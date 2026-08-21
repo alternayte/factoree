@@ -8,6 +8,7 @@ import { PrismaTenantRegistry } from "~/persistence/prisma/project-registry.pris
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
+import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
 
 const env = loadEnv();
@@ -34,8 +35,8 @@ async function call(
     where: { linearAgentSessionId: sessionId },
     select: { temporalWorkflowId: true },
   });
-  const workspaceId = run?.temporalWorkflowId.split(":")[1];
-  if (!workspaceId) throw new Error(`no workspace for agent session ${sessionId}`);
+  if (!run) throw new Error(`no workspace for agent session ${sessionId}`);
+  const { workspaceId } = parseWorkflowId(run.temporalWorkflowId);
   const token = await tenants.getInstallationToken(workspaceId);
   if (!token) throw new Error(`no Linear installation for workspace ${workspaceId}`);
   await body(createLinearAgentClient(token));

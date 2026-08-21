@@ -20,4 +20,8 @@ export class PrismaWebhookLog implements WebhookLog {
       throw error;
     }
   }
+
+  async remove(deliveryId: string): Promise<void> {
+    await this.prisma.processedWebhook.deleteMany({ where: { deliveryId } });
+  }
 }

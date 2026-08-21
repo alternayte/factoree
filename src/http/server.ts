@@ -7,7 +7,7 @@ import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { DelegationService } from "~/domain/runs/delegation-service.js";
 import { createAdminGuard } from "./admin/auth.js";
-import { registerHealthRoutes } from "./health.routes.js";
+import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProjectRoutes } from "./admin/projects.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
@@ -59,6 +59,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     });
     registerRunRoutes(admin, { runs: dependencies.runs, tenants: dependencies.tenants });
     registerInstallationRoutes(admin, { tenants: dependencies.tenants });
+    registerMetricsRoute(admin);
   });
 
   return app;

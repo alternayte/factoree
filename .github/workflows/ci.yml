@@ -6,6 +6,10 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # The Prisma CLI resolves DATABASE_URL eagerly, so every CLI call needs a value.
+    # The integration tests inject the real per-container URL, so a placeholder is correct.
+    env:
+      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

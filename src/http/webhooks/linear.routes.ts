@@ -8,8 +8,14 @@ export const registerLinearWebhookRoutes = (
   app: FastifyInstance,
   dependencies: { secret: string; delegation: DelegationService; logger: Logger },
 ): void => {
-  app.post("/webhooks/linear", { config: { rawBody: true } }, async (request, reply) => {
-    const rawBody = request.rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}), "utf8");
+  app.post("/webhooks/linear", async (request, reply) => {
+    // The JSON content type parser always stores the exact bytes. Reconstructing the body
+    // would verify the signature against bytes Linear did not sign, so reject instead.
+    const rawBody = request.rawBody;
+    if (!rawBody) {
+      dependencies.logger.warn("rejected Linear webhook", { step: "receive", reason: "missing_raw_body" });
+      return reply.code(400).send({ error: "missing_raw_body" });
+    }
     const parsedBody = request.body as { webhookTimestamp?: number; webhookId?: string } | undefined;
 
     const verified = verifyLinearSignature({

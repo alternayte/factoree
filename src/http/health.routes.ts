@@ -14,6 +14,11 @@ export const registerHealthRoutes = (app: FastifyInstance, prisma: FactoreePrism
     }
   });
 
+};
+
+// Every metric carries tenant_id and project_id labels, so /metrics is not public.
+// The caller registers it inside the administration scope, behind the bearer guard.
+export const registerMetricsRoute = (app: FastifyInstance): void => {
   app.get("/metrics", async (_request, reply) => {
     reply.header("content-type", registry.contentType);
     return registry.metrics();

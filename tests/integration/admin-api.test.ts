@@ -48,7 +48,7 @@ beforeAll(async () => {
       tenants,
       projects: new PrismaProjectRegistry(prisma),
       webhookLog: new PrismaWebhookLog(prisma),
-      starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(undefined)), signalHumanInput: vi.fn(() => Promise.resolve(undefined)) },
+      starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
     }),
   });
@@ -72,6 +72,28 @@ describe("administration API", () => {
   it("rejects an administration request without the token", async () => {
     const response = await app.inject({ method: "GET", url: "/admin/projects?linearWorkspaceId=ws-1" });
     expect(response.statusCode).toBe(401);
+  });
+
+  it("rejects a wrong token of the same length and a token of a different length", async () => {
+    const sameLength = await app.inject({
+      method: "GET",
+      url: "/admin/projects?linearWorkspaceId=ws-1",
+      headers: { authorization: `Bearer ${"x".repeat(token.length)}` },
+    });
+    expect(sameLength.statusCode).toBe(401);
+
+    const otherLength = await app.inject({
+      method: "GET",
+      url: "/admin/projects?linearWorkspaceId=ws-1",
+      headers: { authorization: `Bearer ${token}extra` },
+    });
+    expect(otherLength.statusCode).toBe(401);
+  });
+
+  it("serves metrics only with the administration token", async () => {
+    expect((await app.inject({ method: "GET", url: "/metrics" })).statusCode).toBe(401);
+    const authorized = await app.inject({ method: "GET", url: "/metrics", headers: auth });
+    expect(authorized.statusCode).toBe(200);
   });
 
   it("creates, reads, updates, and deletes a project", async () => {
@@ -114,7 +136,7 @@ describe("administration API", () => {
     expect(removed.statusCode).toBe(204);
   });
 
-  it("stores a project secret and never returns its value", async () => {
+  it("stores a project secret as ciphertext and reads it back through the secret store", async () => {
     const created = await app.inject({
       method: "POST",
       url: "/admin/projects",
@@ -141,6 +163,13 @@ describe("administration API", () => {
       headers: auth,
     });
     expect(read.body).not.toContain("ghp_super_secret_value_12345678");
+
+    const stored = await prisma.projectSecret.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(JSON.stringify(stored)).not.toContain("ghp_super_secret_value_12345678");
+    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    expect(await secrets.get(stored.tenantId, project.id, "GITHUB_TOKEN")).toBe(
+      "ghp_super_secret_value_12345678",
+    );
   });
 
   it("does not return a project of another tenant", async () => {

@@ -21,12 +21,9 @@ export const verifyLinearSignature = (input: VerifyLinearSignatureInput): Linear
   const expected = createHmac("sha256", input.secret)
     .update(typeof input.rawBody === "string" ? Buffer.from(input.rawBody, "utf8") : input.rawBody)
     .digest();
-  let provided: Buffer;
-  try {
-    provided = Buffer.from(input.signature, "hex");
-  } catch {
-    return { ok: false, reason: "bad_signature" };
-  }
+  // Buffer.from with hex encoding stops at the first invalid pair instead of throwing.
+  // The length check below is therefore what rejects a malformed signature.
+  const provided = Buffer.from(input.signature, "hex");
   if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
     return { ok: false, reason: "bad_signature" };
   }

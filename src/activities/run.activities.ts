@@ -2,6 +2,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import { metrics } from "~/telemetry/metrics.js";
+import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 
 export interface RunActivityDependencies {
   runs: RunRepository;
@@ -32,22 +33,28 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   },
 
   async completeRun(input: {
+    tenantId: string;
     runId: string;
     status: RunStatus;
     failureReason?: RunFailureReason;
     completedAt: string;
   }): Promise<void> {
+    const before = await dependencies.runs.findById(input.tenantId, input.runId);
+    const alreadyTerminal = before !== null && isTerminalRunStatus(before.status);
     const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
       completedAt: new Date(input.completedAt),
     });
     const labels = { tenant_id: run.tenantId, project_id: run.projectId };
     const completedAt = run.completedAt ?? new Date(input.completedAt);
-    metrics.activeRuns.dec(labels);
-    metrics.runDuration.observe(labels, (completedAt.getTime() - run.createdAt.getTime()) / 1000);
-    if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
-    else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);
-    else metrics.runsFailed.inc({ ...labels, reason: input.failureReason ?? "UNKNOWN" });
+    // An activity retry after a successful write must not count the terminal state twice.
+    if (!alreadyTerminal) {
+      metrics.activeRuns.dec(labels);
+      metrics.runDuration.observe(labels, (completedAt.getTime() - run.createdAt.getTime()) / 1000);
+      if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
+      else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);
+      else metrics.runsFailed.inc({ ...labels, reason: input.failureReason ?? "UNKNOWN" });
+    }
     dependencies.logger.info("run completed", {
       tenant_id: run.tenantId,
       project_id: run.projectId,

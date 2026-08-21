@@ -51,4 +51,6 @@ export interface RunRepository {
 
 export interface WebhookLog {
   recordIfNew(input: { tenantId: string | null; deliveryId: string; eventType: string }): Promise<boolean>;
+  // Releases a marker recorded by recordIfNew, so that a failed delegation can be redelivered.
+  remove(deliveryId: string): Promise<void>;
 }

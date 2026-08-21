@@ -10,6 +10,7 @@ const created: string[] = [];
 const acknowledged: string[] = [];
 const completions: Array<{ runId: string; status: string; failureReason?: string }> = [];
 const statuses: string[] = [];
+const failingSessions = new Set<string>();
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
@@ -23,6 +24,7 @@ const activities = {
     completions.push(input);
   },
   acknowledgeSession: async (input: { sessionId: string }) => {
+    if (failingSessions.has(input.sessionId)) throw new Error("Linear is down");
     acknowledged.push(input.sessionId);
   },
   postProgress: async () => undefined,
@@ -112,7 +114,8 @@ describe("agentRunWorkflow", () => {
       expect(snapshot.runId).toBe("run-session-c");
       expect(snapshot.status).toBe("CANCELLED");
       expect(snapshot.humanInputs).toEqual(["use Postgres"]);
-      expect(statuses).toContain("WAITING_FOR_INPUT");
+      expect(statuses).toContain("RECEIVED");
+      expect(statuses).not.toContain("WAITING_FOR_INPUT");
     });
   });
 
@@ -127,5 +130,26 @@ describe("agentRunWorkflow", () => {
     });
     expect(result.status).toBe("FAILED");
     expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
+  });
+
+  it("drives the Run to a terminal state when an activity fails permanently", async () => {
+    failingSessions.add("session-e");
+    try {
+      await runWorker(async () => {
+        const handle = await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "session-e"),
+          args: [input("session-e")],
+        });
+        await expect(handle.result()).rejects.toThrow();
+      });
+    } finally {
+      failingSessions.delete("session-e");
+    }
+    expect(completions.at(-1)).toMatchObject({
+      runId: "run-session-e",
+      status: "FAILED",
+      failureReason: "INTERNAL_ERROR",
+    });
   });
 });
