@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id                String              @id @default(uuid())
+  linearWorkspaceId String              @unique
+  name              String
+  createdAt         DateTime            @default(now())
+  installations     LinearInstallation[]
+  projects          Project[]
+  runs              Run[]
+  webhooks          ProcessedWebhook[]
+}
+
+model LinearInstallation {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  linearWorkspaceId   String   @unique
+  appUserId           String?
+  accessTokenCipher   String
+  refreshTokenCipher  String?
+  expiresAt           DateTime?
+  scopes              String[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Project {
+  id                 String          @id @default(uuid())
+  tenantId           String
+  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key                String
+  name               String
+  primaryRepository  String
+  referenceRepositories String[]     @default([])
+  linearTeamId       String?
+  defaultAutonomy    String          @default("L2")
+  maxRunMinutes      Int             @default(90)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  secrets            ProjectSecret[]
+  runs               Run[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+model ProjectSecret {
+  id          String   @id @default(uuid())
+  tenantId    String
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  valueCipher String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, name])
+  @@index([tenantId])
+}
+
+model Run {
+  id                       String    @id @default(uuid())
+  tenantId                 String
+  tenant                   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId                String
+  project                  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  linearIssueId            String?
+  linearAgentSessionId     String    @unique
+  temporalWorkflowId       String    @unique
+  status                   String
+  failureReason            String?
+  autonomyLevel            String
+  implementerRunner        String?
+  validatorRunner          String?
+  reviewerRunner           String?
+  spriteId                 String?
+  baseSha                  String?
+  patchSha256              String?
+  commitSha                String?
+  pullRequestUrl           String?
+  contextContractVersion   String?
+  validationContractVersion String?
+  repairCount              Int       @default(0)
+  createdAt                DateTime  @default(now())
+  startedAt                DateTime?
+  completedAt              DateTime?
+  executions               AgentExecution[]
+
+  @@index([tenantId])
+  @@index([projectId])
+}
+
+model AgentExecution {
+  id             String    @id @default(uuid())
+  tenantId       String
+  runId          String
+  run            Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  role           String
+  runner         String
+  model          String?
+  sessionRef     String?
+  promptVersion  String?
+  durationMs     Int?
+  finalResult    Json?
+  costMetadata   Json?
+  createdAt      DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([runId])
+}
+
+model ProcessedWebhook {
+  id         String   @id @default(uuid())
+  tenantId   String?
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  deliveryId String   @unique
+  eventType  String
+  receivedAt DateTime @default(now())
+
+  @@index([tenantId])
+}
