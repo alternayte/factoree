@@ -1,0 +1,25 @@
+{
+  "type": "AgentSessionEvent",
+  "action": "prompted",
+  "createdAt": "2026-08-21T10:05:00.000Z",
+  "organizationId": "workspace-123",
+  "oauthClientId": "oauth-client-1",
+  "appUserId": "app-user-1",
+  "webhookId": "webhook-2",
+  "webhookTimestamp": 1755770700000,
+  "agentActivity": {
+    "id": "activity-1",
+    "signal": "stop",
+    "content": { "type": "prompt", "body": "" }
+  },
+  "agentSession": {
+    "id": "session-1",
+    "appUserId": "app-user-1",
+    "organizationId": "workspace-123",
+    "createdAt": "2026-08-21T10:00:00.000Z",
+    "updatedAt": "2026-08-21T10:05:00.000Z",
+    "status": "active",
+    "type": "commentThread",
+    "issueId": "issue-1"
+  }
+}
