@@ -1,0 +1,31 @@
+{
+  "type": "AgentSessionEvent",
+  "action": "created",
+  "createdAt": "2026-08-21T10:00:00.000Z",
+  "organizationId": "workspace-123",
+  "oauthClientId": "oauth-client-1",
+  "appUserId": "app-user-1",
+  "webhookId": "webhook-1",
+  "webhookTimestamp": 1755770400000,
+  "promptContext": "Issue: Add a health endpoint",
+  "agentSession": {
+    "id": "session-1",
+    "appUserId": "app-user-1",
+    "organizationId": "workspace-123",
+    "createdAt": "2026-08-21T10:00:00.000Z",
+    "updatedAt": "2026-08-21T10:00:00.000Z",
+    "status": "pending",
+    "type": "commentThread",
+    "issueId": "issue-1",
+    "creatorId": "user-1",
+    "issue": {
+      "id": "issue-1",
+      "identifier": "FAC-1",
+      "title": "Add a health endpoint",
+      "description": "## Goal\n\nExpose a health endpoint.",
+      "teamId": "team-1",
+      "url": "https://linear.app/acme/issue/FAC-1"
+    },
+    "creator": { "id": "user-1", "name": "Nate" }
+  }
+}
