@@ -137,6 +137,19 @@ const waitForRun = async (sessionId: string): Promise<void> => {
   throw new Error(`no Run appeared for ${sessionId}`);
 };
 
+// Polls until the Run count for a session reads the expected value on three consecutive
+// checks, rather than sleeping a fixed duration and hoping the count has settled.
+const waitForStableRunCount = async (sessionId: string, expected: number): Promise<void> => {
+  let stableReadings = 0;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const count = await prisma.run.count({ where: { linearAgentSessionId: sessionId } });
+    stableReadings = count === expected ? stableReadings + 1 : 0;
+    if (stableReadings >= 3) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Run count for ${sessionId} never stabilized at ${expected}`);
+};
+
 describe("AT-01 delegation", () => {
   it("creates exactly one Run for one delegation and ignores a duplicate delivery", async () => {
     const first = await send(payload, "delivery-at01");
@@ -148,10 +161,14 @@ describe("AT-01 delegation", () => {
     const duplicate = await send(payload, "delivery-at01");
     expect(duplicate.json()).toEqual({ kind: "duplicate" });
 
+    // A repeated Linear delivery with a new delivery identifier still must not create a
+    // second Run. The deterministic Temporal workflow identifier stops it: the second start
+    // raises WorkflowExecutionAlreadyStartedError before any activity runs. The unique
+    // linearAgentSessionId column is a database backstop, covered by the repository test.
     const differentDelivery = await send(payload, "delivery-at01-b");
     expect(differentDelivery.json()).toMatchObject({ kind: "started" });
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await waitForStableRunCount("session-1", 1);
     expect(await prisma.run.count({ where: { linearAgentSessionId: "session-1" } })).toBe(1);
     expect(acknowledged.filter((id) => id === "session-1")).toHaveLength(1);
   });

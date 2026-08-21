@@ -29,4 +29,15 @@ describe("AT-32 redaction in logs", () => {
     logger.info("value late-added-secret-value");
     expect(lines.join("")).not.toContain("late-added-secret-value");
   });
+
+  it("keeps a bearer token out of a free-text log message", () => {
+    const lines: string[] = [];
+    const logger = createLogger({
+      level: "debug",
+      redactor: new Redactor(),
+      sink: (line) => lines.push(line),
+    });
+    logger.info("agent ran: curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345' https://api.example.com");
+    expect(lines.join("")).not.toContain("abcdefghijklmnopqrstuvwxyz012345");
+  });
 });
