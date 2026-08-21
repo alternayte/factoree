@@ -2,20 +2,23 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
-import { agentRunWorkflow, stopSignal, runStatusQuery } from "~/workflows/agent-run.workflow.js";
+import { agentRunWorkflow, stopSignal, humanInputSignal, runStatusQuery } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
 
 let environment: TestWorkflowEnvironment;
 const created: string[] = [];
 const acknowledged: string[] = [];
 const completions: Array<{ runId: string; status: string; failureReason?: string }> = [];
+const statuses: string[] = [];
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
     created.push(input.linearAgentSessionId);
     return { runId: `run-${input.linearAgentSessionId}`, created: created.filter((id) => id === input.linearAgentSessionId).length === 1 };
   },
-  setRunStatus: async () => undefined,
+  setRunStatus: async (input: { status: string }) => {
+    statuses.push(input.status);
+  },
   completeRun: async (input: { runId: string; status: string; failureReason?: string }) => {
     completions.push(input);
   },
@@ -94,18 +97,22 @@ describe("agentRunWorkflow", () => {
     expect(created.filter((id) => id === "session-b")).toHaveLength(1);
   });
 
-  it("answers the status query while the Run waits", async () => {
+  it("answers the status query and records human input", async () => {
     await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-c"),
         args: [input("session-c")],
       });
-      const snapshot = await handle.query(runStatusQuery);
-      expect(snapshot.runId).toBe("run-session-c");
-      expect(snapshot.status).toBe("WAITING_FOR_INPUT");
+      await handle.signal(humanInputSignal, "use Postgres");
       await handle.signal(stopSignal);
       await handle.result();
+
+      const snapshot = await handle.query(runStatusQuery);
+      expect(snapshot.runId).toBe("run-session-c");
+      expect(snapshot.status).toBe("CANCELLED");
+      expect(snapshot.humanInputs).toEqual(["use Postgres"]);
+      expect(statuses).toContain("WAITING_FOR_INPUT");
     });
   });
 
