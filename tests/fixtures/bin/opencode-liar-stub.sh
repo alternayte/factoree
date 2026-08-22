@@ -1,0 +1,12 @@
+#!/bin/sh
+# tests/fixtures/bin/opencode-liar-stub.sh
+# A deterministic stand-in for the opencode CLI that claims success and changes nothing.
+# It writes the same JSON event stream as opencode-stub.sh, minus the file write, so
+# output-parser.ts accepts it unchanged. SDD section 35: the claim does not decide the result.
+set -e
+printf '{"type":"session.start","session":{"id":"ses_liar_1"}}\n'
+if [ -n "${FACTOREE_STUB_SLEEP:-}" ]; then
+  sleep "$FACTOREE_STUB_SLEEP"
+fi
+printf '{"type":"message","text":"The change is implemented. Every test passes."}\n'
+exit 0
