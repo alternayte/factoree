@@ -75,6 +75,53 @@ describe("PrismaRunRepository", () => {
     expect(updated.failureReason).toBe("STOPPED_BY_HUMAN");
     expect(updated.completedAt?.getTime()).toBe(completedAt.getTime());
   });
+
+  it("records the sandbox, lists it after the retention window, and clears it", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-5"));
+    const retainUntil = new Date(Date.now() - 1_000);
+    await repository.setSandbox(tenantA, created.run.id, {
+      spriteId: "sprite-5",
+      adapter: "fake",
+      retainUntil,
+      baseSha: "b".repeat(40),
+      implementerRunner: "opencode",
+    });
+
+    const stored = await repository.findById(tenantA, created.run.id);
+    expect(stored?.spriteId).toBe("sprite-5");
+    expect(stored?.spriteAdapter).toBe("fake");
+    expect(stored?.baseSha).toBe("b".repeat(40));
+    expect(stored?.implementerRunner).toBe("opencode");
+
+    const expired = await repository.listExpiredSandboxes(new Date(), 10);
+    expect(expired).toContainEqual({
+      tenantId: tenantA,
+      runId: created.run.id,
+      spriteId: "sprite-5",
+      adapter: "fake",
+    });
+
+    await repository.clearSandbox(tenantA, created.run.id);
+    const cleared = await repository.findById(tenantA, created.run.id);
+    expect(cleared?.spriteId).toBeNull();
+    expect(cleared?.spriteRetainUntil).toBeNull();
+    expect(await repository.listExpiredSandboxes(new Date(), 10)).toHaveLength(0);
+  });
+
+  it("refuses to record a sandbox for a Run of another tenant", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-6"));
+    await repository.setSandbox(tenantB, created.run.id, {
+      spriteId: "sprite-6",
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "c".repeat(40),
+      implementerRunner: "opencode",
+    });
+    const stored = await repository.findById(tenantA, created.run.id);
+    expect(stored?.spriteId).toBeNull();
+  });
 });
 
 describe("PrismaWebhookLog", () => {

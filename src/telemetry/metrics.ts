@@ -44,6 +44,25 @@ export const metrics = {
     labelNames,
     registers: [registry],
   }),
+  implementationDuration: new Histogram({
+    name: "factoree_implementation_duration_seconds",
+    help: "Implementer duration in seconds",
+    labelNames: [...labelNames, "runner"],
+    buckets: [10, 30, 60, 300, 900, 1800, 3600],
+    registers: [registry],
+  }),
+  sandboxesCreated: new Counter({
+    name: "factoree_sandboxes_created_total",
+    help: "Sandboxes created",
+    labelNames: [...labelNames, "adapter"],
+    registers: [registry],
+  }),
+  sandboxesDestroyed: new Counter({
+    name: "factoree_sandboxes_destroyed_total",
+    help: "Sandboxes destroyed",
+    labelNames: ["adapter", "reason"],
+    registers: [registry],
+  }),
   humanInterventions: new Counter({
     name: "factoree_human_interventions_total",
     help: "Human interventions such as elicitation answers and stop requests",

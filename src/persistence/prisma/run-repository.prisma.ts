@@ -2,6 +2,8 @@ import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type {
   CreateRunInput,
+  ExpiredSandboxRun,
+  RunSandboxPatch,
   RunRecord,
   RunRepository,
   RunStatusPatch,
@@ -24,6 +26,8 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   validatorRunner: row.validatorRunner,
   reviewerRunner: row.reviewerRunner,
   spriteId: row.spriteId,
+  spriteAdapter: row.spriteAdapter,
+  spriteRetainUntil: row.spriteRetainUntil,
   baseSha: row.baseSha,
   patchSha256: row.patchSha256,
   commitSha: row.commitSha,
@@ -88,5 +92,48 @@ export class PrismaRunRepository implements RunRepository {
       },
     });
     return toRecord(row);
+  }
+
+  async setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids relying on the caller.
+    await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: {
+        spriteId: sandbox.spriteId,
+        spriteAdapter: sandbox.adapter,
+        spriteRetainUntil: sandbox.retainUntil,
+        baseSha: sandbox.baseSha,
+        implementerRunner: sandbox.implementerRunner,
+      },
+    });
+  }
+
+  async clearSandbox(tenantId: string, runId: string): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { spriteId: null, spriteAdapter: null, spriteRetainUntil: null },
+    });
+  }
+
+  async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {
+    const rows = await this.prisma.run.findMany({
+      where: { spriteId: { not: null }, spriteRetainUntil: { lte: now } },
+      orderBy: { spriteRetainUntil: "asc" },
+      take: limit,
+      select: { id: true, tenantId: true, spriteId: true, spriteAdapter: true },
+    });
+    const expired: ExpiredSandboxRun[] = [];
+    for (const row of rows) {
+      // A Run without a recorded adapter cannot be reaped. The reaper leaves it alone, and an
+      // operator can then see the row and act on it.
+      if (row.spriteId === null || row.spriteAdapter === null) continue;
+      expired.push({
+        tenantId: row.tenantId,
+        runId: row.id,
+        spriteId: row.spriteId,
+        adapter: row.spriteAdapter,
+      });
+    }
+    return expired;
   }
 }

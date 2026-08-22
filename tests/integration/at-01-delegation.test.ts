@@ -14,7 +14,13 @@ import {
   PrismaSecretStore,
   PrismaTenantRegistry,
 } from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
+import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
+import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
+import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { FakeSandbox } from "../support/fake-sandbox.js";
+import { FakeRunner } from "../support/fake-runner.js";
 import { createTemporalWorkflowStarter } from "~/temporal/connection.js";
 import { createActivities } from "~/activities/index.js";
 import { buildServer } from "~/http/server.js";
@@ -38,7 +44,8 @@ const env = {
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
 } satisfies Env;
 
-const logger = createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined });
+const redactor = new Redactor();
+const logger = createLogger({ level: "error", redactor, sink: () => undefined });
 const acknowledged: string[] = [];
 const agentSession: AgentSessionPort = {
   acknowledge: async (sessionId) => {
@@ -94,11 +101,27 @@ beforeAll(async () => {
     linearTeamId: "team-1",
   });
 
+  const runs = new PrismaRunRepository(prisma);
+  const fakeSandbox = new FakeSandbox();
+
   worker = await Worker.create({
     connection: environment.nativeConnection,
     taskQueue: env.TEMPORAL_TASK_QUEUE,
     workflowsPath: new URL("../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
-    activities: createActivities({ runs: new PrismaRunRepository(prisma), agentSession, logger }),
+    activities: createActivities({
+      runs,
+      agentSession,
+      // This test drives the Phase 1 path, which carries no sandbox. The doubles below satisfy
+      // the dependency shape and never run.
+      sandboxManager: new SandboxManager({ sandbox: fakeSandbox, allowUnenforcedNetwork: true }),
+      sandbox: fakeSandbox,
+      runners: new AgentRunnerRegistry([new FakeRunner()]),
+      executions: new PrismaAgentExecutionRepository(prisma),
+      secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+      redactor,
+      reaper: new SpriteReaper({ sandboxes: { fake: fakeSandbox }, runs }),
+      logger,
+    }),
   });
   workerRun = worker.run();
 

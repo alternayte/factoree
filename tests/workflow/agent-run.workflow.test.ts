@@ -4,6 +4,9 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { agentRunWorkflow, stopSignal, humanInputSignal, runStatusQuery } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
+import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
+import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
+import type { ImplementActivityInput } from "~/activities/agent.activities.js";
 
 let environment: TestWorkflowEnvironment;
 const created: string[] = [];
@@ -11,6 +14,12 @@ const acknowledged: string[] = [];
 const completions: Array<{ runId: string; status: string; failureReason?: string }> = [];
 const statuses: string[] = [];
 const failingSessions = new Set<string>();
+const prepared: PrepareSandboxActivityInput[] = [];
+const implementCalls: ImplementActivityInput[] = [];
+const cancelledSessions: Array<{ runnerName: string; session: { sessionId: string } }> = [];
+const destroyed: string[] = [];
+/** A run id in this map holds preparation open until the test resolves the promise. */
+const heldPreparations = new Map<string, Promise<void>>();
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
@@ -31,6 +40,47 @@ const activities = {
   postElicitation: async () => undefined,
   postFinalResponse: async () => undefined,
   postError: async () => undefined,
+  prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
+    prepared.push(activityInput);
+    await heldPreparations.get(activityInput.runId);
+    return {
+      spriteId: `sprite-${activityInput.runId}`,
+      adapter: "fake",
+      workspacePath: "/workspace",
+      primaryPath: "/workspace/primary",
+      baseSha: "a".repeat(40),
+      referencePaths: [],
+      baselineCheckpointId: null,
+    };
+  },
+  destroySandbox: async (activityInput: { spriteId: string }) => {
+    destroyed.push(activityInput.spriteId);
+  },
+  reapExpiredSandboxes: async () => 0,
+  implement: async (activityInput: ImplementActivityInput) => {
+    implementCalls.push(activityInput);
+    return {
+      sessionId: "ses_fake",
+      processId: "process-fake",
+      runner: activityInput.runnerName,
+      completed: true,
+      exitCode: 0,
+      cancelled: false,
+      summary: "The change is applied.",
+      durationMs: 10,
+    };
+  },
+  cancelImplementer: async (activityInput: { runnerName: string; session: { sessionId: string } }) => {
+    cancelledSessions.push(activityInput);
+  },
+};
+
+const sandboxInput = {
+  primary: { url: "https://example.invalid/primary.git", ref: "main" },
+  references: [],
+  config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+  goal: "Add the health endpoint.",
+  repositoryInstructions: "Use the existing test idiom.",
 };
 
 const input = (sessionId: string, maxRunMinutes = 90) => ({
@@ -42,6 +92,13 @@ const input = (sessionId: string, maxRunMinutes = 90) => ({
   autonomyLevel: "L2",
   maxRunMinutes,
 });
+
+/** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
+const waitFor = async (predicate: () => boolean): Promise<void> => {
+  while (!predicate()) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+};
 
 const runWorker = async <T>(body: () => Promise<T>): Promise<T> => {
   const worker = await Worker.create({
@@ -130,6 +187,86 @@ describe("agentRunWorkflow", () => {
     });
     expect(result.status).toBe("FAILED");
     expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
+  });
+
+  it("moves through PREPARING and IMPLEMENTING when the input carries a sandbox", async () => {
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "session-f"),
+        args: [{ ...input("session-f"), sandbox: sandboxInput }],
+      });
+      await waitFor(() => implementCalls.some((entry) => entry.runId === "run-session-f"));
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    expect(statuses.slice(-3)).toEqual(["RECEIVED", "PREPARING", "IMPLEMENTING"]);
+    expect(implementCalls.at(-1)?.runnerName).toBe(DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner);
+    expect(implementCalls.at(-1)?.attempt).toBe(1);
+    expect(result.status).toBe("CANCELLED");
+  });
+
+  it("keeps the sandbox after the Run reaches a terminal state, so the retention window holds", async () => {
+    // SDD sections 32 and 51 order RETAIN before DELETE. SpriteReaper deletes the sandbox later.
+    const before = destroyed.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "session-g"),
+        args: [{ ...input("session-g"), sandbox: sandboxInput }],
+      });
+      await waitFor(() => implementCalls.some((entry) => entry.runId === "run-session-g"));
+      await handle.signal(stopSignal);
+      await handle.result();
+      const snapshot = await handle.query(runStatusQuery);
+      expect(snapshot.spriteId).toBe("sprite-run-session-g");
+    });
+    expect(destroyed).toHaveLength(before);
+  });
+
+  it("cancels the Implementer session when a stop signal arrives", async () => {
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "session-h"),
+        args: [{ ...input("session-h"), sandbox: sandboxInput }],
+      });
+      await waitFor(() => implementCalls.some((entry) => entry.runId === "run-session-h"));
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    expect(cancelledSessions.at(-1)).toMatchObject({
+      runnerName: DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner,
+      session: { sessionId: "ses_fake" },
+    });
+    expect(result.status).toBe("CANCELLED");
+  });
+
+  it("does not start the Implementer when the stop arrives during preparation", async () => {
+    let release = (): void => undefined;
+    heldPreparations.set(
+      "run-session-i",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const before = implementCalls.length;
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "session-i"),
+        args: [{ ...input("session-i"), sandbox: sandboxInput }],
+      });
+      // Wait until the workflow has entered PREPARING, then stop it while preparation runs.
+      await waitFor(() => prepared.some((entry) => entry.runId === "run-session-i"));
+      await handle.signal(stopSignal);
+      release();
+      return handle.result();
+    });
+    heldPreparations.delete("run-session-i");
+    expect(implementCalls).toHaveLength(before);
+    expect(cancelledSessions.every((entry) => entry.session.sessionId !== "ses_session_i")).toBe(true);
+    expect(result.status).toBe("CANCELLED");
   });
 
   it("drives the Run to a terminal state when an activity fails permanently", async () => {

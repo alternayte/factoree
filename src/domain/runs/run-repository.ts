@@ -14,6 +14,8 @@ export interface RunRecord {
   validatorRunner: string | null;
   reviewerRunner: string | null;
   spriteId: string | null;
+  spriteAdapter: string | null;
+  spriteRetainUntil: Date | null;
   baseSha: string | null;
   patchSha256: string | null;
   commitSha: string | null;
@@ -42,11 +44,33 @@ export interface RunStatusPatch {
   repairCount?: number;
 }
 
+export interface RunSandboxPatch {
+  spriteId: string;
+  adapter: string;
+  retainUntil: Date;
+  baseSha: string;
+  implementerRunner: string;
+}
+
+/** One Run whose sandbox retention window has passed and whose sandbox still exists. */
+export interface ExpiredSandboxRun {
+  tenantId: string;
+  runId: string;
+  spriteId: string;
+  adapter: string;
+}
+
 export interface RunRepository {
   createIfAbsent(input: CreateRunInput): Promise<{ run: RunRecord; created: boolean }>;
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
   findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null>;
   updateStatus(id: string, status: RunStatus, patch?: RunStatusPatch): Promise<RunRecord>;
+  /** Records the sandbox of the Run and the moment its retention window ends. */
+  setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<void>;
+  /** Removes the sandbox reference after the sandbox is deleted. The evidence stays. */
+  clearSandbox(tenantId: string, runId: string): Promise<void>;
+  /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
+  listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
 }
 
 export interface WebhookLog {
