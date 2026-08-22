@@ -91,6 +91,7 @@ const activities = {
       cancelled: false,
       summary: "The change is applied.",
       durationMs: 10,
+      cancelledSession: cancelledLiveSessions.includes(activityInput.runId),
     };
   },
   cancelImplementer: async (activityInput: { runnerName: string; session: { sessionId: string } }) => {
@@ -309,6 +310,7 @@ describe("agentRunWorkflow", () => {
 
   it("cancels the live Implementer session when the stop arrives while it still runs", async () => {
     let release = (): void => undefined;
+    const cancelledJBefore = cancelledSessions.length;
     heldImplementations.set(
       "run-session-j",
       new Promise<void>((resolve) => {
@@ -333,6 +335,8 @@ describe("agentRunWorkflow", () => {
     });
     heldImplementations.delete("run-session-j");
     expect(cancelledLiveSessions).toContain("run-session-j");
+    // The activity cancelled the session itself, so the workflow does not repeat the call.
+    expect(cancelledSessions).toHaveLength(cancelledJBefore);
     expect(result.status).toBe("CANCELLED");
     expect(completions.at(-1)?.failureReason).toBe("STOPPED_BY_HUMAN");
   });
@@ -355,15 +359,21 @@ describe("agentRunWorkflow", () => {
     }
   });
 
-  it("fails with RUN_TIMEOUT when preparation consumes the Run budget", async () => {
+  it("cuts preparation off at the Run budget, before the preparation itself returns", async () => {
     // The workflow clock, not the wall clock, decides here. The budget is twelve seconds of
-    // workflow time. The test holds preparation open, advances the server clock by twenty
-    // seconds, and only then releases preparation. The wall clock never enters the assertion.
+    // workflow time, and the clock advances twenty seconds while preparation is still held open.
+    // The Run must become terminal while the preparation activity still hangs. Only the
+    // schedule-to-close timeout of the activity can produce that, so a per-attempt timeout alone
+    // fails this test.
     let release = (): void => undefined;
+    let released = false;
     heldPreparations.set(
       "run-session-l",
       new Promise<void>((resolve) => {
-        release = resolve;
+        release = () => {
+          released = true;
+          resolve();
+        };
       }),
     );
     const before = implementCalls.length;
@@ -378,8 +388,11 @@ describe("agentRunWorkflow", () => {
         "the preparation of session-l",
       );
       await environment.sleep("20 seconds");
+      const terminal = await handle.result();
+      // The preparation double still hangs. The Run ended without it.
+      expect(released).toBe(false);
       release();
-      return handle.result();
+      return terminal;
     });
     heldPreparations.delete("run-session-l");
     expect(implementCalls).toHaveLength(before);

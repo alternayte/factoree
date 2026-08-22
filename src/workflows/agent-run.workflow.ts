@@ -151,7 +151,10 @@ export async function agentRunWorkflow(
 
   // The Run budget starts here. Every later step reads the remaining time from this deadline, so
   // preparation and implementation consume the same budget as the wait does.
-  const deadline = Date.now() + input.maxRunMinutes * 60_000;
+  // `maxRunMinutes` can be a fraction. A whole number of milliseconds, with a floor of one
+  // second, keeps every derived Temporal duration valid.
+  const runBudgetMs = Math.max(1_000, Math.round(input.maxRunMinutes * 60_000));
+  const deadline = Date.now() + runBudgetMs;
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
   const failRun = async (
@@ -279,7 +282,6 @@ export async function agentRunWorkflow(
       const watching = scope
         .run(() => condition(() => stopRequested))
         .then(() => {
-          implementerCancelled = true;
           scope.cancel();
         })
         .catch(() => undefined);
@@ -296,6 +298,9 @@ export async function agentRunWorkflow(
       }
 
       if (implementation !== null) {
+        // The fallback below runs unless the activity itself really cancelled the session. A
+        // session lookup that gave up, or a cancel that failed, still needs the fallback.
+        implementerCancelled = implementation.cancelledSession;
         implementerSession = {
           sessionId: implementation.sessionId,
           processId: implementation.processId,

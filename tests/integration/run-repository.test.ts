@@ -109,6 +109,52 @@ describe("PrismaRunRepository", () => {
     expect(await repository.listExpiredSandboxes(new Date(), 10)).toHaveLength(0);
   });
 
+  it("reports the sandbox that setSandbox replaced", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-7"));
+    const patch = (spriteId: string) => ({
+      spriteId,
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "d".repeat(40),
+      implementerRunner: "opencode",
+    });
+
+    const first = await repository.setSandbox(tenantA, created.run.id, patch("sprite-7a"));
+    expect(first).toEqual({ spriteId: null, adapter: null });
+
+    const second = await repository.setSandbox(tenantA, created.run.id, patch("sprite-7b"));
+    expect(second).toEqual({ spriteId: "sprite-7a", adapter: "fake" });
+  });
+
+  it("gives two concurrent writers a different superseded sandbox each", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-8"));
+    const patch = (spriteId: string) => ({
+      spriteId,
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "e".repeat(40),
+      implementerRunner: "opencode",
+    });
+    await repository.setSandbox(tenantA, created.run.id, patch("sprite-8-original"));
+
+    // The row lock serializes the two writers, so each one learns what its own write replaced.
+    const [left, right] = await Promise.all([
+      repository.setSandbox(tenantA, created.run.id, patch("sprite-8-left")),
+      repository.setSandbox(tenantA, created.run.id, patch("sprite-8-right")),
+    ]);
+
+    const superseded = [left.spriteId, right.spriteId].sort();
+    const stored = await repository.findById(tenantA, created.run.id);
+    const winner = stored?.spriteId;
+    expect(winner === "sprite-8-left" || winner === "sprite-8-right").toBe(true);
+    const loser = winner === "sprite-8-left" ? "sprite-8-right" : "sprite-8-left";
+    // Every sandbox except the one the Run still holds was reported to exactly one caller, so
+    // nothing is left unreferenced.
+    expect(superseded).toEqual(["sprite-8-original", loser].sort());
+  });
+
   it("refuses to record a sandbox for a Run of another tenant", async () => {
     const repository = new PrismaRunRepository(prisma);
     const created = await repository.createIfAbsent(input("session-6"));
