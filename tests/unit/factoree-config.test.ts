@@ -119,4 +119,20 @@ describe("parseFactoreeConfig", () => {
     const text = `${minimum}sandbox:\n  allowedDomains:\n    - https://x.test/\n`;
     expect(() => parseFactoreeConfig(text)).toThrow(RunConfigurationError);
   });
+
+  it("accepts the conventional wildcard form", () => {
+    const text = `${minimum}sandbox:\n  allowedDomains:\n    - "*.example.com"\n`;
+    const config = parseFactoreeConfig(text);
+    expect(config.sandbox.allowedDomains).toEqual(["*.example.com"]);
+  });
+
+  it("rejects a wildcard label with no dot, which no adapter gives a meaning to", () => {
+    const text = `${minimum}sandbox:\n  allowedDomains:\n    - "*example.com"\n`;
+    expect(() => parseFactoreeConfig(text)).toThrow(RunConfigurationError);
+  });
+
+  it("rejects a bare wildcard, which would allow every domain", () => {
+    const text = `${minimum}sandbox:\n  allowedDomains:\n    - "*"\n`;
+    expect(() => parseFactoreeConfig(text)).toThrow(RunConfigurationError);
+  });
 });

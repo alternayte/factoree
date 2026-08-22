@@ -128,5 +128,10 @@ export const runVerification = async (options: RunVerificationOptions): Promise<
     });
   }
 
-  return { passed: checks.every((check) => check.passed), checks };
+  // An empty check list must not report a pass. The schema of Task 1 already refuses an empty
+  // command list, so this case cannot come from a repository today. This function is still the
+  // single control that makes the Phase 3 exit condition true, so a vacuous pass must stay
+  // impossible here, rather than merely unreachable at the caller.
+  const passed = checks.length > 0 && checks.every((check) => check.passed);
+  return { passed, checks };
 };

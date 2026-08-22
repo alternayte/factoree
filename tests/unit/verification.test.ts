@@ -172,8 +172,10 @@ describe("runVerification", () => {
     const { sandbox, ref } = await prepare({});
     const outcome = await runVerification({ ...base, sandbox, ref, commands: [], redactor: new Redactor() });
     // The schema of Task 1 already refuses an empty list, so this case cannot come from a
-    // repository. The function returns rather than throwing.
+    // repository. The function returns rather than throwing. The outcome still reports a
+    // failure, because this function is the single control that makes the Phase 3 exit
+    // condition true, and a vacuous pass must stay impossible, not merely unreachable.
     expect(outcome.checks).toEqual([]);
-    expect(outcome.passed).toBe(true);
+    expect(outcome.passed).toBe(false);
   });
 });

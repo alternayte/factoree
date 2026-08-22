@@ -125,7 +125,9 @@ export class NetworkPolicyNotEnforcedError extends Error {
   }
 }
 
-const HOST_NAME = /^\*?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+// A host name, or the conventional wildcard form `*.` followed by a host name. A bare `*`, and a
+// wildcard label with no dot such as `*example.com`, have no defined meaning and stay rejected.
+const HOST_NAME = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 /** Produces a stable, comparable policy. Two equal policies always produce one document. */
 export const normalizeNetworkPolicy = (policy: NetworkPolicy): NetworkPolicy => {

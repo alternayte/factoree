@@ -13,8 +13,10 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
  * here can raise a control that a higher rule sets.
  */
 
-/** A host name, or a wildcard label followed by a host name. The same shape the sandbox uses. */
-const HOST_NAME = /^\*?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+// A host name, or the conventional wildcard form `*.` followed by a host name. The same shape
+// the sandbox uses. A bare `*`, and a wildcard label with no dot such as `*example.com`, have no
+// defined meaning and stay rejected.
+const HOST_NAME = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
 const commandSchema = z
   .object({
