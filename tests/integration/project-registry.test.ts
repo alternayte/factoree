@@ -40,6 +40,7 @@ describe("project registry", () => {
     });
     expect(project.maxRunMinutes).toBe(90);
     expect(project.defaultAutonomy).toBe("L2");
+    expect(project.defaultBranch).toBe("main");
     expect(await projects.list(tenant.id)).toHaveLength(1);
     expect(await projects.findByLinearTeam(tenant.id, "team-1")).not.toBeNull();
   });

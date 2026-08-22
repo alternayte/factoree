@@ -25,6 +25,7 @@ type ProjectRow = {
   linearTeamId: string | null;
   defaultAutonomy: string;
   maxRunMinutes: number;
+  defaultBranch: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -45,6 +46,7 @@ export class PrismaProjectRegistry implements ProjectRegistry {
         ...(input.linearTeamId === undefined ? {} : { linearTeamId: input.linearTeamId }),
         ...(input.defaultAutonomy === undefined ? {} : { defaultAutonomy: input.defaultAutonomy }),
         ...(input.maxRunMinutes === undefined ? {} : { maxRunMinutes: input.maxRunMinutes }),
+        ...(input.defaultBranch === undefined ? {} : { defaultBranch: input.defaultBranch }),
       },
     });
     return toProject(row);
@@ -82,6 +84,7 @@ export class PrismaProjectRegistry implements ProjectRegistry {
         ...(input.linearTeamId === undefined ? {} : { linearTeamId: input.linearTeamId }),
         ...(input.defaultAutonomy === undefined ? {} : { defaultAutonomy: input.defaultAutonomy }),
         ...(input.maxRunMinutes === undefined ? {} : { maxRunMinutes: input.maxRunMinutes }),
+        ...(input.defaultBranch === undefined ? {} : { defaultBranch: input.defaultBranch }),
       },
     });
     return toProject(row);

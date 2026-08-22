@@ -5,7 +5,9 @@ import type { ProjectRegistry, TenantRegistry } from "~/domain/projects/project-
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
 import type { AgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import { classifyAgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
-import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
+import type { AgentRunSandboxInput, AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
+import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
+import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 
 export interface WorkflowStarter {
   start(input: { workflowId: string; args: [AgentRunWorkflowInput] }): Promise<void>;
@@ -29,6 +31,7 @@ export interface DelegationDependencies {
   webhookLog: WebhookLog;
   starter: WorkflowStarter;
   logger: Logger;
+  repositoryBaseUrl: string;
 }
 
 export class DelegationService {
@@ -93,6 +96,33 @@ export class DelegationService {
       return { kind: "unconfigured", reason: `no project for Linear team ${teamId ?? "unknown"}` };
     }
 
+    // SDD section 15 and section 32. A Run needs a primary repository and a ref before a
+    // sandbox can exist. The rest of the configuration lives in `.factoree/config.yaml` inside
+    // that repository, so nothing here reads it.
+    let sandbox: AgentRunSandboxInput;
+    try {
+      sandbox = {
+        primary: {
+          url: buildRepositoryUrl(this.dependencies.repositoryBaseUrl, project.primaryRepository),
+          ref: project.defaultBranch,
+        },
+        // A reference repository has no configured ref yet. Phase 4 discovers one and pins it.
+        references: project.referenceRepositories.map((slug) => ({
+          url: buildRepositoryUrl(this.dependencies.repositoryBaseUrl, slug),
+          ref: "HEAD",
+        })),
+        defaults: DEFAULT_PROJECT_DEFAULTS,
+        // Phase 4 replaces this with the refined Work Item. Until then the issue is the goal.
+        goal: buildGoal(event),
+      };
+    } catch (error) {
+      await this.dependencies.webhookLog.remove(deliveryId);
+      return {
+        kind: "unconfigured",
+        reason: `project ${project.key} has an unusable repository: ${String(error)}`,
+      };
+    }
+
     await this.dependencies.starter.start({
       workflowId,
       args: [
@@ -104,6 +134,7 @@ export class DelegationService {
           agentSessionId: event.agentSession.id,
           autonomyLevel: project.defaultAutonomy,
           maxRunMinutes: project.maxRunMinutes,
+          sandbox,
         },
       ],
     });
@@ -111,3 +142,10 @@ export class DelegationService {
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId };
   }
 }
+
+/** The Work Item text the Implementer receives. Phase 4 replaces it with a refined Work Item. */
+const buildGoal = (event: AgentSessionEvent): string => {
+  const title = event.agentSession.issue?.title ?? "";
+  const description = event.agentSession.issue?.description ?? "";
+  return description === "" ? title : `${title}\n\n${description}`;
+};

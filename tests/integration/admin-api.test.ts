@@ -27,6 +27,7 @@ const env = {
   LOG_LEVEL: "error",
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
+  GITHUB_BASE_URL: "https://github.com",
 } satisfies Env;
 
 let prisma: FactoreePrismaClient;
@@ -52,6 +53,7 @@ beforeAll(async () => {
       webhookLog: new PrismaWebhookLog(prisma),
       starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
+      repositoryBaseUrl: "https://github.com",
     }),
   });
   await app.ready();
@@ -113,7 +115,8 @@ describe("administration API", () => {
       },
     });
     expect(created.statusCode).toBe(201);
-    const project = created.json<{ id: string }>();
+    const project = created.json<{ id: string; defaultBranch: string }>();
+    expect(project.defaultBranch).toBe("main");
 
     const read = await app.inject({
       method: "GET",

@@ -43,6 +43,7 @@ const env = {
   LOG_LEVEL: "error",
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
+  GITHUB_BASE_URL: "https://github.com",
 } satisfies Env;
 
 const redactor = new Redactor();
@@ -141,6 +142,7 @@ beforeAll(async () => {
       webhookLog: new PrismaWebhookLog(prisma),
       starter: createTemporalWorkflowStarter(environment.client, env.TEMPORAL_TASK_QUEUE),
       logger,
+      repositoryBaseUrl: "https://github.com",
     }),
   });
   await app.ready();

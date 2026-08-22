@@ -8,6 +8,7 @@ export interface ProjectRecord {
   linearTeamId: string | null;
   defaultAutonomy: string;
   maxRunMinutes: number;
+  defaultBranch: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,6 +22,7 @@ export interface CreateProjectInput {
   linearTeamId?: string;
   defaultAutonomy?: string;
   maxRunMinutes?: number;
+  defaultBranch?: string;
 }
 
 export type UpdateProjectInput = Partial<Omit<CreateProjectInput, "tenantId" | "key">>;
