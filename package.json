@@ -19,6 +19,7 @@
     "db:migrate:dev": "prisma migrate dev"
   },
   "dependencies": {
+    "@fly/sprites": "^0.2.0",
     "@linear/sdk": "^91.0.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",

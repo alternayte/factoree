@@ -11,6 +11,13 @@ const schema = z.object({
   TEMPORAL_API_KEY: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  SPRITES_TOKEN: z.string().min(1).optional(),
+  SPRITES_BASE_URL: z.string().url().optional(),
+  SANDBOX_ADAPTER: z.enum(["fly-sprites", "local"]).default("fly-sprites"),
+  SANDBOX_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-sandboxes"),
+}).refine((value) => value.SANDBOX_ADAPTER !== "fly-sprites" || value.SPRITES_TOKEN !== undefined, {
+  message: "SPRITES_TOKEN is required when SANDBOX_ADAPTER is fly-sprites",
+  path: ["SPRITES_TOKEN"],
 });
 
 export type Env = z.infer<typeof schema>;

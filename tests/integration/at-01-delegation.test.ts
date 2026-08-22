@@ -34,6 +34,8 @@ const env = {
   TEMPORAL_TASK_QUEUE: "factoree-at01",
   PORT: 3000,
   LOG_LEVEL: "error",
+  SANDBOX_ADAPTER: "local",
+  SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
 } satisfies Env;
 
 const logger = createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined });

@@ -25,6 +25,8 @@ const env = {
   TEMPORAL_TASK_QUEUE: "factoree",
   PORT: 3000,
   LOG_LEVEL: "error",
+  SANDBOX_ADAPTER: "local",
+  SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
 } satisfies Env;
 
 let prisma: FactoreePrismaClient;
