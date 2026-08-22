@@ -77,13 +77,33 @@ describe("buildImplementerInput", () => {
     ).toThrow(ForbiddenImplementerMaterialError);
   });
 
-  it("rejects case and separator variations of a GitHub token name", () => {
-    expect(() =>
-      buildImplementerInput({ ...base, projectTestSecrets: { "GH-TOKEN": "ghp_x" } }),
-    ).toThrow(ForbiddenImplementerMaterialError);
-    expect(() =>
-      buildImplementerInput({ ...base, projectTestSecrets: { githubToken: "ghp_x" } }),
-    ).toThrow(ForbiddenImplementerMaterialError);
+  describe("forbidden-name policy over a table of names", () => {
+    const cases: Array<[name: string, expected: "reject" | "accept"]> = [
+      ["GITHUB_TOKEN", "reject"],
+      ["githubToken", "reject"],
+      ["GH-TOKEN", "reject"],
+      ["LINEAR_API_KEY", "reject"],
+      ["ADMIN_API_TOKEN", "reject"],
+      ["ADMIN_TOKEN", "reject"],
+      ["FACTOREE_ADMIN_KEY", "reject"],
+      ["FACTOREE_SECRET_KEY", "reject"],
+      ["STRIPE_TEST_KEY", "accept"],
+      ["TEST_DATABASE_URL", "accept"],
+      ["MY_GITHUB_MIRROR_URL", "accept"],
+      ["LOG_IN_TOKEN", "accept"],
+      ["PRODUCT_API_KEY", "accept"],
+      ["PRODUCTION_DB", "reject"],
+      ["REPRODUCTION_FIXTURE", "accept"],
+    ];
+
+    it.each(cases)("%s is %s", (name, expected) => {
+      const attempt = () => buildImplementerInput({ ...base, projectTestSecrets: { [name]: "x" } });
+      if (expected === "reject") {
+        expect(attempt).toThrow(ForbiddenImplementerMaterialError);
+      } else {
+        expect(attempt).not.toThrow();
+      }
+    });
   });
 
   it("never includes a Reviewer conversation, because SDD section 34 forbids it", () => {

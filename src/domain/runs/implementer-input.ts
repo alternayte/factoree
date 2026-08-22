@@ -34,29 +34,41 @@ export class ForbiddenImplementerMaterialError extends Error {
 }
 
 /**
- * Forbidden name fragments, tested against a normalized key. Normalization lowercases the key
- * and removes every separator, so `GH-TOKEN`, `gh_token`, and `githubToken` all match `ghtoken`.
- * The check inspects the key only, never the value. See the report for the reasoning and limits.
+ * A forbidden rule is a list of word groups. Every group must contribute at least one matching
+ * word before the rule fires. A rule with one group of one word matches on that bare word, for
+ * example `admin`. A rule with two groups matches only when a word from each group is present,
+ * for example `github` together with a credential word, so a name such as `MY_GITHUB_MIRROR_URL`
+ * survives because it never pairs `github` with a credential word.
+ *
+ * SDD section 30 forbids a Linear token, a GitHub write credential, a production secret, and a
+ * Factoree admin credential. This is the one list and the one matching rule that enforces it.
+ * The check inspects the key only, never the value. See the task report for the reasoning and
+ * for the limits this leaves open.
  */
-const FORBIDDEN_NAME_FRAGMENTS = [
-  "linear",
-  "github",
-  "ghtoken",
-  "adminapitoken",
-  "factoreesecret",
-  "production",
+const CREDENTIAL_WORDS = ["token", "key", "secret", "credential", "pat", "password", "auth"];
+
+const FORBIDDEN_RULES: readonly (readonly string[])[][] = [
+  [["linear"]],
+  [["factoree"]],
+  [["admin"]],
+  [["production"]],
+  [["prod"]],
+  [["github", "gh"], CREDENTIAL_WORDS],
 ];
 
-/** A trailing-underscore prefix in the original brief. The normalized form checks a whole word instead. */
-const FORBIDDEN_WORDS = new Set(["prod"]);
-
-const normalize = (key: string): string => key.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Splits a key into lowercase words, on both a separator and a lowercase-to-uppercase boundary. */
+const wordsOf = (key: string): Set<string> =>
+  new Set(
+    key
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length > 0),
+  );
 
 const isForbiddenName = (key: string): boolean => {
-  const normalized = normalize(key);
-  if (FORBIDDEN_NAME_FRAGMENTS.some((fragment) => normalized.includes(fragment))) return true;
-  const words = key.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 0);
-  return words.some((word) => FORBIDDEN_WORDS.has(word));
+  const words = wordsOf(key);
+  return FORBIDDEN_RULES.some((rule) => rule.every((group) => group.some((word) => words.has(word))));
 };
 
 /** SDD section 34 assembles the Implementer input and rejects forbidden material with a thrown error. */
