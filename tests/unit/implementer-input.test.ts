@@ -94,6 +94,15 @@ describe("buildImplementerInput", () => {
       ["PRODUCT_API_KEY", "accept"],
       ["PRODUCTION_DB", "reject"],
       ["REPRODUCTION_FIXTURE", "accept"],
+      ["GHE_TOKEN", "reject"],
+      ["GITHUB_OAUTH", "reject"],
+      ["GITHUB_MIRROR_CREDENTIALS", "reject"],
+      ["GITHUB", "reject"],
+      ["GH", "reject"],
+      ["GITHUB_PAT", "reject"],
+      ["GH_PAT", "reject"],
+      ["GITHUB_APP_PRIVATE_KEY", "reject"],
+      ["GITHUB_INSTALLATION", "accept"],
     ];
 
     it.each(cases)("%s is %s", (name, expected) => {

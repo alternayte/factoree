@@ -33,27 +33,50 @@ export class ForbiddenImplementerMaterialError extends Error {
   }
 }
 
+type WordPredicate = (word: string) => boolean;
+
+const exactly = (target: string): WordPredicate => (word) => word === target;
+
+/** Matches a word by prefix, so `gh`, `ghe`, `ghes`, and `github` all count as the provider. */
+const startsWith = (prefix: string): WordPredicate => (word) => word.startsWith(prefix);
+
+/** Matches a stem anywhere inside one word, so `oauth` matches `auth` and `credentials` matches `cred`. */
+const CREDENTIAL_STEMS = ["token", "secret", "key", "cred", "auth", "pat", "pass", "bearer"];
+const isCredentialWord: WordPredicate = (word) => CREDENTIAL_STEMS.some((stem) => word.includes(stem));
+
 /**
- * A forbidden rule is a list of word groups. Every group must contribute at least one matching
- * word before the rule fires. A rule with one group of one word matches on that bare word, for
- * example `admin`. A rule with two groups matches only when a word from each group is present,
- * for example `github` together with a credential word, so a name such as `MY_GITHUB_MIRROR_URL`
- * survives because it never pairs `github` with a credential word.
+ * The word `github` does not begin with the letters `gh`, its second letter is `i`, so a
+ * provider match needs the exact word `github` in addition to the `gh` prefix. The prefix
+ * alone still covers `gh`, `ghe`, and `ghes`, and any future short spelling.
+ */
+const isGithubProviderWord: WordPredicate = (word) => word === "github" || startsWith("gh")(word);
+
+/**
+ * A forbidden rule is a list of word predicates. Every predicate must match at least one word
+ * in the key before the rule fires. A rule with one predicate matches on a bare word, for
+ * example `admin`. The GitHub rule has two predicates, a provider word and a separate credential
+ * word, so a name such as `MY_GITHUB_MIRROR_URL` survives: it carries the provider word but no
+ * credential word.
+ *
+ * A hand-maintained list of exact credential names cannot keep up with ordinary naming variety,
+ * for example `GHE_TOKEN`, `GITHUB_OAUTH`, and `GITHUB_MIRROR_CREDENTIALS` all name a real
+ * GitHub credential under a spelling an exact list would miss. Prefix matching on the provider
+ * word and stem matching on the credential word close that gap without re-introducing the
+ * whole-name substring trap: each predicate still tests one word at a time, so `reproduction`
+ * and `fixture` are never joined into a string that could falsely contain `production`.
  *
  * SDD section 30 forbids a Linear token, a GitHub write credential, a production secret, and a
  * Factoree admin credential. This is the one list and the one matching rule that enforces it.
  * The check inspects the key only, never the value. See the task report for the reasoning and
  * for the limits this leaves open.
  */
-const CREDENTIAL_WORDS = ["token", "key", "secret", "credential", "pat", "password", "auth"];
-
-const FORBIDDEN_RULES: readonly (readonly string[])[][] = [
-  [["linear"]],
-  [["factoree"]],
-  [["admin"]],
-  [["production"]],
-  [["prod"]],
-  [["github", "gh"], CREDENTIAL_WORDS],
+const FORBIDDEN_RULES: readonly WordPredicate[][] = [
+  [exactly("linear")],
+  [exactly("factoree")],
+  [exactly("admin")],
+  [exactly("production")],
+  [exactly("prod")],
+  [isGithubProviderWord, isCredentialWord],
 ];
 
 /** Splits a key into lowercase words, on both a separator and a lowercase-to-uppercase boundary. */
@@ -66,9 +89,21 @@ const wordsOf = (key: string): Set<string> =>
       .filter((word) => word.length > 0),
   );
 
+const matchesAnyWord = (words: Set<string>, predicate: WordPredicate): boolean =>
+  [...words].some((word) => predicate(word));
+
 const isForbiddenName = (key: string): boolean => {
   const words = wordsOf(key);
-  return FORBIDDEN_RULES.some((rule) => rule.every((group) => group.some((word) => words.has(word))));
+
+  // A key whose entire word set is the bare GitHub provider word is ambiguous on its own. A
+  // secret literally named GITHUB or GH carries no other context, so it is rejected rather than
+  // assumed harmless.
+  if (words.size === 1) {
+    const [only] = words;
+    if (only !== undefined && isGithubProviderWord(only)) return true;
+  }
+
+  return FORBIDDEN_RULES.some((rule) => rule.every((predicate) => matchesAnyWord(words, predicate)));
 };
 
 /** SDD section 34 assembles the Implementer input and rejects forbidden material with a thrown error. */
