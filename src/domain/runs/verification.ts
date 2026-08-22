@@ -68,11 +68,15 @@ const tail = (text: string): string => {
 
 /**
  * Builds the retained log of a failing command. SDD section 60 requires redaction before any
- * text leaves the sandbox. The hashes cover the raw output, so the redaction here cannot weaken
- * the record of what really ran.
+ * text leaves the sandbox, and the redactor must see the complete output. Truncation before
+ * redaction can cut a secret value at the byte boundary, and the surviving half then matches no
+ * exact secret value and no provider credential pattern. Redaction runs first, on the full text,
+ * so a secret cannot be split out of its own match. Truncation runs after, on the redacted text,
+ * because a redaction can change the length of the text in either direction and the byte cap
+ * must still hold on what Factoree actually retains.
  */
 const buildLog = (redactor: Redactor, stdout: string, stderr: string): string =>
-  redactor.redactText(tail(`--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`));
+  tail(redactor.redactText(`--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`));
 
 export const runVerification = async (options: RunVerificationOptions): Promise<VerificationOutcome> => {
   const now = options.now ?? (() => new Date());

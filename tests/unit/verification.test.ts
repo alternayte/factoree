@@ -134,6 +134,45 @@ describe("runVerification", () => {
     expect(outcome.checks[0]?.stdoutSha256).toBe(sha(big));
   });
 
+  it("redacts a secret before truncation, even when the secret straddles the old cut point", async () => {
+    // Builds output large enough that the retained log must be truncated, with a secret placed
+    // so that a truncate-then-redact order would cut the secret in half at the byte boundary.
+    // The surviving half then matches no exact secret value and no provider credential pattern,
+    // and it stays in the text. Redaction must run on the complete output first.
+    const header = "--- stdout ---\n";
+    const middle = "\n--- stderr ---\n";
+    const trailer = "\n";
+    const secret = "straddle-secret-value-12345";
+    const stderr = "";
+    const halfSecret = Math.floor(secret.length / 2);
+    const targetRemovedFromFront = header.length + halfSecret;
+    const fixedLen = header.length + middle.length + stderr.length + trailer.length;
+    const padLen = MAX_RETAINED_LOG_BYTES + targetRemovedFromFront - fixedLen - secret.length;
+    const stdout = secret + "y".repeat(padLen);
+
+    const { sandbox, ref } = await prepare({ "npm test": { exitCode: 1, stdout, stderr } });
+    const outcome = await runVerification({
+      ...base,
+      sandbox,
+      ref,
+      commands: [{ name: "test", run: "npm test" }],
+      redactor: new Redactor([secret]),
+    });
+
+    const log = outcome.checks[0]?.log ?? "";
+    // No form of the secret, whole or split, must survive into the retained log.
+    expect(log).not.toContain(secret);
+    for (let cut = 4; cut < secret.length - 4; cut += 1) {
+      expect(log).not.toContain(secret.slice(cut));
+      expect(log).not.toContain(secret.slice(0, cut));
+    }
+    expect(Buffer.byteLength(log, "utf8")).toBeLessThanOrEqual(MAX_RETAINED_LOG_BYTES + 200);
+    expect(log).toContain("truncated");
+    // The hash covers the raw, unredacted output. Redaction must never change what the hash
+    // identifies as the command that really ran.
+    expect(outcome.checks[0]?.stdoutSha256).toBe(sha(stdout));
+  });
+
   it("records a command the sandbox could not run as a failure", async () => {
     const sandbox = new FakeSandbox();
     sandbox.onExec = () => {

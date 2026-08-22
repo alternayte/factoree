@@ -76,6 +76,42 @@ describe("PrismaEvidenceStore", () => {
     });
   });
 
+  it("refuses to return an existing row that belongs to a different tenant", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId: ownerTenantId, runId } = await seedTenantProjectAndRun(prisma);
+      const otherTenant = await prisma.tenant.create({
+        data: { linearWorkspaceId: `ws-other-${runId}`, name: "Other tenant" },
+      });
+      const store = new PrismaEvidenceStore(prisma);
+      const key = `run:${runId}:verify:1:mismatch`;
+      // Writes the row directly, with a tenantId that does not own this Run. `Run.id` is a
+      // globally unique uuid primary key, so this state cannot arise through `store.record`
+      // today. The direct write reproduces it, to prove the defence-in-depth check works.
+      await prisma.evidence.create({
+        data: {
+          tenantId: otherTenant.id,
+          runId,
+          kind: "deterministic_check",
+          source: "verify:mismatch",
+          sha256: "c".repeat(64),
+          metadata: { exitCode: 1 },
+          idempotencyKey: key,
+        },
+      });
+      await expect(
+        store.record({
+          tenantId: ownerTenantId,
+          runId,
+          kind: "deterministic_check",
+          source: "verify:mismatch",
+          sha256: "c".repeat(64),
+          metadata: { exitCode: 1 },
+          idempotencyKey: key,
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
   it("does not return the evidence of another tenant", async () => {
     await withDatabase(async (prisma) => {
       const { runId } = await seedTenantProjectAndRun(prisma);
