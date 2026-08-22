@@ -35,47 +35,75 @@ matches the brief.
 `{ name: sprite.name, handle: wrap(sprite) }`, and this matches the brief's shape.
 `SpritesGateway` is our own seam, not the SDK's, and its interface is unchanged.
 
-## 4. `createSession` returns no session identifier
+## 4. `createSession` returns no session identifier — RESOLVED
 
 `Sprite.createSession(command, args, options)` is synchronous and returns a `SpriteCommand`.
 A `SpriteCommand` is an `EventEmitter`, not a promise, and it is not a session ID. The session
 ID exists only on the server, and a caller can discover it only through
-`Sprite.listSessions()`. The brief's approach, to list sessions after creation and take the
-newest one, is correct in shape but was subject to a race: it called `sprite.listSessions()`
-right away, before the command had a chance to attach.
+`Sprite.listSessions()`.
 
-`sprites-client.ts` now waits for the command's `"spawn"` event first, and it matches the
-newest session whose recorded `command` field equals the requested command line. It falls
-back to the newest session overall when no match exists. This narrows the race but does not
-close it: two sessions started at the same instant on the same sprite with the same command
-line are not distinct from each other this way. This is a best-effort correlation, not a
-guarantee.
+The first draft of `sprites-client.ts` waited for the command's `"spawn"` event, then matched
+the newest session whose recorded `command` field equalled the requested command line. This
+was a best-effort correlation, not a guarantee, because two sessions started at the same
+instant on the same sprite with the same command line are not distinct from each other this
+way.
 
-## 5. A finished session's output and exit code are not readable
+**Fix round 1 removed this correlation entirely.** `FlySpriteSandbox.startProcess` now
+generates its own process identifier, for example `proc-a1b2c3d4`, rather than a request to
+the SDK for one. `SpritesGateway`'s `startDetached` method fires the wrapper script through
+`Sprite.createSession` and returns nothing; nothing downstream needs a session ID any more.
+See item 5 for the full scheme. This item is resolved. It is kept in this document, rather
+than deleted, as a record of the SDK behaviour that made the fix necessary.
+
+## 5. A finished session's output and exit code are not readable — RESOLVED with a wrapper
 
 `Sprite.listSessions()` returns `Session` values. A `Session` carries `id`, `command`,
 `workdir`, `created`, `bytesPerSecond`, `isActive`, `lastActivity`, and `tty`. It carries no
 `stdout`, `stderr`, or `exitCode`. `Sprite.attachSession` can reconnect to a session that is
 still active and stream its future output, but the SDK never replays output already produced,
-and it never reports the exit code of a session that has already finished.
+and it never reports the exit code of a session that has already finished. This remains a
+genuine SDK gap, not a translation error: no documented, undocumented, or control-mode API
+call reads a finished session's exit code or its accumulated output.
 
-**This is a genuine capability gap, not a translation error.** `sprites-client.ts` now
-implements `readSession` honestly. While the session is still active, it returns
-`{ running: true, exitCode: null, stdout: "", stderr: "" }`, because that much is knowable.
-Once the session is no longer active, or it has disappeared from the list, `readSession`
-throws a `SandboxError`. The error states that the SDK cannot report a finished session's exit
-code or its accumulated output. It does not invent a `0` exit code or fabricated output.
+**Fix round 1 closes this gap with a shell wrapper, built entirely from documented SDK
+calls.** `FlySpriteSandbox.startProcess` no longer asks the SDK to identify the process it
+starts. Instead:
 
-**Concern for the controller and for Phase 12:** `FlySpriteSandbox.readProcess` cannot report
-a finished `startProcess` outcome today. No shared contract test and no adapter unit test
-exercises `readProcess`, so this gap stays invisible to the test suite. A caller that starts a
-long agent process with `startProcess`, then polls `readProcess` later to learn its result,
-gets a thrown error instead of a snapshot once the process exits. Phase 12 must either find an
-undocumented way to read a finished session's output, for example the control-mode
-`ControlConnection`, a path this task did not explore, or it must change how
-`FlySpriteSandbox` tracks process completion. One option is to wrap the command in a script
-that writes its exit code and its output to a file, then have the sandbox read that file back
-through the filesystem API.
+- It generates its own identifier, `proc-<8 hex characters>`, from `randomUUID()`.
+- It computes a per-process directory inside the sandbox,
+  `<workspacePath>/.factoree/proc/<id>`.
+- It builds a wrapper script and starts it through `SpritesGateway.startDetached`, which calls
+  `Sprite.createSession` with `detachable: true` under the hood. The wrapper runs under `sh -c`
+  and receives the real command as positional parameters, `"$@"`, rather than as text folded
+  into the script, so the caller's file and arguments stay intact and the shell never splits
+  them apart again. It creates the process directory, backgrounds the real command with standard output
+  sent to an `out` file and standard error sent to an `err` file, records the backgrounded
+  job's process group leader to a `pid` file the moment the job starts, waits for the command,
+  and writes its numeric exit code to an `exit` file last. The `exit` file's presence is the
+  signal that the process finished; no session field reports it, so nothing else can serve
+  as that signal.
+- `startProcess` returns `{ id }` with the identifier Factoree generated. It does not touch
+  the SDK's session ID at all.
+- `readProcess` reads the three files back with `exec`, through `sh -c` scripts of the form
+  `if [ -f PATH ]; then cat PATH; fi`, so a file that does not exist yet produces empty output
+  rather than an error. When the `exit` file is absent, the process is running, and
+  `readProcess` reports `exitCode: null`. When it is present, `readProcess` parses its
+  contents as the exit code. It returns whatever `out` and `err` hold either way, so a caller
+  can watch progress before the process finishes.
+- `cancelProcess` reads the `pid` file. An identifier that was never issued, or one whose pid
+  file was never written, has nothing to cancel, and `cancelProcess` returns without an error.
+  Otherwise, it sends `SIGTERM` to the negative of that process ID, the process group, so a
+  child the wrapped command spawned is terminated along with it, and falls back to a direct
+  `kill` of the same ID if the process-group form is rejected. The whole call is wrapped in a
+  catch that never rethrows, so cancellation of a process that has already gone stays
+  idempotent, matching `destroy`.
+
+This scheme uses only `execFile` and `startDetached` (`Sprite.createSession` underneath),
+both documented SDK calls; it needs no control-mode `ControlConnection` and no filesystem API
+beyond what `exec` already provides through shell redirection. `tests/unit/fly-sprite-sandbox.
+test.ts` covers a running process, where the `exit` file is absent, a finished process with a
+zero exit code, a finished process with a non-zero exit code, and a cancel that does not throw
+for an identifier that was never issued.
 
 ## 6. `createCheckpoint` returns a progress stream, not a checkpoint document
 
@@ -88,7 +116,7 @@ whose `comment` matches what was requested, and it falls back to the newest chec
 `createTime` when no match exists. This is also best-effort: two checkpoints created with the
 same comment at the same instant are not distinct from each other this way.
 
-## 7. No SDK API exposes a port as a reachable URL
+## 7. No SDK API exposes a port as a reachable URL — capability flag now honest
 
 The brief assumed `sprite.createService(port)` resolves to `{ url }`. The real
 `Sprite.createService(serviceName, config, duration?)` starts a new managed background
@@ -101,15 +129,15 @@ documentation does not state how, or whether, that field produces a reachable UR
 task did not test it against a live sprite.
 
 **This is a genuine capability gap.** A URL construction scheme built from an undocumented
-field is a guess, so this task did not build one. `sprites-client.ts`'s `createService`
-now throws a `SandboxError` that states the SDK has no documented port-publication API.
-`FlySpriteSandbox.capabilities.supportsExposedServices` still reads `true`, unchanged, because
-that field lives in `fly-sprite-sandbox.ts`, above the seam this task was told not to edit
-except where the `SpritesGateway` interface itself must change. It did not need to change
-here. **Concern for the controller:** this leaves the capability flag and the real behaviour
-out of step with each other. Phase 12 must either find the real port-publication mechanism,
-for example by a test of `httpPort` against a live sprite followed by a read of `sprite.url`,
-or it must set `supportsExposedServices: false` and update any caller that gates on it.
+field is a guess, so this task did not build one. `sprites-client.ts`'s `createService` still
+throws a `SandboxError` that states the SDK has no documented port-publication API.
+
+**Fix round 1 changed `FlySpriteSandbox.capabilities.supportsExposedServices` to `false`.** A
+flag that claims a capability the adapter does not have is worse than an honest `false`.
+Nothing calls `exposeService` before Phase 7, so this has no caller to update today. Phase 7
+or Phase 12 flips the flag back to `true` once the real port-publication mechanism is proved
+against a live sprite, for example by a test of `httpPort` followed by a read of `sprite.url`.
+`tests/unit/fly-sprite-sandbox.test.ts` now asserts the flag reads `false`.
 
 ## 8. Interface-level change: `SpritesSpriteHandle` and `SpritesGateway` use property syntax
 
@@ -143,20 +171,33 @@ because the brief's test gateway mock returns one fixed sprite name from `create
 regardless of the name passed in. The assertion `first.id !== second.id` can only hold true if
 the adapter uses its own generated name rather than whatever the gateway echoes back.
 
-**Concern for the controller:** the removal of the `mkdir` call assumes that the Fly Sprites
-base image already provisions `/workspace`, or that a caller creates it through `exec` before
-its first `cwd`-dependent command. This task did not verify that against a live sprite. Phase
-12 must confirm that the default workspace path exists on a freshly created sprite, or it must
-have `SandboxManager` create the path once, on the caller's side, before it applies the
-network policy.
+**Concern for the controller, resolved by ruling:** the removal of the `mkdir` call assumes
+that the Fly Sprites base image already provisions `/workspace`, or that a caller creates it
+through `exec` before its first `cwd`-dependent command. This task did not verify that
+against a live sprite. A later task makes `SandboxManager` create the workspace directory
+itself, right after it applies the network policy and before any checkout, so this adapter
+does not need to act on this concern. `FlySpriteSandbox` correctly leaves the workspace
+directory as the caller's responsibility.
 
 ## Summary of files changed because of these findings
 
 - `src/adapters/sandbox/fly-sprites/sprites-client.ts`: rewritten against the real SDK types
-  and implementation, for all of items 1, 2, 4, 5, 6, 7, and 8.
-- `src/adapters/sandbox/fly-sprites/fly-sprite-sandbox.ts`: changed only for item 9, a change
-  independent of the SDK reality question. The `SpritesGateway` seam it depends on is
-  otherwise unchanged from the brief.
+  and implementation, for all of items 1, 2, 4, 5, 6, 7, and 8. Fix round 1 replaced
+  `createSession`/`readSession`/`killSession` with a single `startDetached` method, since
+  `FlySpriteSandbox` no longer needs the SDK to identify or read back a session.
+- `src/adapters/sandbox/fly-sprites/fly-sprite-sandbox.ts`: changed for item 9, a change
+  independent of the SDK reality question, and by fix round 1 for items 4, 5, and 7:
+  `startProcess`, `readProcess`, and `cancelProcess` now use the file-backed wrapper scheme,
+  and `capabilities.supportsExposedServices` now reads `false`.
 - `network-policy.ts` matched the brief as drafted. The `SpritesGateway` and
   `SpritesSpriteHandle` interface shapes matched the brief as drafted too, apart from item 8's
-  declaration-style change. No other reality gap turned up in either file.
+  declaration-style change and fix round 1's `startDetached` change. No other reality gap
+  turned up in either file.
+
+## Fix round 1 status
+
+Ruling 1 (item 5, the `readProcess` gap) and ruling 2 (item 7, the capability flag) are both
+resolved in code, covered by new unit tests, and recorded above. Ruling 3 required no code
+change; item 9 now records that a later task gives `SandboxManager` ownership of the workspace
+directory. Item 6, the checkpoint correlation, stays as originally documented, out of scope
+for this round by explicit instruction.

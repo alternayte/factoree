@@ -1,4 +1,4 @@
-import type { Checkpoint, Session, Sprite } from "@fly/sprites";
+import type { Checkpoint, Sprite } from "@fly/sprites";
 import { SpritesClient } from "@fly/sprites";
 import { SandboxError } from "~/domain/runs/sandbox.js";
 
@@ -19,22 +19,20 @@ export interface SpritesExecResult {
   stderr: string;
 }
 
-export interface SpritesSessionSnapshot {
-  running: boolean;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-}
-
 // This interface declares its members as function-typed properties rather than as method
 // signatures. A test fake assigns a `vi.fn()` to each member. ESLint's `unbound-method` rule
 // flags a method signature read off an object, because a method can depend on its receiver. A
 // function-typed property carries no such risk, so the rule leaves it alone.
 export interface SpritesSpriteHandle {
   execFile: (file: string, args: string[], options: SpritesExecOptions) => Promise<SpritesExecResult>;
-  createSession: (file: string, args: string[], options: SpritesExecOptions) => Promise<{ sessionId: string }>;
-  readSession: (sessionId: string) => Promise<SpritesSessionSnapshot>;
-  killSession: (sessionId: string) => Promise<void>;
+  /**
+   * Starts a detachable session that stays alive after this call returns, and after the
+   * client disconnects. `FlySpriteSandbox.startProcess` uses this only to launch its shell
+   * wrapper. It tracks the wrapper's progress through files the wrapper writes, not through a
+   * session identifier, so this returns nothing. See
+   * docs/build/evidence/phase-02-sprites-sdk.md, item 4.
+   */
+  startDetached: (file: string, args: string[], options: SpritesExecOptions) => Promise<void>;
   createCheckpoint: (comment: string) => Promise<{ id: string }>;
   updateNetworkPolicy: (policy: { rules: Array<{ domain: string; action: "allow" | "deny" }> }) => Promise<void>;
   createService: (port: number) => Promise<{ url: string }>;
@@ -81,18 +79,6 @@ const normalizeExecFailure = (error: unknown): unknown => {
   return error;
 };
 
-/**
- * The real SDK returns a detachable session with no session identifier of its own. The caller
- * must list sessions immediately after creation and match the newest one. This is a best-effort
- * correlation, not a guarantee, because two sessions started at the same instant on the same
- * sprite are not distinguishable this way. See `docs/build/evidence/phase-02-sprites-sdk.md`.
- */
-const pickCreatedSession = (sessions: Session[], commandLine: string): Session | undefined => {
-  const matching = sessions.filter((session) => session.command === commandLine);
-  const candidates = matching.length > 0 ? matching : sessions;
-  return candidates.at(-1);
-};
-
 const pickLatestCheckpoint = (checkpoints: Checkpoint[], comment: string): Checkpoint | undefined => {
   const matching = checkpoints.filter((checkpoint) => checkpoint.comment === comment);
   const candidates = matching.length > 0 ? matching : checkpoints;
@@ -115,43 +101,17 @@ const wrap = (sprite: Sprite): SpritesSpriteHandle => ({
       throw normalizeExecFailure(error);
     }
   },
-  createSession: async (file, args, execOptions) => {
+  startDetached: async (file, args, execOptions) => {
     // `Sprite.createSession` starts the command asynchronously and returns immediately. Wait
-    // for the `spawn` event before the session list is read, so the new session has a chance
-    // to appear.
+    // for the `spawn` event so a failure to start is reported here, then close this client's
+    // side of the connection. The session itself, and the command it runs, stays alive on the
+    // sprite.
     const command = sprite.createSession(file, args, { cwd: execOptions.cwd, env: execOptions.env });
     await new Promise<void>((resolve, reject) => {
       command.once("spawn", () => resolve());
       command.once("error", (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))));
     });
-    const sessions = await sprite.listSessions();
-    const created = pickCreatedSession(sessions, [file, ...args].join(" "));
-    if (created === undefined) {
-      throw new Error("the sprite reported no session after createSession");
-    }
-    return { sessionId: created.id };
-  },
-  readSession: async (sessionId) => {
-    const sessions = await sprite.listSessions();
-    const session = sessions.find((entry) => entry.id === sessionId);
-    if (session !== undefined && session.isActive) {
-      return { running: true, exitCode: null, stdout: "", stderr: "" };
-    }
-    // The real SDK exposes no API that reads a finished detached session's exit code or its
-    // accumulated output. See docs/build/evidence/phase-02-sprites-sdk.md.
-    throw new SandboxError(
-      "the Fly Sprites SDK reports whether a detached session is active, but it has no API to " +
-        "read a finished session's exit code or its accumulated output",
-      ADAPTER_NAME,
-    );
-  },
-  killSession: async (sessionId) => {
-    const stream = await sprite.killSession(sessionId);
-    for await (const event of stream) {
-      if (event.type === "error") {
-        throw new Error(event.message ?? "the sprite reported an error while it killed the session");
-      }
-    }
+    command.close();
   },
   createCheckpoint: async (comment) => {
     const stream = await sprite.createCheckpoint(comment);

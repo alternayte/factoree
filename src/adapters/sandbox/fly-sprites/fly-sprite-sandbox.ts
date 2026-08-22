@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import type {
   CheckpointRef,
   Command,
@@ -31,7 +31,10 @@ export class FlySpriteSandbox implements Sandbox {
   readonly capabilities: SandboxCapabilities = {
     enforcesNetworkPolicy: true,
     supportsCheckpoints: true,
-    supportsExposedServices: true,
+    // The Fly Sprites SDK version 0.2.0 has no documented API that publishes a port to a
+    // reachable URL. `exposeService` throws a clear error instead of a claim of success.
+    // See docs/build/evidence/phase-02-sprites-sdk.md, item 7.
+    supportsExposedServices: false,
   };
 
   private readonly workspacePath: string;
@@ -50,6 +53,9 @@ export class FlySpriteSandbox implements Sandbox {
       ...(this.options.config?.region === undefined ? {} : { region: this.options.config.region }),
       ...(input.environment === undefined ? {} : { environment: input.environment }),
     });
+    // FlySpriteSandbox does not create the workspace directory itself. SandboxManager creates
+    // it once, on the caller's side, right after it applies the network policy and before any
+    // checkout.
     return { id: name, adapter: this.name, workspacePath: this.workspacePath };
   }
 
@@ -74,23 +80,60 @@ export class FlySpriteSandbox implements Sandbox {
     }
   }
 
+  /**
+   * The Fly Sprites SDK version 0.2.0 reports no exit code and no accumulated output for a
+   * finished detached session. `startProcess` works around this gap with a shell wrapper. The
+   * wrapper writes the remote shell's process group leader to a `pid` file, sends standard
+   * output to an `out` file and standard error to an `err` file, and writes the numeric exit
+   * code to an `exit` file last, so that file's presence is the signal that the process
+   * finished. `readProcess` and `cancelProcess` read these files back with `exec`. See
+   * docs/build/evidence/phase-02-sprites-sdk.md, items 4 and 5.
+   */
   async startProcess(ref: SandboxRef, command: Command): Promise<ProcessRef> {
-    const session = await this.options.gateway.sprite(ref.id).createSession(command.file, command.args, {
-      cwd: this.resolveCwd(ref, command.cwd),
-      env: command.env ?? {},
-    });
-    return { id: session.sessionId };
+    const id = `proc-${randomUUID().slice(0, 8)}`;
+    const dir = this.procDir(ref, id);
+    const wrapper = buildProcessWrapperScript(dir);
+    await this.options.gateway
+      .sprite(ref.id)
+      .startDetached("sh", ["-c", wrapper, "sh", command.file, ...command.args], {
+        cwd: this.resolveCwd(ref, command.cwd),
+        env: command.env ?? {},
+      });
+    return { id };
   }
 
   async readProcess(ref: SandboxRef, process: ProcessRef): Promise<ProcessSnapshot> {
-    return await this.options.gateway.sprite(ref.id).readSession(process.id);
+    const dir = this.procDir(ref, process.id);
+    const handle = this.options.gateway.sprite(ref.id);
+    const readFileOrEmpty = (path: string): Promise<string> => this.readFileText(handle, path).catch(() => "");
+
+    const exitText = await readFileOrEmpty(posix.join(dir, "exit"));
+    const trimmedExit = exitText.trim();
+    const parsedExit = trimmedExit === "" ? null : Number.parseInt(trimmedExit, 10);
+    const exitCode = parsedExit !== null && !Number.isNaN(parsedExit) ? parsedExit : null;
+    const stdout = await readFileOrEmpty(posix.join(dir, "out"));
+    const stderr = await readFileOrEmpty(posix.join(dir, "err"));
+    return {
+      running: exitCode === null,
+      exitCode,
+      stdout,
+      stderr,
+    };
   }
 
   async cancelProcess(ref: SandboxRef, process: ProcessRef): Promise<void> {
+    const dir = this.procDir(ref, process.id);
+    const handle = this.options.gateway.sprite(ref.id);
     try {
-      await this.options.gateway.sprite(ref.id).killSession(process.id);
+      const pidText = (await this.readFileText(handle, posix.join(dir, "pid"))).trim();
+      // An identifier that was never issued, or a process that has not yet written its pid
+      // file, leaves nothing to cancel.
+      if (!/^[0-9]+$/.test(pidText)) return;
+      const killScript = `kill -TERM -${pidText} 2>/dev/null; kill -TERM ${pidText} 2>/dev/null; true`;
+      await handle.execFile("sh", ["-c", killScript], { cwd: ref.workspacePath, env: {} });
     } catch {
-      // Cancellation is idempotent. A session that has already gone is cancelled.
+      // Cancellation is idempotent. A process that has already gone, or one whose pid file was
+      // never written, is cancelled.
     }
   }
 
@@ -110,6 +153,16 @@ export class FlySpriteSandbox implements Sandbox {
     } catch {
       // Destruction is idempotent. A sprite that has already gone is destroyed.
     }
+  }
+
+  private procDir(ref: SandboxRef, id: string): string {
+    return posix.join(ref.workspacePath, ".factoree", "proc", id);
+  }
+
+  private async readFileText(handle: ReturnType<SpritesGateway["sprite"]>, path: string): Promise<string> {
+    const script = `if [ -f ${shQuote(path)} ]; then cat ${shQuote(path)}; fi`;
+    const result = await handle.execFile("sh", ["-c", script], { cwd: "/", env: {} });
+    return result.stdout;
   }
 
   private resolveCwd(ref: SandboxRef, cwd: string | undefined): string {
@@ -141,4 +194,30 @@ const asExecFailure = (error: unknown): ExecFailure | null => {
     stderr: typeof candidate.stderr === "string" ? candidate.stderr : "",
     timedOut: false,
   };
+};
+
+/** Quotes one value for safe use inside a POSIX shell single-quoted string. */
+const shQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * Builds the wrapper script that `startProcess` runs under `sh -c`. The script receives the
+ * real command as positional parameters, through `"$@"`, rather than as text folded into the
+ * script. This keeps the caller's file and arguments intact, and the shell never splits them
+ * apart again.
+ */
+const buildProcessWrapperScript = (dir: string): string => {
+  const pidFile = shQuote(posix.join(dir, "pid"));
+  const outFile = shQuote(posix.join(dir, "out"));
+  const errFile = shQuote(posix.join(dir, "err"));
+  const exitFile = shQuote(posix.join(dir, "exit"));
+  return [
+    "set -m",
+    `mkdir -p ${shQuote(dir)}`,
+    `"$@" >${outFile} 2>${errFile} &`,
+    "child=$!",
+    `echo "$child" >${pidFile}`,
+    'wait "$child"',
+    "ec=$?",
+    `echo "$ec" >${exitFile}`,
+  ].join("\n");
 };
