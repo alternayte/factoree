@@ -288,4 +288,47 @@ describe("repository configuration and staged network policy", () => {
     };
     expect((await prepare(sandbox)).repositoryInstructions).toBe("house rules\n");
   });
+
+  it("runs the bootstrap command between policy two and policy three", async () => {
+    // Every other test in this block configures no bootstrap command, so the SDD section 32
+    // order test filters the bootstrap exec out of its comparison array. This test proves the
+    // bootstrap command itself runs strictly between the second and the third policy: after the
+    // reference checkouts can reach the configured allow list, and before the Implementer runs
+    // under the narrowed final policy.
+    const bootstrapConfigYaml =
+      "version: 1\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
+      "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n";
+    const sandbox = sandboxServing(bootstrapConfigYaml);
+    await prepare(sandbox);
+    const policyIndexes = sandbox.calls
+      .map((call, index) => ({ call, index }))
+      .filter((entry) => entry.call === "applyNetworkPolicy")
+      .map((entry) => entry.index);
+    expect(policyIndexes).toHaveLength(3);
+    const bootstrapIndex = sandbox.calls.indexOf("exec:sh");
+    expect(bootstrapIndex).toBeGreaterThan(-1);
+    expect(bootstrapIndex).toBeGreaterThan(policyIndexes[1] ?? -1);
+    expect(bootstrapIndex).toBeLessThan(policyIndexes[2] ?? -1);
+  });
+
+  it("joins a reference repository host into policy one and policy two, and drops it from policy three", async () => {
+    // Every other test in this block passes no reference repository, so the host union of
+    // policy two is exercised with one host only. This test adds a reference repository on a
+    // host distinct from the primary one, and proves both hosts reach policy one and policy
+    // two, and neither reaches policy three, which carries the configured allow list alone.
+    const sandbox = sandboxServing(configYaml);
+    await new SandboxManager({ sandbox }).prepare({
+      runId: "run-1",
+      tenantId: "tenant-1",
+      projectId: "project-1",
+      primary: { url: "https://git.test/owner/app.git", ref: "main" },
+      references: [{ url: "https://other.test/owner/design.git", ref: "main" }],
+      defaults: { stagingRead: false, spriteRetentionHours: 24 },
+    });
+    expect(sandbox.networkPolicies).toEqual([
+      { allowedDomains: ["git.test", "other.test"] },
+      { allowedDomains: ["git.test", "other.test", "registry.npmjs.org"] },
+      { allowedDomains: ["registry.npmjs.org"] },
+    ]);
+  });
 });
