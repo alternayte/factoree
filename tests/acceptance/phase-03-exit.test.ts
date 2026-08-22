@@ -12,7 +12,21 @@ import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { buildImplementerInput } from "~/domain/runs/implementer-input.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { Redactor } from "~/telemetry/redaction.js";
-import { createFixtureRepository, git, listRefs } from "./support/fixture-repository.js";
+import { FIXTURE_CONFIG, createFixtureRepository, git, listRefs } from "./support/fixture-repository.js";
+
+/**
+ * The fixture configuration of the network policy case. It declares a non-empty allow list, so
+ * the applied policy carries content and an assertion on it can fail.
+ */
+const ALLOW_LIST_CONFIG = `${FIXTURE_CONFIG}
+sandbox:
+  allowedDomains:
+    - registry.npmjs.org
+    - api.example.com
+`;
+
+/** The same allow list, in the order the loader produces: lower case and sorted. */
+const EXPECTED_ALLOW_LIST = ["api.example.com", "registry.npmjs.org"];
 
 const liar = resolve("tests/fixtures/bin/opencode-liar-stub.sh");
 const honest = resolve("tests/fixtures/bin/opencode-stub.sh");
@@ -55,14 +69,18 @@ describe("Phase 3 exit condition — a false agent success claim cannot bypass a
     await rm(sandboxRoot, { recursive: true, force: true });
   });
 
-  const prepare = async (runId: string, wrap: (inner: Sandbox) => Sandbox = (inner) => inner) => {
+  const prepare = async (
+    runId: string,
+    wrap: (inner: Sandbox) => Sandbox = (inner) => inner,
+    primaryPath: string = repository,
+  ) => {
     const sandbox = wrap(new LocalProcessSandbox({ rootDirectory: sandboxRoot }));
     const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
     const prepared = await manager.prepare({
       runId,
       tenantId: "tenant-1",
       projectId: "project-1",
-      primary: { url: repository, ref: "main" },
+      primary: { url: primaryPath, ref: "main" },
       references: [],
       defaults: DEFAULT_PROJECT_DEFAULTS,
     });
@@ -182,13 +200,32 @@ describe("Phase 3 exit condition — a false agent success claim cannot bypass a
     // LocalProcessSandbox cannot enforce a policy, so this asserts what the manager applied, not
     // what a kernel denied. The live proof stays in Phase 12.
     const recorded: NetworkPolicy[] = [];
-    const { manager, prepared } = await prepare("run-p3-policy", (inner) =>
-      recordNetworkPolicies(inner, recorded),
+    const allowListRepository = await createFixtureRepository(root, "allow-list", ALLOW_LIST_CONFIG);
+    const { manager, prepared } = await prepare(
+      "run-p3-policy",
+      (inner) => recordNetworkPolicies(inner, recorded),
+      allowListRepository,
     );
 
-    // SDD section 32 applies three policies, and the last one is the configured allow list alone.
-    expect(recorded.length).toBeGreaterThanOrEqual(1);
-    expect(recorded.at(-1)?.allowedDomains).toEqual(prepared.runtime.allowedDomains);
+    // The repository really declared an allow list, so every policy below carries content.
+    expect(prepared.runtime.allowedDomains).toEqual(EXPECTED_ALLOW_LIST);
+
+    // SDD section 32 applies exactly three policies.
+    expect(recorded).toHaveLength(3);
+
+    // Policy one runs before the checkout, so it cannot hold a domain the file declares. The
+    // fixture is a local path and carries no host, so policy one denies every domain.
+    expect(recorded[0]?.allowedDomains).toEqual([]);
+
+    // Policy two adds the configured allow list, so the reference checkouts and the bootstrap
+    // command work. Policy three is the configured allow list alone, and every later step, the
+    // Implementer and the verification commands included, runs under it.
+    expect(recorded[1]?.allowedDomains).toEqual(EXPECTED_ALLOW_LIST);
+    expect(recorded[2]?.allowedDomains).toEqual(EXPECTED_ALLOW_LIST);
+    expect(recorded[2]?.allowedDomains).toEqual(prepared.runtime.allowedDomains);
+
+    // Policy two and policy three hold the same list here, because a local fixture path carries
+    // no repository host to drop. A remote host makes them differ, and Phase 12 proves that.
 
     await manager.release(prepared);
   });

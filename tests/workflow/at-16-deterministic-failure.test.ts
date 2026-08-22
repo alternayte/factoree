@@ -99,7 +99,23 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     expect(attempts).toHaveLength(2);
     expect(attempts[1]?.repairFindings).toEqual([VERIFY_FAILURE_TEXT]);
 
-    // Nothing was published.
+    // Nothing was published. The Run invoked exactly these activities, in this order. A new
+    // activity on this path changes the list, so the reader must judge it again.
+    expect(namesFor("run-ses-at16a")).toEqual([
+      "setRunStatus",
+      "setRunStatus",
+      "prepareSandbox",
+      "setRunStatus",
+      "implement",
+      "setRunStatus",
+      "verify",
+      "setRunStatus",
+      "setRunStatus",
+      "implement",
+      "setRunStatus",
+      "verify",
+      "completeRun",
+    ]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);
     expect(result.status).toBe("CANCELLED");
   });
@@ -121,7 +137,28 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     expect(completion?.status).toBe("FAILED");
     expect(completion?.failureReason).toBe("VERIFICATION_FAILED");
 
-    // Nothing was published.
+    // Nothing was published. The Run invoked exactly these activities, in this order. Three
+    // implement calls and three verify calls appear, and no publishing activity appears.
+    expect(namesFor("run-ses-at16b")).toEqual([
+      "setRunStatus",
+      "setRunStatus",
+      "prepareSandbox",
+      "setRunStatus",
+      "implement",
+      "setRunStatus",
+      "verify",
+      "setRunStatus",
+      "setRunStatus",
+      "implement",
+      "setRunStatus",
+      "verify",
+      "setRunStatus",
+      "setRunStatus",
+      "implement",
+      "setRunStatus",
+      "verify",
+      "completeRun",
+    ]);
     expect(namesFor("run-ses-at16b").filter(isPublishingName)).toEqual([]);
   });
 });
