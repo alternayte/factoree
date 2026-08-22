@@ -5,7 +5,7 @@ import type {
   AgentRunner,
   AgentSessionRef,
 } from "~/domain/runs/agent-runner.js";
-import type { ProcessRef, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import type { ProcessRef, ProcessSnapshot, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { parseOpenCodeOutput } from "./output-parser.js";
 
@@ -53,6 +53,10 @@ export class OpenCodeRunner implements AgentRunner {
    * process starts. A caller uses this to cancel a run before it resolves, without a private
    * cast into runner state. It returns undefined once the run has no live process for the
    * given run identifier.
+   *
+   * A resumed run has no equivalent lookup, because `AgentResumeInput` carries no run
+   * identifier. A caller that resumes a session already holds the `AgentSessionRef` it needs
+   * to cancel that resumed run directly.
    */
   activeSession(runId: string): AgentSessionRef | undefined {
     const processId = this.activeByRun.get(runId);
@@ -103,6 +107,10 @@ export class OpenCodeRunner implements AgentRunner {
 
     const live: LiveSession = { ...previous, process, cancelled: false };
     this.sessions.set(process.id, live);
+    // The previous process identifier is superseded by the new one. A future caller holds only
+    // the new AgentSessionRef, so the old entry can never be looked up again. This entry is
+    // removed here, instead of staying in the map for the life of the runner.
+    if (session.processId !== process.id) this.sessions.delete(session.processId);
     return await this.await(live, input.timeoutMs);
   }
 
@@ -122,20 +130,10 @@ export class OpenCodeRunner implements AgentRunner {
       const snapshot = await live.sandbox.readProcess(live.ref, live.process);
 
       if (!snapshot.running) {
-        const parsed = parseOpenCodeOutput(`${snapshot.stdout}\n${snapshot.stderr}`);
-        const exitCode = snapshot.exitCode ?? 1;
-        return {
-          session: {
-            sessionId: parsed.sessionId ?? live.process.id,
-            processId: live.process.id,
-            runner: this.name,
-          },
-          completed: exitCode === 0 && !live.cancelled,
-          exitCode,
-          summary: this.options.redactor.redact(parsed.summary),
-          durationMs: this.clock() - startedAt,
+        return this.buildResult(live, snapshot, startedAt, {
           cancelled: live.cancelled,
-        };
+          fallbackExitCode: 1,
+        });
       }
 
       if (this.clock() >= deadline) {
@@ -143,22 +141,56 @@ export class OpenCodeRunner implements AgentRunner {
         // produced. See SDD section 50.
         await live.sandbox.cancelProcess(live.ref, live.process);
         const final = await live.sandbox.readProcess(live.ref, live.process);
-        const parsed = parseOpenCodeOutput(`${final.stdout}\n${final.stderr}`);
-        return {
-          session: {
-            sessionId: parsed.sessionId ?? live.process.id,
-            processId: live.process.id,
-            runner: this.name,
-          },
-          completed: false,
-          exitCode: final.exitCode ?? 124,
-          summary: this.options.redactor.redact(parsed.summary),
-          durationMs: this.clock() - startedAt,
+        return this.buildResult(live, final, startedAt, {
           cancelled: true,
-        };
+          completed: false,
+          fallbackExitCode: 124,
+        });
       }
 
       await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+    }
+  }
+
+  /**
+   * Builds the final result from one process snapshot. It reads the output through a guarded
+   * parse, so a malformed event never rejects the Run and never discards the evidence the agent
+   * already produced. `completed`, when given, wins over the exit code check. This carries the
+   * timeout branch, where the exit code alone does not say whether the Run finished its work.
+   */
+  private buildResult(
+    live: LiveSession,
+    snapshot: ProcessSnapshot,
+    startedAt: number,
+    options: { cancelled: boolean; completed?: boolean; fallbackExitCode: number },
+  ): AgentRunResult {
+    const parsed = this.safeParse(`${snapshot.stdout}\n${snapshot.stderr}`);
+    const exitCode = snapshot.exitCode ?? options.fallbackExitCode;
+    const completed = options.completed ?? (exitCode === 0 && !options.cancelled);
+    return {
+      session: {
+        sessionId: parsed.sessionId ?? live.process.id,
+        processId: live.process.id,
+        runner: this.name,
+      },
+      completed,
+      exitCode,
+      summary: this.options.redactor.redact(parsed.summary),
+      durationMs: this.clock() - startedAt,
+      cancelled: options.cancelled,
+    };
+  }
+
+  /**
+   * Parses the process output and never throws. A parser fault must not reject the Run and
+   * discard the evidence the agent already produced. This is a second, independent guard beyond
+   * the parser's own defenses against a malformed line.
+   */
+  private safeParse(text: string): { sessionId: string | null; summary: string } {
+    try {
+      return parseOpenCodeOutput(text);
+    } catch {
+      return { sessionId: null, summary: "" };
     }
   }
 }

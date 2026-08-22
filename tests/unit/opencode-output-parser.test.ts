@@ -34,4 +34,43 @@ describe("parseOpenCodeOutput", () => {
   it("returns an empty summary for empty output", () => {
     expect(parseOpenCodeOutput("")).toEqual({ sessionId: null, summary: "" });
   });
+
+  it("does not throw on a line that parses to JSON null", () => {
+    const text = ["null", '{"type":"message","text":"done"}'].join("\n");
+    expect(() => parseOpenCodeOutput(text)).not.toThrow();
+    expect(parseOpenCodeOutput(text).summary).toBe("done");
+  });
+
+  it("does not throw on a line that parses to a bare number", () => {
+    const text = ["42", '{"type":"message","text":"done"}'].join("\n");
+    expect(() => parseOpenCodeOutput(text)).not.toThrow();
+    expect(parseOpenCodeOutput(text).summary).toBe("done");
+  });
+
+  it("does not throw on a line that parses to a JSON array", () => {
+    const text = ["[1,2,3]", '{"type":"message","text":"done"}'].join("\n");
+    expect(() => parseOpenCodeOutput(text)).not.toThrow();
+    expect(parseOpenCodeOutput(text).summary).toBe("done");
+  });
+
+  it("does not throw on a line that parses to a quoted string", () => {
+    const text = ['"a bare string"', '{"type":"message","text":"done"}'].join("\n");
+    expect(() => parseOpenCodeOutput(text)).not.toThrow();
+    expect(parseOpenCodeOutput(text).summary).toBe("done");
+  });
+
+  it("does not throw on a partial line with no closing brace", () => {
+    const text = ['{"type":"message","text":"trunc', '{"type":"message","text":"done"}'].join("\n");
+    expect(() => parseOpenCodeOutput(text)).not.toThrow();
+    expect(parseOpenCodeOutput(text).summary).toBe("done");
+  });
+
+  it("handles output that uses carriage returns as line separators", () => {
+    const text = ['{"type":"session.start","session":{"id":"ses_1"}}', '{"type":"message","text":"done"}'].join(
+      "\r\n",
+    );
+    const result = parseOpenCodeOutput(text);
+    expect(result.sessionId).toBe("ses_1");
+    expect(result.summary).toBe("done");
+  });
 });
