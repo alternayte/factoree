@@ -62,7 +62,8 @@ export interface NetworkPolicy {
 export interface SandboxCapabilities {
   /**
    * True only when the adapter denies egress to a domain outside the allow list at the
-   * network layer. A model instruction is not a security boundary (SDD section 29).
+   * network layer. A model instruction is not a security boundary. SDD section 29
+   * requires enforcement outside the prompt.
    */
   enforcesNetworkPolicy: boolean;
   /** True when the adapter can create a restorable checkpoint. */
@@ -102,9 +103,9 @@ export class SandboxError extends Error {
   constructor(
     message: string,
     readonly adapter: string,
-    options?: { cause?: unknown },
+    options?: ErrorOptions,
   ) {
-    super(message, options as ErrorOptions);
+    super(message, options);
     this.name = "SandboxError";
   }
 }
