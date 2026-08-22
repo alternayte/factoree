@@ -15,6 +15,7 @@ import {
   PrismaTenantRegistry,
 } from "~/persistence/prisma/project-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
+import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
@@ -118,6 +119,7 @@ beforeAll(async () => {
       runners: new AgentRunnerRegistry([new FakeRunner()]),
       executions: new PrismaAgentExecutionRepository(prisma),
       secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+      evidence: new PrismaEvidenceStore(prisma),
       redactor,
       reaper: new SpriteReaper({ sandboxes: { fake: fakeSandbox }, runs }),
       logger,

@@ -7,6 +7,7 @@ import { createPrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaSecretStore, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
+import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
 import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
@@ -90,6 +91,7 @@ const worker = await Worker.create({
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),
     secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+    evidence: new PrismaEvidenceStore(prisma),
     redactor,
     reaper,
     logger,

@@ -7,11 +7,13 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
 import { createAgentActivities } from "./agent.activities.js";
+import { createVerificationActivities } from "./verification.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -21,6 +23,7 @@ export interface ActivityDependencies {
   runners: AgentRunnerRegistry;
   executions: AgentExecutionRepository;
   secrets: SecretStore;
+  evidence: EvidenceStore;
   redactor: Redactor;
   reaper: SpriteReaper;
   logger: Logger;
@@ -42,6 +45,13 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     runners: dependencies.runners,
     sandbox: dependencies.sandbox,
     executions: dependencies.executions,
+    secrets: dependencies.secrets,
+    redactor: dependencies.redactor,
+    logger: dependencies.logger,
+  }),
+  ...createVerificationActivities({
+    sandbox: dependencies.sandbox,
+    evidence: dependencies.evidence,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
