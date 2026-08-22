@@ -140,6 +140,39 @@ describe("OpenCodeRunner", () => {
     expect((await resumed).summary).toBe("fixed");
   });
 
+  it("keeps the previous session entry so a retried resume can still find its sandbox", async () => {
+    // Factoree runs resume as a Temporal activity. Temporal retries an activity with its
+    // original arguments unchanged, so a retry presents the same AgentSessionRef as the first
+    // attempt. The runner must not have deleted the entry that reference points to.
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    const first = runner.run(runInput(sandbox, ref));
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "opencode");
+    sandbox.finishProcess("process-2", { exitCode: 0, stdout: '{"type":"session.start","session":{"id":"ses_1"}}' });
+    const initial = await first;
+
+    const originalReadProcess = sandbox.readProcess.bind(sandbox);
+    let failedOnce = false;
+    sandbox.readProcess = (readRef, process) => {
+      if (!failedOnce && process.id === "process-3") {
+        failedOnce = true;
+        return Promise.reject(new Error("transient sandbox fault"));
+      }
+      return originalReadProcess(readRef, process);
+    };
+
+    const failingAttempt = runner.resume(initial.session, { prompt: "Fix the lint failure.", timeoutMs: 5_000 });
+    await expect(failingAttempt).rejects.toThrow("transient sandbox fault");
+
+    sandbox.readProcess = originalReadProcess;
+    const retriedAttempt = runner.resume(initial.session, { prompt: "Fix the lint failure.", timeoutMs: 5_000 });
+    await waitUntil(() => sandbox.commands.length === 3);
+    sandbox.finishProcess("process-4", { exitCode: 0, stdout: '{"type":"message","text":"fixed on retry"}' });
+    const result = await retriedAttempt;
+    expect(result.summary).toBe("fixed on retry");
+  });
+
   it("cancels the process and reports a timeout when the process outlives its budget", async () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });

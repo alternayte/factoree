@@ -39,6 +39,12 @@ export class OpenCodeRunner implements AgentRunner {
   private readonly executable: string;
   private readonly pollIntervalMs: number;
   private readonly clock: () => number;
+  // An entry lives for the lifetime of this runner instance. Factoree runs run and resume
+  // as Temporal activities, and Temporal retries an activity with its original arguments
+  // unchanged, so a caller may present an old AgentSessionRef on a retry. An entry must not
+  // be removed while any caller can still hold a reference to it. Disposal of run-scoped
+  // state belongs to a later phase that knows when a Run has ended. A worker restart clears
+  // this map, and each entry is small, so the bounded growth is acceptable for now.
   private readonly sessions = new Map<string, LiveSession>();
   private readonly activeByRun = new Map<string, string>();
 
@@ -107,10 +113,6 @@ export class OpenCodeRunner implements AgentRunner {
 
     const live: LiveSession = { ...previous, process, cancelled: false };
     this.sessions.set(process.id, live);
-    // The previous process identifier is superseded by the new one. A future caller holds only
-    // the new AgentSessionRef, so the old entry can never be looked up again. This entry is
-    // removed here, instead of staying in the map for the life of the runner.
-    if (session.processId !== process.id) this.sessions.delete(session.processId);
     return await this.await(live, input.timeoutMs);
   }
 
