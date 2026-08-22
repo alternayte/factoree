@@ -95,6 +95,9 @@ describe("buildImplementerInput", () => {
       ["GHOSTWRITER_API_KEY", "accept"],
       ["GITHUB", "reject"],
       ["GITHUB_APP_PRIVATE_KEY", "reject"],
+      ["GITHUB_AUTHOR", "accept"],
+      ["GITHUB_AUTHOR_NAME", "accept"],
+      ["GITHUB_COMPATIBILITY_MODE", "accept"],
       ["GITHUB_INSTALLATION", "accept"],
       ["GITHUB_MIRROR_CREDENTIALS", "reject"],
       ["GITHUB_OAUTH", "reject"],
@@ -102,6 +105,7 @@ describe("buildImplementerInput", () => {
       ["GITHUB_TOKEN", "reject"],
       ["GITHUBAPP_KEY", "reject"],
       ["GITHUBENTERPRISE_TOKEN", "reject"],
+      ["GITHUBTOKEN", "reject"],
       ["githubToken", "reject"],
       ["LINEAR_API_KEY", "reject"],
       ["LOG_IN_TOKEN", "accept"],
@@ -120,6 +124,53 @@ describe("buildImplementerInput", () => {
       } else {
         expect(attempt).not.toThrow();
       }
+    });
+  });
+
+  describe("value-shape policy, the primary control", () => {
+    // A value in a known provider credential format is a credential whatever the key is called.
+    // No value below is a live credential. Each one is a synthetic string in the shape only.
+    const bodyOf = (length: number): string => "a1b2c3d4e5".repeat(10).slice(0, length);
+
+    const cases: Array<[label: string, value: string, expected: "reject" | "accept"]> = [
+      ["a GitHub classic token shape", `ghp_${bodyOf(36)}`, "reject"],
+      ["a GitHub fine-grained token shape", `github_pat_${bodyOf(40)}`, "reject"],
+      ["a Linear API key shape", `lin_api_${bodyOf(40)}`, "reject"],
+      ["an ordinary sentence that contains the word token", "This value is not a token at all.", "accept"],
+      ["a UUID", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "accept"],
+      ["a short password", "hunter2", "accept"],
+      ["a URL", "https://example.test/api/v1/resource?page=2", "accept"],
+    ];
+
+    it.each(cases)("%s is %s", (_label, value, expected) => {
+      const attempt = () =>
+        buildImplementerInput({ ...base, projectTestSecrets: { HARMLESS_SETTING: value } });
+      if (expected === "reject") {
+        expect(attempt).toThrow(ForbiddenImplementerMaterialError);
+      } else {
+        expect(attempt).not.toThrow();
+      }
+    });
+
+    it("names the offending key and never the value", () => {
+      const value = `ghp_${bodyOf(36)}`;
+      try {
+        buildImplementerInput({ ...base, projectTestSecrets: { NOTES: value } });
+        expect.unreachable("The build must reject a credential-shaped value.");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ForbiddenImplementerMaterialError);
+        expect((error as Error).message).toContain("NOTES");
+        expect((error as Error).message).not.toContain(value);
+      }
+    });
+
+    it("rejects a credential-shaped value under a key named WORKSPACE", () => {
+      expect(() =>
+        buildImplementerInput({
+          ...base,
+          projectTestSecrets: { WORKSPACE: `lin_api_${bodyOf(40)}` },
+        }),
+      ).toThrow(ForbiddenImplementerMaterialError);
     });
   });
 

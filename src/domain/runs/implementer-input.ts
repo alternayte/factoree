@@ -1,4 +1,5 @@
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
+import { looksLikeCredentialValue } from "~/domain/security/credential-formats.js";
 import { IMPLEMENTER_PROMPT_VERSION, renderImplementerPrompt } from "~/prompts/implementer.js";
 
 export interface BuildImplementerInput {
@@ -24,6 +25,8 @@ export interface ImplementerInput {
 }
 
 export class ForbiddenImplementerMaterialError extends Error {
+  // The message names the key only. A secret value must never reach an error message or a log
+  // line.
   constructor(readonly key: string) {
     super(
       `The Implementer must not receive "${key}". SDD section 30 forbids Linear tokens, GitHub ` +
@@ -40,9 +43,34 @@ const exactly = (target: string): WordPredicate => (word) => word === target;
 /** Matches a word by prefix. */
 const startsWith = (prefix: string): WordPredicate => (word) => word.startsWith(prefix);
 
-/** Matches a stem anywhere inside one word, so `oauth` matches `auth` and `credentials` matches `cred`. */
-const CREDENTIAL_STEMS = ["token", "secret", "key", "cred", "auth", "pat", "pass", "bearer"];
-const isCredentialWord: WordPredicate = (word) => CREDENTIAL_STEMS.some((stem) => word.includes(stem));
+/**
+ * The explicit list of credential words. A word in a key matches only as a whole word, never as
+ * a stem inside a longer word. A stem test rejected `GITHUB_AUTHOR`, because `author` contains
+ * `auth`. The list spells out each variant instead. A bounded list that a reader can audit beats
+ * a clever rule that a reader must simulate.
+ */
+const CREDENTIAL_WORDS = new Set([
+  "token",
+  "tokens",
+  "secret",
+  "secrets",
+  "key",
+  "keys",
+  "cred",
+  "creds",
+  "credential",
+  "credentials",
+  "auth",
+  "oauth",
+  "pat",
+  "pats",
+  "password",
+  "passphrase",
+  "bearer",
+  "apikey",
+]);
+
+const isCredentialWord: WordPredicate = (word) => CREDENTIAL_WORDS.has(word);
 
 /**
  * A short prefix such as `gh` also opens ordinary English words, for example `ghost`, `ghetto`,
@@ -63,15 +91,17 @@ const isGithubProviderWord: WordPredicate = (word) =>
  *
  * A hand-maintained list of exact credential names cannot keep up with ordinary naming variety,
  * for example `GHE_TOKEN`, `GITHUB_OAUTH`, and `GITHUB_MIRROR_CREDENTIALS` all name a real
- * GitHub credential under a spelling an exact list would miss. Prefix matching on the provider
- * word and stem matching on the credential word close that gap without re-introducing the
- * whole-name substring trap: each predicate still tests one word at a time, so `reproduction`
- * and `fixture` are never joined into a string that could falsely contain `production`.
+ * GitHub credential under a spelling an exact list would miss. A prefix match on the provider
+ * word and a whole-word match on the credential word close that gap without the substring trap:
+ * each predicate tests one word at a time, so `reproduction` and `fixture` never join into a
+ * string that falsely contains `production`.
  *
  * SDD section 30 forbids a Linear token, a GitHub write credential, a production secret, and a
- * Factoree admin credential. This is the one list and the one matching rule that enforces it.
- * The check inspects the key only, never the value. See the task report for the reasoning and
- * for the limits this leaves open.
+ * Factoree admin credential. The name check is the secondary guardrail. The value check is the
+ * primary control, because a value reveals a credential far more reliably than a key does. Do
+ * not add a further name heuristic here. A fused abbreviation such as `GHTOKEN` that holds a
+ * real GitHub token is caught by its value. The same name over any other value is not a
+ * credential. See the task report for the residual gaps.
  */
 const FORBIDDEN_RULES: readonly WordPredicate[][] = [
   [exactly("linear")],
@@ -109,9 +139,17 @@ const isForbiddenName = (key: string): boolean => {
   return FORBIDDEN_RULES.some((rule) => rule.every((predicate) => matchesAnyWord(words, predicate)));
 };
 
+/**
+ * The primary control. A value in a known provider credential format is a credential whatever
+ * the key is called. This catches the case no name rule can catch, an innocuous key that holds a
+ * real token. The formats come from the one shared list in `src/domain/security`.
+ */
+const isForbiddenValue = (value: string): boolean => looksLikeCredentialValue(value);
+
 /** SDD section 34 assembles the Implementer input and rejects forbidden material with a thrown error. */
 export const buildImplementerInput = (input: BuildImplementerInput): ImplementerInput => {
-  for (const key of Object.keys(input.projectTestSecrets)) {
+  for (const [key, value] of Object.entries(input.projectTestSecrets)) {
+    if (isForbiddenValue(value)) throw new ForbiddenImplementerMaterialError(key);
     if (isForbiddenName(key)) throw new ForbiddenImplementerMaterialError(key);
   }
 
