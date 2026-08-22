@@ -18,6 +18,11 @@ export interface SpriteReaperOptions {
    * value never selects which part is removed.
    */
   workspacePath?: string;
+  /**
+   * Runs after each successful deletion. The worker uses it to count the deletion. The domain
+   * holds no metric registry of its own.
+   */
+  onDestroyed?: (entry: ExpiredSandbox) => void;
 }
 
 const DEFAULT_WORKSPACE_PATH = "/workspace";
@@ -50,6 +55,7 @@ export class SpriteReaper {
         continue;
       }
       await this.options.runs.clearSandbox(entry.tenantId, entry.runId);
+      this.options.onDestroyed?.(entry);
       destroyed += 1;
     }
     return destroyed;

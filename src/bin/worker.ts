@@ -1,6 +1,7 @@
 import { Worker } from "@temporalio/worker";
 import { loadEnv } from "~/config/env.js";
 import { createLogger } from "~/telemetry/logger.js";
+import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createPrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
@@ -45,7 +46,11 @@ const sandboxManager = new SandboxManager({
 });
 
 const runners = new AgentRunnerRegistry([new OpenCodeRunner({ redactor })]);
-const reaper = new SpriteReaper({ sandboxes: { [sandbox.name]: sandbox }, runs });
+const reaper = new SpriteReaper({
+  sandboxes: { [sandbox.name]: sandbox },
+  runs,
+  onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
+});
 
 // The Linear access token belongs to the workspace of the Run. The session id carries the
 // workspace prefix in the workflow id, so the activity resolves the client for each call.
@@ -93,7 +98,14 @@ const worker = await Worker.create({
 
 // SDD section 51. The reaper deletes each sandbox after its retention window ends.
 const REAP_INTERVAL_MS = 15 * 60_000;
+// One pass at a time. A slow provider must not start a second pass over the same batch.
+let reaping = false;
 const reapTimer = setInterval(() => {
+  if (reaping) {
+    logger.warn("the previous sandbox reaper pass still runs", { step: "retention" });
+    return;
+  }
+  reaping = true;
   void reaper
     .reap(new Date())
     .then((count) => {
@@ -101,6 +113,9 @@ const reapTimer = setInterval(() => {
     })
     .catch((error: unknown) => {
       logger.error("the sandbox reaper failed", { error: String(error) });
+    })
+    .finally(() => {
+      reaping = false;
     });
 }, REAP_INTERVAL_MS);
 reapTimer.unref();

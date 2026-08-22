@@ -37,6 +37,28 @@ export interface PrepareSandboxActivityOutput {
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
 
+/**
+ * Deletes one sandbox and reports a failure at error level. A silent failure hides a leak, and
+ * an operator must be able to see the sandbox that stayed behind.
+ */
+const release = async (
+  dependencies: SandboxActivityDependencies,
+  spriteId: string,
+  adapter: string,
+  destroy: () => Promise<void>,
+): Promise<void> => {
+  try {
+    await destroy();
+  } catch (error) {
+    dependencies.logger.error("the sandbox was not deleted and is now unreferenced", {
+      sprite_id: spriteId,
+      adapter,
+      error: String(error),
+      step: "prepare",
+    });
+  }
+};
+
 export const createSandboxActivities = (dependencies: SandboxActivityDependencies) => ({
   async prepareSandbox(input: PrepareSandboxActivityInput): Promise<PrepareSandboxActivityOutput> {
     const prepared = await dependencies.sandboxManager.prepare({
@@ -52,6 +74,15 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
     // SDD section 51. The Run keeps the sandbox reference and the retention deadline, so
     // `SpriteReaper` can delete the sandbox after the window ends. The workflow never deletes
     // it, because SDD section 32 orders RETAIN before DELETE.
+    // A retry of this activity prepares a second sandbox, because `prepare` creates a new one
+    // for each call. The sandbox the Run already holds must go, otherwise the overwrite below
+    // makes it unreferenced and the reaper can never find it. Factoree reads the reference
+    // before the overwrite, and deletes that sandbox after the overwrite has committed. An
+    // idempotent `prepare` was the alternative. It was rejected, because a partly prepared
+    // sandbox from a crashed attempt has an unknown checkout state, and reuse of it would carry
+    // that state into the new attempt.
+    const previous = await dependencies.runs.findById(input.tenantId, input.runId);
+
     const retainUntil = new Date(Date.now() + input.config.spriteRetentionHours * MILLISECONDS_PER_HOUR);
     try {
       await dependencies.runs.setSandbox(input.tenantId, input.runId, {
@@ -62,10 +93,25 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
         implementerRunner: input.config.implementerRunner,
       });
     } catch (error) {
-      // The Run now holds no reference to this sandbox, and a Temporal retry creates a new one.
-      // The unreferenced sandbox must go now, because the reaper can never find it.
-      await dependencies.sandboxManager.release(prepared).catch(() => undefined);
+      // The Run holds no reference to this sandbox, and a Temporal retry creates a new one. The
+      // unreferenced sandbox must go now.
+      await release(dependencies, prepared.ref.id, prepared.ref.adapter, () =>
+        dependencies.sandboxManager.release(prepared),
+      );
       throw error;
+    }
+
+    if (previous?.spriteId != null && previous.spriteId !== prepared.ref.id) {
+      const staleId = previous.spriteId;
+      const staleAdapter = previous.spriteAdapter ?? dependencies.sandbox.name;
+      await release(dependencies, staleId, staleAdapter, () =>
+        dependencies.sandbox.destroy({
+          id: staleId,
+          adapter: staleAdapter,
+          workspacePath: prepared.ref.workspacePath,
+        }),
+      );
+      metrics.sandboxesDestroyed.inc({ adapter: staleAdapter, reason: "SUPERSEDED" });
     }
 
     metrics.sandboxesCreated.inc({
@@ -94,8 +140,9 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
   },
 
   /**
-   * An explicit early teardown. The normal terminal path does not call this activity. SDD
-   * section 51 keeps the sandbox for the retention window, and `SpriteReaper` deletes it later.
+   * An explicit early teardown. This activity is reserved for a later phase that needs one, for
+   * example an operator command. The normal terminal path never calls it. SDD section 51 keeps
+   * the sandbox for the retention window, and `SpriteReaper` deletes it later.
    */
   async destroySandbox(input: {
     tenantId: string;

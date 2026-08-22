@@ -12,6 +12,9 @@ export class FakeRunner implements AgentRunner {
   readonly resumes: Array<{ session: AgentSessionRef; input: AgentResumeInput }> = [];
   readonly cancelled: AgentSessionRef[] = [];
   private result: AgentRunResult;
+  /** While this promise is pending, `run` does not resolve. It models a long agent run. */
+  private hold: Promise<void> | null = null;
+  private live: AgentSessionRef | null = null;
 
   constructor(
     readonly name = "opencode",
@@ -32,9 +35,27 @@ export class FakeRunner implements AgentRunner {
     this.result = { ...this.result, ...result };
   }
 
-  run(input: AgentRunInput): Promise<AgentRunResult> {
+  /** Holds every later `run` open until the returned function is called. */
+  holdRun(): () => void {
+    let release = (): void => undefined;
+    this.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  /** The live session of one Run. `OpenCodeRunner` offers the same lookup. */
+  activeSession(runId: string): AgentSessionRef | undefined {
+    const started = this.runs.some((entry) => entry.runId === runId);
+    return started ? (this.live ?? undefined) : undefined;
+  }
+
+  async run(input: AgentRunInput): Promise<AgentRunResult> {
     this.runs.push(input);
-    return Promise.resolve(this.result);
+    this.live = this.result.session;
+    await this.hold;
+    this.live = null;
+    return this.result;
   }
 
   resume(session: AgentSessionRef, input: AgentResumeInput): Promise<AgentRunResult> {

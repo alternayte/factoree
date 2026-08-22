@@ -1,6 +1,7 @@
+import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
-import type { AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
@@ -53,6 +54,27 @@ export interface ImplementActivityOutput {
   durationMs: number;
 }
 
+/**
+ * The interval between two heartbeats. A heartbeat is the only way Temporal can deliver a
+ * cancellation to a long activity, so the Implementer activity must send one.
+ */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * A runner that can name the live session of one Run. SDD section 33 fixes the `AgentRunner`
+ * port, so this capability stays outside it. `OpenCodeRunner` provides it, and the activity
+ * uses it only when the runner has it.
+ */
+interface RunnerWithActiveSession {
+  activeSession(runId: string): AgentSessionRef | undefined;
+}
+
+const activeSessionOf = (runner: AgentRunner, runId: string): AgentSessionRef | undefined => {
+  const candidate = runner as Partial<RunnerWithActiveSession>;
+  if (typeof candidate.activeSession !== "function") return undefined;
+  return candidate.activeSession(runId);
+};
+
 export const createAgentActivities = (dependencies: AgentActivityDependencies) => ({
   async implement(input: ImplementActivityInput): Promise<ImplementActivityOutput> {
     // SDD section 60: every Project secret must reach the redactor before any output is captured.
@@ -88,20 +110,51 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     });
 
     const runner = dependencies.runners.get(input.runnerName);
-    const result = await runner.run({
-      runId: input.runId,
-      tenantId: input.tenantId,
-      role: "implementer",
-      sandbox: dependencies.sandbox,
-      ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
-      workingDirectory: input.primaryPath,
-      prompt: implementerInput.prompt,
-      promptVersion: implementerInput.promptVersion,
-      environment: implementerInput.environment,
-      actionPolicy,
-      timeoutMs: input.timeoutMs,
-    });
+    const context = Context.current();
 
+    // Only a heartbeat lets Temporal reach this activity with a cancellation.
+    const heartbeat = setInterval(() => {
+      context.heartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // SDD section 50: a stop must cancel the active agent process. The workflow cancels this
+    // activity, and the cancellation reaches the live session here, while the run still holds.
+    const onCancel = (): void => {
+      const session = activeSessionOf(runner, input.runId);
+      if (session === undefined) return;
+      void runner.cancel(session).catch((error: unknown) => {
+        dependencies.logger.error("the cancellation of the Implementer session failed", {
+          tenant_id: input.tenantId,
+          run_id: input.runId,
+          runner: runner.name,
+          error: String(error),
+        });
+      });
+    };
+    context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
+
+    let result;
+    try {
+      result = await runner.run({
+        runId: input.runId,
+        tenantId: input.tenantId,
+        role: "implementer",
+        sandbox: dependencies.sandbox,
+        ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
+        workingDirectory: input.primaryPath,
+        prompt: implementerInput.prompt,
+        promptVersion: implementerInput.promptVersion,
+        environment: implementerInput.environment,
+        actionPolicy,
+        timeoutMs: input.timeoutMs,
+      });
+    } finally {
+      clearInterval(heartbeat);
+      context.cancellationSignal.removeEventListener("abort", onCancel);
+    }
+
+    // The evidence of a cancelled run is kept. The activity returns the result of the runner
+    // rather than a cancellation error, so the AgentExecution row still holds the summary.
     await dependencies.executions.record({
       tenantId: input.tenantId,
       runId: input.runId,

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
+import { Context } from "@temporalio/activity";
 import { Worker } from "@temporalio/worker";
 import { agentRunWorkflow, stopSignal, humanInputSignal, runStatusQuery } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
@@ -20,6 +21,12 @@ const cancelledSessions: Array<{ runnerName: string; session: { sessionId: strin
 const destroyed: string[] = [];
 /** A run id in this map holds preparation open until the test resolves the promise. */
 const heldPreparations = new Map<string, Promise<void>>();
+/** A run id in this map holds the Implementer open, the same way a real agent run does. */
+const heldImplementations = new Map<string, Promise<void>>();
+/** The run ids whose Implementer double reports a failed attempt. */
+const failingImplementations = new Set<string>();
+/** The run ids whose live Implementer session the activity cancelled. */
+const cancelledLiveSessions: string[] = [];
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
@@ -59,11 +66,27 @@ const activities = {
   reapExpiredSandboxes: async () => 0,
   implement: async (activityInput: ImplementActivityInput) => {
     implementCalls.push(activityInput);
+    const held = heldImplementations.get(activityInput.runId);
+    if (held !== undefined) {
+      // The real activity cancels the live agent session when Temporal cancels the activity.
+      // This double records the same event and then returns its evidence.
+      Context.current().cancellationSignal.addEventListener(
+        "abort",
+        () => cancelledLiveSessions.push(activityInput.runId),
+        { once: true },
+      );
+      const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
+      try {
+        await held;
+      } finally {
+        clearInterval(heartbeat);
+      }
+    }
     return {
       sessionId: "ses_fake",
       processId: "process-fake",
       runner: activityInput.runnerName,
-      completed: true,
+      completed: !failingImplementations.has(activityInput.runId),
       exitCode: 0,
       cancelled: false,
       summary: "The change is applied.",
@@ -94,8 +117,10 @@ const input = (sessionId: string, maxRunMinutes = 90) => ({
 });
 
 /** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
-const waitFor = async (predicate: () => boolean): Promise<void> => {
+const waitFor = async (predicate: () => boolean, what = "the condition"): Promise<void> => {
+  const deadline = Date.now() + 10_000;
   while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`the test waited ten seconds for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 };
@@ -196,7 +221,10 @@ describe("agentRunWorkflow", () => {
         workflowId: buildWorkflowId("workspace-123", "session-f"),
         args: [{ ...input("session-f"), sandbox: sandboxInput }],
       });
-      await waitFor(() => implementCalls.some((entry) => entry.runId === "run-session-f"));
+      await waitFor(
+        () => implementCalls.some((entry) => entry.runId === "run-session-f"),
+        "the Implementer of session-f",
+      );
       await handle.signal(stopSignal);
       return handle.result();
     });
@@ -215,7 +243,10 @@ describe("agentRunWorkflow", () => {
         workflowId: buildWorkflowId("workspace-123", "session-g"),
         args: [{ ...input("session-g"), sandbox: sandboxInput }],
       });
-      await waitFor(() => implementCalls.some((entry) => entry.runId === "run-session-g"));
+      await waitFor(
+        () => implementCalls.some((entry) => entry.runId === "run-session-g"),
+        "the Implementer of session-g",
+      );
       await handle.signal(stopSignal);
       await handle.result();
       const snapshot = await handle.query(runStatusQuery);
@@ -231,7 +262,10 @@ describe("agentRunWorkflow", () => {
         workflowId: buildWorkflowId("workspace-123", "session-h"),
         args: [{ ...input("session-h"), sandbox: sandboxInput }],
       });
-      await waitFor(() => implementCalls.some((entry) => entry.runId === "run-session-h"));
+      await waitFor(
+        () => implementCalls.some((entry) => entry.runId === "run-session-h"),
+        "the Implementer of session-h",
+      );
       await handle.signal(stopSignal);
       return handle.result();
     });
@@ -251,6 +285,7 @@ describe("agentRunWorkflow", () => {
       }),
     );
     const before = implementCalls.length;
+    const cancelledBefore = cancelledSessions.length;
     const result = await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
@@ -258,15 +293,85 @@ describe("agentRunWorkflow", () => {
         args: [{ ...input("session-i"), sandbox: sandboxInput }],
       });
       // Wait until the workflow has entered PREPARING, then stop it while preparation runs.
-      await waitFor(() => prepared.some((entry) => entry.runId === "run-session-i"));
+      await waitFor(
+        () => prepared.some((entry) => entry.runId === "run-session-i"),
+        "the preparation of session-i",
+      );
       await handle.signal(stopSignal);
       release();
       return handle.result();
     });
     heldPreparations.delete("run-session-i");
     expect(implementCalls).toHaveLength(before);
-    expect(cancelledSessions.every((entry) => entry.session.sessionId !== "ses_session_i")).toBe(true);
+    expect(cancelledSessions).toHaveLength(cancelledBefore);
     expect(result.status).toBe("CANCELLED");
+  });
+
+  it("cancels the live Implementer session when the stop arrives while it still runs", async () => {
+    let release = (): void => undefined;
+    heldImplementations.set(
+      "run-session-j",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "session-j"),
+        args: [{ ...input("session-j"), sandbox: sandboxInput }],
+      });
+      await waitFor(
+        () => implementCalls.some((entry) => entry.runId === "run-session-j"),
+        "the Implementer of session-j",
+      );
+      await handle.signal(stopSignal);
+      // The stop must reach the activity while the Implementer still runs.
+      await waitFor(() => cancelledLiveSessions.includes("run-session-j"), "the live cancellation");
+      release();
+      return handle.result();
+    });
+    heldImplementations.delete("run-session-j");
+    expect(cancelledLiveSessions).toContain("run-session-j");
+    expect(result.status).toBe("CANCELLED");
+    expect(completions.at(-1)?.failureReason).toBe("STOPPED_BY_HUMAN");
+  });
+
+  it("fails with IMPLEMENTATION_FAILED when the Implementer reports a failed attempt", async () => {
+    failingImplementations.add("run-session-k");
+    try {
+      const result = await runWorker(async () => {
+        const handle = await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "session-k"),
+          args: [{ ...input("session-k"), sandbox: sandboxInput }],
+        });
+        return handle.result();
+      });
+      expect(result.status).toBe("FAILED");
+      expect(completions.at(-1)?.failureReason).toBe("IMPLEMENTATION_FAILED");
+    } finally {
+      failingImplementations.delete("run-session-k");
+    }
+  });
+
+  it("fails with RUN_TIMEOUT when preparation consumes the Run budget", async () => {
+    // The Run budget is under one second here, and preparation takes longer than the budget.
+    // The Run must end at once, rather than wait a further whole budget after preparation.
+    heldPreparations.set("run-session-l", new Promise<void>((resolve) => setTimeout(resolve, 4_000)));
+    const before = implementCalls.length;
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "session-l"),
+        args: [{ ...input("session-l", 0.03), sandbox: sandboxInput }],
+      });
+      return handle.result();
+    });
+    heldPreparations.delete("run-session-l");
+    expect(implementCalls).toHaveLength(before);
+    expect(result.status).toBe("FAILED");
+    expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
   });
 
   it("drives the Run to a terminal state when an activity fails permanently", async () => {
