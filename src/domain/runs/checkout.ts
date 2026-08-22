@@ -51,7 +51,13 @@ export const checkoutRepositories = async (
   };
 
   const clone = async (spec: RepositorySpec, path: string): Promise<string> => {
-    await run({ file: "git", args: ["clone", "--no-tags", spec.url, path] });
+    // `--no-hardlinks` stops a clone of a local path from hardlinking object files into the
+    // checkout. Without it, the read-only control on a reference checkout, and the permission
+    // repair when the sandbox is destroyed, both change the mode of an inode the source
+    // repository still shares. A sandbox must never change anything outside itself. Git applies
+    // the local optimization only to a clone of a local path, so the option costs a remote
+    // clone nothing.
+    await run({ file: "git", args: ["clone", "--no-hardlinks", "--no-tags", spec.url, path] });
     await run({ file: "git", args: ["-C", path, "checkout", "--detach", spec.ref] });
     // SDD section 29 denies git remote write from an agent.
     await run({ file: "git", args: ["-C", path, "remote", "set-url", "--push", "origin", "DISABLED_BY_FACTOREE"] });

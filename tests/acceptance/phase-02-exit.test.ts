@@ -35,7 +35,7 @@ describe("Phase 2 exit condition — an isolated fixture change without publishi
     // The origin state before the Run. Every later comparison uses these values.
     const originHeadBefore = (await git(repository, ["rev-parse", "HEAD"])).trim();
     const originRefsBefore = await listRefs(repository);
-    expect(originRefsBefore).toEqual(["refs/heads/main"]);
+    expect(originRefsBefore).toEqual([`refs/heads/main ${originHeadBefore}`]);
 
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
     const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
@@ -114,7 +114,8 @@ describe("Phase 2 exit condition — an isolated fixture change without publishi
     expect(baselineCopy).toBe("original\n");
 
     // Nothing was published. The origin still holds its original content, one commit, the same
-    // HEAD, and no new ref of any kind. A new branch or a new tag appears in the ref list.
+    // HEAD, and no new ref of any kind. A new branch, a new tag, or a moved branch appears in
+    // the ref list, because each line carries the ref name and the object name together.
     const origin = await readFile(join(repository, "target.txt"), "utf8");
     expect(origin.trim()).toBe("original");
     expect((await git(repository, ["rev-list", "--count", "HEAD"])).trim()).toBe("1");

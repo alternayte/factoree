@@ -72,7 +72,7 @@ describe("AT-13 — Action Policy", () => {
     const target = join(prepared.checkout.primary.path, "target.txt");
     const result = await sandbox.exec(prepared.ref, {
       file: "sh",
-      args: ["-c", `printf changed > ${target} && printf OK`],
+      args: ["-c", `printf changed > '${target}' && printf OK`],
     });
     expect(result.stdout).toBe("OK");
     expect(await readFile(target, "utf8")).toBe("changed");
@@ -97,7 +97,7 @@ describe("AT-13 — Action Policy", () => {
     const path = entry?.path ?? "";
     const result = await sandbox.exec(prepared.ref, {
       file: "sh",
-      args: ["-c", `printf changed > ${path}/target.txt 2>/dev/null; printf %s $?`],
+      args: ["-c", `printf changed > '${path}/target.txt' 2>/dev/null; printf %s $?`],
     });
     expect(result.stdout).not.toBe("0");
     // The file itself is unchanged, so the failure above is a denied write, not a shell fault.
@@ -119,7 +119,7 @@ describe("AT-13 — Action Policy", () => {
     });
     const result = await sandbox.exec(prepared.ref, {
       file: "sh",
-      args: ["-c", `git -C ${prepared.checkout.primary.path} push origin HEAD 2>&1; printf "|%s" $?`],
+      args: ["-c", `git -C '${prepared.checkout.primary.path}' push origin HEAD 2>&1; printf "|%s" $?`],
     });
     expect(result.stdout).not.toContain("|0");
     expect(result.stdout).toContain("DISABLED_BY_FACTOREE");

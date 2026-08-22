@@ -210,7 +210,12 @@ export class LocalProcessSandbox implements Sandbox {
     // of it. The owner must hold write permission on a directory before the platform removes an
     // entry inside it, so removal alone fails on an ordinary Run that has a reference
     // repository. This step restores that permission first.
-    await restoreWritePermission(path);
+    //
+    // A failure of the permission repair must not stop the removal. This method already dropped
+    // the sandbox from the live set, so no later call can reach the directory. A removal that
+    // can still succeed is better than one that never runs. The removal itself decides the
+    // outcome: it throws when the directory stays behind.
+    await restoreWritePermission(path).catch(() => undefined);
     await rm(path, { recursive: true, force: true });
   }
 

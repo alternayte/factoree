@@ -34,9 +34,13 @@ export const createFixtureRepository = async (root: string, name: string): Promi
   return path;
 };
 
-/** Lists every ref name the repository holds, sorted, so a test can prove nothing was added. */
+/**
+ * Lists every ref the repository holds, sorted, so a test can prove nothing was added and
+ * nothing moved. Each line carries the ref name and the object name it points at. A name alone
+ * would miss a force push that rewrote an existing branch.
+ */
 export const listRefs = async (path: string): Promise<string[]> => {
-  const output = await git(path, ["for-each-ref", "--format=%(refname)"]);
+  const output = await git(path, ["for-each-ref", "--format=%(refname) %(objectname)"]);
   return output
     .split("\n")
     .map((line) => line.trim())

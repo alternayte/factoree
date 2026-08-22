@@ -17,6 +17,19 @@ describe("checkoutRepositories", () => {
     expect(result.primary.path).toBe("/workspace/primary");
   });
 
+  it("clones without a hardlink, so no checkout shares an inode with its source", async () => {
+    // A clone of a local path hardlinks object files by default. The read-only control on a
+    // reference checkout would then change the mode of an inode the source repository still
+    // shares, and a sandbox must never change anything outside itself.
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    await checkoutRepositories(sandbox, ref, input);
+    const clones = sandbox.commands.filter((command) => command.args.includes("clone"));
+    expect(clones).toHaveLength(2);
+    for (const clone of clones) expect(clone.args).toContain("--no-hardlinks");
+  });
+
   it("clones every reference repository under its own directory", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
