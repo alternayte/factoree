@@ -58,6 +58,9 @@ model ProjectSecret {
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name        String
   valueCipher String
+  // SDD section 30. Only a secret an operator marks reaches the Implementer environment. Every
+  // secret reaches the redactor, marked or not.
+  injectIntoImplementer Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

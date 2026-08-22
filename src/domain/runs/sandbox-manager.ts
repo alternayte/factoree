@@ -1,5 +1,6 @@
 import type { CheckoutResult, RepositorySpec } from "./checkout.js";
-import { checkoutRepositories } from "./checkout.js";
+import { checkoutRepositories, withoutUrlCredentials } from "./checkout.js";
+import { RunConfigurationError } from "./run-configuration-error.js";
 import type { ProjectRuntimeConfig } from "./project-runtime-config.js";
 import type { CheckpointRef, Sandbox, SandboxRef } from "./sandbox.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
@@ -66,7 +67,8 @@ export class SandboxManager {
       const mkdir = await sandbox.exec(ref, { file: "mkdir", args: ["-p", ref.workspacePath] });
       if (mkdir.exitCode !== 0) {
         throw new Error(
-          `the command "mkdir -p ${ref.workspacePath}" failed with exit code ${mkdir.exitCode}: ${mkdir.stderr.trim()}`,
+          `the command "mkdir -p ${ref.workspacePath}" failed with exit code ${mkdir.exitCode}: ` +
+            withoutUrlCredentials(mkdir.stderr.trim()),
         );
       }
 
@@ -82,8 +84,11 @@ export class SandboxManager {
           cwd: checkout.primary.path,
         });
         if (result.exitCode !== 0) {
-          throw new Error(
-            `the bootstrap command failed with exit code ${result.exitCode}: ${result.stderr.trim()}`,
+          // The bootstrap command comes from the Project configuration, so a failure of it is a
+          // configuration fault. A retry runs the same command and fails again.
+          throw new RunConfigurationError(
+            `the bootstrap command failed with exit code ${result.exitCode}: ` +
+              withoutUrlCredentials(result.stderr.trim()),
           );
         }
       }

@@ -100,11 +100,16 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       dependencies.logger,
     );
 
-    const names = await dependencies.secrets.listNames(input.tenantId, input.projectId);
+    // SDD section 30: a non-production test secret reaches the Implementer only when the
+    // operator injects it explicitly. The mark on the secret is that explicit act. Every other
+    // Project secret stays out of the sandbox, and the redactor above still holds its value.
+    // `buildImplementerInput` keeps its own rejection of forbidden material as the last control.
+    const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
     const projectTestSecrets: Record<string, string> = {};
-    for (const name of names) {
-      const value = await dependencies.secrets.get(input.tenantId, input.projectId, name);
-      if (value !== null) projectTestSecrets[name] = value;
+    for (const descriptor of descriptors) {
+      if (!descriptor.injectIntoImplementer) continue;
+      const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
+      if (value !== null) projectTestSecrets[descriptor.name] = value;
     }
 
     const actionPolicy = buildActionPolicy({ stagingRead: input.stagingRead });

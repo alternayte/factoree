@@ -62,3 +62,42 @@ describe("LocalProcessSandbox", () => {
     await rm(rootDirectory, { recursive: true, force: true });
   });
 });
+
+describe("LocalProcessSandbox and the host environment", () => {
+  it("hides a host credential from the child process", async () => {
+    // SDD section 30. The worker holds an admin credential, a Linear token, and a Fly token in
+    // its own environment. An agent that runs `printenv` must not read any of them.
+    const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-env-"));
+    process.env.ADMIN_API_TOKEN = "admin-token-fixture";
+    try {
+      const sandbox = new LocalProcessSandbox({ rootDirectory });
+      const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+      const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "printenv"] });
+      expect(result.stdout).not.toContain("admin-token-fixture");
+      expect(result.stdout).toContain("PATH=");
+      expect(result.stdout).toContain("HOME=");
+      await sandbox.destroy(ref);
+    } finally {
+      delete process.env.ADMIN_API_TOKEN;
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("still passes the environment of the command", async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-env-"));
+    try {
+      const sandbox = new LocalProcessSandbox({ rootDirectory });
+      const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+      const result = await sandbox.exec(ref, {
+        file: "sh",
+        args: ["-c", "printf %s \"$FIXTURE\""],
+        env: { FIXTURE: "fixture-value" },
+      });
+      expect(result.stdout).toBe("fixture-value");
+      await sandbox.destroy(ref);
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+});
+

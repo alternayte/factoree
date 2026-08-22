@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NetworkPolicyNotEnforcedError } from "~/domain/runs/sandbox.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
@@ -87,6 +88,16 @@ describe("SandboxManager.prepare", () => {
     await expect(
       manager.prepare({ ...input, config: { ...input.config, bootstrapCommand: "npm ci" } }),
     ).rejects.toThrow(/install failed/);
+  });
+
+  it("reports a failed bootstrap command as a configuration fault", async () => {
+    // SDD section 49. The command comes from the Project configuration, so a retry repeats it.
+    const sandbox = withSha();
+    sandbox.scriptExec(/npm ci/, { exitCode: 1, stderr: "install failed" });
+    const manager = new SandboxManager({ sandbox });
+    await expect(
+      manager.prepare({ ...input, config: { ...input.config, bootstrapCommand: "npm ci" } }),
+    ).rejects.toBeInstanceOf(RunConfigurationError);
   });
 
   it("destroys the sandbox when preparation fails, so no sandbox leaks", async () => {

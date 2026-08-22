@@ -49,6 +49,7 @@ describe("AT-32 redaction in logs", () => {
       put: () => Promise.resolve(),
       get: () => Promise.resolve("fixture-secret-value"),
       listNames: () => Promise.resolve(["FIXTURE"]),
+      list: () => Promise.resolve([{ name: "FIXTURE", injectIntoImplementer: false }]),
       remove: () => Promise.resolve(true),
     };
     await registerProjectSecrets(redactor, store, "tenant-1", "project-1");

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { FakeSandbox } from "../support/fake-sandbox.js";
+import { runSandboxContract } from "../support/sandbox-contract.js";
+
+// A conformance suite with one conformer proves nothing about conformance. `FakeSandbox`
+// underpins many activity tests, so it must meet the same lifecycle contract as a real adapter.
+// It records a command instead of running one, so it claims the lifecycle part only.
+runSandboxContract(
+  "FakeSandbox",
+  () => Promise.resolve({ sandbox: new FakeSandbox(), dispose: () => Promise.resolve() }),
+  { executesCommands: false },
+);
 
 describe("FakeSandbox", () => {
   it("records the order of the port calls", async () => {

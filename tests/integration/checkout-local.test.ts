@@ -77,4 +77,20 @@ describe("checkoutRepositories against real git repositories", () => {
     await sandbox.exec(ref, { file: "chmod", args: ["-R", "u+w", referencePath] });
     await sandbox.destroy(ref);
   });
+
+  it("checks out a tag ref, because RepositorySpec allows a tag", async () => {
+    // A clone with `--no-tags` fetches no tag, and `git checkout --detach <tag>` then reads the
+    // tag as a path and fails with exit code 128.
+    await run("git", ["-C", primaryUrl, "tag", "v1.0.0"]);
+    const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
+    const ref = await sandbox.create({ runId: "tag", tenantId: "t", projectId: "p" });
+    const result = await checkoutRepositories(sandbox, ref, {
+      primary: { url: primaryUrl, ref: "v1.0.0" },
+      references: [],
+    });
+    expect(result.primary.baseSha).toMatch(/^[0-9a-f]{40}$/);
+    const tagSha = await run("git", ["-C", primaryUrl, "rev-parse", "v1.0.0^{commit}"]);
+    expect(result.primary.baseSha).toBe(tagSha.stdout.trim());
+    await sandbox.destroy(ref);
+  });
 });

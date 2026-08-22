@@ -8,15 +8,10 @@ import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
+import { MemorySecretStore } from "../support/memory-secret-store.js";
+import type { SecretStore } from "~/domain/projects/secret-store.js";
 
-const secrets = {
-  put: () => Promise.resolve(),
-  get: () => Promise.resolve(null),
-  listNames: () => Promise.resolve([]),
-  remove: () => Promise.resolve(false),
-};
-
-const build = (runner: FakeRunner) => {
+const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore()) => {
   const recorded: RecordAgentExecutionInput[] = [];
   const executions = {
     record: (recordInput: RecordAgentExecutionInput): Promise<AgentExecutionRecord> => {
@@ -25,15 +20,16 @@ const build = (runner: FakeRunner) => {
     },
     listForRun: () => Promise.resolve([]),
   };
+  const redactor = new Redactor();
   const activities = createAgentActivities({
     runners: new AgentRunnerRegistry([runner]),
     sandbox: new FakeSandbox(),
     executions,
     secrets,
-    redactor: new Redactor(),
-    logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
+    redactor,
+    logger: createLogger({ level: "error", redactor, sink: () => undefined }),
   });
-  return { activities, recorded };
+  return { activities, recorded, redactor };
 };
 
 /** Polls until the predicate holds, and names itself when it gives up. */
@@ -145,3 +141,29 @@ describe("the implement activity", () => {
     expect(runner.cancelled).toHaveLength(0);
   });
 });
+
+describe("the implement activity and the Project secret store", () => {
+  it("runs a Project that holds a real credential, redacts it, and never injects it", async () => {
+    // SDD section 30: only an explicitly marked secret reaches the Implementer. SDD section 60:
+    // every Project secret reaches the redactor, marked or not.
+    const runner = new FakeRunner();
+    const secrets = new MemorySecretStore({
+      GITHUB_TOKEN: { value: "ghp_realcredentialvalue0001", injectIntoImplementer: false },
+      TEST_FIXTURE_URL: { value: "http://localhost:9999/fixture", injectIntoImplementer: true },
+    });
+    const { activities, redactor } = build(runner, secrets);
+    const environment = new MockActivityEnvironment();
+
+    const result: ImplementActivityOutput = await environment.run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      input,
+    );
+
+    expect(result.completed).toBe(true);
+    const passed = runner.runs[0]?.environment ?? {};
+    expect(passed.GITHUB_TOKEN).toBeUndefined();
+    expect(passed.TEST_FIXTURE_URL).toBe("http://localhost:9999/fixture");
+    expect(redactor.redact("the log holds ghp_realcredentialvalue0001")).toBe("the log holds [REDACTED]");
+  });
+});
+

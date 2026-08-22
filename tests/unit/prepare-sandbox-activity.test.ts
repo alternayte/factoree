@@ -8,6 +8,8 @@ import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
+import { MemorySecretStore } from "../support/memory-secret-store.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
@@ -19,7 +21,7 @@ const supersededCount = async (): Promise<number> => {
   return sample?.value ?? 0;
 };
 
-const build = (superseded: SupersededSandbox) => {
+const build = (superseded: SupersededSandbox, secretValues: Record<string, string> = {}) => {
   const sandbox = new FakeSandbox();
   sandbox.scriptExec(/rev-parse HEAD/, { stdout: `${HEAD}\n` });
   const runs = {
@@ -31,14 +33,17 @@ const build = (superseded: SupersededSandbox) => {
     findByAgentSession: vi.fn(),
     updateStatus: vi.fn(),
   };
+  const redactor = new Redactor();
   const activities = createSandboxActivities({
     sandboxManager: new SandboxManager({ sandbox }),
     sandbox,
     runs,
     reaper: new SpriteReaper({ sandboxes: { fake: sandbox }, runs }),
-    logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
+    secrets: new MemorySecretStore(secretValues),
+    redactor,
+    logger: createLogger({ level: "error", redactor, sink: () => undefined }),
   });
-  return { activities, sandbox, runs };
+  return { activities, sandbox, runs, redactor };
 };
 
 const input = {
@@ -78,3 +83,39 @@ describe("the prepareSandbox activity", () => {
     expect(await supersededCount()).toBe(before);
   });
 });
+
+describe("the prepareSandbox activity and SDD section 60", () => {
+  it("registers every Project secret with the redactor before it prepares anything", async () => {
+    const { activities, redactor } = build({ spriteId: null, adapter: null }, { API: "fixture-secret-value" });
+    await activities.prepareSandbox(input);
+    expect(redactor.redact("the log holds fixture-secret-value")).toBe("the log holds [REDACTED]");
+  });
+
+  it("redacts a Project secret that a failed bootstrap command printed", async () => {
+    const { activities, sandbox } = build({ spriteId: null, adapter: null }, { API: "fixture-secret-value" });
+    sandbox.scriptExec(/npm ci/, { exitCode: 1, stderr: "auth failed for fixture-secret-value" });
+    const error = await activities
+      .prepareSandbox({ ...input, config: { ...input.config, bootstrapCommand: "npm ci" } })
+      .catch((thrown: unknown) => thrown);
+    expect(String(error)).not.toContain("fixture-secret-value");
+    expect(String(error)).toContain("[REDACTED]");
+    // The class survives the redaction, so the workflow still recognises the configuration fault.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+  });
+
+  it("keeps the access token of a clone URL out of the error of a failed clone", async () => {
+    const { activities, sandbox } = build({ spriteId: null, adapter: null });
+    sandbox.scriptExec(/clone/, {
+      exitCode: 128,
+      stderr: "fatal: authentication failed for https://x-access-token:ghp_tokenvalue000000000000@github.com/acme/app.git",
+    });
+    const withToken = {
+      ...input,
+      primary: { url: "https://x-access-token:ghp_tokenvalue000000000000@github.com/acme/app.git", ref: "main" },
+    };
+    const error = await activities.prepareSandbox(withToken).catch((thrown: unknown) => thrown);
+    expect(String(error)).not.toContain("ghp_tokenvalue000000000000");
+    expect(String(error)).not.toContain("x-access-token");
+  });
+});
+

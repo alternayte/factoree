@@ -4,6 +4,7 @@ import {
   condition,
   defineQuery,
   defineSignal,
+  ApplicationFailure,
   isCancellation,
   proxyActivities,
   setHandler,
@@ -14,7 +15,11 @@ import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activiti
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { ProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
+
 import { buildWorkflowId } from "../temporal/workflow-id.js";
+// The workflow bundler resolves a relative path only, so this value import does not use the
+// `~/` alias.
+import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
 
 export interface AgentRunSandboxInput {
   primary: { url: string; ref: string };
@@ -69,8 +74,26 @@ const buildSandboxActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${Math.min(PREPARE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
-    retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
+    // SDD section 49: a semantic failure must not consume the infrastructure retry policy. A
+    // configuration fault repeats on every attempt, so it fails fast.
+    retry: {
+      maximumAttempts: 3,
+      initialInterval: "5 seconds",
+      backoffCoefficient: 2,
+      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE],
+    },
   });
+
+/**
+ * Reports whether a failure, or any cause below it, is the configuration error of the domain.
+ * Temporal wraps an activity error, so the type appears on a cause rather than on the top error.
+ */
+const isConfigurationFault = (error: unknown): boolean => {
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ApplicationFailure && current.type === RUN_CONFIGURATION_ERROR_TYPE) return true;
+  }
+  return false;
+};
 
 /**
  * The margin the Implementer activity keeps after the Run budget ends. It covers the
@@ -158,10 +181,10 @@ export async function agentRunWorkflow(
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
   const failRun = async (
-    failureReason: "RUN_TIMEOUT" | "IMPLEMENTATION_FAILED",
+    failureReason: "RUN_TIMEOUT" | "IMPLEMENTATION_FAILED" | "CONFIGURATION_INVALID",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
-    status = "FAILED";
+    status = failureReason === "CONFIGURATION_INVALID" ? "FAILED_CONFIGURATION" : "FAILED";
     // Write the durable terminal state first. A Linear outage must not leave the Run open.
     await activities.completeRun({
       tenantId: input.tenantId,
@@ -238,6 +261,15 @@ export async function agentRunWorkflow(
           environment: {},
         });
       } catch (error) {
+        // A configuration fault is not an infrastructure fault. The Run ends in
+        // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
+              "Repair the repository reference, the reference repositories, or the bootstrap command.",
+          );
+        }
         // Preparation is bounded by the remaining budget. A budget that ran out during
         // preparation is a Run timeout, not an internal fault.
         if (remainingMs() > 0) throw error;
@@ -314,6 +346,10 @@ export async function agentRunWorkflow(
       // SDD section 49: a semantic outcome drives a workflow decision. A failed attempt must not
       // fall into the wait and become a timeout.
       if (implementation === null || !implementation.completed) {
+        // SDD section 50: a Run that reaches the maximum duration fails with `RUN_TIMEOUT`. The
+        // runner reports a cancelled agent process as an incomplete attempt, so the deadline
+        // decides which of the two outcomes this is.
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
         return await failRun(
           "IMPLEMENTATION_FAILED",
           "The Implementer did not complete the change. Factoree ended the Run.",

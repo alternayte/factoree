@@ -109,7 +109,7 @@ export class PrismaRunRepository implements RunRepository {
         SELECT "spriteId", "spriteAdapter" FROM "Run"
         WHERE "id" = ${runId} AND "tenantId" = ${tenantId} FOR UPDATE`;
       const previous = rows[0];
-      await tx.run.updateMany({
+      const updated = await tx.run.updateMany({
         where: { id: runId, tenantId },
         data: {
           spriteId: sandbox.spriteId,
@@ -119,6 +119,12 @@ export class PrismaRunRepository implements RunRepository {
           implementerRunner: sandbox.implementerRunner,
         },
       });
+      // A write that reaches no row must not report success. The Run would then hold no
+      // reference to the sandbox, the activity would report a prepared sandbox anyway, and the
+      // reaper could never find it. A wrong Run or a wrong tenant lands here.
+      if (updated.count === 0) {
+        throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the sandbox reference`);
+      }
       return {
         spriteId: previous?.spriteId ?? null,
         adapter: previous?.spriteAdapter ?? null,

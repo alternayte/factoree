@@ -109,6 +109,25 @@ describe("PrismaRunRepository", () => {
     expect(await repository.listExpiredSandboxes(new Date(), 10)).toHaveLength(0);
   });
 
+  it("refuses to record a sandbox for a Run of another tenant, and reports the refusal", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-6"));
+    const patch = {
+      spriteId: "sprite-6",
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "c".repeat(40),
+      implementerRunner: "opencode",
+    };
+    // A wrong tenant reaches no row. A silent success would leave the sandbox unreferenced, and
+    // the reaper could never find it.
+    await expect(repository.setSandbox(tenantB, created.run.id, patch)).rejects.toThrow(
+      /received the sandbox reference/,
+    );
+    const stored = await repository.findById(tenantA, created.run.id);
+    expect(stored?.spriteId).toBeNull();
+  });
+
   it("reports the sandbox that setSandbox replaced", async () => {
     const repository = new PrismaRunRepository(prisma);
     const created = await repository.createIfAbsent(input("session-7"));
@@ -155,19 +174,6 @@ describe("PrismaRunRepository", () => {
     expect(superseded).toEqual(["sprite-8-original", loser].sort());
   });
 
-  it("refuses to record a sandbox for a Run of another tenant", async () => {
-    const repository = new PrismaRunRepository(prisma);
-    const created = await repository.createIfAbsent(input("session-6"));
-    await repository.setSandbox(tenantB, created.run.id, {
-      spriteId: "sprite-6",
-      adapter: "fake",
-      retainUntil: new Date(),
-      baseSha: "c".repeat(40),
-      implementerRunner: "opencode",
-    });
-    const stored = await repository.findById(tenantA, created.run.id);
-    expect(stored?.spriteId).toBeNull();
-  });
 });
 
 describe("PrismaWebhookLog", () => {

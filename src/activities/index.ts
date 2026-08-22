@@ -34,6 +34,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     sandbox: dependencies.sandbox,
     runs: dependencies.runs,
     reaper: dependencies.reaper,
+    secrets: dependencies.secrets,
+    redactor: dependencies.redactor,
     logger: dependencies.logger,
   }),
   ...createAgentActivities({

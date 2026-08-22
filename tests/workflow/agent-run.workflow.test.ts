@@ -8,6 +8,7 @@ import { buildWorkflowId } from "~/temporal/workflow-id.js";
 import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
 import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 
 let environment: TestWorkflowEnvironment;
 const created: string[] = [];
@@ -27,6 +28,10 @@ const heldImplementations = new Map<string, Promise<void>>();
 const failingImplementations = new Set<string>();
 /** The run ids whose live Implementer session the activity cancelled. */
 const cancelledLiveSessions: string[] = [];
+/** Every message the workflow posted to the human on the error path. */
+const postedErrors: string[] = [];
+/** The run ids whose preparation double raises a configuration fault. */
+const configurationFaults = new Set<string>();
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
@@ -46,9 +51,14 @@ const activities = {
   postProgress: async () => undefined,
   postElicitation: async () => undefined,
   postFinalResponse: async () => undefined,
-  postError: async () => undefined,
+  postError: async (activityInput: { message: string }) => {
+    postedErrors.push(activityInput.message);
+  },
   prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
     prepared.push(activityInput);
+    if (configurationFaults.has(activityInput.runId)) {
+      throw new RunConfigurationError("the bootstrap command failed with exit code 1: no such file");
+    }
     await heldPreparations.get(activityInput.runId);
     return {
       spriteId: `sprite-${activityInput.runId}`,
@@ -354,6 +364,7 @@ describe("agentRunWorkflow", () => {
       });
       expect(result.status).toBe("FAILED");
       expect(completions.at(-1)?.failureReason).toBe("IMPLEMENTATION_FAILED");
+      expect(postedErrors.at(-1)).toBe("The Implementer did not complete the change. Factoree ended the Run.");
     } finally {
       failingImplementations.delete("run-session-k");
     }
@@ -421,3 +432,68 @@ describe("agentRunWorkflow", () => {
     });
   });
 });
+
+describe("a configuration fault during preparation", () => {
+  it("fails fast with FAILED_CONFIGURATION and never retries the activity", async () => {
+    configurationFaults.add("run-ses-configuration");
+    const before = prepared.filter((entry) => entry.runId === "run-ses-configuration").length;
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-configuration"),
+        args: [{ ...input("ses-configuration"), sandbox: sandboxInput }],
+      });
+      return handle.result();
+    });
+
+    expect(result.status).toBe("FAILED_CONFIGURATION");
+    const completion = completions.find((entry) => entry.runId === "run-ses-configuration");
+    expect(completion?.status).toBe("FAILED_CONFIGURATION");
+    expect(completion?.failureReason).toBe("CONFIGURATION_INVALID");
+    // SDD section 49: a semantic failure must not consume the infrastructure retry policy.
+    const attempts = prepared.filter((entry) => entry.runId === "run-ses-configuration").length - before;
+    expect(attempts).toBe(1);
+    configurationFaults.delete("run-ses-configuration");
+  });
+});
+
+describe("an Implementer that ends because the Run budget ended", () => {
+  it("fails with RUN_TIMEOUT, not with IMPLEMENTATION_FAILED", async () => {
+    // SDD section 50. The runner cancels the agent process at the deadline and reports an
+    // incomplete attempt. The Run reached its maximum duration, so the reason is the timeout.
+    let release = (): void => undefined;
+    heldImplementations.set(
+      "run-session-timeout",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    failingImplementations.add("run-session-timeout");
+    try {
+      const result = await runWorker(async () => {
+        const handle = await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "session-timeout"),
+          args: [{ ...input("session-timeout", 0.2), sandbox: sandboxInput }],
+        });
+        await waitFor(
+          () => implementCalls.some((entry) => entry.runId === "run-session-timeout"),
+          "the Implementer of session-timeout",
+        );
+        // The workflow clock passes the Run budget while the Implementer still runs.
+        await environment.sleep("20 seconds");
+        release();
+        return handle.result();
+      });
+      expect(result.status).toBe("FAILED");
+      expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
+      expect(postedErrors.at(-1)).toBe(
+        "Factoree stopped the Run because it reached the maximum Run duration.",
+      );
+    } finally {
+      heldImplementations.delete("run-session-timeout");
+      failingImplementations.delete("run-session-timeout");
+    }
+  });
+});
+

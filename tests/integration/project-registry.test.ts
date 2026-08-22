@@ -72,6 +72,28 @@ describe("project registry", () => {
     expect(stored.valueCipher).not.toContain("ghp_value_for_test_1234567890");
     expect(await secrets.get(tenant.id, project.id, "GITHUB_TOKEN")).toBe("ghp_value_for_test_1234567890");
     expect(await secrets.listNames(tenant.id, project.id)).toEqual(["GITHUB_TOKEN"]);
+    // SDD section 30. A secret carries no injection mark unless the operator sets one.
+    expect(await secrets.list(tenant.id, project.id)).toEqual([
+      { name: "GITHUB_TOKEN", injectIntoImplementer: false },
+    ]);
+  });
+
+  it("keeps the injection mark of a secret the operator marked", async () => {
+    const tenant = await tenants.ensureTenant("ws-4b", "Workspace Four B");
+    const project = await projects.create({
+      tenantId: tenant.id,
+      key: "injected",
+      name: "Injected",
+      primaryRepository: "acme/injected",
+    });
+    await secrets.put(tenant.id, project.id, "FIXTURE_URL", "http://localhost:9999", {
+      injectIntoImplementer: true,
+    });
+    await secrets.put(tenant.id, project.id, "GITHUB_TOKEN", "ghp_value_for_test_1234567890");
+    expect(await secrets.list(tenant.id, project.id)).toEqual([
+      { name: "FIXTURE_URL", injectIntoImplementer: true },
+      { name: "GITHUB_TOKEN", injectIntoImplementer: false },
+    ]);
   });
 
   it("does not return a secret to another tenant", async () => {

@@ -6,12 +6,31 @@ export interface SandboxUnderTest {
   dispose: () => Promise<void>;
 }
 
+export interface SandboxContractOptions {
+  /**
+   * True when the subject really runs a command. An in-memory double records a command and
+   * answers it from a script, so it cannot honour stdout, an exit code, a working directory, an
+   * environment variable, a timeout, or the isolation of two workspaces. Such a subject claims
+   * the lifecycle part of the contract only. The execution part stays as strong as it was.
+   */
+  executesCommands?: boolean;
+}
+
 /**
  * Every Sandbox adapter must pass this suite. SDD section 12 requires that the Fly Sprites
  * adapter be replaceable, so the behaviour the rest of Factoree depends on lives here and
  * not in one adapter's own test file.
+ *
+ * The suite has two parts. Every conformer passes the lifecycle part. A conformer that executes
+ * commands passes the execution part as well.
  */
-export const runSandboxContract = (name: string, create: () => Promise<SandboxUnderTest>): void => {
+export const runSandboxContract = (
+  name: string,
+  create: () => Promise<SandboxUnderTest>,
+  options: SandboxContractOptions = {},
+): void => {
+  const executesCommands = options.executesCommands ?? true;
+  const whenExecuting = executesCommands ? it : it.skip;
   describe(`Sandbox contract: ${name}`, () => {
     const withSandbox = async (body: (subject: SandboxUnderTest) => Promise<void>): Promise<void> => {
       const subject = await create();
@@ -34,7 +53,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("runs a command and reports stdout and a zero exit code", async () => {
+    whenExecuting("runs a command and reports stdout and a zero exit code", async () => {
       await withSandbox(async ({ sandbox }) => {
         const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
         const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "printf hello"] });
@@ -45,7 +64,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("reports a non-zero exit code and stderr without throwing", async () => {
+    whenExecuting("reports a non-zero exit code and stderr without throwing", async () => {
       await withSandbox(async ({ sandbox }) => {
         const ref = await sandbox.create({ runId: "run-2", tenantId: "t", projectId: "p" });
         const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "printf oops >&2; exit 3"] });
@@ -55,7 +74,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("runs a command in the workspace by default and honours cwd and env", async () => {
+    whenExecuting("runs a command in the workspace by default and honours cwd and env", async () => {
       await withSandbox(async ({ sandbox }) => {
         const ref = await sandbox.create({ runId: "run-3", tenantId: "t", projectId: "p" });
         await sandbox.exec(ref, { file: "sh", args: ["-c", "mkdir -p sub && printf x > sub/f"] });
@@ -71,7 +90,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("stops a command at its timeout and reports timedOut", async () => {
+    whenExecuting("stops a command at its timeout and reports timedOut", async () => {
       await withSandbox(async ({ sandbox }) => {
         const ref = await sandbox.create({ runId: "run-4", tenantId: "t", projectId: "p" });
         const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "sleep 30"], timeoutMs: 500 });
@@ -81,7 +100,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("starts a process, reads its output, and reports it as finished", async () => {
+    whenExecuting("starts a process, reads its output, and reports it as finished", async () => {
       await withSandbox(async ({ sandbox }) => {
         const ref = await sandbox.create({ runId: "run-5", tenantId: "t", projectId: "p" });
         const process = await sandbox.startProcess(ref, { file: "sh", args: ["-c", "printf started; exit 0"] });
@@ -104,7 +123,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("cancelling an already finished process does not throw", async () => {
+    whenExecuting("cancelling an already finished process does not throw", async () => {
       await withSandbox(async ({ sandbox }) => {
         const ref = await sandbox.create({ runId: "run-7", tenantId: "t", projectId: "p" });
         const process = await sandbox.startProcess(ref, { file: "sh", args: ["-c", "exit 0"] });
@@ -143,7 +162,7 @@ export const runSandboxContract = (name: string, create: () => Promise<SandboxUn
       });
     });
 
-    it("isolates two sandboxes from one another", async () => {
+    whenExecuting("isolates two sandboxes from one another", async () => {
       await withSandbox(async ({ sandbox }) => {
         const first = await sandbox.create({ runId: "run-11", tenantId: "t", projectId: "p" });
         const second = await sandbox.create({ runId: "run-12", tenantId: "t", projectId: "p" });

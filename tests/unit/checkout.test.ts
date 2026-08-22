@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkoutRepositories } from "~/domain/runs/checkout.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
 const input = {
@@ -28,6 +29,43 @@ describe("checkoutRepositories", () => {
     const clones = sandbox.commands.filter((command) => command.args.includes("clone"));
     expect(clones).toHaveLength(2);
     for (const clone of clones) expect(clone.args).toContain("--no-hardlinks");
+  });
+
+  it("fetches the tags, because a ref can be a tag", async () => {
+    // `--no-tags` was removed. A clone without tags leaves `git checkout --detach <tag>` with
+    // nothing to resolve, and git then reads the tag as a path and fails.
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    await checkoutRepositories(sandbox, ref, input);
+    const clones = sandbox.commands.filter((command) => command.args.includes("clone"));
+    for (const clone of clones) expect(clone.args).not.toContain("--no-tags");
+  });
+
+  it("keeps the access token of a clone URL out of the error of a failed clone", async () => {
+    // SDD section 60. The error escapes into Temporal history, which is external persistence.
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/clone/, {
+      exitCode: 128,
+      stderr: "fatal: could not read from https://x-access-token:ghp_realtokenvalue000000000@github.com/acme/app.git",
+    });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const withToken = {
+      primary: { url: "https://x-access-token:ghp_realtokenvalue000000000@github.com/acme/app.git", ref: "main" },
+      references: [],
+    };
+    const error = await checkoutRepositories(sandbox, ref, withToken).catch((thrown: unknown) => thrown);
+    const message = String(error);
+    expect(message).not.toContain("ghp_realtokenvalue000000000");
+    expect(message).not.toContain("x-access-token");
+    expect(message).toContain("github.com/acme/app.git");
+  });
+
+  it("reports a ref that git cannot resolve as a configuration fault", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/checkout --detach/, { exitCode: 128, stderr: "fatal: invalid reference: v9" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    await expect(checkoutRepositories(sandbox, ref, input)).rejects.toBeInstanceOf(RunConfigurationError);
   });
 
   it("clones every reference repository under its own directory", async () => {
@@ -130,6 +168,26 @@ describe("checkoutRepositories path safety", () => {
     expect(result.references[0]?.path).toBe("/workspace/reference/design");
   });
 
+  it("rejects the same reference repository URL twice, even at two different refs", async () => {
+    // Both entries resolve to one directory. Git would report a directory that exists, and that
+    // message names nothing an operator can act on.
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const duplicateInput = {
+      primary: { url: "https://github.com/acme/app.git", ref: "main" },
+      references: [
+        { url: "https://github.com/acme/design.git", ref: "main" },
+        { url: "https://github.com/acme/design.git", ref: "v1.0.0" },
+      ],
+    };
+    const error = await checkoutRepositories(sandbox, ref, duplicateInput).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toMatch(/appears more than once/);
+    // The check runs before the first reference clone, so only the primary was cloned.
+    expect(sandbox.commands.filter((command) => command.args.includes("clone"))).toHaveLength(1);
+  });
+
   it("fails before any clone when two reference repositories derive the same directory name", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
@@ -141,9 +199,9 @@ describe("checkoutRepositories path safety", () => {
         { url: "https://gitlab.com/other/design.git", ref: "main" },
       ],
     };
-    await expect(checkoutRepositories(sandbox, ref, collidingInput)).rejects.toThrow(
-      /both derive the directory name "design"/,
-    );
+    const error = await checkoutRepositories(sandbox, ref, collidingInput).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toMatch(/both derive the directory name "design"/);
     const cloneCount = sandbox.commands.filter((command) => command.args.includes("clone")).length;
     expect(cloneCount).toBe(1);
   });

@@ -73,6 +73,46 @@ const restoreWritePermission = async (path: string): Promise<void> => {
  * enforce an egress policy. It reports `enforcesNetworkPolicy: false`. `SandboxManager` refuses
  * to run an agent in it unless the caller opts in. Production uses `FlySpriteSandbox`.
  */
+/**
+ * The host variables one child process may read.
+ *
+ * SDD section 30 forbids the Implementer receiving a Factoree admin credential, a Linear token,
+ * or a GitHub write credential. The worker holds all three in its own environment, so the child
+ * receives an allow list and nothing else. A deny list is wrong by default, and one forgotten
+ * name leaks an admin credential. `FlySpriteSandbox` already passes the command environment
+ * alone, so the two adapters now agree.
+ *
+ * Each entry earns its place:
+ * `PATH` finds `git`, `sh`, and `node`. `HOME` gives git and npm a place for a configuration
+ * file and a cache. `TMPDIR`, `TMP`, and `TEMP` name the temporary directory a tool writes to.
+ * `LANG`, `LC_ALL`, and `TZ` fix the text encoding and the time of a tool that formats output.
+ * `TERM` stops a tool that reads the terminal type from failing. `SHELL` answers a tool that
+ * asks for the login shell. `SYSTEMROOT` is mandatory for a process on Windows.
+ */
+const INHERITED_ENVIRONMENT_NAMES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+  "TERM",
+  "SHELL",
+  "SYSTEMROOT",
+] as const;
+
+/** Builds the environment of one child process from the allow list and the command. */
+const buildChildEnvironment = (commandEnvironment?: Record<string, string>): NodeJS.ProcessEnv => {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const name of INHERITED_ENVIRONMENT_NAMES) {
+    const value = process.env[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return { ...environment, ...commandEnvironment };
+};
+
 export class LocalProcessSandbox implements Sandbox {
   readonly name = "local";
   readonly capabilities: SandboxCapabilities = {
@@ -109,11 +149,9 @@ export class LocalProcessSandbox implements Sandbox {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
-      // The child process inherits the full host environment. This choice is deliberate for a
-      // local development and test adapter. The production adapter does not do this.
       const child = spawn(command.file, command.args, {
         cwd: this.resolveCwd(ref, command.cwd),
-        env: { ...process.env, ...command.env },
+        env: buildChildEnvironment(command.env),
       });
       const timer =
         command.timeoutMs === undefined
@@ -141,11 +179,9 @@ export class LocalProcessSandbox implements Sandbox {
     // This method ignores command.timeoutMs. The caller must enforce its own deadline and stop
     // the process with cancelProcess.
     const id = `process-${randomUUID().slice(0, 8)}`;
-    // The child process inherits the full host environment. This choice is deliberate for a
-    // local development and test adapter. The production adapter does not do this.
     const child = spawn(command.file, command.args, {
       cwd: this.resolveCwd(ref, command.cwd),
-      env: { ...process.env, ...command.env },
+      env: buildChildEnvironment(command.env),
     });
     const record: RunningProcess = {
       stdout: "",

@@ -26,6 +26,13 @@ const PATTERNS: RegExp[] = [
   /Bearer\s+[A-Za-z0-9._~+/-]{16,}=*/gi,
 ];
 
+/**
+ * Matches the userinfo of a URL. A clone URL of a private repository carries an access token
+ * here, and that token is not a Project secret, so no secret list can catch it. The host stays
+ * readable, because an operator needs it to understand the failure.
+ */
+const URL_USERINFO = /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/\s@]+@/g;
+
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export class Redactor {
@@ -40,6 +47,14 @@ export class Redactor {
     // log line. A Project secret shorter than four characters is a configuration fault, not a
     // redaction fault.
     if (value.length >= 4) this.secrets.add(value);
+  }
+
+  /**
+   * Redacts one string. A caller that must keep the class of an error uses this method and
+   * writes the result back into the message of that error.
+   */
+  redactText(value: string): string {
+    return this.redactString(value);
   }
 
   redact<T>(value: T): T {
@@ -66,7 +81,7 @@ export class Redactor {
   }
 
   private redactString(value: string): string {
-    let output = value;
+    let output = value.replace(URL_USERINFO, `$1${REDACTED}@`);
     for (const secret of this.secrets) {
       output = output.replace(new RegExp(escapeRegExp(secret), "g"), REDACTED);
     }

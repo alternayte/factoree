@@ -20,8 +20,9 @@ export const CREDENTIAL_VALUE_PATTERNS: readonly RegExp[] = [
   /github_pat_[A-Za-z0-9_]{20,}/,
   // Anthropic API keys.
   /sk-ant-[A-Za-z0-9-]{20,}/,
-  // OpenAI-style API keys.
-  /sk-[A-Za-z0-9]{20,}/,
+  // OpenAI-style API keys. The word boundary stops a match inside an ordinary word such as
+  // `risk-` or `disk-` that a long alphanumeric run follows.
+  /\bsk-[A-Za-z0-9]{20,}/,
   // Linear API keys and OAuth tokens.
   /lin_(?:api|oauth)_[A-Za-z0-9]{20,}/,
 ];
