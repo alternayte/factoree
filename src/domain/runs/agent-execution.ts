@@ -14,6 +14,15 @@ export interface RecordAgentExecutionInput {
    * default, so this carries the outcome and the redacted summary only.
    */
   finalResult: { completed: boolean; exitCode: number; cancelled: boolean; summary: string };
+  /**
+   * Identifies one execution attempt, unique within the tenant. The caller derives this value
+   * from something that identifies the attempt itself, not from a Temporal activity retry
+   * counter. A Temporal activity retries with unchanged arguments, so a `record` call carrying
+   * the same key must return the existing row rather than write a second one. A genuinely
+   * distinct attempt, for example a later repair loop attempt for the same Run and role, uses a
+   * distinct key and writes a distinct row.
+   */
+  idempotencyKey: string;
 }
 
 export interface AgentExecutionRecord extends RecordAgentExecutionInput {

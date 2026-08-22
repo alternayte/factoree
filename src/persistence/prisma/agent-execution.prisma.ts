@@ -10,8 +10,18 @@ export class PrismaAgentExecutionRepository implements AgentExecutionRepository 
   constructor(private readonly prisma: PrismaClient) {}
 
   async record(input: RecordAgentExecutionInput): Promise<AgentExecutionRecord> {
-    const row = await this.prisma.agentExecution.create({
-      data: {
+    // A retried Temporal activity calls this method again with the same idempotency key. The
+    // unique constraint on (tenantId, idempotencyKey) makes the write collide, and the upsert
+    // returns the row that already exists rather than creating a second one.
+    const row = await this.prisma.agentExecution.upsert({
+      where: {
+        tenantId_idempotencyKey: {
+          tenantId: input.tenantId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      },
+      update: {},
+      create: {
         tenantId: input.tenantId,
         runId: input.runId,
         role: input.role,
@@ -21,6 +31,7 @@ export class PrismaAgentExecutionRepository implements AgentExecutionRepository 
         promptVersion: input.promptVersion,
         durationMs: input.durationMs,
         finalResult: input.finalResult,
+        idempotencyKey: input.idempotencyKey,
       },
     });
     return toRecord(row);
@@ -47,9 +58,13 @@ interface Row {
   promptVersion: string | null;
   durationMs: number | null;
   finalResult: unknown;
+  idempotencyKey: string;
   createdAt: Date;
 }
 
+// This repository is the only writer of `finalResult` today, and it always writes the shape
+// declared on `RecordAgentExecutionInput`. The cast below assumes that shape rather than
+// checking it at run time. A second writer must add a runtime check here.
 const toRecord = (row: Row): AgentExecutionRecord => ({
   id: row.id,
   tenantId: row.tenantId,
@@ -61,5 +76,6 @@ const toRecord = (row: Row): AgentExecutionRecord => ({
   promptVersion: row.promptVersion ?? "",
   durationMs: row.durationMs ?? 0,
   finalResult: row.finalResult as RecordAgentExecutionInput["finalResult"],
+  idempotencyKey: row.idempotencyKey,
   createdAt: row.createdAt,
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { Redactor } from "~/telemetry/redaction.js";
+import { createLogger } from "~/telemetry/logger.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 
 const store = (values: Record<string, string>): SecretStore => ({
@@ -34,5 +35,33 @@ describe("registerProjectSecrets", () => {
     const redactor = new Redactor();
     const result = await registerProjectSecrets(redactor, store({ A: "alpha-secret" }), "t", "p");
     expect(typeof result).toBe("number");
+  });
+
+  it("warns through the redacted logger for a secret below the short-secret threshold", async () => {
+    const redactor = new Redactor();
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", redactor, sink: (line) => lines.push(line) });
+    await registerProjectSecrets(redactor, store({ A: "pw12" }), "tenant-1", "project-1", logger);
+    expect(lines).toHaveLength(1);
+    const entry = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(entry["level"]).toBe("warn");
+    expect(entry["secret_name"]).toBe("A");
+    expect(entry["secret_length"]).toBe(4);
+    expect(JSON.stringify(entry)).not.toContain("pw12");
+  });
+
+  it("does not warn for a secret at or above the short-secret threshold", async () => {
+    const redactor = new Redactor();
+    const lines: string[] = [];
+    const logger = createLogger({ level: "debug", redactor, sink: (line) => lines.push(line) });
+    await registerProjectSecrets(redactor, store({ A: "eightchr" }), "tenant-1", "project-1", logger);
+    expect(lines).toHaveLength(0);
+  });
+
+  it("does not warn when the caller supplies no logger", async () => {
+    const redactor = new Redactor();
+    await expect(
+      registerProjectSecrets(redactor, store({ A: "pw12" }), "tenant-1", "project-1"),
+    ).resolves.toBe(1);
   });
 });

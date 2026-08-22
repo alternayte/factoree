@@ -110,8 +110,13 @@ model AgentExecution {
   durationMs     Int?
   finalResult    Json?
   costMetadata   Json?
+  // Identifies one execution attempt. The caller sets this, so a Temporal activity retry with
+  // unchanged arguments collides on the same key and does not write a second row. A distinct
+  // attempt, for example a repair loop attempt, uses a distinct key and writes a distinct row.
+  idempotencyKey String
   createdAt      DateTime  @default(now())
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([runId])
 }
