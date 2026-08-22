@@ -60,50 +60,67 @@ than deleted, as a record of the SDK behaviour that made the fix necessary.
 `Sprite.listSessions()` returns `Session` values. A `Session` carries `id`, `command`,
 `workdir`, `created`, `bytesPerSecond`, `isActive`, `lastActivity`, and `tty`. It carries no
 `stdout`, `stderr`, or `exitCode`. `Sprite.attachSession` can reconnect to a session that is
-still active and stream its future output, but the SDK never replays output already produced,
-and it never reports the exit code of a session that has already finished. This remains a
-genuine SDK gap, not a translation error: no documented, undocumented, or control-mode API
-call reads a finished session's exit code or its accumulated output.
+still active. It can stream that session's future output. The SDK never replays output
+already produced. It never reports the exit code of a session that has already finished.
+This remains a genuine SDK gap, not a translation error. No documented, undocumented, or
+control-mode API call reads a finished session's exit code or its accumulated output.
 
-**Fix round 1 closes this gap with a shell wrapper, built entirely from documented SDK
-calls.** `FlySpriteSandbox.startProcess` no longer asks the SDK to identify the process it
+**Fix round 1 closed this gap with a shell wrapper.** It is built entirely from documented
+SDK calls. `FlySpriteSandbox.startProcess` no longer asks the SDK to identify the process it
 starts. Instead:
 
-- It generates its own identifier, `proc-<8 hex characters>`, from `randomUUID()`.
-- It computes a per-process directory inside the sandbox,
-  `<workspacePath>/.factoree/proc/<id>`.
-- It builds a wrapper script and starts it through `SpritesGateway.startDetached`, which calls
-  `Sprite.createSession` with `detachable: true` under the hood. The wrapper runs under `sh -c`
-  and receives the real command as positional parameters, `"$@"`, rather than as text folded
-  into the script, so the caller's file and arguments stay intact and the shell never splits
-  them apart again. It creates the process directory, backgrounds the real command with standard output
-  sent to an `out` file and standard error sent to an `err` file, records the backgrounded
-  job's process group leader to a `pid` file the moment the job starts, waits for the command,
-  and writes its numeric exit code to an `exit` file last. The `exit` file's presence is the
-  signal that the process finished; no session field reports it, so nothing else can serve
-  as that signal.
+- It generates its own identifier, `proc-<8 hex characters>`, from `randomUUID()`, and
+  computes a per-process directory inside the sandbox, `<workspacePath>/.factoree/proc/<id>`.
+- `startProcess` creates that directory itself, with a blocking `execFile("mkdir", ["-p",
+  dir], ...)` call, before it starts anything. This makes the directory's presence a reliable
+  signal that Factoree issued this identifier, not merely that the wrapper has run.
+- It builds a wrapper script and starts it through `SpritesGateway.startDetached`. Round 1's
+  evidence stated that `startDetached` passes `detachable: true` to `Sprite.createSession`
+  itself. That credited the wrong code. `startDetached` passes only `cwd` and `env`.
+  `Sprite.createSession` forces `detachable: true` on every call, on the SDK's own side, seen
+  directly in `sprite.js`. The behaviour round 1 described was correct. The code credited for
+  it was not.
+- The wrapper runs under `sh -c`. It receives the real command as positional parameters,
+  `"$@"`, rather than as text folded into the script. The caller's file and arguments stay
+  intact this way, and the shell never splits them apart again. Before it backgrounds the
+  real command, it checks for a `cancel` marker file, described below, and stops there if the
+  marker is present. Otherwise it backgrounds the real command, with standard output sent to
+  an `out` file and standard error sent to an `err` file. It records the backgrounded job's
+  process group leader to a `pid` file the moment the job starts. It waits for the command,
+  then writes its numeric exit code to an `exit` file last. The `exit` file's presence is the
+  signal that the process finished. No session field reports it, so nothing else can serve as
+  that signal.
 - `startProcess` returns `{ id }` with the identifier Factoree generated. It does not touch
   the SDK's session ID at all.
-- `readProcess` reads the three files back with `exec`, through `sh -c` scripts of the form
-  `if [ -f PATH ]; then cat PATH; fi`, so a file that does not exist yet produces empty output
-  rather than an error. When the `exit` file is absent, the process is running, and
+- `readProcess` first checks whether the process directory exists. An identifier whose
+  directory is absent throws a `SandboxError` naming it. This is a round 2 fix, recorded in
+  item 3 below, in place of a report of `running: true` forever. Once the directory is
+  confirmed, it reads the three files back with `exec`, through `sh -c` scripts of the form
+  `if [ -f PATH ]; then cat PATH; fi`. A file that does not exist yet produces empty output
+  this way, rather than an error. When the `exit` file is absent, the process is running, and
   `readProcess` reports `exitCode: null`. When it is present, `readProcess` parses its
   contents as the exit code. It returns whatever `out` and `err` hold either way, so a caller
   can watch progress before the process finishes.
-- `cancelProcess` reads the `pid` file. An identifier that was never issued, or one whose pid
-  file was never written, has nothing to cancel, and `cancelProcess` returns without an error.
-  Otherwise, it sends `SIGTERM` to the negative of that process ID, the process group, so a
-  child the wrapped command spawned is terminated along with it, and falls back to a direct
-  `kill` of the same ID if the process-group form is rejected. The whole call is wrapped in a
-  catch that never rethrows, so cancellation of a process that has already gone stays
-  idempotent, matching `destroy`.
+- `cancelProcess` first checks the process directory. An absent directory means the
+  identifier was never issued, or the sandbox is already gone, and the method returns without
+  an error. Otherwise it writes a `cancel` marker file, a round 2 fix recorded in item 1
+  below, that the wrapper checks before it launches anything. It then rereads the `pid` file,
+  up to five times, forty milliseconds apart, before it gives up. Once a pid is read, it
+  sends `SIGTERM` to the negative of that process ID, the process group, so a child the
+  wrapped command spawned is terminated with it. A direct `kill` of the same ID is the
+  fallback, used when the process-group form is rejected. The whole call sits inside a catch
+  that never rethrows. Cancellation of a process that has already gone stays idempotent this
+  way, matching `destroy`.
 
-This scheme uses only `execFile` and `startDetached` (`Sprite.createSession` underneath),
-both documented SDK calls; it needs no control-mode `ControlConnection` and no filesystem API
-beyond what `exec` already provides through shell redirection. `tests/unit/fly-sprite-sandbox.
-test.ts` covers a running process, where the `exit` file is absent, a finished process with a
-zero exit code, a finished process with a non-zero exit code, and a cancel that does not throw
-for an identifier that was never issued.
+This scheme uses only `execFile` and `startDetached`, both documented SDK calls. It needs no
+control-mode `ControlConnection`. It needs no filesystem API beyond what `exec` already
+provides through shell redirection.
+
+`tests/unit/fly-sprite-sandbox.test.ts` covers seven cases: a running process; a finished
+process with a zero exit code; a finished process with a non-zero exit code; an unissued
+identifier, which throws instead of a poll that never ends; a cancel of a running process; a
+cancel that still terminates a process which starts during the cancel window; and a cancel of
+an identifier that was never issued.
 
 ## 6. `createCheckpoint` returns a progress stream, not a checkpoint document
 
@@ -134,10 +151,18 @@ throws a `SandboxError` that states the SDK has no documented port-publication A
 
 **Fix round 1 changed `FlySpriteSandbox.capabilities.supportsExposedServices` to `false`.** A
 flag that claims a capability the adapter does not have is worse than an honest `false`.
-Nothing calls `exposeService` before Phase 7, so this has no caller to update today. Phase 7
-or Phase 12 flips the flag back to `true` once the real port-publication mechanism is proved
-against a live sprite, for example by a test of `httpPort` followed by a read of `sprite.url`.
-`tests/unit/fly-sprite-sandbox.test.ts` now asserts the flag reads `false`.
+Phase 7 or Phase 12 flips the flag back to `true` once the real port-publication mechanism is
+proved against a live sprite, for example by a test of `httpPort` followed by a read of
+`sprite.url`. `tests/unit/fly-sprite-sandbox.test.ts` asserts the flag reads `false`.
+
+**Fix round 1 left a contradiction that fix round 2 closed.** `exposeService` still called
+through to the gateway and returned whatever URL it yielded. A gateway other than the
+production seam, including the test's own fake, can therefore make `exposeService` return a
+URL. `capabilities.supportsExposedServices` reported `false` at the same time.
+`FlySpriteSandbox.exposeService` now throws a `SandboxError` itself, before it ever reaches a
+gateway. `createService` is removed from `SpritesSpriteHandle` and from the seam entirely,
+since nothing calls it any more. `tests/unit/fly-sprite-sandbox.test.ts` asserts the rejection
+and checks that its message names the port.
 
 ## 8. Interface-level change: `SpritesSpriteHandle` and `SpritesGateway` use property syntax
 
@@ -196,8 +221,60 @@ directory as the caller's responsibility.
 
 ## Fix round 1 status
 
-Ruling 1 (item 5, the `readProcess` gap) and ruling 2 (item 7, the capability flag) are both
-resolved in code, covered by new unit tests, and recorded above. Ruling 3 required no code
-change; item 9 now records that a later task gives `SandboxManager` ownership of the workspace
-directory. Item 6, the checkpoint correlation, stays as originally documented, out of scope
-for this round by explicit instruction.
+Ruling 1 addressed the `readProcess` gap, item 5. Ruling 2 addressed the capability flag,
+item 7. Both are resolved in code, covered by unit tests, and recorded above. Ruling 3
+required no code change. Item 9 records that a later task gives `SandboxManager` ownership of
+the workspace directory. Item 6, the checkpoint correlation, stays as originally documented,
+out of scope for that round by explicit instruction.
+
+## Fix round 2 status
+
+A task review confirmed the shell quoting, the SDK confinement to the seam, the deny-all
+policy, and three evidence claims from round 1. It found three behavioural defects.
+
+- **Finding 1 (Important), the `cancelProcess` start-window gap.** `cancelProcess` returned
+  silently when a cancel arrived before the wrapper had written its `pid` file. A stop signal
+  issued in the first moments of a Run left the process alive. SDD section 50 requires a
+  stop signal to terminate the active process, and acceptance test AT-31 proves it. Item 5
+  above now records the fix: a cancel marker the wrapper checks before it launches anything,
+  plus a bounded reread of the `pid` file. One open window remains, between the wrapper's
+  marker check and its `pid` write. Both are local shell steps, with no network round trip
+  between them. This narrows the window close to zero. It does not prove the window closed,
+  since no lock enforces it. `tests/unit/fly-sprite-sandbox.test.ts` proves a cancel issued
+  before the `pid` file exists still terminates the process, through a fake whose `pid` file
+  appears mid-retry.
+- **Finding 2 (Important), `exposeService` threw only inside the seam.** Item 7 above
+  records this fix: `exposeService` now throws a `SandboxError` itself. `createService` is
+  gone from the seam.
+- **Finding 3 (Minor, promoted), an unknown process identifier polled forever.** Item 5 above
+  records this fix: `readProcess` now throws a `SandboxError` that names the identifier, when
+  its process directory does not exist. This matches `LocalProcessSandbox`.
+
+Three further fixes rode along in the same files:
+
+- `sprites-client.ts`'s `normalizeExecFailure` now coerces a non-zero exit failure's `stdout`
+  and `stderr` to a string on the failure path. The success path already did this. `ExecResult`
+  permits a `Buffer` for either field; without this fix, one turns silently into an empty
+  string.
+- `fly-sprite-sandbox.ts` now uses `posix.join` and `posix.isAbsolute` everywhere it builds or
+  resolves a path, such as `resolveCwd`, which used the platform `join` and `isAbsolute`
+  before. Every path in this file addresses a remote POSIX filesystem, regardless of the host
+  platform this code runs on.
+- The kill script's process-group signal and its direct-pid signal are now joined with `||`.
+  The direct signal fires only when the process-group signal is rejected. This matches what
+  item 5 already described as a fallback.
+
+`tests/unit/fly-sprite-sandbox.test.ts` also gained the three assertions the review named. A
+command's `timeoutMs` reaches the gateway as `timeout` on `exec`. `startProcess` never passes
+a `timeout`, since `startProcess` ignores it by contract. `exposeService` rejects.
+
+### Open questions for Phase 12
+
+- Whether a detached session survives `command.close()` when `maxRunAfterDisconnect` is left
+  unset. If the server's default kills a session on client disconnect, every process this
+  adapter starts dies immediately, and only a live sprite can settle this.
+- Whether `set -m` reliably gives the backgrounded command its own process group, across
+  every shell the Fly Sprites base image can run. `cancelProcess`'s process-group kill depends
+  on this.
+- What `ramMB`, `cpus`, and `storageGB` a Run needs by default. `FlySpriteSandboxOptions.config`
+  currently passes on whatever the caller supplies, with no resource guidance of its own.

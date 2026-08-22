@@ -1,6 +1,5 @@
 import type { Checkpoint, Sprite } from "@fly/sprites";
 import { SpritesClient } from "@fly/sprites";
-import { SandboxError } from "~/domain/runs/sandbox.js";
 
 /**
  * The narrow seam over `@fly/sprites`. Only this file knows the SDK. The adapter above it, the
@@ -35,7 +34,6 @@ export interface SpritesSpriteHandle {
   startDetached: (file: string, args: string[], options: SpritesExecOptions) => Promise<void>;
   createCheckpoint: (comment: string) => Promise<{ id: string }>;
   updateNetworkPolicy: (policy: { rules: Array<{ domain: string; action: "allow" | "deny" }> }) => Promise<void>;
-  createService: (port: number) => Promise<{ url: string }>;
   delete: () => Promise<void>;
 }
 
@@ -59,21 +57,31 @@ export interface SpritesGatewayOptions {
   baseUrl?: string;
 }
 
-const ADAPTER_NAME = "fly-sprites";
-
 /**
  * The SDD chunk that first drafted this file assumed the real SDK names a timeout error
  * `TimeoutError`. The real SDK instead resolves a timed-out command with a plain `Error` and no
  * name of its own. This function restores the name `FlySpriteSandbox` expects, so it needs no
- * change to recognise a timeout.
+ * change to recognise a timeout. It also normalizes a non-zero exit failure's `stdout` and
+ * `stderr`, which the SDK types as `string | Buffer`, to a string in every case, the same way
+ * the success path already does, so a `Buffer` never silently becomes an empty string
+ * downstream.
  */
+const stringifyExecOutput = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  return "";
+};
+
 const normalizeExecFailure = (error: unknown): unknown => {
-  if (
-    error instanceof Error &&
-    typeof (error as { exitCode?: unknown }).exitCode !== "number" &&
-    error.name !== "AbortError" &&
-    /^Command timed out after/.test(error.message)
-  ) {
+  if (!(error instanceof Error)) return error;
+  const candidate = error as { exitCode?: unknown; stdout?: unknown; stderr?: unknown };
+  if (typeof candidate.exitCode === "number") {
+    return Object.assign(error, {
+      stdout: stringifyExecOutput(candidate.stdout),
+      stderr: stringifyExecOutput(candidate.stderr),
+    });
+  }
+  if (error.name !== "AbortError" && /^Command timed out after/.test(error.message)) {
     error.name = "TimeoutError";
   }
   return error;
@@ -128,16 +136,6 @@ const wrap = (sprite: Sprite): SpritesSpriteHandle => ({
     return { id: created.id };
   },
   updateNetworkPolicy: (policy) => sprite.updateNetworkPolicy(policy),
-  createService: () => {
-    // The real SDK has no documented API that publishes an existing port to a reachable URL.
-    // `Sprite.createService` starts a new managed background process instead, and the service
-    // it returns carries no URL. See docs/build/evidence/phase-02-sprites-sdk.md.
-    throw new SandboxError(
-      "the Fly Sprites SDK version 0.2.0 has no documented API that publishes a port to a " +
-        "reachable URL, so FlySpriteSandbox cannot expose a service",
-      ADAPTER_NAME,
-    );
-  },
   delete: () => sprite.delete(),
 });
 

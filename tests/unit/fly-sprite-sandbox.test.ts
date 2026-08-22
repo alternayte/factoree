@@ -1,13 +1,18 @@
+import { posix } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
+import { SandboxError } from "~/domain/runs/sandbox.js";
 import type { SpritesGateway, SpritesSpriteHandle } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
+
+const WORKSPACE = "/workspace";
+
+const procDir = (id: string): string => posix.join(WORKSPACE, ".factoree", "proc", id);
 
 const handle = (overrides: Partial<SpritesSpriteHandle> = {}): SpritesSpriteHandle => ({
   execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
   startDetached: vi.fn().mockResolvedValue(undefined),
   createCheckpoint: vi.fn().mockResolvedValue({ id: "v1" }),
   updateNetworkPolicy: vi.fn().mockResolvedValue(undefined),
-  createService: vi.fn().mockResolvedValue({ url: "https://sprite.example/8080" }),
   delete: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 });
@@ -18,24 +23,44 @@ const gateway = (sprite: SpritesSpriteHandle): SpritesGateway => ({
 });
 
 /**
- * Builds an `execFile` fake for `readProcess`, which reads three files back in order: `exit`,
- * `out`, then `err`. Each script argument checks for a file and prints its content, or prints
- * nothing when the file is absent.
+ * A small in-memory stand-in for the sprite's real filesystem. It understands the four shell
+ * script shapes `FlySpriteSandbox` sends through `execFile`: an existence check, a file read, a
+ * marker write, and `mkdir -p`. It records every kill script separately, so a test can inspect
+ * the process ID a cancel actually signalled.
  */
-const readProcessExecFile = (options: { exit?: string; stdout?: string; stderr?: string }) =>
-  vi.fn().mockImplementation((_file: string, args: string[]) => {
+const virtualSprite = (): { handle: SpritesSpriteHandle; files: Map<string, string>; killScripts: string[] } => {
+  const files = new Map<string, string>();
+  const killScripts: string[] = [];
+
+  const execFile: SpritesSpriteHandle["execFile"] = (file, args) => {
+    if (file === "mkdir") {
+      const dir = args.at(-1) ?? "";
+      files.set(dir, "");
+      return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+    }
     const script = args[1] ?? "";
-    if (script.includes("/exit'")) {
-      return Promise.resolve({ exitCode: 0, stdout: options.exit ?? "", stderr: "" });
+    const exists = /^if \[ -e '([^']*)' \]; then echo 1; fi$/.exec(script);
+    if (exists?.[1] !== undefined) {
+      return Promise.resolve({ exitCode: 0, stdout: files.has(exists[1]) ? "1" : "", stderr: "" });
     }
-    if (script.includes("/out'")) {
-      return Promise.resolve({ exitCode: 0, stdout: options.stdout ?? "", stderr: "" });
+    const read = /^if \[ -f '([^']*)' \]; then cat '[^']*'; fi$/.exec(script);
+    if (read?.[1] !== undefined) {
+      return Promise.resolve({ exitCode: 0, stdout: files.get(read[1]) ?? "", stderr: "" });
     }
-    if (script.includes("/err'")) {
-      return Promise.resolve({ exitCode: 0, stdout: options.stderr ?? "", stderr: "" });
+    const write = /^: > '([^']*)'$/.exec(script);
+    if (write?.[1] !== undefined) {
+      files.set(write[1], "");
+      return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+    }
+    if (script.includes("kill -TERM")) {
+      killScripts.push(script);
+      return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
     }
     return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
-  });
+  };
+
+  return { handle: handle({ execFile }), files, killScripts };
+};
 
 describe("FlySpriteSandbox", () => {
   it("names the adapter fly-sprites and declares its real capabilities", () => {
@@ -98,12 +123,21 @@ describe("FlySpriteSandbox", () => {
     );
   });
 
-  it("starts a process with a Factoree-generated identifier", async () => {
+  it("passes a command's timeout to exec as the gateway's timeout option", async () => {
+    const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    await sandbox.exec(ref, { file: "git", args: ["status"], timeoutMs: 5000 });
+    expect(sprite.execFile).toHaveBeenCalledWith("git", ["status"], expect.objectContaining({ timeout: 5000 }));
+  });
+
+  it("starts a process with a Factoree-generated identifier and creates its directory first", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
     const started = await sandbox.startProcess(ref, { file: "opencode", args: ["run"] });
     expect(started.id).toMatch(/^proc-[0-9a-f]{8}$/);
+    expect(sprite.execFile).toHaveBeenCalledWith("mkdir", ["-p", procDir(started.id)], expect.anything());
     expect(sprite.startDetached).toHaveBeenCalledTimes(1);
     const call = vi.mocked(sprite.startDetached).mock.calls[0];
     expect(call?.[0]).toBe("sh");
@@ -113,10 +147,22 @@ describe("FlySpriteSandbox", () => {
     expect(call?.[1]?.slice(2)).toEqual(["sh", "opencode", "run"]);
   });
 
-  it("reports a running process when the exit file is absent", async () => {
-    const sprite = handle({ execFile: readProcessExecFile({ stdout: "partial output" }) });
+  it("does not pass a command's timeout to startProcess, since startProcess ignores it", async () => {
+    const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    await sandbox.startProcess(ref, { file: "opencode", args: ["run"], timeoutMs: 5000 });
+    const call = vi.mocked(sprite.startDetached).mock.calls[0];
+    expect(call?.[2]).not.toHaveProperty("timeout");
+  });
+
+  it("reports a running process when the exit file is absent", async () => {
+    const { handle: sprite, files } = virtualSprite();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const dir = procDir("proc-aaaaaaaa");
+    files.set(dir, "");
+    files.set(posix.join(dir, "out"), "partial output");
     const snapshot = await sandbox.readProcess(ref, { id: "proc-aaaaaaaa" });
     expect(snapshot.running).toBe(true);
     expect(snapshot.exitCode).toBeNull();
@@ -124,11 +170,13 @@ describe("FlySpriteSandbox", () => {
   });
 
   it("reports a finished process with a zero exit code", async () => {
-    const sprite = handle({
-      execFile: readProcessExecFile({ exit: "0\n", stdout: "done", stderr: "" }),
-    });
+    const { handle: sprite, files } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const dir = procDir("proc-aaaaaaaa");
+    files.set(dir, "");
+    files.set(posix.join(dir, "exit"), "0\n");
+    files.set(posix.join(dir, "out"), "done");
     const snapshot = await sandbox.readProcess(ref, { id: "proc-aaaaaaaa" });
     expect(snapshot.running).toBe(false);
     expect(snapshot.exitCode).toBe(0);
@@ -136,36 +184,64 @@ describe("FlySpriteSandbox", () => {
   });
 
   it("reports a finished process with a non-zero exit code", async () => {
-    const sprite = handle({
-      execFile: readProcessExecFile({ exit: "17\n", stdout: "", stderr: "boom" }),
-    });
+    const { handle: sprite, files } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const dir = procDir("proc-aaaaaaaa");
+    files.set(dir, "");
+    files.set(posix.join(dir, "exit"), "17\n");
+    files.set(posix.join(dir, "err"), "boom");
     const snapshot = await sandbox.readProcess(ref, { id: "proc-aaaaaaaa" });
     expect(snapshot.running).toBe(false);
     expect(snapshot.exitCode).toBe(17);
     expect(snapshot.stderr).toBe("boom");
   });
 
-  it("cancels a process by its pid file and terminates the process group", async () => {
-    const execFile: SpritesSpriteHandle["execFile"] = vi.fn((_file: string, args: string[]) => {
-      const script = args[1] ?? "";
-      if (script.includes("/pid'")) return Promise.resolve({ exitCode: 0, stdout: "4242\n", stderr: "" });
-      return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
-    });
-    const sprite = handle({ execFile });
+  it("throws for a process identifier that was never issued, instead of polling forever", async () => {
+    const { handle: sprite } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
-    await sandbox.cancelProcess(ref, { id: "proc-aaaaaaaa" });
-    const killCall = vi.mocked(execFile).mock.calls.find((call) => (call[1][1] ?? "").includes("kill -TERM"));
-    expect(killCall?.[1][1]).toContain("-4242");
+    await expect(sandbox.readProcess(ref, { id: "proc-unknown" })).rejects.toThrow(SandboxError);
+    await expect(sandbox.readProcess(ref, { id: "proc-unknown" })).rejects.toThrow(/proc-unknown/);
   });
 
-  it("does not throw when it cancels an identifier that was never issued", async () => {
-    const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
+  it("cancels a running process by its pid file and terminates the process group", async () => {
+    const { handle: sprite, files, killScripts } = virtualSprite();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const dir = procDir("proc-aaaaaaaa");
+    files.set(dir, "");
+    files.set(posix.join(dir, "pid"), "4242");
+    await sandbox.cancelProcess(ref, { id: "proc-aaaaaaaa" });
+    expect(killScripts).toHaveLength(1);
+    expect(killScripts[0]).toContain("-4242");
+    // The cancel marker is written even though the process was already running: it is
+    // harmless there, since the wrapper only reads it before it launches the command.
+    expect(files.has(posix.join(dir, "cancel"))).toBe(true);
+  });
+
+  it("still terminates a process that starts during the cancel window, rather than reporting success silently", async () => {
+    const { handle: sprite, files, killScripts } = virtualSprite();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const dir = procDir("proc-aaaaaaaa");
+    const pidFile = posix.join(dir, "pid");
+    files.set(dir, "");
+    // The pid file does not exist yet: cancelProcess is called in the window before the
+    // wrapper has backgrounded the real command. It appears only once the bounded reread has
+    // started, simulating the wrapper catching up mid-retry.
+    setTimeout(() => files.set(pidFile, "9999"), 20);
+    await sandbox.cancelProcess(ref, { id: "proc-aaaaaaaa" });
+    expect(killScripts).toHaveLength(1);
+    expect(killScripts[0]).toContain("-9999");
+  });
+
+  it("does not throw when it cancels an identifier that was never issued, and signals nothing", async () => {
+    const { handle: sprite, killScripts } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
     await expect(sandbox.cancelProcess(ref, { id: "gone" })).resolves.toBeUndefined();
+    expect(killScripts).toHaveLength(0);
   });
 
   it("does not throw when it destroys a sprite that has already gone", async () => {
@@ -182,5 +258,13 @@ describe("FlySpriteSandbox", () => {
     const checkpoint = await sandbox.checkpoint(ref, "baseline");
     expect(sprite.createCheckpoint).toHaveBeenCalledWith("baseline");
     expect(checkpoint).toEqual({ id: "v1", name: "baseline" });
+  });
+
+  it("rejects exposeService with a SandboxError, regardless of the gateway", async () => {
+    const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(SandboxError);
+    await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(/8080/);
   });
 });
