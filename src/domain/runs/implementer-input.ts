@@ -45,11 +45,14 @@ const CREDENTIAL_STEMS = ["token", "secret", "key", "cred", "auth", "pat", "pass
 const isCredentialWord: WordPredicate = (word) => CREDENTIAL_STEMS.some((stem) => word.includes(stem));
 
 /**
- * The word `github` does not begin with the letters `gh`, its second letter is `i`, so a
- * provider match needs the exact word `github` in addition to the `gh` prefix. The prefix
- * alone still covers `gh`, `ghe`, and `ghes`, and any future short spelling.
+ * A short prefix such as `gh` also opens ordinary English words, for example `ghost`, `ghetto`,
+ * `gherkin`, `ghoul`, and `ghastly`, so a bare two-letter prefix is too broad. A provider word
+ * is instead a word that starts with the whole word `github`, which covers `github`,
+ * `githubenterprise`, and `githubapp`, or a word that is exactly one of the short abbreviations
+ * `gh`, `ghe`, or `ghes`, which is how a real abbreviation appears, standing alone.
  */
-const isGithubProviderWord: WordPredicate = (word) => word === "github" || startsWith("gh")(word);
+const isGithubProviderWord: WordPredicate = (word) =>
+  startsWith("github")(word) || word === "gh" || word === "ghe" || word === "ghes";
 
 /**
  * A forbidden rule is a list of word predicates. Every predicate must match at least one word
