@@ -37,7 +37,7 @@ type WordPredicate = (word: string) => boolean;
 
 const exactly = (target: string): WordPredicate => (word) => word === target;
 
-/** Matches a word by prefix, so `gh`, `ghe`, `ghes`, and `github` all count as the provider. */
+/** Matches a word by prefix. */
 const startsWith = (prefix: string): WordPredicate => (word) => word.startsWith(prefix);
 
 /** Matches a stem anywhere inside one word, so `oauth` matches `auth` and `credentials` matches `cred`. */
