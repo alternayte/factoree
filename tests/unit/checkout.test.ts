@@ -70,3 +70,68 @@ describe("checkoutRepositories", () => {
     await expect(checkoutRepositories(sandbox, ref, input)).rejects.toThrow(/base SHA/);
   });
 });
+
+describe("checkoutRepositories path safety", () => {
+  it("rejects a reference repository URL whose derived name is the parent directory", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const badInput = {
+      primary: { url: "https://github.com/acme/app.git", ref: "main" },
+      references: [{ url: "https://github.com/acme/..", ref: "main" }],
+    };
+    await expect(checkoutRepositories(sandbox, ref, badInput)).rejects.toThrow(/not allowed/);
+  });
+
+  it("rejects a reference repository URL whose derived name is the current directory", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const badInput = {
+      primary: { url: "https://github.com/acme/app.git", ref: "main" },
+      references: [{ url: "https://github.com/acme/.", ref: "main" }],
+    };
+    await expect(checkoutRepositories(sandbox, ref, badInput)).rejects.toThrow(/not allowed/);
+  });
+
+  it("rejects a URL that ends in a trailing slash, because the derived name is empty", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const badInput = {
+      primary: { url: "https://github.com/acme/app.git", ref: "main" },
+      references: [{ url: "https://github.com/acme/design/", ref: "main" }],
+    };
+    await expect(checkoutRepositories(sandbox, ref, badInput)).rejects.toThrow(/usable directory name/);
+  });
+
+  it("derives a usable directory name from an SSH-style URL", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const sshInput = {
+      primary: { url: "https://github.com/acme/app.git", ref: "main" },
+      references: [{ url: "git@github.com:acme/design.git", ref: "main" }],
+    };
+    const result = await checkoutRepositories(sandbox, ref, sshInput);
+    expect(result.references[0]?.path).toBe("/workspace/reference/design");
+  });
+
+  it("fails before any clone when two reference repositories derive the same directory name", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const collidingInput = {
+      primary: { url: "https://github.com/acme/app.git", ref: "main" },
+      references: [
+        { url: "https://github.com/acme/design.git", ref: "main" },
+        { url: "https://gitlab.com/other/design.git", ref: "main" },
+      ],
+    };
+    await expect(checkoutRepositories(sandbox, ref, collidingInput)).rejects.toThrow(
+      /both derive the directory name "design"/,
+    );
+    const cloneCount = sandbox.commands.filter((command) => command.args.includes("clone")).length;
+    expect(cloneCount).toBe(1);
+  });
+});
