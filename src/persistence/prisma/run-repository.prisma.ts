@@ -4,6 +4,7 @@ import type {
   CreateRunInput,
   ExpiredSandboxRun,
   RunSandboxPatch,
+  SupersededSandbox,
   RunRecord,
   RunRepository,
   RunStatusPatch,
@@ -94,17 +95,34 @@ export class PrismaRunRepository implements RunRepository {
     return toRecord(row);
   }
 
-  async setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<void> {
-    // The tenant filter is part of the query. SDD section 52 forbids relying on the caller.
-    await this.prisma.run.updateMany({
-      where: { id: runId, tenantId },
-      data: {
-        spriteId: sandbox.spriteId,
-        spriteAdapter: sandbox.adapter,
-        spriteRetainUntil: sandbox.retainUntil,
-        baseSha: sandbox.baseSha,
-        implementerRunner: sandbox.implementerRunner,
-      },
+  async setSandbox(
+    tenantId: string,
+    runId: string,
+    sandbox: RunSandboxPatch,
+  ): Promise<SupersededSandbox> {
+    // The row lock makes the read and the write one atomic step. Two concurrent activity
+    // attempts therefore see different previous values, and each deletes only the sandbox it
+    // really replaced. The tenant filter is part of the query. SDD section 52 forbids relying
+    // on the caller.
+    return await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ spriteId: string | null; spriteAdapter: string | null }>>`
+        SELECT "spriteId", "spriteAdapter" FROM "Run"
+        WHERE "id" = ${runId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+      const previous = rows[0];
+      await tx.run.updateMany({
+        where: { id: runId, tenantId },
+        data: {
+          spriteId: sandbox.spriteId,
+          spriteAdapter: sandbox.adapter,
+          spriteRetainUntil: sandbox.retainUntil,
+          baseSha: sandbox.baseSha,
+          implementerRunner: sandbox.implementerRunner,
+        },
+      });
+      return {
+        spriteId: previous?.spriteId ?? null,
+        adapter: previous?.spriteAdapter ?? null,
+      };
     });
   }
 

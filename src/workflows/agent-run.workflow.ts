@@ -57,11 +57,20 @@ const activities = proxyActivities<Activities>({
   retry: { maximumAttempts: 5, initialInterval: "1 second", backoffCoefficient: 2 },
 });
 
-// Preparation clones every repository and runs the bootstrap command, so it takes minutes.
-const sandboxActivities = proxyActivities<Activities>({
-  startToCloseTimeout: "30 minutes",
-  retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
-});
+/** The longest one preparation attempt can take. A retry gets its own attempt of this length. */
+const PREPARE_ATTEMPT_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Preparation clones every repository and runs the bootstrap command, so it takes minutes.
+ * `scheduleToCloseTimeout` bounds every attempt together, so the retry policy cannot spend more
+ * than the remaining Run budget.
+ */
+const buildSandboxActivities = (budgetMs: number) =>
+  proxyActivities<Activities>({
+    startToCloseTimeout: `${Math.min(PREPARE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
+    scheduleToCloseTimeout: `${budgetMs} milliseconds`,
+    retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
+  });
 
 /**
  * The margin the Implementer activity keeps after the Run budget ends. It covers the
@@ -82,6 +91,9 @@ const IMPLEMENT_HEARTBEAT_TIMEOUT_MS = 120_000;
 const buildImplementActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${budgetMs + IMPLEMENT_MARGIN_MS} milliseconds`,
+    // Every attempt together stays inside the Run budget plus the margin. One attempt is allowed,
+    // so the two timeouts agree, and the bound holds even if the retry policy changes.
+    scheduleToCloseTimeout: `${budgetMs + IMPLEMENT_MARGIN_MS} milliseconds`,
     heartbeatTimeout: `${IMPLEMENT_HEARTBEAT_TIMEOUT_MS} milliseconds`,
     // The workflow waits for the cancelled activity, so the evidence the agent already produced
     // still reaches the AgentExecution row.
@@ -109,6 +121,8 @@ export async function agentRunWorkflow(
   let stopRequested = false;
   let sprite: PrepareSandboxActivityOutput | null = null;
   let implementerSession: AgentSessionRef | null = null;
+  /** True once the implement activity itself has cancelled the live session. */
+  let implementerCancelled = false;
 
   setHandler(stopSignal, () => {
     stopRequested = true;
@@ -162,7 +176,9 @@ export async function agentRunWorkflow(
   // SDD section 50: a stop must terminate the active agent process, and no change is published.
   const cancelRun = async (): Promise<AgentRunWorkflowResult> => {
     const session = implementerSession;
-    if (session !== null) {
+    // The implement activity cancels its own live session when the scope cancellation reaches
+    // it. A second cancellation is needed only for a session the activity did not cancel.
+    if (session !== null && !implementerCancelled) {
       await notify(() =>
         cancelActivities.cancelImplementer({ runnerName: session.runner, session }),
       );
@@ -195,22 +211,35 @@ export async function agentRunWorkflow(
 
     const sandbox = input.sandbox;
     if (sandbox !== undefined) {
+      // A Run whose budget has already passed must not start work it cannot finish.
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
       status = "PREPARING";
       await activities.setRunStatus({ runId: id, status });
+
+      const sandboxActivities = buildSandboxActivities(remainingMs());
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
       // retention window of SDD section 51 has passed.
       // A const holds the prepared sandbox, because narrowing of a let does not survive into a
       // closure.
-      const preparedSandbox = await sandboxActivities.prepareSandbox({
-        runId: id,
-        tenantId: input.tenantId,
-        projectId: input.projectId,
-        primary: sandbox.primary,
-        references: sandbox.references,
-        config: sandbox.config,
-        environment: {},
-      });
+      let preparedSandbox: PrepareSandboxActivityOutput;
+      try {
+        preparedSandbox = await sandboxActivities.prepareSandbox({
+          runId: id,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          primary: sandbox.primary,
+          references: sandbox.references,
+          config: sandbox.config,
+          environment: {},
+        });
+      } catch (error) {
+        // Preparation is bounded by the remaining budget. A budget that ran out during
+        // preparation is a Run timeout, not an internal fault.
+        if (remainingMs() > 0) throw error;
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      }
       sprite = preparedSandbox;
 
       // A stop that arrived during preparation must prevent the Implementer from starting.
@@ -250,6 +279,7 @@ export async function agentRunWorkflow(
       const watching = scope
         .run(() => condition(() => stopRequested))
         .then(() => {
+          implementerCancelled = true;
           scope.cancel();
         })
         .catch(() => undefined);

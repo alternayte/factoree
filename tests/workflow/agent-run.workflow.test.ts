@@ -356,16 +356,29 @@ describe("agentRunWorkflow", () => {
   });
 
   it("fails with RUN_TIMEOUT when preparation consumes the Run budget", async () => {
-    // The Run budget is under one second here, and preparation takes longer than the budget.
-    // The Run must end at once, rather than wait a further whole budget after preparation.
-    heldPreparations.set("run-session-l", new Promise<void>((resolve) => setTimeout(resolve, 4_000)));
+    // The workflow clock, not the wall clock, decides here. The budget is twelve seconds of
+    // workflow time. The test holds preparation open, advances the server clock by twenty
+    // seconds, and only then releases preparation. The wall clock never enters the assertion.
+    let release = (): void => undefined;
+    heldPreparations.set(
+      "run-session-l",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
     const before = implementCalls.length;
     const result = await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-l"),
-        args: [{ ...input("session-l", 0.03), sandbox: sandboxInput }],
+        args: [{ ...input("session-l", 0.2), sandbox: sandboxInput }],
       });
+      await waitFor(
+        () => prepared.some((entry) => entry.runId === "run-session-l"),
+        "the preparation of session-l",
+      );
+      await environment.sleep("20 seconds");
+      release();
       return handle.result();
     });
     heldPreparations.delete("run-session-l");

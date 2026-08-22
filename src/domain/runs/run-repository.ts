@@ -52,6 +52,15 @@ export interface RunSandboxPatch {
   implementerRunner: string;
 }
 
+/**
+ * The sandbox the Run held before `setSandbox` replaced it. The caller deletes it, because
+ * nothing refers to it any more. Both fields are null when the Run held no sandbox.
+ */
+export interface SupersededSandbox {
+  spriteId: string | null;
+  adapter: string | null;
+}
+
 /** One Run whose sandbox retention window has passed and whose sandbox still exists. */
 export interface ExpiredSandboxRun {
   tenantId: string;
@@ -65,8 +74,12 @@ export interface RunRepository {
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
   findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null>;
   updateStatus(id: string, status: RunStatus, patch?: RunStatusPatch): Promise<RunRecord>;
-  /** Records the sandbox of the Run and the moment its retention window ends. */
-  setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<void>;
+  /**
+   * Records the sandbox of the Run and the moment its retention window ends. It reports the
+   * sandbox it replaced in the same atomic step, so two concurrent attempts cannot both believe
+   * they replaced the same one.
+   */
+  setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<SupersededSandbox>;
   /** Removes the sandbox reference after the sandbox is deleted. The evidence stays. */
   clearSandbox(tenantId: string, runId: string): Promise<void>;
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */

@@ -46,9 +46,10 @@ const release = async (
   spriteId: string,
   adapter: string,
   destroy: () => Promise<void>,
-): Promise<void> => {
+): Promise<boolean> => {
   try {
     await destroy();
+    return true;
   } catch (error) {
     dependencies.logger.error("the sandbox was not deleted and is now unreferenced", {
       sprite_id: spriteId,
@@ -56,6 +57,7 @@ const release = async (
       error: String(error),
       step: "prepare",
     });
+    return false;
   }
 };
 
@@ -75,17 +77,16 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
     // `SpriteReaper` can delete the sandbox after the window ends. The workflow never deletes
     // it, because SDD section 32 orders RETAIN before DELETE.
     // A retry of this activity prepares a second sandbox, because `prepare` creates a new one
-    // for each call. The sandbox the Run already holds must go, otherwise the overwrite below
-    // makes it unreferenced and the reaper can never find it. Factoree reads the reference
-    // before the overwrite, and deletes that sandbox after the overwrite has committed. An
-    // idempotent `prepare` was the alternative. It was rejected, because a partly prepared
-    // sandbox from a crashed attempt has an unknown checkout state, and reuse of it would carry
-    // that state into the new attempt.
-    const previous = await dependencies.runs.findById(input.tenantId, input.runId);
-
+    // for each call. The sandbox the Run already holds must go, otherwise it becomes
+    // unreferenced and the reaper can never find it. `setSandbox` reports what it replaced in
+    // one atomic step, so two concurrent attempts never delete the same sandbox. An idempotent
+    // `prepare` was the alternative. It was rejected, because a partly prepared sandbox from a
+    // crashed attempt has an unknown checkout state, and reuse of it would carry that state into
+    // the new attempt.
     const retainUntil = new Date(Date.now() + input.config.spriteRetentionHours * MILLISECONDS_PER_HOUR);
+    let superseded;
     try {
-      await dependencies.runs.setSandbox(input.tenantId, input.runId, {
+      superseded = await dependencies.runs.setSandbox(input.tenantId, input.runId, {
         spriteId: prepared.ref.id,
         adapter: prepared.ref.adapter,
         retainUntil,
@@ -101,17 +102,20 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
       throw error;
     }
 
-    if (previous?.spriteId != null && previous.spriteId !== prepared.ref.id) {
-      const staleId = previous.spriteId;
-      const staleAdapter = previous.spriteAdapter ?? dependencies.sandbox.name;
-      await release(dependencies, staleId, staleAdapter, () =>
+    if (superseded.spriteId !== null && superseded.spriteId !== prepared.ref.id) {
+      const staleId = superseded.spriteId;
+      const staleAdapter = superseded.adapter ?? dependencies.sandbox.name;
+      // The workspace path of the new sandbox serves the old one as well. Every adapter uses one
+      // fixed workspace path. `SpriteReaper` documents the same assumption.
+      const destroyed = await release(dependencies, staleId, staleAdapter, () =>
         dependencies.sandbox.destroy({
           id: staleId,
           adapter: staleAdapter,
           workspacePath: prepared.ref.workspacePath,
         }),
       );
-      metrics.sandboxesDestroyed.inc({ adapter: staleAdapter, reason: "SUPERSEDED" });
+      // Only a real deletion is counted. A failed deletion is a leak, and the log names it.
+      if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: staleAdapter, reason: "SUPERSEDED" });
     }
 
     metrics.sandboxesCreated.inc({

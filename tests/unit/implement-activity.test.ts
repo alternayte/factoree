@@ -36,6 +36,15 @@ const build = (runner: FakeRunner) => {
   return { activities, recorded };
 };
 
+/** Polls until the predicate holds, and names itself when it gives up. */
+const waitFor = async (predicate: () => boolean): Promise<void> => {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("the test waited five seconds for the condition");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 const input = {
   runId: "run-1",
   tenantId: "tenant-1",
@@ -79,6 +88,47 @@ describe("the implement activity", () => {
     // The evidence of the cancelled run stays. The activity returns the result of the runner.
     expect(result.sessionId).toBe("ses_fake");
     expect(recorded).toHaveLength(1);
+  });
+
+  it("cancels the session that registers after the cancellation arrived", async () => {
+    const runner = new FakeRunner();
+    runner.delayStart(300);
+    const release = runner.holdRun();
+    const { activities } = build(runner);
+    const environment = new MockActivityEnvironment();
+
+    const running: Promise<ImplementActivityOutput> = environment.run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      input,
+    );
+    // The cancellation arrives before the runner has a live session.
+    await waitFor(() => runner.runs.length === 1);
+    environment.cancel();
+    expect(runner.cancelled).toHaveLength(0);
+
+    await waitFor(() => runner.cancelled.length === 1);
+    release();
+    await running;
+    expect(runner.cancelled[0]?.sessionId).toBe("ses_fake");
+  });
+
+  it("cancels the session when the activity starts on an already cancelled context", async () => {
+    const runner = new FakeRunner();
+    runner.delayStart(100);
+    const release = runner.holdRun();
+    const { activities } = build(runner);
+    const environment = new MockActivityEnvironment();
+    // The signal is already aborted before the activity begins.
+    environment.cancel();
+
+    const running: Promise<ImplementActivityOutput> = environment.run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      input,
+    );
+    await waitFor(() => runner.cancelled.length === 1);
+    release();
+    await running;
+    expect(runner.cancelled[0]?.sessionId).toBe("ses_fake");
   });
 
   it("records one AgentExecution row and returns the outcome of the runner", async () => {

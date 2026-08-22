@@ -61,6 +61,15 @@ export interface ImplementActivityOutput {
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
+ * The time the cancel path waits for the live session to appear. A cancellation can arrive
+ * before the runner has started the process, so the first lookup can give nothing.
+ */
+const SESSION_LOOKUP_TIMEOUT_MS = 60_000;
+
+/** The delay between two lookups of the live session. */
+const SESSION_LOOKUP_INTERVAL_MS = 100;
+
+/**
  * A runner that can name the live session of one Run. SDD section 33 fixes the `AgentRunner`
  * port, so this capability stays outside it. `OpenCodeRunner` provides it, and the activity
  * uses it only when the runner has it.
@@ -119,19 +128,45 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
 
     // SDD section 50: a stop must cancel the active agent process. The workflow cancels this
     // activity, and the cancellation reaches the live session here, while the run still holds.
-    const onCancel = (): void => {
-      const session = activeSessionOf(runner, input.runId);
-      if (session === undefined) return;
-      void runner.cancel(session).catch((error: unknown) => {
-        dependencies.logger.error("the cancellation of the Implementer session failed", {
+    let running = true;
+    const cancelLiveSession = async (): Promise<void> => {
+      // The session appears only after the runner has started the process. A cancellation can
+      // arrive before that moment, so the lookup repeats for a bounded time. The loop also ends
+      // as soon as the run itself ends, and then there is nothing left to cancel.
+      const deadline = Date.now() + SESSION_LOOKUP_TIMEOUT_MS;
+      while (running && Date.now() < deadline) {
+        const session = activeSessionOf(runner, input.runId);
+        if (session !== undefined) {
+          try {
+            await runner.cancel(session);
+          } catch (error) {
+            dependencies.logger.error("the cancellation of the Implementer session failed", {
+              tenant_id: input.tenantId,
+              run_id: input.runId,
+              runner: runner.name,
+              error: String(error),
+            });
+          }
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, SESSION_LOOKUP_INTERVAL_MS));
+      }
+      if (running) {
+        dependencies.logger.warn("no live Implementer session appeared for the cancellation", {
           tenant_id: input.tenantId,
           run_id: input.runId,
           runner: runner.name,
-          error: String(error),
         });
-      });
+      }
     };
-    context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
+
+    const onCancel = (): void => {
+      void cancelLiveSession();
+    };
+    // A listener never fires on a signal that is already aborted, so the aborted case runs the
+    // cancel path at once.
+    if (context.cancellationSignal.aborted) onCancel();
+    else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
 
     let result;
     try {
@@ -149,6 +184,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         timeoutMs: input.timeoutMs,
       });
     } finally {
+      running = false;
       clearInterval(heartbeat);
       context.cancellationSignal.removeEventListener("abort", onCancel);
     }

@@ -15,6 +15,8 @@ export class FakeRunner implements AgentRunner {
   /** While this promise is pending, `run` does not resolve. It models a long agent run. */
   private hold: Promise<void> | null = null;
   private live: AgentSessionRef | null = null;
+  /** The delay before the session registers. It models the start of the sandbox process. */
+  private startDelayMs = 0;
 
   constructor(
     readonly name = "opencode",
@@ -35,6 +37,11 @@ export class FakeRunner implements AgentRunner {
     this.result = { ...this.result, ...result };
   }
 
+  /** Delays the registration of the session, the way a real process start does. */
+  delayStart(milliseconds: number): void {
+    this.startDelayMs = milliseconds;
+  }
+
   /** Holds every later `run` open until the returned function is called. */
   holdRun(): () => void {
     let release = (): void => undefined;
@@ -52,6 +59,9 @@ export class FakeRunner implements AgentRunner {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     this.runs.push(input);
+    if (this.startDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.startDelayMs));
+    }
     this.live = this.result.session;
     await this.hold;
     this.live = null;
