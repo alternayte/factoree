@@ -26,3 +26,58 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   stagingRead: false,
   spriteRetentionHours: 24,
 };
+
+import type { FactoreeConfig } from "~/domain/projects/factoree-config.js";
+import { normalizeNetworkPolicy } from "./sandbox.js";
+
+/** SDD section 35. One configured deterministic verification command. */
+export interface VerificationCommand {
+  /** The name recorded with the result. It is unique inside one Run. */
+  name: string;
+  /** The exact shell command. It runs through `sh -c` from a clean environment. */
+  run: string;
+}
+
+/**
+ * The Project-level values that `.factoree/config.yaml` must not own. A repository must not be
+ * able to widen a control the operator set on the Project.
+ */
+export interface ProjectDefaults {
+  stagingRead: boolean;
+  spriteRetentionHours: number;
+}
+
+export const DEFAULT_PROJECT_DEFAULTS: ProjectDefaults = {
+  stagingRead: false,
+  spriteRetentionHours: 24,
+};
+
+export interface ResolvedProjectConfig {
+  runtime: ProjectRuntimeConfig;
+  verifyCommands: VerificationCommand[];
+}
+
+/**
+ * SDD section 15 and section 57. Produces the runtime configuration of one Run from the
+ * repository file and the Project defaults. The repository owns the bootstrap command, the
+ * verification commands, the runner names, the repair limit, and the egress allow list. The
+ * Project owns staging read and the sandbox retention window.
+ */
+export const toProjectRuntimeConfig = (
+  config: FactoreeConfig,
+  defaults: ProjectDefaults,
+): ResolvedProjectConfig => ({
+  runtime: {
+    bootstrapCommand: config.bootstrap?.command ?? null,
+    // The same normalisation the sandbox applies, so the value carried on the Run and the value
+    // sent to the adapter can never differ.
+    allowedDomains: normalizeNetworkPolicy({ allowedDomains: config.sandbox.allowedDomains }).allowedDomains,
+    implementerRunner: config.agents.implementer,
+    validatorRunner: config.agents.validator,
+    reviewerRunner: config.agents.reviewer,
+    repairMaxAttempts: config.repair.maxAttempts,
+    stagingRead: defaults.stagingRead,
+    spriteRetentionHours: defaults.spriteRetentionHours,
+  },
+  verifyCommands: config.verify.commands.map((command) => ({ name: command.name, run: command.run })),
+});
