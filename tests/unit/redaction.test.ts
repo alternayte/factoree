@@ -43,4 +43,10 @@ describe("Redactor", () => {
     const redactor = new Redactor(["", "a"]);
     expect(redactor.redact("a plain message")).toBe("a plain message");
   });
+
+  it("registers a four character secret and ignores a three character value", () => {
+    const redactor = new Redactor(["pw12", "abc"]);
+    expect(redactor.redact("pw12")).toBe("[REDACTED]");
+    expect(redactor.redact("abc")).toBe("abc");
+  });
 });

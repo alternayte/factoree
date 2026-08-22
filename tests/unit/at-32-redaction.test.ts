@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
+import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import type { SecretStore } from "~/domain/projects/secret-store.js";
 
 describe("AT-32 redaction in logs", () => {
   it("keeps a configured project secret out of every log line", () => {
@@ -39,5 +41,20 @@ describe("AT-32 redaction in logs", () => {
     });
     logger.info("agent ran: curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345' https://api.example.com");
     expect(lines.join("")).not.toContain("abcdefghijklmnopqrstuvwxyz012345");
+  });
+
+  it("AT-32: a Project secret loaded from the SecretStore never reaches a log line", async () => {
+    const redactor = new Redactor();
+    const store: SecretStore = {
+      put: () => Promise.resolve(),
+      get: () => Promise.resolve("fixture-secret-value"),
+      listNames: () => Promise.resolve(["FIXTURE"]),
+      remove: () => Promise.resolve(true),
+    };
+    await registerProjectSecrets(redactor, store, "tenant-1", "project-1");
+    const lines: string[] = [];
+    const logger = createLogger({ level: "info", redactor, sink: (line) => lines.push(line) });
+    logger.info("the agent printed fixture-secret-value");
+    expect(lines.join("\n")).not.toContain("fixture-secret-value");
   });
 });

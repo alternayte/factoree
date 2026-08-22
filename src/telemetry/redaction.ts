@@ -35,7 +35,10 @@ export class Redactor {
   }
 
   addSecret(value: string): void {
-    if (value.length >= 6) this.secrets.add(value);
+    // Four characters is the floor. A shorter value would redact ordinary words out of every
+    // log line. A Project secret shorter than four characters is a configuration fault, not a
+    // redaction fault.
+    if (value.length >= 4) this.secrets.add(value);
   }
 
   redact<T>(value: T): T {

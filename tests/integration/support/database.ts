@@ -1,5 +1,7 @@
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 
 export const startDatabase = async (): Promise<{ url: string; stop: () => Promise<void> }> => {
   const container = await new PostgreSqlContainer("postgres:16").start();
@@ -15,4 +17,54 @@ export const startDatabase = async (): Promise<{ url: string; stop: () => Promis
     throw error;
   }
   return { url, stop: () => container.stop().then(() => undefined) };
+};
+
+/**
+ * Starts a database, runs the callback with a connected Prisma client, and stops the database
+ * afterward. Use this helper when a test needs only one short-lived database, not a suite-wide
+ * client shared across many tests.
+ */
+export const withDatabase = async (
+  run: (prisma: FactoreePrismaClient) => Promise<void>,
+): Promise<void> => {
+  const database = await startDatabase();
+  const prisma = createPrismaClient(database.url);
+  try {
+    await run(prisma);
+  } finally {
+    await prisma.$disconnect();
+    await database.stop();
+  }
+};
+
+/**
+ * Creates a Tenant, a Project, and a Run in one call, for a test that needs a valid Run to
+ * attach a related record to and does not care about the Run's other field values.
+ */
+export const seedTenantProjectAndRun = async (
+  prisma: FactoreePrismaClient,
+): Promise<{ tenantId: string; projectId: string; runId: string }> => {
+  const suffix = randomUUID();
+  const tenant = await prisma.tenant.create({
+    data: { linearWorkspaceId: `ws-${suffix}`, name: `Tenant ${suffix}` },
+  });
+  const project = await prisma.project.create({
+    data: {
+      tenantId: tenant.id,
+      key: `demo-${suffix}`,
+      name: `Demo ${suffix}`,
+      primaryRepository: "acme/demo",
+    },
+  });
+  const run = await prisma.run.create({
+    data: {
+      tenantId: tenant.id,
+      projectId: project.id,
+      linearAgentSessionId: `session-${suffix}`,
+      temporalWorkflowId: `workflow-${suffix}`,
+      status: "RECEIVED",
+      autonomyLevel: "L2",
+    },
+  });
+  return { tenantId: tenant.id, projectId: project.id, runId: run.id };
 };
