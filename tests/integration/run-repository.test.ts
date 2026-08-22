@@ -75,6 +75,105 @@ describe("PrismaRunRepository", () => {
     expect(updated.failureReason).toBe("STOPPED_BY_HUMAN");
     expect(updated.completedAt?.getTime()).toBe(completedAt.getTime());
   });
+
+  it("records the sandbox, lists it after the retention window, and clears it", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-5"));
+    const retainUntil = new Date(Date.now() - 1_000);
+    await repository.setSandbox(tenantA, created.run.id, {
+      spriteId: "sprite-5",
+      adapter: "fake",
+      retainUntil,
+      baseSha: "b".repeat(40),
+      implementerRunner: "opencode",
+    });
+
+    const stored = await repository.findById(tenantA, created.run.id);
+    expect(stored?.spriteId).toBe("sprite-5");
+    expect(stored?.spriteAdapter).toBe("fake");
+    expect(stored?.baseSha).toBe("b".repeat(40));
+    expect(stored?.implementerRunner).toBe("opencode");
+
+    const expired = await repository.listExpiredSandboxes(new Date(), 10);
+    expect(expired).toContainEqual({
+      tenantId: tenantA,
+      runId: created.run.id,
+      spriteId: "sprite-5",
+      adapter: "fake",
+    });
+
+    await repository.clearSandbox(tenantA, created.run.id);
+    const cleared = await repository.findById(tenantA, created.run.id);
+    expect(cleared?.spriteId).toBeNull();
+    expect(cleared?.spriteRetainUntil).toBeNull();
+    expect(await repository.listExpiredSandboxes(new Date(), 10)).toHaveLength(0);
+  });
+
+  it("refuses to record a sandbox for a Run of another tenant, and reports the refusal", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-6"));
+    const patch = {
+      spriteId: "sprite-6",
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "c".repeat(40),
+      implementerRunner: "opencode",
+    };
+    // A wrong tenant reaches no row. A silent success would leave the sandbox unreferenced, and
+    // the reaper could never find it.
+    await expect(repository.setSandbox(tenantB, created.run.id, patch)).rejects.toThrow(
+      /received the sandbox reference/,
+    );
+    const stored = await repository.findById(tenantA, created.run.id);
+    expect(stored?.spriteId).toBeNull();
+  });
+
+  it("reports the sandbox that setSandbox replaced", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-7"));
+    const patch = (spriteId: string) => ({
+      spriteId,
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "d".repeat(40),
+      implementerRunner: "opencode",
+    });
+
+    const first = await repository.setSandbox(tenantA, created.run.id, patch("sprite-7a"));
+    expect(first).toEqual({ spriteId: null, adapter: null });
+
+    const second = await repository.setSandbox(tenantA, created.run.id, patch("sprite-7b"));
+    expect(second).toEqual({ spriteId: "sprite-7a", adapter: "fake" });
+  });
+
+  it("gives two concurrent writers a different superseded sandbox each", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-8"));
+    const patch = (spriteId: string) => ({
+      spriteId,
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "e".repeat(40),
+      implementerRunner: "opencode",
+    });
+    await repository.setSandbox(tenantA, created.run.id, patch("sprite-8-original"));
+
+    // The row lock serializes the two writers, so each one learns what its own write replaced.
+    const [left, right] = await Promise.all([
+      repository.setSandbox(tenantA, created.run.id, patch("sprite-8-left")),
+      repository.setSandbox(tenantA, created.run.id, patch("sprite-8-right")),
+    ]);
+
+    const superseded = [left.spriteId, right.spriteId].sort();
+    const stored = await repository.findById(tenantA, created.run.id);
+    const winner = stored?.spriteId;
+    expect(winner === "sprite-8-left" || winner === "sprite-8-right").toBe(true);
+    const loser = winner === "sprite-8-left" ? "sprite-8-right" : "sprite-8-left";
+    // Every sandbox except the one the Run still holds was reported to exactly one caller, so
+    // nothing is left unreferenced.
+    expect(superseded).toEqual(["sprite-8-original", loser].sort());
+  });
+
 });
 
 describe("PrismaWebhookLog", () => {

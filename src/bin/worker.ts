@@ -1,10 +1,20 @@
 import { Worker } from "@temporalio/worker";
 import { loadEnv } from "~/config/env.js";
 import { createLogger } from "~/telemetry/logger.js";
+import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createPrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
-import { PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaSecretStore, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
+import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
+import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
+import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
+import { OpenCodeRunner } from "~/adapters/runners/opencode/opencode-runner.js";
+import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
+import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
+import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
@@ -16,6 +26,31 @@ const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, e
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+const runs = new PrismaRunRepository(prisma);
+
+// SDD section 31. The adapter comes from configuration. The local adapter cannot enforce an
+// egress policy, so SandboxManager accepts it only under the explicit opt in below.
+const sandbox: Sandbox =
+  env.SANDBOX_ADAPTER === "local"
+    ? new LocalProcessSandbox({ rootDirectory: env.SANDBOX_LOCAL_ROOT })
+    : new FlySpriteSandbox({
+        gateway: createSpritesGateway({
+          token: env.SPRITES_TOKEN ?? "",
+          ...(env.SPRITES_BASE_URL === undefined ? {} : { baseUrl: env.SPRITES_BASE_URL }),
+        }),
+      });
+
+const sandboxManager = new SandboxManager({
+  sandbox,
+  ...(env.SANDBOX_ADAPTER === "local" ? { allowUnenforcedNetwork: true } : {}),
+});
+
+const runners = new AgentRunnerRegistry([new OpenCodeRunner({ redactor })]);
+const reaper = new SpriteReaper({
+  sandboxes: { [sandbox.name]: sandbox },
+  runs,
+  onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
+});
 
 // The Linear access token belongs to the workspace of the Run. The session id carries the
 // workspace prefix in the workflow id, so the activity resolves the client for each call.
@@ -47,8 +82,47 @@ const worker = await Worker.create({
   namespace: env.TEMPORAL_NAMESPACE,
   taskQueue: env.TEMPORAL_TASK_QUEUE,
   workflowsPath: new URL("../workflows/agent-run.workflow.js", import.meta.url).pathname,
-  activities: createActivities({ runs: new PrismaRunRepository(prisma), agentSession, logger }),
+  activities: createActivities({
+    runs,
+    agentSession,
+    sandboxManager,
+    sandbox,
+    runners,
+    executions: new PrismaAgentExecutionRepository(prisma),
+    secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+    redactor,
+    reaper,
+    logger,
+  }),
 });
 
+// SDD section 51. The reaper deletes each sandbox after its retention window ends.
+const REAP_INTERVAL_MS = 15 * 60_000;
+// One pass at a time. A slow provider must not start a second pass over the same batch.
+let reaping = false;
+const reapTimer = setInterval(() => {
+  if (reaping) {
+    logger.warn("the previous sandbox reaper pass still runs", { step: "retention" });
+    return;
+  }
+  reaping = true;
+  void reaper
+    .reap(new Date())
+    .then((count) => {
+      if (count > 0) logger.info("sandboxes reaped", { count, step: "retention" });
+    })
+    .catch((error: unknown) => {
+      logger.error("the sandbox reaper failed", { error: String(error) });
+    })
+    .finally(() => {
+      reaping = false;
+    });
+}, REAP_INTERVAL_MS);
+reapTimer.unref();
+
 logger.info("worker started", { step: "boot" });
-await worker.run();
+try {
+  await worker.run();
+} finally {
+  clearInterval(reapTimer);
+}

@@ -58,6 +58,9 @@ model ProjectSecret {
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name        String
   valueCipher String
+  // SDD section 30. Only a secret an operator marks reaches the Implementer environment. Every
+  // secret reaches the redactor, marked or not.
+  injectIntoImplementer Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -81,6 +84,8 @@ model Run {
   validatorRunner          String?
   reviewerRunner           String?
   spriteId                 String?
+  spriteAdapter            String?
+  spriteRetainUntil        DateTime?
   baseSha                  String?
   patchSha256              String?
   commitSha                String?
@@ -95,6 +100,7 @@ model Run {
 
   @@index([tenantId])
   @@index([projectId])
+  @@index([spriteRetainUntil])
 }
 
 model AgentExecution {
@@ -110,8 +116,13 @@ model AgentExecution {
   durationMs     Int?
   finalResult    Json?
   costMetadata   Json?
+  // Identifies one execution attempt. The caller sets this, so a Temporal activity retry with
+  // unchanged arguments collides on the same key and does not write a second row. A distinct
+  // attempt, for example a repair loop attempt, uses a distinct key and writes a distinct row.
+  idempotencyKey String
   createdAt      DateTime  @default(now())
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([runId])
 }

@@ -9,7 +9,11 @@ import type {
   TenantRegistry,
   UpdateProjectInput,
 } from "~/domain/projects/project-registry.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type {
+  ProjectSecretDescriptor,
+  PutSecretOptions,
+  SecretStore,
+} from "~/domain/projects/secret-store.js";
 
 type ProjectRow = {
   id: string;
@@ -94,14 +98,23 @@ export class PrismaProjectRegistry implements ProjectRegistry {
 export class PrismaSecretStore implements SecretStore {
   constructor(private readonly prisma: FactoreePrismaClient, private readonly keyHex: string) {}
 
-  async put(tenantId: string, projectId: string, name: string, value: string): Promise<void> {
+  async put(
+    tenantId: string,
+    projectId: string,
+    name: string,
+    value: string,
+    options?: PutSecretOptions,
+  ): Promise<void> {
     const project = await this.prisma.project.findFirst({ where: { id: projectId, tenantId } });
     if (!project) throw new Error("project not found for tenant");
     const valueCipher = encryptSecret(value, this.keyHex);
+    // The mark defaults to false. A secret an operator does not mark never reaches the
+    // Implementer environment. SDD section 30 requires the injection to be explicit.
+    const injectIntoImplementer = options?.injectIntoImplementer ?? false;
     await this.prisma.projectSecret.upsert({
       where: { projectId_name: { projectId, name } },
-      create: { tenantId, projectId, name, valueCipher },
-      update: { valueCipher },
+      create: { tenantId, projectId, name, valueCipher, injectIntoImplementer },
+      update: { valueCipher, injectIntoImplementer },
     });
   }
 
@@ -116,6 +129,14 @@ export class PrismaSecretStore implements SecretStore {
       orderBy: { name: "asc" },
     });
     return rows.map((row) => row.name);
+  }
+
+  async list(tenantId: string, projectId: string): Promise<ProjectSecretDescriptor[]> {
+    const rows = await this.prisma.projectSecret.findMany({
+      where: { tenantId, projectId },
+      orderBy: { name: "asc" },
+    });
+    return rows.map((row) => ({ name: row.name, injectIntoImplementer: row.injectIntoImplementer }));
   }
 
   async remove(tenantId: string, projectId: string, name: string): Promise<boolean> {

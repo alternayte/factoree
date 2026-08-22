@@ -94,13 +94,19 @@ export const registerProjectRoutes = (
 
   app.put<{ Params: { id: string; name: string } }>("/admin/projects/:id/secrets/:name", async (request, reply) => {
     const query = tenantQuerySchema.safeParse(request.query);
-    const body = z.object({ value: z.string().min(1) }).safeParse(request.body);
+    // SDD section 30. The Implementer receives a Project secret only when the operator marks it
+    // here. The mark defaults to false, so an unmarked secret stays out of the sandbox.
+    const body = z
+      .object({ value: z.string().min(1), injectIntoImplementer: z.boolean().default(false) })
+      .safeParse(request.body);
     if (!query.success || !body.success) return reply.code(400).send({ error: "invalid request" });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
     const project = await dependencies.projects.findById(tenant.id, request.params.id);
     if (!project) return reply.code(404).send({ error: "project not found" });
-    await dependencies.secrets.put(tenant.id, project.id, request.params.name, body.data.value);
+    await dependencies.secrets.put(tenant.id, project.id, request.params.name, body.data.value, {
+      injectIntoImplementer: body.data.injectIntoImplementer,
+    });
     return reply.code(204).send();
   });
 

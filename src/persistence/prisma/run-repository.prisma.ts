@@ -2,6 +2,9 @@ import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type {
   CreateRunInput,
+  ExpiredSandboxRun,
+  RunSandboxPatch,
+  SupersededSandbox,
   RunRecord,
   RunRepository,
   RunStatusPatch,
@@ -24,6 +27,8 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   validatorRunner: row.validatorRunner,
   reviewerRunner: row.reviewerRunner,
   spriteId: row.spriteId,
+  spriteAdapter: row.spriteAdapter,
+  spriteRetainUntil: row.spriteRetainUntil,
   baseSha: row.baseSha,
   patchSha256: row.patchSha256,
   commitSha: row.commitSha,
@@ -88,5 +93,71 @@ export class PrismaRunRepository implements RunRepository {
       },
     });
     return toRecord(row);
+  }
+
+  async setSandbox(
+    tenantId: string,
+    runId: string,
+    sandbox: RunSandboxPatch,
+  ): Promise<SupersededSandbox> {
+    // The row lock makes the read and the write one atomic step. Two concurrent activity
+    // attempts therefore see different previous values, and each deletes only the sandbox it
+    // really replaced. The tenant filter is part of the query. SDD section 52 forbids relying
+    // on the caller.
+    return await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ spriteId: string | null; spriteAdapter: string | null }>>`
+        SELECT "spriteId", "spriteAdapter" FROM "Run"
+        WHERE "id" = ${runId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+      const previous = rows[0];
+      const updated = await tx.run.updateMany({
+        where: { id: runId, tenantId },
+        data: {
+          spriteId: sandbox.spriteId,
+          spriteAdapter: sandbox.adapter,
+          spriteRetainUntil: sandbox.retainUntil,
+          baseSha: sandbox.baseSha,
+          implementerRunner: sandbox.implementerRunner,
+        },
+      });
+      // A write that reaches no row must not report success. The Run would then hold no
+      // reference to the sandbox, the activity would report a prepared sandbox anyway, and the
+      // reaper could never find it. A wrong Run or a wrong tenant lands here.
+      if (updated.count === 0) {
+        throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the sandbox reference`);
+      }
+      return {
+        spriteId: previous?.spriteId ?? null,
+        adapter: previous?.spriteAdapter ?? null,
+      };
+    });
+  }
+
+  async clearSandbox(tenantId: string, runId: string): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { spriteId: null, spriteAdapter: null, spriteRetainUntil: null },
+    });
+  }
+
+  async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {
+    const rows = await this.prisma.run.findMany({
+      where: { spriteId: { not: null }, spriteRetainUntil: { lte: now } },
+      orderBy: { spriteRetainUntil: "asc" },
+      take: limit,
+      select: { id: true, tenantId: true, spriteId: true, spriteAdapter: true },
+    });
+    const expired: ExpiredSandboxRun[] = [];
+    for (const row of rows) {
+      // A Run without a recorded adapter cannot be reaped. The reaper leaves it alone, and an
+      // operator can then see the row and act on it.
+      if (row.spriteId === null || row.spriteAdapter === null) continue;
+      expired.push({
+        tenantId: row.tenantId,
+        runId: row.id,
+        spriteId: row.spriteId,
+        adapter: row.spriteAdapter,
+      });
+    }
+    return expired;
   }
 }

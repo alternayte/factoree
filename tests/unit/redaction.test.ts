@@ -43,4 +43,31 @@ describe("Redactor", () => {
     const redactor = new Redactor(["", "a"]);
     expect(redactor.redact("a plain message")).toBe("a plain message");
   });
+
+  it("registers a four character secret and ignores a three character value", () => {
+    const redactor = new Redactor(["pw12", "abc"]);
+    expect(redactor.redact("pw12")).toBe("[REDACTED]");
+    expect(redactor.redact("abc")).toBe("abc");
+  });
+});
+
+describe("Redactor URL and pattern anchoring", () => {
+  it("removes the userinfo of a URL, because a clone URL carries an access token there", () => {
+    const redactor = new Redactor();
+    const output = redactor.redact("clone https://x-access-token:secretvalue@github.com/acme/app.git failed");
+    expect(output).not.toContain("x-access-token");
+    expect(output).not.toContain("secretvalue");
+    expect(output).toContain("github.com/acme/app.git");
+  });
+
+  it("keeps an ordinary word that ends in sk- out of the credential pattern", () => {
+    const redactor = new Redactor();
+    const line = "the risk-abcdefghijklmnopqrstuvwx metric rose";
+    expect(redactor.redact(line)).toBe(line);
+  });
+
+  it("still redacts an OpenAI-style key that stands alone", () => {
+    const redactor = new Redactor();
+    expect(redactor.redact("key sk-abcdefghijklmnopqrstuvwx here")).toBe("key [REDACTED] here");
+  });
 });
