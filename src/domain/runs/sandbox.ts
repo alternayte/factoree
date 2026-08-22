@@ -28,6 +28,10 @@ export interface Command {
   /** Absolute path, or a path relative to `SandboxRef.workspacePath`. */
   cwd?: string;
   env?: Record<string, string>;
+  /**
+   * The deadline for `exec` only. `startProcess` ignores this field. A caller of `startProcess`
+   * must enforce its own deadline and stop the process with `cancelProcess`.
+   */
   timeoutMs?: number;
 }
 
@@ -82,6 +86,7 @@ export interface Sandbox {
   /** Applies the egress policy. `SandboxManager` calls this before any checkout. */
   applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void>;
   exec(ref: SandboxRef, command: Command): Promise<CommandResult>;
+  /** Ignores `Command.timeoutMs`. The caller must enforce its own deadline. */
   startProcess(ref: SandboxRef, command: Command): Promise<ProcessRef>;
   /** Reads whatever the process has written so far and reports whether it has exited. */
   readProcess(ref: SandboxRef, process: ProcessRef): Promise<ProcessSnapshot>;

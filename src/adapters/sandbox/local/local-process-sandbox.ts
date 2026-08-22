@@ -74,6 +74,8 @@ export class LocalProcessSandbox implements Sandbox {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
+      // The child process inherits the full host environment. This choice is deliberate for a
+      // local development and test adapter. The production adapter does not do this.
       const child = spawn(command.file, command.args, {
         cwd: this.resolveCwd(ref, command.cwd),
         env: { ...process.env, ...command.env },
@@ -101,7 +103,11 @@ export class LocalProcessSandbox implements Sandbox {
 
   startProcess(ref: SandboxRef, command: Command): Promise<ProcessRef> {
     this.assertLive(ref);
+    // This method ignores command.timeoutMs. The caller must enforce its own deadline and stop
+    // the process with cancelProcess.
     const id = `process-${randomUUID().slice(0, 8)}`;
+    // The child process inherits the full host environment. This choice is deliberate for a
+    // local development and test adapter. The production adapter does not do this.
     const child = spawn(command.file, command.args, {
       cwd: this.resolveCwd(ref, command.cwd),
       env: { ...process.env, ...command.env },
@@ -142,7 +148,7 @@ export class LocalProcessSandbox implements Sandbox {
 
   cancelProcess(_ref: SandboxRef, process: ProcessRef): Promise<void> {
     const record = this.processes.get(process.id);
-    // Cancelling a finished or unknown process is not an error. Cancellation is idempotent.
+    // A finished process or an unknown process is not an error. Cancellation is idempotent.
     if (record !== undefined && record.running) record.kill();
     return Promise.resolve();
   }
@@ -162,7 +168,7 @@ export class LocalProcessSandbox implements Sandbox {
   }
 
   async destroy(ref: SandboxRef): Promise<void> {
-    // Destroying an unknown sandbox is not an error. Destruction is idempotent.
+    // An unknown sandbox is not an error to destroy. Destruction is idempotent.
     this.live.delete(ref.id);
     await rm(join(this.options.rootDirectory, ref.id), { recursive: true, force: true });
   }
