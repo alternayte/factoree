@@ -67,7 +67,7 @@ describe("AT-33 tenant isolation", () => {
     `;
     const names = rows.map((row) => row.table_name).sort();
     expect(names).toEqual(
-      ["AgentExecution", "LinearInstallation", "ProcessedWebhook", "Project", "ProjectSecret", "Run"].sort(),
+      ["AgentExecution", "Evidence", "LinearInstallation", "ProcessedWebhook", "Project", "ProjectSecret", "Run"].sort(),
     );
   });
 });

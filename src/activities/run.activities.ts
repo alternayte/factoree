@@ -26,10 +26,26 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     return { runId: run.id, created };
   },
 
-  async setRunStatus(input: { runId: string; status: RunStatus; startedAt?: string }): Promise<void> {
-    await dependencies.runs.updateStatus(input.runId, input.status, {
+  async setRunStatus(input: {
+    runId: string;
+    status: RunStatus;
+    startedAt?: string;
+    /** SDD section 42. The number of repairs the Run has started. */
+    repairCount?: number;
+  }): Promise<void> {
+    const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.startedAt === undefined ? {} : { startedAt: new Date(input.startedAt) }),
+      ...(input.repairCount === undefined ? {} : { repairCount: input.repairCount }),
     });
+    if (input.status === "REPAIRING") {
+      // SDD section 62. The counter belongs in the activity, not in the workflow, because a
+      // workflow must stay deterministic.
+      metrics.repairs.inc({
+        tenant_id: run.tenantId,
+        project_id: run.projectId,
+        reason: "VERIFICATION",
+      });
+    }
   },
 
   async completeRun(input: {

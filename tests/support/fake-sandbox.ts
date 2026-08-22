@@ -26,11 +26,21 @@ export class FakeSandbox implements Sandbox {
   readonly calls: string[] = [];
   readonly commands: Command[] = [];
   readonly policies: NetworkPolicy[] = [];
+  /** Every policy passed to `applyNetworkPolicy`, in order. */
+  readonly networkPolicies: NetworkPolicy[] = [];
   readonly checkpoints: string[] = [];
   readonly destroyed: string[] = [];
   private readonly scripted: ScriptedResult[] = [];
   private counter = 0;
   private readonly processes = new Map<string, ProcessSnapshot>();
+
+  /**
+   * A test hook. When it is set, `exec` returns what it produces instead of the default result.
+   * `timedOut` and `durationMs` default to false and 0.
+   */
+  onExec:
+    | ((command: Command) => { exitCode: number; stdout: string; stderr: string; timedOut?: boolean })
+    | null = null;
 
   constructor(readonly capabilities: SandboxCapabilities = {
     enforcesNetworkPolicy: true,
@@ -61,6 +71,7 @@ export class FakeSandbox implements Sandbox {
 
   applyNetworkPolicy(_ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
     this.calls.push("applyNetworkPolicy");
+    this.networkPolicies.push(policy);
     this.policies.push(policy);
     return Promise.resolve();
   }
@@ -68,6 +79,10 @@ export class FakeSandbox implements Sandbox {
   exec(_ref: SandboxRef, command: Command): Promise<CommandResult> {
     this.calls.push(`exec:${command.file}`);
     this.commands.push(command);
+    if (this.onExec !== null) {
+      const produced = this.onExec(command);
+      return Promise.resolve({ timedOut: false, durationMs: 0, ...produced });
+    }
     const line = [command.file, ...command.args].join(" ");
     const scripted = this.scripted.find((entry) => entry.matcher.test(line));
     return Promise.resolve({

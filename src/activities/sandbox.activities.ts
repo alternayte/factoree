@@ -3,7 +3,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { ProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
+import type { ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -26,7 +26,7 @@ export interface PrepareSandboxActivityInput {
   projectId: string;
   primary: RepositorySpec;
   references: RepositorySpec[];
-  config: ProjectRuntimeConfig;
+  defaults: ProjectDefaults;
   environment: Record<string, string>;
 }
 
@@ -37,7 +37,12 @@ export interface PrepareSandboxActivityOutput {
   primaryPath: string;
   baseSha: string;
   referencePaths: string[];
+  /** SDD section 55 requires the recorded commit SHA of every repository. */
+  referenceBaseShas: string[];
   baselineCheckpointId: string | null;
+  runtime: ProjectRuntimeConfig;
+  verifyCommands: VerificationCommand[];
+  repositoryInstructions: string;
 }
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
@@ -80,7 +85,7 @@ const prepare = async (
     projectId: input.projectId,
     primary: input.primary,
     references: input.references,
-    config: input.config,
+    defaults: input.defaults,
     environment: input.environment,
   });
 
@@ -94,7 +99,7 @@ const prepare = async (
   // `prepare` was the alternative. It was rejected, because a partly prepared sandbox from a
   // crashed attempt has an unknown checkout state, and reuse of it would carry that state into
   // the new attempt.
-  const retainUntil = new Date(Date.now() + input.config.spriteRetentionHours * MILLISECONDS_PER_HOUR);
+  const retainUntil = new Date(Date.now() + prepared.runtime.spriteRetentionHours * MILLISECONDS_PER_HOUR);
   let superseded;
   try {
     superseded = await dependencies.runs.setSandbox(input.tenantId, input.runId, {
@@ -102,7 +107,7 @@ const prepare = async (
       adapter: prepared.ref.adapter,
       retainUntil,
       baseSha: prepared.checkout.primary.baseSha,
-      implementerRunner: input.config.implementerRunner,
+      implementerRunner: prepared.runtime.implementerRunner,
     });
   } catch (error) {
     // The Run holds no reference to this sandbox, and a Temporal retry creates a new one. The
@@ -150,7 +155,13 @@ const prepare = async (
     primaryPath: prepared.checkout.primary.path,
     baseSha: prepared.checkout.primary.baseSha,
     referencePaths: prepared.checkout.references.map((entry) => entry.path),
+    // SDD section 55 requires the recorded SHA of every reference repository, not only the
+    // primary one. This closes the Phase 2 carried finding.
+    referenceBaseShas: prepared.checkout.references.map((entry) => entry.baseSha),
     baselineCheckpointId: prepared.baselineCheckpoint?.id ?? null,
+    runtime: prepared.runtime,
+    verifyCommands: prepared.verifyCommands,
+    repositoryInstructions: prepared.repositoryInstructions,
   };
 };
 

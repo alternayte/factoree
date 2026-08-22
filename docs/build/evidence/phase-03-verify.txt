@@ -1,0 +1,1329 @@
+
+> factoree@0.1.0 verify
+> npm run lint && npm run typecheck && npm test && npm run test:integration && npm run test:workflow && npm run build
+
+
+> factoree@0.1.0 lint
+> eslint .
+
+
+> factoree@0.1.0 typecheck
+> tsc --noEmit
+
+
+> factoree@0.1.0 test
+> vitest run --config vitest.config.ts
+
+The plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option. You can remove the plugin and set resolve.tsconfigPaths: true in your Vite config instead.
+
+ RUN  v4.1.11 /Users/nathananderson-tennant/Development/factoree
+
+
+ Test Files  36 passed (36)
+      Tests  327 passed | 7 skipped (334)
+   Start at  00:51:40
+   Duration  2.02s (transform 663ms, setup 0ms, import 1.93s, tests 3.59s, environment 2ms)
+
+
+> factoree@0.1.0 test:integration
+> vitest run --config vitest.integration.config.ts
+
+The plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option. You can remove the plugin and set resolve.tsconfigPaths: true in your Vite config instead.
+
+ RUN  v4.1.11 /Users/nathananderson-tennant/Development/factoree
+
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55762"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55763"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55764"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55765"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55766"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55767"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55768"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55769"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55770"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Temporal CLI 1.8.2 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:54782
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:54785/metrics
+2026-08-22T22:52:28.400Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 358 ms { sdkComponent: 'worker', taskQueue: 'factoree-at01' }
+2026-08-22T22:52:28.401Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'factoree-at01', size: '1.53MB' }
+2026-08-22T22:52:28.551Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'factoree-at01',
+  state: 'RUNNING'
+}
+2026-08-22T22:52:28.552Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'factoree-at01' }
+2026-08-22T22:52:28.706Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'factoree-at01',
+  isLocal: false,
+  attempt: 1,
+  namespace: 'default',
+  taskToken: 'CiQwMWEwMmJhYy1lYTEwLTc1YzgtYTFiYi05MzEyMjQ2ZmNhOTYSHmxpbmVhcjp3b3Jrc3BhY2UtMTIzOnNlc3Npb24tMRokMDFhMDJiYWMtZWUzZC03MmE3LWFjNTMtZTMyMWE1MjQ0OGI2IB0oATIBNUIOcHJlcGFyZVNhbmRib3hKCAgBENyAQBgB',
+  activityId: '5',
+  activityType: 'prepareSandbox',
+  workflowId: 'linear:workspace-123:session-1',
+  workflowRunId: '01a02bac-ee3d-72a7-ac53-e321a52448b6',
+  workflowType: 'agentRunWorkflow',
+  error: Error: the base SHA of https://github.com/acme/demo.git is not forty hexadecimal characters: ""
+      at clone (/Users/nathananderson-tennant/Development/factoree/src/domain/runs/checkout.ts:81:11)
+      at processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at checkoutPrimary (/Users/nathananderson-tennant/Development/factoree/src/domain/runs/checkout.ts:95:19)
+      at SandboxManager.prepare (/Users/nathananderson-tennant/Development/factoree/src/domain/runs/sandbox-manager.ts:104:23)
+      at prepare (/Users/nathananderson-tennant/Development/factoree/src/activities/sandbox.activities.ts:82:20)
+      at prepareSandbox (/Users/nathananderson-tennant/Development/factoree/src/activities/sandbox.activities.ts:182:14)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:20)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:16)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:16)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:32,
+  durationMs: 6
+}
+2026-08-22T22:52:29.405Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'factoree-at01',
+  state: 'STOPPING'
+}
+2026-08-22T22:52:29.405Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'factoree-at01',
+  state: 'DRAINING'
+}
+2026-08-22T22:52:29.407Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'factoree-at01',
+  state: 'DRAINED'
+}
+2026-08-22T22:52:29.407Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'factoree-at01',
+  state: 'STOPPED'
+}
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55771"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55772"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55773"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma/schema.prisma.
+Datasource "db": PostgreSQL database "test", schema "public" at "localhost:55774"
+
+6 migrations found in prisma/migrations
+
+Applying migration `20260821212058_init`
+Applying migration `20260822184549_add_agent_execution_idempotency_key`
+Applying migration `20260822210000_phase_02_sandbox`
+Applying migration `20260822233000_project_secret_injection`
+Applying migration `20260822234500_add_evidence`
+Applying migration `20260822235500_add_project_default_branch`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260821212058_init/
+    └─ migration.sql
+  └─ 20260822184549_add_agent_execution_idempotency_key/
+    └─ migration.sql
+  └─ 20260822210000_phase_02_sandbox/
+    └─ migration.sql
+  └─ 20260822233000_project_secret_injection/
+    └─ migration.sql
+  └─ 20260822234500_add_evidence/
+    └─ migration.sql
+  └─ 20260822235500_add_project_default_branch/
+    └─ migration.sql
+
+All migrations have been successfully applied.
+
+ Test Files  13 passed (13)
+      Tests  50 passed (50)
+   Start at  00:51:42
+   Duration  62.07s (transform 216ms, setup 0ms, import 2.84s, tests 57.92s, environment 1ms)
+
+
+> factoree@0.1.0 test:workflow
+> vitest run --config vitest.workflow.config.ts
+
+The plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option. You can remove the plugin and set resolve.tsconfigPaths: true in your Vite config instead.
+
+ RUN  v4.1.11 /Users/nathananderson-tennant/Development/factoree
+
+2026-08-22T22:52:46.006Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 358 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.007Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:46.148Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:46.149Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.221Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:46.221Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:46.221Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:46.221Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:46.371Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 139 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.372Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:46.489Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:46.489Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.532Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:46.533Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:46.533Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:46.533Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:46.670Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 129 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.671Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:46.796Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:46.796Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.845Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:46.845Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:46.846Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:46.846Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:46.968Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 116 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:46.969Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:47.098Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:47.098Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:47.134Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:47.134Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:47.134Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:47.134Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:47.252Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 112 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:47.253Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:47.391Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:47.391Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:47.452Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:47.452Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:47.453Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:47.453Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:47.569Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 109 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:47.570Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:47.691Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:47.691Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:47.772Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:47.772Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:47.773Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:47.773Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:47.895Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 115 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:47.896Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:48.011Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:48.011Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.062Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:48.062Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:48.062Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:48.062Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:48.177Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 108 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.179Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:48.292Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:48.292Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.335Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:48.335Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:48.335Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:48.335Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:48.448Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 106 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.450Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:48.567Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:48.567Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.714Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:48.715Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:48.715Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:48.715Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:48.832Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 109 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.833Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:48.949Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:48.949Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:48.995Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:52:48.995Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:52:48.996Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:52:48.996Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:52:49.109Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 107 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:52:49.111Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:52:49.230Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:52:49.231Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:01.296Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:01.296Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+[2m2026-08-22T22:53:01.298441Z[0m [33m WARN[0m [2mtemporalio_sdk_core::worker::activities[0m[2m:[0m Activity not found on completion. This may happen if the activity has already been cancelled but completed anyway. [3mtask_token[0m[2m=[0mTaskToken(AAdkZWZhdWx0AB5saW5lYXI6d29ya3NwYWNlLTEyMzpzZXNzaW9uLWwAJDVmYzlhM2E0LWY5MDMtNDIzMC04Y2ExLWIwMzZkNmJlYTcwOQAAAAAAAAAdAAAAAQ==) [3mdetails[0m[2m=[0mStatus { code: NotFound, message: "Completed workflow", metadata: MetadataMap { headers: {"content-type": "application/grpc"} }, source: None }
+2026-08-22T22:53:01.298Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:01.299Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:01.500Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 187 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:01.502Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:01.657Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:01.657Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:01.682Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 1,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0AB5saW5lYXI6d29ya3NwYWNlLTEyMzpzZXNzaW9uLWUAJGFkMDE1ZjcwLWY0NmQtNGUyZC1hZTg1LWIxNjRmZjQyOWQ1NwAAAAAAAAALAAAAAQ==',
+  activityId: '2',
+  activityType: 'acknowledgeSession',
+  workflowId: 'linear:workspace-123:session-e',
+  workflowRunId: 'ad015f70-f46d-4e2d-ae85-b164ff429d57',
+  workflowType: 'agentRunWorkflow',
+  error: Error: Linear is down
+      at acknowledgeSession (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:91:55)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:01.685Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 2,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0AB5saW5lYXI6d29ya3NwYWNlLTEyMzpzZXNzaW9uLWUAJGFkMDE1ZjcwLWY0NmQtNGUyZC1hZTg1LWIxNjRmZjQyOWQ1NwAAAAAAAAALAAAAAg==',
+  activityId: '2',
+  activityType: 'acknowledgeSession',
+  workflowId: 'linear:workspace-123:session-e',
+  workflowRunId: 'ad015f70-f46d-4e2d-ae85-b164ff429d57',
+  workflowType: 'agentRunWorkflow',
+  error: Error: Linear is down
+      at acknowledgeSession (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:91:55)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:01.686Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 3,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0AB5saW5lYXI6d29ya3NwYWNlLTEyMzpzZXNzaW9uLWUAJGFkMDE1ZjcwLWY0NmQtNGUyZC1hZTg1LWIxNjRmZjQyOWQ1NwAAAAAAAAALAAAAAw==',
+  activityId: '2',
+  activityType: 'acknowledgeSession',
+  workflowId: 'linear:workspace-123:session-e',
+  workflowRunId: 'ad015f70-f46d-4e2d-ae85-b164ff429d57',
+  workflowType: 'agentRunWorkflow',
+  error: Error: Linear is down
+      at acknowledgeSession (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:91:55)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:01.687Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 4,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0AB5saW5lYXI6d29ya3NwYWNlLTEyMzpzZXNzaW9uLWUAJGFkMDE1ZjcwLWY0NmQtNGUyZC1hZTg1LWIxNjRmZjQyOWQ1NwAAAAAAAAALAAAABA==',
+  activityId: '2',
+  activityType: 'acknowledgeSession',
+  workflowId: 'linear:workspace-123:session-e',
+  workflowRunId: 'ad015f70-f46d-4e2d-ae85-b164ff429d57',
+  workflowType: 'agentRunWorkflow',
+  error: Error: Linear is down
+      at acknowledgeSession (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:91:55)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:01.687Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 5,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0AB5saW5lYXI6d29ya3NwYWNlLTEyMzpzZXNzaW9uLWUAJGFkMDE1ZjcwLWY0NmQtNGUyZC1hZTg1LWIxNjRmZjQyOWQ1NwAAAAAAAAALAAAABQ==',
+  activityId: '2',
+  activityType: 'acknowledgeSession',
+  workflowId: 'linear:workspace-123:session-e',
+  workflowRunId: 'ad015f70-f46d-4e2d-ae85-b164ff429d57',
+  workflowType: 'agentRunWorkflow',
+  error: Error: Linear is down
+      at acknowledgeSession (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:91:55)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:01.693Z [WARN] Workflow failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  namespace: 'default',
+  workflowId: 'linear:workspace-123:session-e',
+  runId: 'ad015f70-f46d-4e2d-ae85-b164ff429d57',
+  workflowType: 'agentRunWorkflow',
+  error: [Error: Activity task failed] {
+    [cause]: Error: Linear is down
+        at acknowledgeSession (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:91:55) {
+      [cause]: undefined
+    }
+  }
+}
+2026-08-22T22:53:01.696Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:01.696Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:01.696Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:01.696Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:01.849Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 144 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:01.850Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:01.979Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:01.979Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:02.009Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 1,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0ACZsaW5lYXI6d29ya3NwYWNlLTEyMzpzZXMtY29uZmlndXJhdGlvbgAkYTJhM2M5MWItZWNmNS00MzY5LTgxZWEtZTVjY2UzOGRlMmU0AAAAAAAAAB0AAAAB',
+  activityId: '5',
+  activityType: 'prepareSandbox',
+  workflowId: 'linear:workspace-123:ses-configuration',
+  workflowRunId: 'a2a3c91b-ecf5-4369-81ea-e5cce38de2e4',
+  workflowType: 'agentRunWorkflow',
+  error: RunConfigurationError: the bootstrap command failed with exit code 1: no such file
+      at prepareSandbox (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:105:15)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:02.018Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:02.018Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:02.018Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:02.018Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:02.160Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 134 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:02.161Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:02.288Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:02.288Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:22.362Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:22.362Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:22.363Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:22.363Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:23.516Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 343 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:23.518Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:23.656Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:23.657Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:23.748Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:23.748Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:23.749Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:23.749Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:23.900Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 141 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:23.902Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:24.024Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:24.024Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:24.071Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:24.071Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:24.071Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:24.071Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:24.203Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 124 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:24.205Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:24.321Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:24.321Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:24.386Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:24.386Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:24.387Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:24.387Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:24.504Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 111 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:24.505Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:24.625Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:24.625Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:24.693Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:24.693Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:24.693Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:24.693Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:24.808Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 108 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:24.809Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:24.930Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:24.930Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:25.004Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:25.004Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:25.004Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:25.004Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:25.119Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 107 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:25.120Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:25.246Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:25.246Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:25.303Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:25.303Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:25.304Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:25.304Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:25.421Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 109 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:25.422Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:25.534Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:25.535Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+[2m2026-08-22T22:53:37.577873Z[0m [33m WARN[0m [2mtemporalio_sdk_core::worker::activities[0m[2m:[0m Activity not found on completion. This may happen if the activity has already been cancelled but completed anyway. [3mtask_token[0m[2m=[0mTaskToken(AAdkZWZhdWx0ABtsaW5lYXI6d29ya3NwYWNlLTEyMzpzZXMtdjcAJDBhNWEwZTZlLTJlY2QtNGEwMC05MWE2LTY3YTRmOTE2NGY0NgAAAAAAAAA1AAAAAQ==) [3mdetails[0m[2m=[0mStatus { code: NotFound, message: "Completed workflow", metadata: MetadataMap { headers: {"content-type": "application/grpc"} }, source: None }
+2026-08-22T22:53:37.579Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:37.579Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:37.580Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:37.580Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:37.773Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 182 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:37.775Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:37.917Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:37.917Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:37.947Z [WARN] Activity failed {
+  sdkComponent: 'worker',
+  taskQueue: 'test',
+  isLocal: false,
+  attempt: 1,
+  namespace: 'default',
+  taskToken: 'AAdkZWZhdWx0ABtsaW5lYXI6d29ya3NwYWNlLTEyMzpzZXMtdjgAJDgyYWRjNjBlLTMzNjktNDZhMS1hMzAwLWQ0YWIwZGZjMTgwYQAAAAAAAAAdAAAAAQ==',
+  activityId: '5',
+  activityType: 'prepareSandbox',
+  workflowId: 'linear:workspace-123:ses-v8',
+  workflowRunId: '82adc60e-3369-46a1-a300-d4ab0dfc180a',
+  workflowType: 'agentRunWorkflow',
+  error: RunConfigurationError: the bootstrap command failed with exit code 1: no such file
+      at prepareSandbox (/Users/nathananderson-tennant/Development/factoree/tests/workflow/support/harness.ts:105:15)
+      at executeNextHandler (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:100:54)
+      at Activity.execute (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:102:26)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:150:29
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+      at NativeConnection.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/connection.js:172:46)
+      at Client.withAbortSignal (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/client/lib/base-client.js:65:38)
+      at Activity.executeWithClient (/Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:149:33)
+      at /Users/nathananderson-tennant/Development/factoree/node_modules/@temporalio/worker/lib/activity.js:162:43
+      at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14),
+  durationMs: 0
+}
+2026-08-22T22:53:37.959Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:37.959Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:37.959Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:37.959Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+Temporal CLI 1.8.2 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:55170
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:55173/metrics
+2026-08-22T22:53:39.267Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 347 ms { sdkComponent: 'worker', taskQueue: 'at-35' }
+2026-08-22T22:53:39.268Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'at-35', size: '1.53MB' }
+2026-08-22T22:53:39.403Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'RUNNING' }
+2026-08-22T22:53:39.404Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'at-35' }
+2026-08-22T22:53:39.515Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'STOPPING' }
+2026-08-22T22:53:39.515Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'DRAINING' }
+2026-08-22T22:53:39.517Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'DRAINED' }
+2026-08-22T22:53:39.517Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'STOPPED' }
+2026-08-22T22:53:39.670Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 143 ms { sdkComponent: 'worker', taskQueue: 'at-35' }
+2026-08-22T22:53:39.671Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'at-35', size: '1.53MB' }
+2026-08-22T22:53:39.788Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'RUNNING' }
+2026-08-22T22:53:39.788Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'at-35' }
+2026-08-22T22:53:39.837Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'STOPPING' }
+2026-08-22T22:53:39.837Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'DRAINING' }
+2026-08-22T22:53:39.838Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'DRAINED' }
+2026-08-22T22:53:39.838Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'at-35', state: 'STOPPED' }
+2026-08-22T22:53:40.730Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 310 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:40.732Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:40.859Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:40.860Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:40.960Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:40.960Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:40.961Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:40.961Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+2026-08-22T22:53:41.116Z [INFO] asset workflow-bundle-cf9249a3b08bb7a587ee.js 1.53 MiB [emitted] [immutable] (name: main)
+runtime modules 1.34 KiB 4 modules
+modules by path ./node_modules/@temporalio/ 363 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 161 KiB 35 modules
+  modules by path ./node_modules/@temporalio/workflow/ 202 KiB 26 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/ 21.9 KiB
+  modules by path ./src/workflows/ 20.2 KiB 2 modules
+  ./src/temporal/workflow-id.ts 596 bytes [built] [code generated]
+  ./src/domain/runs/run-configuration-error.ts 1.06 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+webpack 5.109.2 compiled successfully in 144 ms { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:41.117Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'test', size: '1.53MB' }
+2026-08-22T22:53:41.237Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'RUNNING' }
+2026-08-22T22:53:41.237Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'test' }
+2026-08-22T22:53:41.314Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPING' }
+2026-08-22T22:53:41.315Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINING' }
+2026-08-22T22:53:41.315Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'DRAINED' }
+2026-08-22T22:53:41.315Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'test', state: 'STOPPED' }
+
+ Test Files  4 passed (4)
+      Tests  25 passed (25)
+   Start at  00:52:44
+   Duration  56.52s (transform 67ms, setup 0ms, import 972ms, tests 55.17s, environment 0ms)
+
+
+> factoree@0.1.0 build
+> tsc -p tsconfig.build.json
+
+exit=0

@@ -21,6 +21,21 @@ describe("normalizeNetworkPolicy", () => {
     const policy = normalizeNetworkPolicy({ allowedDomains: ["b.example.com", "a.example.com"] });
     expect(policy.allowedDomains).toEqual(["a.example.com", "b.example.com"]);
   });
+
+  it("accepts the conventional wildcard form", () => {
+    const policy = normalizeNetworkPolicy({ allowedDomains: ["*.example.com"] });
+    expect(policy.allowedDomains).toEqual(["*.example.com"]);
+  });
+
+  it("rejects a wildcard label with no dot, which no adapter gives a meaning to", () => {
+    expect(() => normalizeNetworkPolicy({ allowedDomains: ["*example.com"] })).toThrow(
+      /domain must be a host name/,
+    );
+  });
+
+  it("rejects a bare wildcard, which would allow every domain", () => {
+    expect(() => normalizeNetworkPolicy({ allowedDomains: ["*"] })).toThrow(/domain must be a host name/);
+  });
 });
 
 describe("NetworkPolicyNotEnforcedError", () => {

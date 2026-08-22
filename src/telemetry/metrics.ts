@@ -69,4 +69,17 @@ export const metrics = {
     labelNames,
     registers: [registry],
   }),
+  verificationDuration: new Histogram({
+    name: "factoree_verification_duration_seconds",
+    help: "Deterministic verification duration in seconds",
+    labelNames,
+    buckets: [5, 15, 60, 180, 600, 1800],
+    registers: [registry],
+  }),
+  repairs: new Counter({
+    name: "factoree_repairs_total",
+    help: "Repair attempts started",
+    labelNames: [...labelNames, "reason"],
+    registers: [registry],
+  }),
 };

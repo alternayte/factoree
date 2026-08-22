@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { RUN_STATUSES, TERMINAL_RUN_STATUSES, isTerminalRunStatus } from "~/domain/runs/run-status.js";
+import {
+  RUN_FAILURE_REASONS,
+  RUN_STATUSES,
+  TERMINAL_RUN_STATUSES,
+  isTerminalRunStatus,
+} from "~/domain/runs/run-status.js";
 
 describe("run status", () => {
   it("declares every SDD section 48 state", () => {
@@ -29,6 +34,11 @@ describe("run status", () => {
     expect([...TERMINAL_RUN_STATUSES].sort()).toEqual(
       ["CANCELLED", "FAILED", "FAILED_CONFIGURATION", "FAILED_REVIEW", "READY_FOR_HUMAN", "STALE_BASE"].sort(),
     );
+  });
+
+  it("declares the failure reason of a Run that verification denied", () => {
+    // SDD section 35. A failing check with a spent repair budget ends the Run with this reason.
+    expect([...RUN_FAILURE_REASONS]).toContain("VERIFICATION_FAILED");
   });
 
   it("classifies terminal and non-terminal states", () => {

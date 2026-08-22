@@ -29,6 +29,7 @@ const delegation = new DelegationService({
   webhookLog: new PrismaWebhookLog(prisma),
   starter: createTemporalWorkflowStarter(client, env.TEMPORAL_TASK_QUEUE),
   logger,
+  repositoryBaseUrl: env.GITHUB_BASE_URL,
 });
 
 const app = buildServer({ env, logger, prisma, projects, tenants, secrets, runs, delegation });

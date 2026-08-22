@@ -15,6 +15,7 @@ import {
   PrismaTenantRegistry,
 } from "~/persistence/prisma/project-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
+import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
@@ -42,6 +43,7 @@ const env = {
   LOG_LEVEL: "error",
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
+  GITHUB_BASE_URL: "https://github.com",
 } satisfies Env;
 
 const redactor = new Redactor();
@@ -118,6 +120,7 @@ beforeAll(async () => {
       runners: new AgentRunnerRegistry([new FakeRunner()]),
       executions: new PrismaAgentExecutionRepository(prisma),
       secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+      evidence: new PrismaEvidenceStore(prisma),
       redactor,
       reaper: new SpriteReaper({ sandboxes: { fake: fakeSandbox }, runs }),
       logger,
@@ -139,6 +142,7 @@ beforeAll(async () => {
       webhookLog: new PrismaWebhookLog(prisma),
       starter: createTemporalWorkflowStarter(environment.client, env.TEMPORAL_TASK_QUEUE),
       logger,
+      repositoryBaseUrl: "https://github.com",
     }),
   });
   await app.ready();

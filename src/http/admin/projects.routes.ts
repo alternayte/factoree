@@ -13,6 +13,7 @@ const createSchema = z.object({
   linearTeamId: z.string().min(1).optional(),
   defaultAutonomy: z.enum(["L0", "L1", "L2", "L3", "L4"]).default("L2"),
   maxRunMinutes: z.number().int().positive().max(600).default(90),
+  defaultBranch: z.string().min(1).max(255).default("main"),
 });
 
 const updateSchema = createSchema.partial().omit({ linearWorkspaceId: true, workspaceName: true, key: true });
@@ -39,6 +40,7 @@ export const registerProjectRoutes = (
       ...(parsed.data.linearTeamId === undefined ? {} : { linearTeamId: parsed.data.linearTeamId }),
       defaultAutonomy: parsed.data.defaultAutonomy,
       maxRunMinutes: parsed.data.maxRunMinutes,
+      defaultBranch: parsed.data.defaultBranch,
     });
     return reply.code(201).send(project);
   });
@@ -76,6 +78,7 @@ export const registerProjectRoutes = (
       ...(body.data.linearTeamId === undefined ? {} : { linearTeamId: body.data.linearTeamId }),
       ...(body.data.defaultAutonomy === undefined ? {} : { defaultAutonomy: body.data.defaultAutonomy }),
       ...(body.data.maxRunMinutes === undefined ? {} : { maxRunMinutes: body.data.maxRunMinutes }),
+      ...(body.data.defaultBranch === undefined ? {} : { defaultBranch: body.data.defaultBranch }),
     };
     const project = await dependencies.projects.update(tenant.id, request.params.id, update);
     if (!project) return reply.code(404).send({ error: "project not found" });

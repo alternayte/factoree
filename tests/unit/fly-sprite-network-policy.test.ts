@@ -24,4 +24,12 @@ describe("toSpritesNetworkPolicy", () => {
       { domain: "*", action: "deny" },
     ]);
   });
+
+  it("translates the conventional wildcard form to its own allow rule", () => {
+    const document = toSpritesNetworkPolicy({ allowedDomains: ["*.example.com"] });
+    expect(document.rules).toEqual([
+      { domain: "*.example.com", action: "allow" },
+      { domain: "*", action: "deny" },
+    ]);
+  });
 });

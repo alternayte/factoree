@@ -1,150 +1,34 @@
-/* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
-import { Context } from "@temporalio/activity";
-import { Worker } from "@temporalio/worker";
 import { agentRunWorkflow, stopSignal, humanInputSignal, runStatusQuery } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
 import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
-import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
-import type { ImplementActivityInput } from "~/activities/agent.activities.js";
-import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { createWorkflowHarness, waitFor } from "./support/harness.js";
 
 let environment: TestWorkflowEnvironment;
-const created: string[] = [];
-const acknowledged: string[] = [];
-const completions: Array<{ runId: string; status: string; failureReason?: string }> = [];
-const statuses: string[] = [];
-const failingSessions = new Set<string>();
-const prepared: PrepareSandboxActivityInput[] = [];
-const implementCalls: ImplementActivityInput[] = [];
-const cancelledSessions: Array<{ runnerName: string; session: { sessionId: string } }> = [];
-const destroyed: string[] = [];
-/** A run id in this map holds preparation open until the test resolves the promise. */
-const heldPreparations = new Map<string, Promise<void>>();
-/** A run id in this map holds the Implementer open, the same way a real agent run does. */
-const heldImplementations = new Map<string, Promise<void>>();
-/** The run ids whose Implementer double reports a failed attempt. */
-const failingImplementations = new Set<string>();
-/** The run ids whose live Implementer session the activity cancelled. */
-const cancelledLiveSessions: string[] = [];
-/** Every message the workflow posted to the human on the error path. */
-const postedErrors: string[] = [];
-/** The run ids whose preparation double raises a configuration fault. */
-const configurationFaults = new Set<string>();
 
-const activities = {
-  createRun: async (input: { linearAgentSessionId: string }) => {
-    created.push(input.linearAgentSessionId);
-    return { runId: `run-${input.linearAgentSessionId}`, created: created.filter((id) => id === input.linearAgentSessionId).length === 1 };
-  },
-  setRunStatus: async (input: { status: string }) => {
-    statuses.push(input.status);
-  },
-  completeRun: async (input: { runId: string; status: string; failureReason?: string }) => {
-    completions.push(input);
-  },
-  acknowledgeSession: async (input: { sessionId: string }) => {
-    if (failingSessions.has(input.sessionId)) throw new Error("Linear is down");
-    acknowledged.push(input.sessionId);
-  },
-  postProgress: async () => undefined,
-  postElicitation: async () => undefined,
-  postFinalResponse: async () => undefined,
-  postError: async (activityInput: { message: string }) => {
-    postedErrors.push(activityInput.message);
-  },
-  prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
-    prepared.push(activityInput);
-    if (configurationFaults.has(activityInput.runId)) {
-      throw new RunConfigurationError("the bootstrap command failed with exit code 1: no such file");
-    }
-    await heldPreparations.get(activityInput.runId);
-    return {
-      spriteId: `sprite-${activityInput.runId}`,
-      adapter: "fake",
-      workspacePath: "/workspace",
-      primaryPath: "/workspace/primary",
-      baseSha: "a".repeat(40),
-      referencePaths: [],
-      baselineCheckpointId: null,
-    };
-  },
-  destroySandbox: async (activityInput: { spriteId: string }) => {
-    destroyed.push(activityInput.spriteId);
-  },
-  reapExpiredSandboxes: async () => 0,
-  implement: async (activityInput: ImplementActivityInput) => {
-    implementCalls.push(activityInput);
-    const held = heldImplementations.get(activityInput.runId);
-    if (held !== undefined) {
-      // The real activity cancels the live agent session when Temporal cancels the activity.
-      // This double records the same event and then returns its evidence.
-      Context.current().cancellationSignal.addEventListener(
-        "abort",
-        () => cancelledLiveSessions.push(activityInput.runId),
-        { once: true },
-      );
-      const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
-      try {
-        await held;
-      } finally {
-        clearInterval(heartbeat);
-      }
-    }
-    return {
-      sessionId: "ses_fake",
-      processId: "process-fake",
-      runner: activityInput.runnerName,
-      completed: !failingImplementations.has(activityInput.runId),
-      exitCode: 0,
-      cancelled: false,
-      summary: "The change is applied.",
-      durationMs: 10,
-      cancelledSession: cancelledLiveSessions.includes(activityInput.runId),
-    };
-  },
-  cancelImplementer: async (activityInput: { runnerName: string; session: { sessionId: string } }) => {
-    cancelledSessions.push(activityInput);
-  },
-};
-
-const sandboxInput = {
-  primary: { url: "https://example.invalid/primary.git", ref: "main" },
-  references: [],
-  config: DEFAULT_PROJECT_RUNTIME_CONFIG,
-  goal: "Add the health endpoint.",
-  repositoryInstructions: "Use the existing test idiom.",
-};
-
-const input = (sessionId: string, maxRunMinutes = 90) => ({
-  tenantId: "tenant-1",
-  workspaceId: "workspace-123",
-  projectId: "project-1",
-  linearIssueId: "issue-1",
-  agentSessionId: sessionId,
-  autonomyLevel: "L2",
-  maxRunMinutes,
-});
-
-/** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
-const waitFor = async (predicate: () => boolean, what = "the condition"): Promise<void> => {
-  const deadline = Date.now() + 10_000;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error(`the test waited ten seconds for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-};
-
-const runWorker = async <T>(body: () => Promise<T>): Promise<T> => {
-  const worker = await Worker.create({
-    connection: environment.nativeConnection,
-    taskQueue: "test",
-    workflowsPath: new URL("../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
-    activities,
-  });
-  return worker.runUntil(body());
-};
+const harness = createWorkflowHarness(() => environment);
+const {
+  created,
+  acknowledged,
+  completions,
+  statuses,
+  statusesOf,
+  failingSessions,
+  prepared,
+  implementCalls,
+  cancelledSessions,
+  destroyed,
+  heldPreparations,
+  heldImplementations,
+  failingImplementations,
+  cancelledLiveSessions,
+  postedErrors,
+  configurationFaults,
+  sandboxInput,
+  input,
+  runWorker,
+} = harness;
 
 beforeAll(async () => {
   environment = await TestWorkflowEnvironment.createTimeSkipping();
@@ -239,7 +123,9 @@ describe("agentRunWorkflow", () => {
       await handle.signal(stopSignal);
       return handle.result();
     });
-    expect(statuses.slice(-3)).toEqual(["RECEIVED", "PREPARING", "IMPLEMENTING"]);
+    // Verification now follows the implementation, so the sequence of this Run is longer than
+    // it was in Phase 2. The first three states of this Run are still exactly these three.
+    expect(statusesOf("run-session-f").slice(0, 3)).toEqual(["RECEIVED", "PREPARING", "IMPLEMENTING"]);
     expect(implementCalls.at(-1)?.runnerName).toBe(DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner);
     expect(implementCalls.at(-1)?.attempt).toBe(1);
     expect(result.status).toBe("CANCELLED");

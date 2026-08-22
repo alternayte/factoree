@@ -44,4 +44,13 @@ describe("loadEnv", () => {
     const env = loadEnv({ ...base, SPRITES_TOKEN: undefined, SANDBOX_ADAPTER: "local" });
     expect(env.SANDBOX_ADAPTER).toBe("local");
   });
+
+  it("defaults the GitHub base URL", () => {
+    const env = loadEnv(base);
+    expect(env.GITHUB_BASE_URL).toBe("https://github.com");
+  });
+
+  it("rejects a GitHub base URL that is not a URL", () => {
+    expect(() => loadEnv({ ...base, GITHUB_BASE_URL: "not-a-url" })).toThrow();
+  });
 });

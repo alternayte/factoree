@@ -42,6 +42,7 @@ model Project {
   linearTeamId       String?
   defaultAutonomy    String          @default("L2")
   maxRunMinutes      Int             @default(90)
+  defaultBranch      String          @default("main")
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   secrets            ProjectSecret[]
@@ -97,6 +98,7 @@ model Run {
   startedAt                DateTime?
   completedAt              DateTime?
   executions               AgentExecution[]
+  evidence                 Evidence[]
 
   @@index([tenantId])
   @@index([projectId])
@@ -125,6 +127,27 @@ model AgentExecution {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([runId])
+}
+
+model Evidence {
+  id                    String   @id @default(uuid())
+  tenantId              String
+  runId                 String
+  run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // Null for a deterministic check. SDD section 35 records a check that answers no assertion.
+  // Phase 6 fills this column for Validation Contract evidence.
+  validationAssertionId String?
+  kind                  String
+  source                String
+  sha256                String
+  storageRef            String?
+  metadata              Json
+  // A Temporal retry of one activity must not write a second row.
+  idempotencyKey        String
+  createdAt             DateTime @default(now())
+
+  @@unique([runId, idempotencyKey])
+  @@index([tenantId, runId])
 }
 
 model ProcessedWebhook {

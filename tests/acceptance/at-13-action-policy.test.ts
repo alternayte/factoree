@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
-import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
+import { DEFAULT_PROJECT_DEFAULTS, DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import {
   ForbiddenImplementerMaterialError,
@@ -67,7 +67,7 @@ describe("AT-13 — Action Policy", () => {
       projectId: "p",
       primary: { url: primary, ref: "main" },
       references: [{ url: reference, ref: "main" }],
-      config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+      defaults: DEFAULT_PROJECT_DEFAULTS,
     });
     const target = join(prepared.checkout.primary.path, "target.txt");
     const result = await sandbox.exec(prepared.ref, {
@@ -89,7 +89,7 @@ describe("AT-13 — Action Policy", () => {
       projectId: "p",
       primary: { url: primary, ref: "main" },
       references: [{ url: reference, ref: "main" }],
-      config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+      defaults: DEFAULT_PROJECT_DEFAULTS,
     });
     const entry = prepared.checkout.references[0];
     expect(entry).toBeDefined();
@@ -115,7 +115,7 @@ describe("AT-13 — Action Policy", () => {
       projectId: "p",
       primary: { url: primary, ref: "main" },
       references: [],
-      config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+      defaults: DEFAULT_PROJECT_DEFAULTS,
     });
     const result = await sandbox.exec(prepared.ref, {
       file: "sh",

@@ -13,8 +13,8 @@ import type { RunStatus } from "~/domain/runs/run-status.js";
 import type { Activities } from "~/activities/index.js";
 import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
+import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import type { ProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 
 import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
@@ -24,9 +24,12 @@ import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-e
 export interface AgentRunSandboxInput {
   primary: { url: string; ref: string };
   references: Array<{ url: string; ref: string }>;
-  config: ProjectRuntimeConfig;
+  /**
+   * SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the primary
+   * repository. Only the values a repository must not own travel from the control plane.
+   */
+  defaults: { stagingRead: boolean; spriteRetentionHours: number };
   goal: string;
-  repositoryInstructions: string;
 }
 
 export interface AgentRunWorkflowInput {
@@ -124,6 +127,22 @@ const buildImplementActivities = (budgetMs: number) =>
     retry: { maximumAttempts: 1 },
   });
 
+/** The longest one verification pass can take. A retry gets its own attempt of this length. */
+const VERIFY_ATTEMPT_TIMEOUT_MS = 60 * 60_000;
+
+/**
+ * Verification runs the project build and test commands, so it takes minutes. It is bounded by
+ * the remaining Run budget. SDD section 49: a semantic failure must not consume the
+ * infrastructure retry policy. A failing check is a semantic outcome, and the activity returns
+ * it as a result, so a retry here covers only a transport fault.
+ */
+const buildVerifyActivities = (budgetMs: number) =>
+  proxyActivities<Activities>({
+    startToCloseTimeout: `${Math.min(VERIFY_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
+    scheduleToCloseTimeout: `${budgetMs} milliseconds`,
+    retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
+  });
+
 // The cancellation of a live Implementer session runs after the Run budget has ended, so it
 // needs its own short timeout.
 const cancelActivities = proxyActivities<Activities>({
@@ -181,7 +200,11 @@ export async function agentRunWorkflow(
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
   const failRun = async (
-    failureReason: "RUN_TIMEOUT" | "IMPLEMENTATION_FAILED" | "CONFIGURATION_INVALID",
+    failureReason:
+      | "RUN_TIMEOUT"
+      | "IMPLEMENTATION_FAILED"
+      | "CONFIGURATION_INVALID"
+      | "VERIFICATION_FAILED",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = failureReason === "CONFIGURATION_INVALID" ? "FAILED_CONFIGURATION" : "FAILED";
@@ -198,6 +221,72 @@ export async function agentRunWorkflow(
   };
 
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
+
+  /**
+   * One Implementer attempt. The cancellation scope, the stop watcher, and the session
+   * bookkeeping are unchanged from Phase 2. It returns null when the activity was cancelled.
+   */
+  const runImplementer = async (attemptInput: {
+    prepared: PrepareSandboxActivityOutput;
+    goal: string;
+    attempt: number;
+    repairFindings: string[];
+  }): Promise<ImplementActivityOutput | null> => {
+    const budgetMs = remainingMs();
+    const implementActivities = buildImplementActivities(budgetMs);
+    const scope = new CancellationScope({ cancellable: true });
+    const running = scope.run(() =>
+      implementActivities.implement({
+        runId: id,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        runnerName: attemptInput.prepared.runtime.implementerRunner,
+        spriteId: attemptInput.prepared.spriteId,
+        adapter: attemptInput.prepared.adapter,
+        workspacePath: attemptInput.prepared.workspacePath,
+        primaryPath: attemptInput.prepared.primaryPath,
+        referencePaths: attemptInput.prepared.referencePaths,
+        goal: attemptInput.goal,
+        humanDecisions: humanInputs,
+        repositoryInstructions: attemptInput.prepared.repositoryInstructions,
+        repairFindings: attemptInput.repairFindings,
+        stagingRead: attemptInput.prepared.runtime.stagingRead,
+        timeoutMs: budgetMs,
+        attempt: attemptInput.attempt,
+      }),
+    );
+    // SDD section 50: a stop must reach the running agent process. The scope cancellation
+    // travels to the activity, and the activity stops the live session.
+    const watching = scope
+      .run(() => condition(() => stopRequested))
+      .then(() => {
+        scope.cancel();
+      })
+      .catch(() => undefined);
+
+    let implementation: ImplementActivityOutput | null = null;
+    try {
+      implementation = await running;
+    } catch (error) {
+      // A cancelled Implementer is the stop path, not a fault. Every other error stays a fault.
+      if (!isCancellation(error)) throw error;
+    } finally {
+      scope.cancel();
+      await watching;
+    }
+
+    if (implementation !== null) {
+      // The fallback below runs unless the activity itself really cancelled the session. A
+      // session lookup that gave up, or a cancel that failed, still needs the fallback.
+      implementerCancelled = implementation.cancelledSession;
+      implementerSession = {
+        sessionId: implementation.sessionId,
+        processId: implementation.processId,
+        runner: implementation.runner,
+      };
+    }
+    return implementation;
+  };
 
   // SDD section 50: a stop must terminate the active agent process, and no change is published.
   const cancelRun = async (): Promise<AgentRunWorkflowResult> => {
@@ -257,7 +346,7 @@ export async function agentRunWorkflow(
           projectId: input.projectId,
           primary: sandbox.primary,
           references: sandbox.references,
-          config: sandbox.config,
+          defaults: sandbox.defaults,
           environment: {},
         });
       } catch (error) {
@@ -283,82 +372,104 @@ export async function agentRunWorkflow(
       // it cannot finish.
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
-      status = "IMPLEMENTING";
-      await activities.setRunStatus({ runId: id, status });
+      // One Implementer attempt plus its verification. SDD section 42 bounds the number of
+      // repairs, so the loop can never run without end.
+      let attempt = FIRST_IMPLEMENTER_ATTEMPT;
+      let repairFindings: string[] = [];
+      let repairCount = 0;
+      const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
 
-      const budgetMs = remainingMs();
-      const implementActivities = buildImplementActivities(budgetMs);
-      const scope = new CancellationScope({ cancellable: true });
-      const running = scope.run(() =>
-        implementActivities.implement({
-          runId: id,
-          tenantId: input.tenantId,
-          projectId: input.projectId,
-          runnerName: sandbox.config.implementerRunner,
-          spriteId: preparedSandbox.spriteId,
-          adapter: preparedSandbox.adapter,
-          workspacePath: preparedSandbox.workspacePath,
-          primaryPath: preparedSandbox.primaryPath,
-          referencePaths: preparedSandbox.referencePaths,
-          goal: sandbox.goal,
-          humanDecisions: humanInputs,
-          repositoryInstructions: sandbox.repositoryInstructions,
-          repairFindings: [],
-          stagingRead: sandbox.config.stagingRead,
-          timeoutMs: budgetMs,
-          attempt: FIRST_IMPLEMENTER_ATTEMPT,
-        }),
-      );
-      // SDD section 50: a stop must reach the running agent process. The scope cancellation
-      // travels to the activity, and the activity stops the live session.
-      const watching = scope
-        .run(() => condition(() => stopRequested))
-        .then(() => {
-          scope.cancel();
-        })
-        .catch(() => undefined);
-
-      let implementation: ImplementActivityOutput | null = null;
-      try {
-        implementation = await running;
-      } catch (error) {
-        // A cancelled Implementer is the stop path, not a fault. Every other error stays a fault.
-        if (!isCancellation(error)) throw error;
-      } finally {
-        scope.cancel();
-        await watching;
-      }
-
-      if (implementation !== null) {
-        // The fallback below runs unless the activity itself really cancelled the session. A
-        // session lookup that gave up, or a cancel that failed, still needs the fallback.
-        implementerCancelled = implementation.cancelledSession;
-        implementerSession = {
-          sessionId: implementation.sessionId,
-          processId: implementation.processId,
-          runner: implementation.runner,
-        };
-      }
-
-      // A stop that arrived while the Implementer ran must end the Run here.
-      if (stopRequested) return await cancelRun();
-
-      // SDD section 49: a semantic outcome drives a workflow decision. A failed attempt must not
-      // fall into the wait and become a timeout.
-      if (implementation === null || !implementation.completed) {
-        // SDD section 50: a Run that reaches the maximum duration fails with `RUN_TIMEOUT`. The
-        // runner reports a cancelled agent process as an incomplete attempt, so the deadline
-        // decides which of the two outcomes this is.
+      for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-        return await failRun(
-          "IMPLEMENTATION_FAILED",
-          "The Implementer did not complete the change. Factoree ended the Run.",
+
+        status = "IMPLEMENTING";
+        await activities.setRunStatus({ runId: id, status });
+
+        const implementation = await runImplementer({
+          prepared: preparedSandbox,
+          goal: sandbox.goal,
+          attempt,
+          repairFindings,
+        });
+
+        // A stop that arrived while the Implementer ran must end the Run here.
+        if (stopRequested) return await cancelRun();
+
+        // SDD section 49: a semantic outcome drives a workflow decision. A failed attempt must
+        // not fall into the wait and become a timeout.
+        if (implementation === null || !implementation.completed) {
+          // SDD section 50: a Run that reaches the maximum duration fails with `RUN_TIMEOUT`.
+          // The runner reports a cancelled agent process as an incomplete attempt, so the
+          // deadline decides which of the two outcomes this is.
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "IMPLEMENTATION_FAILED",
+            "The Implementer did not complete the change. Factoree ended the Run.",
+          );
+        }
+
+        // SDD section 35. The agent has now claimed success. The claim does not decide what
+        // follows. Only the configured commands do.
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        status = "VERIFYING";
+        await activities.setRunStatus({ runId: id, status });
+
+        const verifyActivities = buildVerifyActivities(remainingMs());
+        let verification: VerifyActivityOutput;
+        try {
+          verification = await verifyActivities.verify({
+            runId: id,
+            tenantId: input.tenantId,
+            projectId: input.projectId,
+            spriteId: preparedSandbox.spriteId,
+            adapter: preparedSandbox.adapter,
+            workspacePath: preparedSandbox.workspacePath,
+            primaryPath: preparedSandbox.primaryPath,
+            commands: preparedSandbox.verifyCommands,
+            timeoutMs: remainingMs(),
+            attempt,
+          });
+        } catch (error) {
+          // Verification is bounded by the remaining budget, the same way preparation is. A
+          // budget that ran out during verification is a Run timeout, not an internal fault.
+          if (remainingMs() > 0) throw error;
+          return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+
+        await notify(() =>
+          activities.postProgress({
+            sessionId: input.agentSessionId,
+            message: verification.summary,
+          }),
         );
+
+        if (stopRequested) return await cancelRun();
+        if (verification.passed) break;
+
+        // SDD section 42. A failing check enters repair while budget remains. No third repair
+        // occurs when the limit is two.
+        if (repairCount >= maxRepairs) {
+          return await failRun(
+            "VERIFICATION_FAILED",
+            "Deterministic verification did not pass, and the repair budget is spent. " +
+              `${verification.summary} Factoree published nothing.`,
+          );
+        }
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        repairCount += 1;
+        attempt += 1;
+        repairFindings = verification.failures;
+        status = "REPAIRING";
+        await activities.setRunStatus({ runId: id, status, repairCount });
       }
     }
 
-    // The delivery pipeline of SDD section 49 is added by later phases. Until then the Run
-    // stays open for a stop signal, for human input, or until the Run budget ends it.
+    // Deterministic verification passed. The next state of SDD section 49 is USER_VALIDATING,
+    // and Phase 7 builds it. Until then the Run stays open for a stop signal, for human input,
+    // or until the Run budget ends it. SDD section 68 forbids READY_FOR_HUMAN without a
+    // Validation Contract, a PR, and a Proof Pack, so Phase 3 invents no success terminal state.
     const stopped = await condition(() => stopRequested, remainingMs());
 
     if (!stopped) return await failRun("RUN_TIMEOUT", timeoutMessage);

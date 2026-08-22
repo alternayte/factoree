@@ -21,6 +21,7 @@ const project = {
   linearTeamId: "team-1",
   defaultAutonomy: "L2",
   maxRunMinutes: 90,
+  defaultBranch: "main",
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -66,6 +67,7 @@ const build = (
     },
     starter,
     logger,
+    repositoryBaseUrl: "https://github.com",
   });
   return { service, starter };
 };
@@ -141,5 +143,56 @@ describe("DelegationService", () => {
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-4");
     expect(outcome.kind).toBe("unconfigured");
     expect(starter.start).not.toHaveBeenCalled();
+  });
+
+  it("gives the workflow a sandbox built from the Project record", async () => {
+    const { service, starter } = build({
+      project: {
+        ...project,
+        primaryRepository: "acme/app",
+        referenceRepositories: ["acme/lib"],
+        defaultBranch: "release",
+      },
+    });
+    const raw = event("agent-session-created");
+    raw.agentSession.issue = {
+      ...raw.agentSession.issue!,
+      title: "Fix the header",
+      description: "The header overlaps the logo.",
+    };
+
+    await service.handleAgentSessionEvent(raw, "delivery-7");
+
+    const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
+    expect(started.args[0]?.sandbox).toEqual({
+      primary: { url: "https://github.com/acme/app.git", ref: "release" },
+      references: [{ url: "https://github.com/acme/lib.git", ref: "HEAD" }],
+      defaults: { stagingRead: false, spriteRetentionHours: 24 },
+      goal: "Fix the header\n\nThe header overlaps the logo.",
+    });
+  });
+
+  it("uses the issue title alone when the issue holds no description", async () => {
+    const { service, starter } = build();
+    const raw = event("agent-session-created");
+    raw.agentSession.issue = { ...raw.agentSession.issue!, title: "Fix the header", description: null };
+
+    await service.handleAgentSessionEvent(raw, "delivery-8");
+
+    const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
+    expect((started.args[0]?.sandbox as { goal: string }).goal).toBe("Fix the header");
+  });
+
+  it("does not start a workflow when the repository slug is unusable", async () => {
+    const { service, starter } = build({
+      project: { ...project, primaryRepository: "not-a-slug" },
+    });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
+    expect(outcome.kind).toBe("unconfigured");
+    expect(starter.start).not.toHaveBeenCalled();
+
+    // The marker was released, so a Linear redelivery of the same identifier is not a duplicate.
+    const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
+    expect(redelivery.kind).not.toBe("duplicate");
   });
 });
