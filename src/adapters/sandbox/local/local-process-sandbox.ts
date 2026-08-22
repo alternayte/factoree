@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -30,6 +30,41 @@ interface RunningProcess {
   exitCode: number | null;
   kill: () => void;
 }
+
+/** True when the platform reports that the path is already gone. */
+const isMissing = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ENOENT";
+
+/**
+ * Restores owner write permission across one directory tree, so removal can proceed.
+ *
+ * `checkoutRepositories` makes every reference checkout read-only, because SDD section 29 denies
+ * an agent writing one. That state is normal for every Run that has a reference repository, and
+ * the adapter's own cleanup must cope with it. A missing path is not an error, because
+ * destruction is idempotent. A symbolic link keeps its own mode, because the target belongs to
+ * another owner.
+ */
+const restoreWritePermission = async (path: string): Promise<void> => {
+  let targets: string[];
+  try {
+    const entries = await readdir(path, { recursive: true, withFileTypes: true });
+    targets = [path, ...entries.map((entry) => join(entry.parentPath, entry.name))];
+  } catch (error) {
+    if (isMissing(error)) return;
+    throw error;
+  }
+
+  for (const target of targets) {
+    try {
+      const info = await lstat(target);
+      if (info.isSymbolicLink()) continue;
+      await chmod(target, info.mode | 0o200);
+    } catch (error) {
+      // A path that vanished between the listing and this call needs no permission change.
+      if (!isMissing(error)) throw error;
+    }
+  }
+};
 
 /**
  * A Sandbox that runs commands as child processes in a per-Run directory.
@@ -170,7 +205,13 @@ export class LocalProcessSandbox implements Sandbox {
   async destroy(ref: SandboxRef): Promise<void> {
     // An unknown sandbox is not an error to destroy. Destruction is idempotent.
     this.live.delete(ref.id);
-    await rm(join(this.options.rootDirectory, ref.id), { recursive: true, force: true });
+    const path = join(this.options.rootDirectory, ref.id);
+    // Every reference checkout is read-only, and the baseline checkpoint holds a read-only copy
+    // of it. The owner must hold write permission on a directory before the platform removes an
+    // entry inside it, so removal alone fails on an ordinary Run that has a reference
+    // repository. This step restores that permission first.
+    await restoreWritePermission(path);
+    await rm(path, { recursive: true, force: true });
   }
 
   private resolveCwd(ref: SandboxRef, cwd: string | undefined): string {

@@ -1,9 +1,8 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
-import type { PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
@@ -39,23 +38,6 @@ const recordingGateway = (sent: unknown[]): SpritesGateway => {
     createSprite: (name) => Promise.resolve({ name, handle }),
     sprite: () => handle,
   };
-};
-
-/**
- * Restores write permission across the whole sandbox directory, which holds the workspace and
- * the baseline checkpoint copy of it. The read-only reference control also blocks the test
- * harness from removing those directories, so cleanup needs this step. It runs after every
- * assertion, so it never affects a result. The Task 6 checkout test carries the same step.
- */
-const restoreWritePermission = async (
-  sandbox: LocalProcessSandbox,
-  prepared: PreparedSandbox,
-): Promise<void> => {
-  if (prepared.checkout.references.length === 0) return;
-  await sandbox.exec(prepared.ref, {
-    file: "chmod",
-    args: ["-R", "u+w", dirname(prepared.ref.workspacePath)],
-  });
 };
 
 describe("AT-13 — Action Policy", () => {
@@ -95,7 +77,6 @@ describe("AT-13 — Action Policy", () => {
     expect(result.stdout).toBe("OK");
     expect(await readFile(target, "utf8")).toBe("changed");
     expect(buildActionPolicy().decide("writePrimaryWorktree")).toBe("allow");
-    await restoreWritePermission(sandbox, prepared);
     await manager.release(prepared);
   });
 
@@ -122,7 +103,6 @@ describe("AT-13 — Action Policy", () => {
     // The file itself is unchanged, so the failure above is a denied write, not a shell fault.
     expect(await readFile(join(path, "target.txt"), "utf8")).toBe("original\n");
     expect(buildActionPolicy().decide("writeReferenceRepository")).toBe("deny");
-    await restoreWritePermission(sandbox, prepared);
     await manager.release(prepared);
   });
 

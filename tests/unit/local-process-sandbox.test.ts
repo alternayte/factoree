@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,27 @@ describe("LocalProcessSandbox", () => {
     await sandbox.exec(ref, { file: "sh", args: ["-c", "printf x > marker"] });
     await sandbox.destroy(ref);
     await expect(sandbox.exec(ref, { file: "sh", args: ["-c", "true"] })).rejects.toThrow(/destroyed/);
+    await rm(rootDirectory, { recursive: true, force: true });
+  });
+
+  it("removes a workspace that holds a read-only subtree", async () => {
+    // Every reference checkout is read-only, because SDD section 29 denies an agent writing one.
+    // A read-only directory blocks removal of the entries inside it, so destroy must restore
+    // write permission first. Without that step this test fails with EACCES.
+    const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-readonly-"));
+    const sandbox = new LocalProcessSandbox({ rootDirectory });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const created = await sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", "mkdir -p reference/design/.git && printf x > reference/design/.git/config && chmod -R a-w reference/design"],
+    });
+    expect(created.exitCode).toBe(0);
+    // The checkpoint copy carries the same read-only mode, so destroy must handle it too.
+    await sandbox.checkpoint(ref, "baseline");
+
+    await sandbox.destroy(ref);
+
+    expect(existsSync(join(rootDirectory, ref.id))).toBe(false);
     await rm(rootDirectory, { recursive: true, force: true });
   });
 

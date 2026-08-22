@@ -103,6 +103,16 @@ describe("Phase 2 exit condition — an isolated fixture change without publishi
     expect(changed).not.toBe("original\n");
     expect(changed).toContain("Replace the contents of target.txt.");
 
+    // The baseline checkpoint is a real copy taken before the Implementer ran, and not a name
+    // alone. It still holds the original content after the worktree changed.
+    const checkpointId = prepared.baselineCheckpoint?.id ?? "";
+    expect(checkpointId).not.toBe("");
+    const baselineCopy = await readFile(
+      join(sandboxRoot, prepared.ref.id, "checkpoints", checkpointId, "primary", "target.txt"),
+      "utf8",
+    );
+    expect(baselineCopy).toBe("original\n");
+
     // Nothing was published. The origin still holds its original content, one commit, the same
     // HEAD, and no new ref of any kind. A new branch or a new tag appears in the ref list.
     const origin = await readFile(join(repository, "target.txt"), "utf8");
