@@ -37,68 +37,81 @@ const SHA = /^[0-9a-f]{40}$/;
 export const withoutUrlCredentials = (text: string): string =>
   text.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/\s@]+@/g, "$1");
 
-/**
- * SDD section 32. Checks out the primary repository, then the reference repositories.
- *
- * The primary worktree is writable. Every reference repository is made read-only. SDD section 29
- * denies writing a reference repository. The checkout removes the push URL of every clone. SDD
- * section 29 denies git remote write from an agent. Neither control is a prompt.
- */
-export const checkoutRepositories = async (
+// The command line of a clone holds the repository URL, and that URL can carry an access
+// token. Every message therefore passes through `withoutUrlCredentials`.
+const run = async (
   sandbox: Sandbox,
   ref: SandboxRef,
-  input: CheckoutInput,
-): Promise<CheckoutResult> => {
-  // The command line of a clone holds the repository URL, and that URL can carry an access
-  // token. Every message therefore passes through `withoutUrlCredentials`.
-  const run = async (command: Command, configurationFault = false): Promise<CommandResult> => {
-    const result = await sandbox.exec(ref, command);
-    if (result.exitCode !== 0) {
-      const line = withoutUrlCredentials([command.file, ...command.args].join(" "));
-      const message =
-        `the command "${line}" failed with exit code ${result.exitCode}: ` +
-        withoutUrlCredentials(result.stderr.trim());
-      throw configurationFault ? new RunConfigurationError(message) : new Error(message);
-    }
-    return result;
-  };
+  command: Command,
+  configurationFault = false,
+): Promise<CommandResult> => {
+  const result = await sandbox.exec(ref, command);
+  if (result.exitCode !== 0) {
+    const line = withoutUrlCredentials([command.file, ...command.args].join(" "));
+    const message =
+      `the command "${line}" failed with exit code ${result.exitCode}: ` +
+      withoutUrlCredentials(result.stderr.trim());
+    throw configurationFault ? new RunConfigurationError(message) : new Error(message);
+  }
+  return result;
+};
 
-  const clone = async (spec: RepositorySpec, path: string): Promise<string> => {
-    // `--no-hardlinks` stops a clone of a local path from hardlinking object files into the
-    // checkout. Without it, the read-only control on a reference checkout, and the permission
-    // repair when the sandbox is destroyed, both change the mode of an inode the source
-    // repository still shares. A sandbox must never change anything outside itself. Git applies
-    // the local optimization only to a clone of a local path, so the option costs a remote
-    // clone nothing.
-    //
-    // `--no-tags` was removed. `RepositorySpec.ref` allows a tag, and a clone that fetches no
-    // tag leaves the later checkout of that tag with nothing to resolve. Git then reads the tag
-    // as a path and the command fails.
-    await run({ file: "git", args: ["clone", "--no-hardlinks", spec.url, path] });
-    // A reference that does not exist is a configuration fault. A retry repeats it.
-    await run({ file: "git", args: ["-C", path, "checkout", "--detach", spec.ref] }, true);
-    // SDD section 29 denies git remote write from an agent.
-    await run({ file: "git", args: ["-C", path, "remote", "set-url", "--push", "origin", "DISABLED_BY_FACTOREE"] });
-    const head = await run({ file: "git", args: ["-C", path, "rev-parse", "HEAD"] });
-    const baseSha = head.stdout.trim();
-    if (!SHA.test(baseSha)) {
-      throw new Error(
-        `the base SHA of ${withoutUrlCredentials(spec.url)} is not forty hexadecimal characters: "${baseSha}"`,
-      );
-    }
-    return baseSha;
-  };
+const clone = async (sandbox: Sandbox, ref: SandboxRef, spec: RepositorySpec, path: string): Promise<string> => {
+  // `--no-hardlinks` stops a clone of a local path from hardlinking object files into the
+  // checkout. Without it, the read-only control on a reference checkout, and the permission
+  // repair when the sandbox is destroyed, both change the mode of an inode the source
+  // repository still shares. A sandbox must never change anything outside itself. Git applies
+  // the local optimization only to a clone of a local path, so the option costs a remote
+  // clone nothing.
+  //
+  // `--no-tags` was removed. `RepositorySpec.ref` allows a tag, and a clone that fetches no
+  // tag leaves the later checkout of that tag with nothing to resolve. Git then reads the tag
+  // as a path and the command fails.
+  await run(sandbox, ref, { file: "git", args: ["clone", "--no-hardlinks", spec.url, path] });
+  // A reference that does not exist is a configuration fault. A retry repeats it.
+  await run(sandbox, ref, { file: "git", args: ["-C", path, "checkout", "--detach", spec.ref] }, true);
+  // SDD section 29 denies git remote write from an agent.
+  await run(sandbox, ref, {
+    file: "git",
+    args: ["-C", path, "remote", "set-url", "--push", "origin", "DISABLED_BY_FACTOREE"],
+  });
+  const head = await run(sandbox, ref, { file: "git", args: ["-C", path, "rev-parse", "HEAD"] });
+  const baseSha = head.stdout.trim();
+  if (!SHA.test(baseSha)) {
+    throw new Error(
+      `the base SHA of ${withoutUrlCredentials(spec.url)} is not forty hexadecimal characters: "${baseSha}"`,
+    );
+  }
+  return baseSha;
+};
 
-  const primaryPath = `${ref.workspacePath}/primary`;
-  const primaryBaseSha = await clone(input.primary, primaryPath);
+/** SDD section 32. Checks out the primary repository. The worktree is writable. */
+export const checkoutPrimary = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec,
+): Promise<CheckedOutRepository> => {
+  const path = `${ref.workspacePath}/primary`;
+  const baseSha = await clone(sandbox, ref, spec, path);
+  return { url: spec.url, path, baseSha, readOnly: false };
+};
 
+/**
+ * SDD section 32. Checks out every reference repository and makes it read-only. SDD section 29
+ * denies writing a reference repository and denies git remote write from an agent.
+ */
+export const checkoutReferences = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  specs: RepositorySpec[],
+): Promise<CheckedOutRepository[]> => {
   // Every reference name must resolve to its own directory, one level below `reference/`. This
   // check runs before the first reference clone, so a collision fails with a clear message
   // instead of a confusing git error about a non-empty directory.
   const namesByUrl = new Map<string, string>();
   const urlsByName = new Map<string, string>();
   const seenUrls = new Set<string>();
-  for (const spec of input.references) {
+  for (const spec of specs) {
     // The same URL twice resolves to the same directory, and the second clone then fails with a
     // git message about a directory that exists. A reference repository gives read-only context,
     // and one ref of it is enough, so the duplicate is refused here with a clear message. A
@@ -125,20 +138,27 @@ export const checkoutRepositories = async (
   }
 
   const references: CheckedOutRepository[] = [];
-  for (const spec of input.references) {
+  for (const spec of specs) {
     const name = namesByUrl.get(spec.url) ?? repositoryName(spec.url);
     const path = `${ref.workspacePath}/reference/${name}`;
-    const baseSha = await clone(spec, path);
+    const baseSha = await clone(sandbox, ref, spec, path);
     // SDD section 29 denies writing a reference repository. This is a file mode, not a prompt.
-    await run({ file: "chmod", args: ["-R", "a-w", path] });
+    await run(sandbox, ref, { file: "chmod", args: ["-R", "a-w", path] });
     references.push({ url: spec.url, path, baseSha, readOnly: true });
   }
 
-  return {
-    primary: { url: input.primary.url, path: primaryPath, baseSha: primaryBaseSha, readOnly: false },
-    references,
-  };
+  return references;
 };
+
+/** The whole SDD section 32 checkout, for a caller that needs no step between the two halves. */
+export const checkoutRepositories = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  input: CheckoutInput,
+): Promise<CheckoutResult> => ({
+  primary: await checkoutPrimary(sandbox, ref, input.primary),
+  references: await checkoutReferences(sandbox, ref, input.references),
+});
 
 /**
  * Derives a directory name from the last path segment of a repository URL. The derived name must

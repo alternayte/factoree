@@ -257,7 +257,7 @@ export async function agentRunWorkflow(
           projectId: input.projectId,
           primary: sandbox.primary,
           references: sandbox.references,
-          config: sandbox.config,
+          defaults: { stagingRead: sandbox.config.stagingRead, spriteRetentionHours: sandbox.config.spriteRetentionHours },
           environment: {},
         });
       } catch (error) {

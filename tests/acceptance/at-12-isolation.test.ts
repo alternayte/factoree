@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { OpenCodeRunner } from "~/adapters/runners/opencode/opencode-runner.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
-import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
+import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createFixtureRepository } from "./support/fixture-repository.js";
@@ -42,7 +42,7 @@ describe("AT-12 — isolation", () => {
           projectId: "project-1",
           primary: { url: repository, ref: "main" },
           references: [],
-          config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+          defaults: DEFAULT_PROJECT_DEFAULTS,
         }),
       ),
     );

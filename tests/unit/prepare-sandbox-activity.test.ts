@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSandboxActivities } from "~/activities/sandbox.activities.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
-import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
+import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import type { SupersededSandbox } from "~/domain/runs/run-repository.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -13,6 +13,40 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
+const DEFAULT_CONFIG_YAML = "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+const BOOTSTRAP_CONFIG_YAML =
+  "version: 1\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+
+interface Scripted {
+  matcher: RegExp;
+  result: Partial<{ exitCode: number; stdout: string; stderr: string }>;
+}
+
+/**
+ * Builds a `FakeSandbox` that serves `yaml` for `.factoree/config.yaml`, a fixed commit SHA for
+ * `git rev-parse HEAD`, and every other command as a success, unless `overrides` matches first.
+ */
+const sandboxWithConfig = (yaml: string, overrides: Scripted[] = []): FakeSandbox => {
+  const sandbox = new FakeSandbox();
+  sandbox.onExec = (command) => {
+    const last = command.args[command.args.length - 1] ?? "";
+    if (command.file === "cat" && last.endsWith(".factoree/config.yaml")) {
+      return { exitCode: 0, stdout: yaml, stderr: "" };
+    }
+    if (command.file === "cat") return { exitCode: 1, stdout: "", stderr: "no such file" };
+    const line = [command.file, ...command.args].join(" ");
+    const scripted = overrides.find((entry) => entry.matcher.test(line));
+    if (scripted !== undefined) {
+      return { exitCode: 0, stdout: "", stderr: "", ...scripted.result };
+    }
+    if (command.file === "git" && command.args.includes("rev-parse")) {
+      return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+  return sandbox;
+};
+
 const supersededCount = async (): Promise<number> => {
   const metric = await metrics.sandboxesDestroyed.get();
   const sample = metric.values.find(
@@ -21,9 +55,11 @@ const supersededCount = async (): Promise<number> => {
   return sample?.value ?? 0;
 };
 
-const build = (superseded: SupersededSandbox, secretValues: Record<string, string> = {}) => {
-  const sandbox = new FakeSandbox();
-  sandbox.scriptExec(/rev-parse HEAD/, { stdout: `${HEAD}\n` });
+const build = (
+  superseded: SupersededSandbox,
+  secretValues: Record<string, string> = {},
+  sandbox: FakeSandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML),
+) => {
   const runs = {
     setSandbox: vi.fn().mockResolvedValue(superseded),
     clearSandbox: vi.fn().mockResolvedValue(undefined),
@@ -52,7 +88,7 @@ const input = {
   projectId: "project-1",
   primary: { url: "https://github.com/acme/app.git", ref: "main" },
   references: [],
-  config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+  defaults: DEFAULT_PROJECT_DEFAULTS,
   environment: {},
 };
 
@@ -92,11 +128,11 @@ describe("the prepareSandbox activity and SDD section 60", () => {
   });
 
   it("redacts a Project secret that a failed bootstrap command printed", async () => {
-    const { activities, sandbox } = build({ spriteId: null, adapter: null }, { API: "fixture-secret-value" });
-    sandbox.scriptExec(/npm ci/, { exitCode: 1, stderr: "auth failed for fixture-secret-value" });
-    const error = await activities
-      .prepareSandbox({ ...input, config: { ...input.config, bootstrapCommand: "npm ci" } })
-      .catch((thrown: unknown) => thrown);
+    const sandbox = sandboxWithConfig(BOOTSTRAP_CONFIG_YAML, [
+      { matcher: /npm ci/, result: { exitCode: 1, stderr: "auth failed for fixture-secret-value" } },
+    ]);
+    const { activities } = build({ spriteId: null, adapter: null }, { API: "fixture-secret-value" }, sandbox);
+    const error = await activities.prepareSandbox(input).catch((thrown: unknown) => thrown);
     expect(String(error)).not.toContain("fixture-secret-value");
     expect(String(error)).toContain("[REDACTED]");
     // The class survives the redaction, so the workflow still recognises the configuration fault.
@@ -104,11 +140,17 @@ describe("the prepareSandbox activity and SDD section 60", () => {
   });
 
   it("keeps the access token of a clone URL out of the error of a failed clone", async () => {
-    const { activities, sandbox } = build({ spriteId: null, adapter: null });
-    sandbox.scriptExec(/clone/, {
-      exitCode: 128,
-      stderr: "fatal: authentication failed for https://x-access-token:ghp_tokenvalue000000000000@github.com/acme/app.git",
-    });
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML, [
+      {
+        matcher: /clone/,
+        result: {
+          exitCode: 128,
+          stderr:
+            "fatal: authentication failed for https://x-access-token:ghp_tokenvalue000000000000@github.com/acme/app.git",
+        },
+      },
+    ]);
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
     const withToken = {
       ...input,
       primary: { url: "https://x-access-token:ghp_tokenvalue000000000000@github.com/acme/app.git", ref: "main" },

@@ -7,7 +7,7 @@ import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sand
 import { OpenCodeRunner } from "~/adapters/runners/opencode/opencode-runner.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
-import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
+import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { buildImplementerInput } from "~/domain/runs/implementer-input.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -49,7 +49,7 @@ describe("Phase 2 exit condition — an isolated fixture change without publishi
       projectId: "project-1",
       primary: { url: repository, ref: "main" },
       references: [],
-      config: DEFAULT_PROJECT_RUNTIME_CONFIG,
+      defaults: DEFAULT_PROJECT_DEFAULTS,
     });
 
     // A real sandbox exists, with a captured base SHA and a baseline checkpoint.
@@ -66,17 +66,14 @@ describe("Phase 2 exit condition — an isolated fixture change without publishi
       requiredContext: [],
       primaryRepositoryPath: prepared.checkout.primary.path,
       referenceRepositoryPaths: [],
-      repositoryInstructions: await readFile(
-        join(prepared.checkout.primary.path, "CONTRIBUTING.md"),
-        "utf8",
-      ),
+      repositoryInstructions: prepared.repositoryInstructions,
       skills: [],
       actionPolicy: buildActionPolicy(),
       repairFindings: [],
       projectTestSecrets: {},
     });
 
-    const result = await runners.get(DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner).run({
+    const result = await runners.get(prepared.runtime.implementerRunner).run({
       runId: "run-exit",
       tenantId: "tenant-1",
       role: "implementer",
