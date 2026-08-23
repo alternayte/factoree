@@ -4,6 +4,7 @@ import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js"
 import type { ContextResolver } from "~/domain/context/context-resolver.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
 import type { RepositoryRef } from "~/domain/context/context-source.js";
+import type { AuthorityDomain } from "~/domain/context/authority.js";
 import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
@@ -28,7 +29,13 @@ export interface ResolveContextActivityOutput {
   primary: { slug: string; sha: string };
   references: Array<{ slug: string; sha: string }>;
   /** SDD section 23. A non-null value means implementation must not start. */
-  unresolvedConflict: { id: string; subject: string; question: string } | null;
+  unresolvedConflict: {
+    id: string;
+    subject: string;
+    /** SDD section 22. The authority domain of the pair. The answer settles this domain only. */
+    domain: AuthorityDomain;
+    question: string;
+  } | null;
   conflictCount: number;
   /** The line Factoree posts to Linear. It is the Phase 4 exit condition in one sentence. */
   summary: string;
@@ -132,11 +139,14 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
           `Draft Context Contract ${shortSha(sha256)}.`
         : `Context Contract ${shortSha(sha256)}.`;
 
+    // Nothing reached the store on the draft path, so the summary must not claim a record.
+    const conflictVerb = stored === null ? "found" : "recorded";
+
     const summary =
       `Factoree resolved the context of this Run. Repositories: ${repositories}. ` +
       `${count(resolved.contract.items.length, "context item", "context items")}, ` +
       `${required.length} of them preloaded. ` +
-      `${count(resolved.contract.conflicts.length, "conflict", "conflicts")} recorded. ${outcome}`;
+      `${count(resolved.contract.conflicts.length, "conflict", "conflicts")} ${conflictVerb}. ${outcome}`;
 
     return {
       sha256,
@@ -150,6 +160,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
           : {
               id: resolved.unresolvedConflict.id,
               subject: resolved.unresolvedConflict.subject,
+              domain: resolved.unresolvedConflict.authorityDomain,
               question: conflictQuestion(resolved.unresolvedConflict),
             },
       conflictCount: resolved.contract.conflicts.length,

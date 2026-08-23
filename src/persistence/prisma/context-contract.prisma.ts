@@ -5,8 +5,8 @@ import type {
   StoredContextContract,
 } from "~/domain/context/context-contract-store.js";
 import type { ContextConflictRecord, SelectedContextItem } from "~/domain/context/conflicts.js";
-import type { AuthorityClass } from "~/domain/context/authority.js";
-import { isAuthorityClass } from "~/domain/context/authority.js";
+import type { AuthorityClass, AuthorityDomain } from "~/domain/context/authority.js";
+import { isAuthorityClass, isAuthorityDomain } from "~/domain/context/authority.js";
 import type { ContextClassification } from "~/domain/context/context-source.js";
 import { CONTEXT_CLASSIFICATIONS } from "~/domain/context/context-source.js";
 
@@ -46,6 +46,15 @@ const toClassification = (value: string, ref: string): ContextClassification => 
   return value;
 };
 
+const toDomain = (value: string, key: string): AuthorityDomain => {
+  if (!isAuthorityDomain(value)) {
+    throw new ContextContractRowInvalidError(
+      `Context conflict "${key}" holds the unknown authority domain "${value}".`,
+    );
+  }
+  return value;
+};
+
 const toResolution = (value: string, key: string): ContextConflictRecord["resolution"] => {
   if (value !== "resolved" && value !== "unresolved") {
     throw new ContextContractRowInvalidError(
@@ -72,6 +81,7 @@ interface ItemRow {
 interface ConflictRow {
   conflictKey: string;
   subject: string;
+  authorityDomain: string;
   winnerRef: string | null;
   loserRef: string | null;
   reason: string;
@@ -109,6 +119,7 @@ const toItem = (row: ItemRow): SelectedContextItem => ({
 const toConflict = (row: ConflictRow): ContextConflictRecord => ({
   id: row.conflictKey,
   subject: row.subject,
+  authorityDomain: toDomain(row.authorityDomain, row.conflictKey),
   winnerRef: row.winnerRef,
   loserRef: row.loserRef,
   reason: row.reason,
@@ -169,6 +180,7 @@ export class PrismaContextContractStore implements ContextContractStore {
               tenantId: input.tenantId,
               conflictKey: conflict.id,
               subject: conflict.subject,
+              authorityDomain: conflict.authorityDomain,
               winnerRef: conflict.winnerRef,
               loserRef: conflict.loserRef,
               reason: conflict.reason,

@@ -237,6 +237,7 @@ describe("renderContextContract", () => {
           {
             id: "CTX-1",
             subject: "notification",
+            authorityDomain: "architecture_intent",
             winnerRef: "docs/ADR-031.md",
             loserRef: "README.md",
             reason: "accepted ADR has higher architecture authority than repository README",
@@ -257,6 +258,7 @@ describe("renderContextContract", () => {
           {
             id: "CTX-1",
             subject: "notification",
+            authorityDomain: "architecture_intent",
             winnerRef: null,
             loserRef: null,
             reason: "two equally authoritative sources",

@@ -1,3 +1,4 @@
+import type { AuthorityDomain } from "~/domain/context/authority.js";
 import type { AcceptanceCriterion, WorkItem, WorkItemSource } from "./work-item.js";
 import { parseWorkItem } from "./work-item.js";
 import type { AutonomyLevel } from "./risk.js";
@@ -21,6 +22,13 @@ export interface RecordedDecision {
    * A refinement answer settles no conflict, so it carries no subject.
    */
   subject?: string;
+  /**
+   * SDD section 22 makes authority domain-specific, and SDD section 23 asks one question about
+   * one conflict. One subject can raise a conflict in more than one authority domain. The domain
+   * therefore scopes the answer with the subject. A refinement answer settles no conflict, so it
+   * carries no domain.
+   */
+  domain?: AuthorityDomain;
 }
 
 export interface RefinementProject {

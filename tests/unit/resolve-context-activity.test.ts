@@ -68,6 +68,9 @@ const decision = {
   questionId: "CTX-1",
   question: "Which ADR governs notification retry?",
   answer: "ADR-031 governs notification retry.",
+  // SDD section 23. The answer settles this subject in this authority domain, and no other pair.
+  subject: "notification",
+  domain: "architecture_intent" as const,
 };
 
 /**
@@ -159,6 +162,9 @@ describe("resolveContext activity", () => {
     const output = await activities.resolveContext(input());
     expect(output.summary).toMatch(/did not freeze/i);
     expect(output.summary).toMatch(/conflict is unresolved/i);
+    // Nothing reached the store, so the summary must not claim a record. It reports a find.
+    expect(output.summary).toMatch(/\d+ conflicts? found\./);
+    expect(output.summary).not.toMatch(/recorded/);
   });
 
   it("counts no conflict while the resolution stays unfrozen", async () => {
@@ -204,11 +210,7 @@ describe("resolveContext activity", () => {
     const settled = await activities.resolveContext(
       input({
         decisions: [
-          {
-            questionId: "CTX-1",
-            question: "Which ADR governs notification retry?",
-            answer: "ADR-031 governs notification retry.",
-          },
+          decision,
         ],
       }),
     );

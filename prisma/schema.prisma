@@ -204,6 +204,9 @@ model ContextConflict {
   // conflict, because no authority rule gave a winner.
   conflictKey       String
   subject           String
+  // SDD section 22 makes authority domain-specific. The domain with the subject names the
+  // question a human answered, so the record must carry it.
+  authorityDomain   String
   winnerRef         String?
   loserRef          String?
   reason            String

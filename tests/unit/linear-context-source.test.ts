@@ -56,14 +56,17 @@ describe("LinearContextSource", () => {
             question: "Which one governs notification?",
             answer: "The ADR.",
             subject: "notification",
+            domain: "architecture_intent",
           },
         ],
       }),
     );
-    // The reference comes from the subject, because a conflict identifier is not unique across
-    // the rounds of one Run.
+    // The reference comes from the authority domain and the subject, because a conflict
+    // identifier is not unique across the rounds of one Run. One subject can also raise a
+    // conflict in two domains, so the domain belongs in the reference as well.
     const decision = candidates.find(
-      (candidate) => candidate.reference.ref === "linear:decision:subject:notification",
+      (candidate) =>
+        candidate.reference.ref === "linear:decision:subject:architecture_intent:notification",
     );
     expect(decision?.topics).toEqual(["notification"]);
   });

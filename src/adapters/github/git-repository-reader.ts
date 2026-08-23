@@ -54,10 +54,32 @@ export interface RepositoryReader {
   readBlob(url: string, sha: string, path: string): Promise<string | null>;
 }
 
+/**
+ * Recognizes a git failure that repeats on every attempt. A repository that does not exist, a
+ * ref that does not exist, and a rejected credential all give the same answer for ever. SDD
+ * section 49 makes such a failure semantic, so the caller must not retry it. A timeout, a reset
+ * connection, and a temporary DNS failure carry none of these phrases, so they stay retryable.
+ */
+export const isDeterministicRemoteFailure = (text: string): boolean =>
+  /Repository not found/i.test(text) ||
+  /does not appear to be a git repository/i.test(text) ||
+  /remote branch .* not found/i.test(text) ||
+  /Authentication failed/i.test(text) ||
+  /could not read Username/i.test(text) ||
+  /Permission denied/i.test(text) ||
+  /access rights/i.test(text);
+
 export class RepositoryReadError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /**
+   * True when the same read fails the same way on every attempt. SDD section 49 forbids such a
+   * failure to consume the infrastructure retry policy.
+   */
+  readonly deterministic: boolean;
+
+  constructor(message: string, options?: { cause?: unknown; deterministic?: boolean }) {
     super(message, options);
     this.name = "RepositoryReadError";
+    this.deterministic = options?.deterministic ?? false;
   }
 }
 
@@ -104,6 +126,7 @@ export class GitRepositoryReader implements RepositoryReader {
       // secret. This removal is the only guard that keeps the token out of the message.
       throw new RepositoryReadError(withoutUrlCredentials(`${subject}: ${String(error)}`), {
         cause: error,
+        deterministic: isDeterministicRemoteFailure(String(error)),
       });
     }
   }
@@ -168,8 +191,11 @@ export class GitRepositoryReader implements RepositoryReader {
     const first = stdout.split("\n").find((line) => line.trim() !== "");
     const sha = first?.split(/\s+/)[0]?.trim() ?? "";
     if (!SHA.test(sha)) {
+      // The remote answered, and it named no such ref. A retry asks the same question and
+      // gets the same answer, so this failure is deterministic.
       throw new RepositoryReadError(
         `the ref "${ref}" of ${withoutUrlCredentials(url)} does not resolve to a commit SHA.`,
+        { deterministic: true },
       );
     }
     return sha;

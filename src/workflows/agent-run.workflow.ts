@@ -17,6 +17,7 @@ import type { VerifyActivityOutput } from "~/activities/verification.activities.
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AuthorityDomain } from "~/domain/context/authority.js";
 
 import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
@@ -115,7 +116,14 @@ const buildContextActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${Math.min(RESOLVE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
-    retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
+    // SDD section 49: a semantic failure must not consume the infrastructure retry policy. A
+    // repository reference that resolves to nothing repeats on every attempt, so it fails fast.
+    retry: {
+      maximumAttempts: 3,
+      initialInterval: "5 seconds",
+      backoffCoefficient: 2,
+      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE],
+    },
   });
 
 /**
@@ -306,6 +314,11 @@ export async function agentRunWorkflow(
      * subject only. A refinement question settles no conflict, so the caller passes no subject.
      */
     subject?: string,
+    /**
+     * SDD section 22. The authority domain of the conflict. The answer settles that domain with
+     * that subject, and no other pair. A refinement question carries no domain.
+     */
+    domain?: AuthorityDomain,
   ): Promise<boolean> => {
     if (questionRounds >= MAX_QUESTION_ROUNDS) return false;
     // The count is read before the first await. A human can answer as soon as the Run reports
@@ -331,6 +344,7 @@ export async function agentRunWorkflow(
       question,
       answer: humanInputs[humanInputs.length - 1] ?? "",
       ...(subject === undefined ? {} : { subject }),
+      ...(domain === undefined ? {} : { domain }),
     });
     return true;
   };
@@ -525,18 +539,35 @@ export async function agentRunWorkflow(
         status = "RESOLVING_CONTEXT";
         await activities.setRunStatus({ runId: id, status });
 
-        resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
-          runId: id,
-          tenantId: input.tenantId,
-          projectId: input.projectId,
-          goal: refined.goal,
-          acceptanceCriteria: refined.acceptanceCriteria,
-          primaryRepository: repositoryRef(refined.primaryRepository),
-          referenceRepositories: refined.referenceRepositories.map(repositoryRef),
-          workItemReferences: refined.workItemReferences,
-          decisions,
-        });
-        contextContractVersion = resolvedContext.sha256;
+        try {
+          resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
+            runId: id,
+            tenantId: input.tenantId,
+            projectId: input.projectId,
+            goal: refined.goal,
+            acceptanceCriteria: refined.acceptanceCriteria,
+            primaryRepository: repositoryRef(refined.primaryRepository),
+            referenceRepositories: refined.referenceRepositories.map(repositoryRef),
+            workItemReferences: refined.workItemReferences,
+            decisions,
+          });
+        } catch (error) {
+          // SDD section 49. A repository reference that resolves to nothing is a semantic
+          // failure, so it drives a workflow decision. The retry policy already denied a second
+          // attempt. A transport fault is not this type, so it still retries.
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not resolve the context, because the Run configuration is invalid. " +
+                "Repair the repository reference, the reference repositories, or the default branch.",
+            );
+          }
+          throw error;
+        }
+        // SDD section 21. Only a frozen Context Contract has a version. A resolution that still
+        // holds an unresolved conflict stored nothing, so the snapshot reports no version.
+        contextContractVersion =
+          resolvedContext.unresolvedConflict === null ? resolvedContext.sha256 : null;
 
         await notify(() =>
           activities.postProgress({
@@ -549,7 +580,12 @@ export async function agentRunWorkflow(
         if (conflict === null) break;
 
         // SDD section 23. No safe resolution exists, so implementation must not start.
-        const proceeded = await askAndWait(conflict.id, conflict.question, conflict.subject);
+        const proceeded = await askAndWait(
+          conflict.id,
+          conflict.question,
+          conflict.subject,
+          conflict.domain,
+        );
         if (stopRequested) return await cancelRun();
         if (!proceeded) {
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);

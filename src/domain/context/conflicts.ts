@@ -1,6 +1,7 @@
-import type { AuthorityClass } from "./authority.js";
+import type { AuthorityClass, AuthorityDomain } from "./authority.js";
 import { authorityDomainOf, compareAuthority } from "./authority.js";
 import type { ContextClassification, ContextReference } from "./context-source.js";
+import { conflictDecisionRef } from "./decision-ref.js";
 
 /** One item the resolver selected. It is the row a Context Contract persists. */
 export interface SelectedContextItem {
@@ -17,6 +18,12 @@ export interface SelectedContextItem {
 export interface ContextConflictRecord {
   id: string;
   subject: string;
+  /**
+   * SDD section 22 makes authority domain-specific. The pair sits in one domain, and the domain
+   * with the subject names the question a human must answer. The workflow records the domain on
+   * the answer, so the answer settles this conflict only.
+   */
+  authorityDomain: AuthorityDomain;
   winnerRef: string | null;
   loserRef: string | null;
   reason: string;
@@ -93,22 +100,24 @@ export interface DetectConflictsOptions {
  *
  * A separate rule then applies. SDD section 22 makes an explicit Work Item decision the highest
  * product-intent authority. SDD section 23 requires the human answer to persist as a Run
- * decision that governs the Run. So when the item list holds a `work_item_decision` item whose
- * topics include a conflict subject, the decision resolves that conflict. This happens whatever
- * the ordinary domain pairing found. The caller names those decision items through
- * `decisionRefs`. Only a recorded answer settles a subject, and the Work Item body is not one.
+ * decision that governs the Run. The detector builds the decision reference of the pair from the
+ * authority domain of the pair and from the subject of the pair. A `work_item_decision` item
+ * with that exact reference resolves the pair. This happens whatever the ordinary domain pairing
+ * found. The caller names those decision items through `decisionRefs`. Only a recorded answer
+ * settles a pair, and the Work Item body is not one.
  *
- * A recorded answer carries the subject of the conflict it settled, and no other topic. SDD
- * section 23 makes a human answer decisive for the question Factoree asked. One answer therefore
- * settles one subject. It never settles a second subject, and it never settles a conflict in
- * another authority domain that no human ever saw.
+ * SDD section 23 makes a human answer decisive for the one question Factoree asked. That
+ * question names one authority domain and one subject, so the answer settles that pair only. One
+ * subject can raise a conflict in two domains. An answer about the architecture of a subject
+ * therefore leaves the interface conflict of the same subject unresolved, and Factoree asks the
+ * second question.
  *
  * A recorded decision never enters a pair. It is an override, not a competitor, so it cannot
- * conflict with the Work Item body or with a second answer. This second rule is a subject
+ * conflict with the Work Item body or with a second answer. This second rule is a reference
  * check, not a pairing. The rule applies to every pair, not only to an unresolved pair. It is
- * an out-of-band override keyed by the subject, so it never weighs one authority ladder against
- * another. It is why the workflow can make progress after one human answer. Without the rule,
- * the same question repeats without end.
+ * an out-of-band override keyed by the domain and the subject, so it never weighs one authority
+ * ladder against another. It is why the workflow can make progress after one human answer.
+ * Without the rule, the same question repeats without end.
  */
 export const detectConflicts = (
   items: SelectedContextItem[],
@@ -116,11 +125,15 @@ export const detectConflicts = (
 ): ContextConflictRecord[] => {
   const decisionRefs = new Set(options.decisionRefs ?? []);
   const conflictables = items.filter((item) => conflictable(item.classification));
-  const decisions = conflictables
-    .filter(
-      (item) => item.authority === "work_item_decision" && decisionRefs.has(item.reference.ref),
-    )
-    .sort((a, b) => (a.reference.ref < b.reference.ref ? -1 : a.reference.ref > b.reference.ref ? 1 : 0));
+  // The decisions are keyed by their own stable reference. `conflictDecisionRef` builds the same
+  // reference from the domain and the subject of a pair, so the lookup is exact.
+  const decisions = new Map<string, SelectedContextItem>(
+    conflictables
+      .filter(
+        (item) => item.authority === "work_item_decision" && decisionRefs.has(item.reference.ref),
+      )
+      .map((item) => [item.reference.ref, item]),
+  );
   // A recorded answer is an out-of-band override, not a competitor. It settles a subject, and it
   // never enters a pair itself. Otherwise the Work Item body pairs with the answer a human gave to
   // a question about it, and the contract renders a conflict that does not exist.
@@ -133,20 +146,22 @@ export const detectConflicts = (
       const right = candidates[j];
       if (left === undefined || right === undefined) continue;
       if (left.reference.ref === right.reference.ref) continue;
-      if (authorityDomainOf(left.authority) !== authorityDomainOf(right.authority)) continue;
+      const authorityDomain = authorityDomainOf(left.authority);
+      if (authorityDomain !== authorityDomainOf(right.authority)) continue;
       // SDD section 22 joins the members of these two domains with `+`. They are combined
       // evidence about one behavior, so they never compete. `compareAuthority` reports `equal`,
       // because they do sit on one rung, and the detector must not read that as a conflict.
-      if (COMBINED_EVIDENCE_DOMAINS.has(authorityDomainOf(left.authority))) continue;
+      if (COMBINED_EVIDENCE_DOMAINS.has(authorityDomain)) continue;
 
       const shared = left.topics.filter((topic) => right.topics.includes(topic)).sort();
       const subject = shared[0];
       if (subject === undefined) continue;
 
-      const decision = decisions.find((item) => item.topics.includes(subject));
+      const decision = decisions.get(conflictDecisionRef(authorityDomain, subject));
       if (decision !== undefined) {
         found.push({
           subject,
+          authorityDomain,
           winnerRef: decision.reference.ref,
           loserRef: null,
           reason: DECISION_REASON,
@@ -163,6 +178,7 @@ export const detectConflicts = (
         const [first, second] = [left.reference.ref, right.reference.ref].sort();
         found.push({
           subject,
+          authorityDomain,
           winnerRef: null,
           loserRef: null,
           reason:
@@ -175,9 +191,10 @@ export const detectConflicts = (
 
       const winner = order === "a" ? left : right;
       const loser = order === "a" ? right : left;
-      const domain = DOMAIN_NAMES[authorityDomainOf(left.authority)] ?? "";
+      const domain = DOMAIN_NAMES[authorityDomain] ?? "";
       found.push({
         subject,
+        authorityDomain,
         winnerRef: winner.reference.ref,
         loserRef: loser.reference.ref,
         reason: `${nameOf(winner.authority)} has higher ${domain} authority than ${nameOf(loser.authority)}`,

@@ -67,6 +67,7 @@ const contract = (): ContextContract => ({
     {
       id: "CTX-1",
       subject: "notification",
+      authorityDomain: "architecture_intent",
       winnerRef: ADR_REF,
       loserRef: README_REF,
       reason: "accepted ADR has higher architecture authority than repository README",
@@ -76,6 +77,7 @@ const contract = (): ContextContract => ({
       // An unresolved conflict names no winner and no loser. SDD section 23.
       id: "CTX-2",
       subject: "delivery",
+      authorityDomain: "interface_contract",
       winnerRef: null,
       loserRef: null,
       reason: "two equally authoritative sources describe delivery",

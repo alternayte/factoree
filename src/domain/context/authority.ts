@@ -88,6 +88,11 @@ const PLACEMENTS = new Map<string, Placement>(
 
 export const isAuthorityClass = (value: string): value is AuthorityClass => PLACEMENTS.has(value);
 
+const DOMAIN_SET = new Set<string>(DOMAIN_ORDER);
+
+/** A guard for a domain name a database column holds. The store never casts a stored string. */
+export const isAuthorityDomain = (value: string): value is AuthorityDomain => DOMAIN_SET.has(value);
+
 const placementOf = (authority: AuthorityClass): Placement => {
   const placement = PLACEMENTS.get(authority);
   if (placement === undefined) {

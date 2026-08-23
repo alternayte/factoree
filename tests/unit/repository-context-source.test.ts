@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { RepositoryContextSource, classifyPath } from "~/domain/context/repository-source.js";
 import type { ContextDiscoveryRequest } from "~/domain/context/context-source.js";
+import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import {
+  RepositoryReadError,
+  isDeterministicRemoteFailure,
+} from "~/adapters/github/git-repository-reader.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FakeRepositoryReader } from "../support/fake-repository-reader.js";
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
@@ -183,6 +189,55 @@ describe("RepositoryContextSource", () => {
         path: "absent.md",
       }),
     ).rejects.toThrow(/absent\.md/);
+  });
+
+  /** A reader whose `resolveRef` fails with the given error. Discovery must classify it. */
+  const failingReader = (error: Error): RepositoryReader => {
+    const base = reader();
+    return {
+      resolveRef: () => Promise.reject(error),
+      listTree: (url: string, sha: string) => base.listTree(url, sha),
+      readBlob: (url: string, sha: string, path: string) => base.readBlob(url, sha, path),
+    };
+  };
+
+  it("reports a ref that resolves to nothing as a Run configuration fault", async () => {
+    // SDD section 49. The failure repeats on every attempt, so it must drive a workflow
+    // decision instead of the infrastructure retry policy.
+    const source = new RepositoryContextSource({
+      reader: failingReader(
+        new RepositoryReadError('the ref "main" of https://git/acme/webhook-service does not resolve to a commit SHA.', {
+          deterministic: true,
+        }),
+      ),
+    });
+    await expect(source.discover(request())).rejects.toBeInstanceOf(RunConfigurationError);
+  });
+
+  it("keeps a transport fault retryable", async () => {
+    // A timeout against a reachable host can succeed on the next attempt, so it must stay an
+    // ordinary read error.
+    const source = new RepositoryContextSource({
+      reader: failingReader(
+        new RepositoryReadError("the ref \"main\" could not be resolved: the read timed out after 120000 ms"),
+      ),
+    });
+    await expect(source.discover(request())).rejects.toBeInstanceOf(RepositoryReadError);
+    await expect(source.discover(request())).rejects.not.toBeInstanceOf(RunConfigurationError);
+  });
+
+  it("names a repository that does not exist as a deterministic failure", () => {
+    expect(isDeterministicRemoteFailure("remote: Repository not found.")).toBe(true);
+    expect(isDeterministicRemoteFailure("fatal: Authentication failed for 'https://git/x'")).toBe(
+      true,
+    );
+    // A timeout and a reset connection are transport faults, so they stay retryable.
+    expect(isDeterministicRemoteFailure("Command failed: git ls-remote\nkilled SIGTERM")).toBe(
+      false,
+    );
+    expect(isDeterministicRemoteFailure("fatal: unable to access: Connection reset by peer")).toBe(
+      false,
+    );
   });
 
   it("exposes the pinned SHA of every repository after discovery", async () => {

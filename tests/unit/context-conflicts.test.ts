@@ -33,6 +33,7 @@ describe("detectConflicts", () => {
       {
         id: "CTX-1",
         subject: "notification",
+        authorityDomain: "architecture_intent",
         winnerRef: "docs/ADR-031.md",
         loserRef: "README.md",
         reason: "accepted ADR has higher architecture authority than repository README",
@@ -118,12 +119,12 @@ describe("detectConflicts", () => {
     const conflicts = detectConflicts([
       item("docs/ADR-031.md", "accepted_adr", ["notification"]),
       item("docs/ADR-042.md", "accepted_adr", ["notification"]),
-      item("linear:decision:CTX-1", "work_item_decision", ["notification"], "required"),
-    ], { decisionRefs: ["linear:decision:CTX-1"] });
+      item("linear:decision:subject:architecture_intent:notification", "work_item_decision", ["notification"], "required"),
+    ], { decisionRefs: ["linear:decision:subject:architecture_intent:notification"] });
     const unresolved = conflicts.filter((conflict) => conflict.resolution === "unresolved");
     expect(unresolved).toEqual([]);
     const settled = conflicts.find((conflict) => conflict.subject === "notification");
-    expect(settled?.winnerRef).toBe("linear:decision:CTX-1");
+    expect(settled?.winnerRef).toBe("linear:decision:subject:architecture_intent:notification");
     expect(settled?.reason).toBe("a recorded human decision settles this subject");
   });
 
@@ -136,9 +137,9 @@ describe("detectConflicts", () => {
         item("docs/ADR-042.md", "accepted_adr", ["notification"]),
         item("docs/ADR-051.md", "accepted_adr", ["billing"]),
         item("docs/ADR-052.md", "accepted_adr", ["billing"]),
-        item("linear:decision:subject:billing", "work_item_decision", ["billing"], "required"),
+        item("linear:decision:subject:architecture_intent:billing", "work_item_decision", ["billing"], "required"),
       ],
-      { decisionRefs: ["linear:decision:subject:billing"] },
+      { decisionRefs: ["linear:decision:subject:architecture_intent:billing"] },
     );
     const billing = conflicts.find((conflict) => conflict.subject === "billing");
     expect(billing?.resolution).toBe("resolved");
@@ -153,14 +154,15 @@ describe("detectConflicts", () => {
       [
         item("docs/ADR-031.md", "accepted_adr", ["notification"]),
         item("README.md", "repository_readme", ["notification"]),
-        item("linear:decision:subject:billing", "work_item_decision", ["billing"], "required"),
+        item("linear:decision:subject:architecture_intent:billing", "work_item_decision", ["billing"], "required"),
       ],
-      { decisionRefs: ["linear:decision:subject:billing"] },
+      { decisionRefs: ["linear:decision:subject:architecture_intent:billing"] },
     );
     expect(conflicts).toEqual([
       {
         id: "CTX-1",
         subject: "notification",
+        authorityDomain: "architecture_intent",
         winnerRef: "docs/ADR-031.md",
         loserRef: "README.md",
         reason: "accepted ADR has higher architecture authority than repository README",
@@ -213,15 +215,16 @@ describe("detectConflicts", () => {
         item("docs/ADR-031.md", "accepted_adr", ["notification"]),
         item("docs/ADR-042.md", "accepted_adr", ["notification"]),
         item("linear:issue:run-1", "work_item_decision", ["notification"], "required"),
-        item("linear:decision:CTX-1", "work_item_decision", ["notification"], "required"),
+        item("linear:decision:subject:architecture_intent:notification", "work_item_decision", ["notification"], "required"),
       ],
-      { decisionRefs: ["linear:decision:CTX-1"] },
+      { decisionRefs: ["linear:decision:subject:architecture_intent:notification"] },
     );
     expect(conflicts).toEqual([
       {
         id: "CTX-1",
         subject: "notification",
-        winnerRef: "linear:decision:CTX-1",
+        authorityDomain: "architecture_intent",
+        winnerRef: "linear:decision:subject:architecture_intent:notification",
         loserRef: null,
         reason: "a recorded human decision settles this subject",
         resolution: "resolved",
@@ -251,6 +254,52 @@ describe("detectConflicts", () => {
         item("tests/retry.test.ts", "executable_tests", ["retry"]),
       ]),
     ).toEqual([]);
+  });
+
+  // One subject raises a conflict in two authority domains. SDD section 23 requires one focused
+  // question for each of them, so one answer must never settle the pair no human saw.
+  const twoDomains = [
+    item("docs/ADR-031.md", "accepted_adr", ["notification"]),
+    item("docs/ADR-042.md", "accepted_adr", ["notification"]),
+    item("api/openapi.yaml", "machine_readable_contract", ["notification"]),
+    item("api/events.proto", "machine_readable_contract", ["notification"]),
+  ];
+
+  it("raises one conflict for each authority domain that shares a subject", () => {
+    const conflicts = detectConflicts(twoDomains);
+    expect(
+      conflicts
+        .filter((conflict) => conflict.resolution === "unresolved")
+        .map((conflict) => conflict.authorityDomain)
+        .sort(),
+    ).toEqual(["architecture_intent", "interface_contract"]);
+  });
+
+  it("settles the architecture conflict with an answer about the architecture domain", () => {
+    const ref = "linear:decision:subject:architecture_intent:notification";
+    const conflicts = detectConflicts(
+      [...twoDomains, item(ref, "work_item_decision", ["notification"], "required")],
+      { decisionRefs: [ref] },
+    );
+    const architecture = conflicts.find(
+      (conflict) => conflict.authorityDomain === "architecture_intent",
+    );
+    expect(architecture?.resolution).toBe("resolved");
+    expect(architecture?.winnerRef).toBe(ref);
+  });
+
+  it("leaves the interface conflict open after an answer about the architecture domain", () => {
+    const ref = "linear:decision:subject:architecture_intent:notification";
+    const conflicts = detectConflicts(
+      [...twoDomains, item(ref, "work_item_decision", ["notification"], "required")],
+      { decisionRefs: [ref] },
+    );
+    const contract = conflicts.find(
+      (conflict) => conflict.authorityDomain === "interface_contract",
+    );
+    expect(contract?.resolution).toBe("unresolved");
+    expect(contract?.winnerRef).toBeNull();
+    expect(firstUnresolved(conflicts)?.authorityDomain).toBe("interface_contract");
   });
 
   it("does not let a decision on another subject settle this conflict", () => {
@@ -288,8 +337,8 @@ describe("firstUnresolved", () => {
     const conflicts = detectConflicts([
       item("docs/ADR-031.md", "accepted_adr", ["billing"]),
       item("docs/ADR-042.md", "accepted_adr", ["billing"]),
-      item("linear:decision:CTX-1", "work_item_decision", ["billing"], "required"),
-    ], { decisionRefs: ["linear:decision:CTX-1"] });
+      item("linear:decision:subject:architecture_intent:billing", "work_item_decision", ["billing"], "required"),
+    ], { decisionRefs: ["linear:decision:subject:architecture_intent:billing"] });
     expect(firstUnresolved(conflicts)).toBeNull();
   });
 });

@@ -27,6 +27,8 @@ const {
   postedProgress,
   autonomyLevels,
   configurationFaults,
+  contextCalls,
+  missingBranches,
   projectInput,
   workItemInput,
   input,
@@ -350,6 +352,40 @@ describe("a configuration fault during preparation", () => {
     const attempts = prepared.filter((entry) => entry.runId === "run-ses-configuration").length - before;
     expect(attempts).toBe(1);
     configurationFaults.delete("run-ses-configuration");
+  });
+});
+
+describe("a Project default branch that does not exist", () => {
+  it("fails with FAILED_CONFIGURATION and resolves the context one time only", async () => {
+    // SDD section 49. A ref that resolves to nothing is a semantic failure, so it drives a
+    // workflow decision. It must not consume the infrastructure retry policy.
+    missingBranches.add("no-such-branch");
+    const before = contextCalls.filter((entry) => entry.runId === "run-ses-badbranch").length;
+
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-badbranch"),
+        args: [
+          {
+            ...input("ses-badbranch"),
+            project: { ...projectInput, defaultBranch: "no-such-branch" },
+          },
+        ],
+      });
+      return handle.result();
+    });
+
+    expect(result.status).toBe("FAILED_CONFIGURATION");
+    const completion = completions.find((entry) => entry.runId === "run-ses-badbranch");
+    expect(completion?.status).toBe("FAILED_CONFIGURATION");
+    expect(completion?.failureReason).toBe("CONFIGURATION_INVALID");
+    const attempts =
+      contextCalls.filter((entry) => entry.runId === "run-ses-badbranch").length - before;
+    expect(attempts).toBe(1);
+    // The Run never reached preparation, so no sandbox exists.
+    expect(prepared.filter((entry) => entry.runId === "run-ses-badbranch")).toEqual([]);
+    missingBranches.delete("no-such-branch");
   });
 });
 

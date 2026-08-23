@@ -1,5 +1,6 @@
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { RepositoryReadError } from "~/adapters/github/git-repository-reader.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FACTOREE_CONFIG_PATH } from "~/domain/projects/factoree-config.js";
 import type { AuthorityClass } from "./authority.js";
 import type {
@@ -164,7 +165,22 @@ export class RepositoryContextSource implements ContextSource {
     role: "primary" | "reference",
   ): Promise<ContextCandidate[]> {
     // SDD section 20. An explicit commit SHA, never a moving ref.
-    const sha = await this.options.reader.resolveRef(repository.url, repository.ref);
+    //
+    // SDD section 49. A ref that does not exist, and a repository that does not exist, are
+    // semantic failures of the Run configuration. They repeat on every attempt, so they must
+    // drive a workflow decision instead of the infrastructure retry policy. A transport fault
+    // against a reachable host is not deterministic, so it stays retryable.
+    let sha: string;
+    try {
+      sha = await this.options.reader.resolveRef(repository.url, repository.ref);
+    } catch (error) {
+      if (error instanceof RepositoryReadError && error.deterministic) {
+        throw new RunConfigurationError(
+          `The ${role} repository "${repository.slug}" is not usable: ${error.message}`,
+        );
+      }
+      throw error;
+    }
     this.urls.set(repository.slug, repository.url);
     this.shas.set(repository.slug, sha);
 

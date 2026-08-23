@@ -249,6 +249,7 @@ describe("ContextResolver", () => {
             question: "Which one governs notification?",
             answer: "The ADR.",
             subject: "notification",
+            domain: "architecture_intent",
           },
         ],
       }),
@@ -261,7 +262,8 @@ describe("ContextResolver", () => {
     // The answer that settles a subject is the one recorded against that subject. The refinement
     // answer, whose source version collides with the Run identifier, settles nothing.
     const settled = resolved.contract.conflicts.find(
-      (conflict) => conflict.winnerRef === "linear:decision:subject:notification",
+      (conflict) =>
+        conflict.winnerRef === "linear:decision:subject:architecture_intent:notification",
     );
     expect(settled?.reason).toBe("a recorded human decision settles this subject");
     expect(
@@ -295,6 +297,7 @@ describe("ContextResolver", () => {
           question: "Which one governs billing?",
           answer: "ADR-051 governs it.",
           subject: "billing",
+          domain: "architecture_intent",
         },
       ]),
     );
@@ -320,12 +323,14 @@ describe("ContextResolver", () => {
           question: "Which one governs billing?",
           answer: "ADR-051 governs it.",
           subject: "billing",
+          domain: "architecture_intent",
         },
         {
           questionId: "CTX-1",
           question: "Which one governs notification?",
           answer: "ADR-031 governs it.",
           subject: "notification",
+          domain: "architecture_intent",
         },
       ]),
     );
@@ -333,7 +338,80 @@ describe("ContextResolver", () => {
       resolved.contract.items
         .map((item) => item.reference.ref)
         .filter((ref) => ref.startsWith("linear:decision:")),
-    ).toEqual(["linear:decision:subject:billing", "linear:decision:subject:notification"]);
+    ).toEqual([
+      "linear:decision:subject:architecture_intent:billing",
+      "linear:decision:subject:architecture_intent:notification",
+    ]);
+    expect(resolved.unresolvedConflict).toBeNull();
+  });
+
+  // One subject raises a conflict in two authority domains. SDD section 22 keeps the two ladders
+  // apart, so each domain needs its own human answer.
+  const twoDomains = {
+    "docs/ADR-031.md": "Status: accepted\n\nThe notification is owned here.\n",
+    "docs/ADR-042.md": "Status: accepted\n\nThe notification is owned elsewhere.\n",
+    "api/openapi.yaml": "openapi: 3.1.0\n\ninfo: the notification payload\n",
+    "api/events.proto": "message Notification { string notification = 1; }\n",
+  };
+
+  it("raises one unresolved conflict for each authority domain of one subject", async () => {
+    const resolved = await build({ primary: twoDomains }).resolve(input());
+    expect(
+      resolved.contract.conflicts
+        .filter((conflict) => conflict.resolution === "unresolved")
+        .map((conflict) => conflict.authorityDomain)
+        .sort(),
+    ).toEqual(["architecture_intent", "interface_contract"]);
+  });
+
+  it("lets an answer about one domain leave the conflict of the other domain open", async () => {
+    const resolved = await build({ primary: twoDomains }).resolve(
+      input({
+        decisions: [
+          {
+            questionId: "CTX-1",
+            question: "Which ADR governs notification?",
+            answer: "ADR-031 governs it.",
+            subject: "notification",
+            domain: "architecture_intent",
+          },
+        ],
+      }),
+    );
+    const architecture = resolved.contract.conflicts.find(
+      (conflict) => conflict.authorityDomain === "architecture_intent",
+    );
+    expect(architecture?.resolution).toBe("resolved");
+    expect(architecture?.reason).toBe("a recorded human decision settles this subject");
+    // The human never saw the interface question, so the answer must not settle it.
+    const contract = resolved.contract.conflicts.find(
+      (conflict) => conflict.authorityDomain === "interface_contract",
+    );
+    expect(contract?.resolution).toBe("unresolved");
+    expect(resolved.unresolvedConflict?.authorityDomain).toBe("interface_contract");
+  });
+
+  it("freezes nothing until both domains of one subject carry an answer", async () => {
+    const resolved = await build({ primary: twoDomains }).resolve(
+      input({
+        decisions: [
+          {
+            questionId: "CTX-1",
+            question: "Which ADR governs notification?",
+            answer: "ADR-031 governs it.",
+            subject: "notification",
+            domain: "architecture_intent",
+          },
+          {
+            questionId: "CTX-2",
+            question: "Which contract governs notification?",
+            answer: "The OpenAPI document governs it.",
+            subject: "notification",
+            domain: "interface_contract",
+          },
+        ],
+      }),
+    );
     expect(resolved.unresolvedConflict).toBeNull();
   });
 

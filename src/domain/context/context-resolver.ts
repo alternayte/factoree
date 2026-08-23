@@ -15,7 +15,7 @@ import {
 } from "./context-contract.js";
 import { topicsOf } from "./topics.js";
 
-import { linearDecisionRef } from "./linear-source.js";
+import { linearDecisionRef } from "./decision-ref.js";
 
 export interface ResolveContextInput {
   runId: string;

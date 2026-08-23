@@ -25,6 +25,16 @@ import {
   DEFAULT_PROJECT_RUNTIME_CONFIG,
 } from "~/domain/runs/project-runtime-config.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import type { AuthorityDomain } from "~/domain/context/authority.js";
+
+/** One conflict the context double reports. It carries the domain, the way a real record does. */
+export interface HarnessConflict {
+  id: string;
+  subject: string;
+  domain: AuthorityDomain;
+  question: string;
+  settledByDecision?: boolean;
+}
 
 /** One recorded `setRunStatus` call. The repair count is present only on a `REPAIRING` call. */
 export interface StatusCall {
@@ -96,16 +106,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    */
   const refineOverrides = new Map<string, (input: RefineActivityInput) => RefineActivityOutput>();
   /**
-   * The conflict the context double reports for one run id. It reports the conflict until the
-   * Run records a decision for it. `detectConflicts` applies the same rule, and
+   * The conflicts the context double reports for one run id, in order. It reports the first
+   * conflict no recorded decision settles. A decision settles a conflict when it carries the
+   * same authority domain and the same subject, which is the rule `detectConflicts` applies.
    * `tests/unit/context-conflicts.test.ts` proves that rule against the real domain. A conflict
    * marked `settledByDecision: false` survives every answer, which is the case the bounded
    * question rounds exist for.
    */
-  const contextConflicts = new Map<
-    string,
-    { id: string; subject: string; question: string; settledByDecision?: boolean }
-  >();
+  const contextConflicts = new Map<string, HarnessConflict[]>();
+  /**
+   * The branch names no repository of the harness carries. The context double raises the domain
+   * configuration error for one of them, in the same way the real discovery path does when
+   * `git ls-remote` names no such ref.
+   */
+  const missingBranches = new Set<string>();
   /** The pinned SHA of the primary repository of a Run. Discovery reports it in production. */
   const PRIMARY_SHA = "b".repeat(40);
 
@@ -166,12 +180,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     },
     resolveContext: async (input: ResolveContextActivityInput) => {
       contextCalls.push(input);
-      const conflict = contextConflicts.get(input.runId) ?? null;
-      const settled =
-        conflict !== null &&
+      if (missingBranches.has(input.primaryRepository.ref)) {
+        throw new RunConfigurationError(
+          `the ref "${input.primaryRepository.ref}" of the primary repository does not resolve ` +
+            "to a commit SHA.",
+        );
+      }
+      const all = contextConflicts.get(input.runId) ?? [];
+      const settled = (conflict: HarnessConflict): boolean =>
         conflict.settledByDecision !== false &&
-        input.decisions.some((decision) => decision.questionId === conflict.id);
-      const unresolvedConflict = settled ? null : conflict;
+        input.decisions.some(
+          (decision) =>
+            decision.subject === conflict.subject && decision.domain === conflict.domain,
+        );
+      const unresolvedConflict = all.find((conflict) => !settled(conflict)) ?? null;
       const document = `# Context Contract\n\nGoal: ${input.goal}\n`;
       return {
         sha256: createHash("sha256").update(`${input.runId}|${document}`, "utf8").digest("hex"),
@@ -187,7 +209,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           sha: `${index}`.repeat(40),
         })),
         unresolvedConflict,
-        conflictCount: conflict === null ? 0 : 1,
+        conflictCount: all.length,
         summary:
           unresolvedConflict === null
             ? "Factoree resolved the context of this Run."
@@ -371,6 +393,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     contextCalls,
     refineOverrides,
     contextConflicts,
+    missingBranches,
     workItemInput,
     projectInput,
     PRIMARY_SHA,
