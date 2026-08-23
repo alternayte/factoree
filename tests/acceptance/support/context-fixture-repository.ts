@@ -38,12 +38,36 @@ verify:
       run: "true"
 `;
 
+/**
+ * The `.factoree/config.yaml` of AT-04. It turns Backstage topology discovery and automatic
+ * reference repository discovery on, so the Backstage source and the discovered-repository path
+ * of the resolver are both exercised end to end.
+ */
+export const CONTEXT_FIXTURE_CONFIG_WITH_TOPOLOGY = `version: 1
+
+verify:
+  commands:
+    - name: check
+      run: "true"
+
+context:
+  backstage:
+    enabled: true
+  referenceRepositories:
+    automaticDiscovery: true
+`;
+
 export interface ContextFixtureOptions {
   /**
    * Extra files the primary repository carries, by path. AT-08 adds a second accepted ADR this
    * way. The builder writes each file before the single commit.
    */
   extraPrimaryFiles?: Record<string, string>;
+  /**
+   * The `.factoree/config.yaml` the primary repository carries. AT-04 turns the `context` block
+   * on. The default is `CONTEXT_FIXTURE_CONFIG`, so every Phase 4 acceptance test is unchanged.
+   */
+  primaryConfig?: string;
 }
 
 export interface ContextFixture {
@@ -138,6 +162,7 @@ export const buildContextFixture = async (
     const primary = await createRepository(root, PRIMARY_SLUG, {
       ...PRIMARY_FILES,
       [LARGE_FILE_PATH]: largeFileContent(),
+      ".factoree/config.yaml": options.primaryConfig ?? CONTEXT_FIXTURE_CONFIG,
       ...(options.extraPrimaryFiles ?? {}),
     });
     const reference = await createRepository(root, REFERENCE_SLUG, REFERENCE_FILES);
