@@ -66,17 +66,21 @@ const DECISION_REASON = "a recorded human decision settles this subject";
  *
  * The detector is deterministic by design. Two selected items conflict when they sit in one
  * authority domain and both carry the same Work Item topic. SDD section 8 forbids Refinement
- * from resolving an ambiguous architecture choice silently. A similarity model would guess, so
- * it is the wrong control here. The domain-and-topic rule never guesses.
+ * to resolve an ambiguous architecture choice without a human answer. A similarity model
+ * guesses, so it is the wrong control here. The domain-and-topic rule never guesses.
  *
  * A separate rule then applies. SDD section 22 makes an explicit Work Item decision the highest
- * product-intent authority, and SDD section 23 requires the human answer to persist as a Run
+ * product-intent authority. SDD section 23 requires the human answer to persist as a Run
  * decision that governs the Run. So when the item list holds a `work_item_decision` item whose
- * topics include a conflict subject, that conflict is resolved by the decision, whatever the
- * ordinary domain pairing found. A decision item sits in the product-intent domain, so it never
- * pairs with an architecture-intent conflict through the domain rule alone. This second rule is
- * a subject check, not a pairing, and it is why the workflow can make progress after one human
- * answer instead of asking the same question again.
+ * topics include a conflict subject, the decision resolves that conflict. This happens whatever
+ * the ordinary domain pairing found.
+ *
+ * A decision item sits in the product-intent domain, so it never pairs with an
+ * architecture-intent conflict through the domain rule alone. This second rule is a subject
+ * check, not a pairing. The rule applies to every pair, not only to an unresolved pair. It is
+ * an out-of-band override keyed by the subject, so it never weighs one authority ladder against
+ * another. It is why the workflow can make progress after one human answer. Without the rule,
+ * the same question repeats without end.
  */
 export const detectConflicts = (items: SelectedContextItem[]): ContextConflictRecord[] => {
   const candidates = items.filter((item) => conflictable(item.classification));
