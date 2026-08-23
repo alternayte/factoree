@@ -22,6 +22,17 @@ const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 
 const SHA = /^[0-9a-f]{40}$/;
 
+/**
+ * Recognizes the `git cat-file` message for a path that does not exist at a given SHA. This
+ * covers the two phrasings git uses: a path absent from the tree, and a `<sha>:<path>` object
+ * name that a git version rejects outright.
+ */
+const isMissingObject = (stderr: string): boolean =>
+  /does not exist/.test(stderr) ||
+  /Not a valid object name/.test(stderr) ||
+  /not a tree object/.test(stderr) ||
+  /Invalid object name/.test(stderr);
+
 export interface TreeEntry {
   path: string;
   sizeBytes: number;
@@ -84,6 +95,34 @@ export class GitRepositoryReader implements RepositoryReader {
   }
 
   /**
+   * Runs git and reports the outcome instead of a throw on a nonzero exit. A caller uses this
+   * form when a nonzero exit can mean two different things, such as a legitimate "not found"
+   * result and a genuine fault, and the caller must tell them apart.
+   */
+  private async gitResult(
+    cwd: string,
+    args: string[],
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    try {
+      const { stdout } = await run("git", args, {
+        cwd,
+        timeout: GIT_READ_TIMEOUT_MS,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+      });
+      return { exitCode: 0, stdout, stderr: "" };
+    } catch (error) {
+      const asExecError = error as { code?: number; stdout?: string; stderr?: string };
+      return {
+        exitCode: asExecError.code ?? 1,
+        stdout: asExecError.stdout ?? "",
+        stderr: asExecError.stderr ?? String(error),
+      };
+    }
+  }
+
+  /**
    * A bare mirror of one repository, created once per reader. `--filter=blob:none` fetches the
    * commits and the trees and leaves the blobs on the server until the reader reads one, so a
    * large repository costs a small download. SDD section 55 forbids a copy of a complete
@@ -124,23 +163,32 @@ export class GitRepositoryReader implements RepositoryReader {
 
   async listTree(url: string, sha: string): Promise<TreeListing> {
     const path = await this.mirror(url);
+    // `-z` ends each record with a NUL byte instead of a newline, so git never quotes or
+    // C-escapes a path. Without `-z`, a non-ASCII byte or a control character in a path comes
+    // back rewritten, and a stored path then fails to match the real file at a later read.
     const stdout = await this.git(
       path,
-      ["ls-tree", "-r", "-l", "--full-tree", sha],
+      ["ls-tree", "-r", "-l", "-z", "--full-tree", sha],
       `the tree of ${withoutUrlCredentials(url)} at ${sha} could not be listed`,
     );
     const entries: TreeEntry[] = [];
     let truncated = false;
-    for (const line of stdout.split("\n")) {
-      if (line.trim() === "") continue;
+    for (const record of stdout.split("\0")) {
+      if (record === "") continue;
       if (entries.length >= MAX_TREE_ENTRIES) {
         truncated = true;
         break;
       }
-      // Format: `<mode> <type> <object> <size>\t<path>`. The size field is `-` for a submodule.
-      const [meta, entryPath] = line.split("\t");
-      const size = meta?.trim().split(/\s+/)[3] ?? "-";
-      if (entryPath === undefined || entryPath === "" || size === "-") continue;
+      // Format: `<mode> <type> <object> <size>\t<path>`. The path itself can hold a tab, so the
+      // split stops at the first tab only, and everything after it is the path.
+      const tab = record.indexOf("\t");
+      if (tab < 0) continue;
+      const meta = record.slice(0, tab);
+      const entryPath = record.slice(tab + 1);
+      const size = meta.trim().split(/\s+/)[3] ?? "-";
+      // A submodule entry reports its size as `-`, because a submodule has no blob of its own
+      // in this repository. The reader excludes it, because there is no byte count to report.
+      if (entryPath === "" || size === "-") continue;
       entries.push({ path: entryPath, sizeBytes: Number.parseInt(size, 10) });
     }
     return { entries, truncated };
@@ -148,14 +196,19 @@ export class GitRepositoryReader implements RepositoryReader {
 
   async readBlob(url: string, sha: string, path: string): Promise<string | null> {
     const mirror = await this.mirror(url);
-    let size: number;
-    try {
-      const stdout = await this.git(mirror, ["cat-file", "-s", `${sha}:${path}`], "size");
-      size = Number.parseInt(stdout.trim(), 10);
-    } catch {
-      // The path does not exist at that SHA. This is an ordinary discovery outcome, not a fault.
-      return null;
+    const sizeResult = await this.gitResult(mirror, ["cat-file", "-s", `${sha}:${path}`]);
+    if (sizeResult.exitCode !== 0) {
+      // A missing path or an invalid object at this SHA is an ordinary discovery outcome, not a
+      // fault, so it returns null rather than a throw. Every other failure, for example a
+      // corrupt mirror or an exhausted output buffer, is a genuine fault and must throw.
+      if (isMissingObject(sizeResult.stderr)) return null;
+      throw new RepositoryReadError(
+        withoutUrlCredentials(
+          `the blob "${path}" of ${url} at ${sha} could not be read: ${sizeResult.stderr.trim()}`,
+        ),
+      );
     }
+    const size = Number.parseInt(sizeResult.stdout.trim(), 10);
     // See AT-09. A large file stays tool-accessible in the sandbox and never enters a prompt.
     if (!Number.isFinite(size) || size > MAX_BLOB_BYTES) return null;
     const stdout = await this.git(

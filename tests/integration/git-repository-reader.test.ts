@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, existsSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -24,6 +24,8 @@ beforeAll(() => {
   writeFileSync(join(origin, "README.md"), "# Service\n\nNotifications are owned here.\n");
   writeFileSync(join(origin, "docs", "ADR-031.md"), "# ADR 31\n\nStatus: accepted\n");
   writeFileSync(join(origin, "big.bin"), "x".repeat(300_000));
+  writeFileSync(join(origin, "café.txt"), "espresso\n");
+  writeFileSync(join(origin, "a file with spaces.txt"), "spaced\n");
   git(origin, "init", "--initial-branch", "main");
   git(origin, "add", ".");
   git(origin, "commit", "-m", "initial");
@@ -58,9 +60,29 @@ describe("GitRepositoryReader", () => {
     const tree = await reader.listTree(origin, headSha);
     expect(tree.truncated).toBe(false);
     const paths = tree.entries.map((entry) => entry.path).sort();
-    expect(paths).toEqual(["README.md", "big.bin", "docs/ADR-031.md"]);
+    expect(paths).toEqual([
+      "README.md",
+      "a file with spaces.txt",
+      "big.bin",
+      "café.txt",
+      "docs/ADR-031.md",
+    ]);
     const readme = tree.entries.find((entry) => entry.path === "README.md");
     expect(readme?.sizeBytes).toBeGreaterThan(0);
+  });
+
+  it("lists and reads a path holding a non-ASCII byte without quoting or escaping it", async () => {
+    const tree = await reader.listTree(origin, headSha);
+    const entry = tree.entries.find((candidate) => candidate.path === "café.txt");
+    expect(entry).toBeDefined();
+    await expect(reader.readBlob(origin, headSha, "café.txt")).resolves.toBe("espresso\n");
+  });
+
+  it("lists and reads a path holding a space without splitting it", async () => {
+    const tree = await reader.listTree(origin, headSha);
+    const entry = tree.entries.find((candidate) => candidate.path === "a file with spaces.txt");
+    expect(entry).toBeDefined();
+    await expect(reader.readBlob(origin, headSha, "a file with spaces.txt")).resolves.toBe("spaced\n");
   });
 
   it("reads a blob at the pinned SHA", async () => {
@@ -86,5 +108,35 @@ describe("GitRepositoryReader", () => {
     await expect(
       reader.resolveRef("https://user:supersecrettoken@127.0.0.1:1/owner/repo.git", "main"),
     ).rejects.toThrow(/^(?!.*supersecrettoken).*$/s);
+  });
+
+  it("throws a RepositoryReadError for a genuine fault, rather than a false null", async () => {
+    // A fresh reader isolates the mirror this test corrupts from the mirror the other tests
+    // share. The directory a reader creates for its mirrors carries the prefix
+    // "factoree-context-", so a before-and-after diff of the temporary directory finds it.
+    const before = new Set(readdirSync(tmpdir()));
+    const localReader = new GitRepositoryReader();
+    await localReader.listTree(origin, headSha);
+    const after = readdirSync(tmpdir());
+    const contextDirName = after.find((name) => name.startsWith("factoree-context-") && !before.has(name));
+    expect(contextDirName).toBeDefined();
+    const contextDir = join(tmpdir(), contextDirName as string);
+    const mirrorDirName = readdirSync(contextDir)[0];
+    expect(mirrorDirName).toBeDefined();
+    const mirrorDir = join(contextDir, mirrorDirName as string);
+
+    // Corrupts the blob object of README.md inside the mirror, so a later read of it fails for a
+    // reason other than "the path does not exist". Git keeps a fresh clone this small as loose
+    // objects, so the object file exists on disk at a path derived from its own SHA.
+    const blobSha = git(mirrorDir, "rev-parse", `${headSha}:README.md`).trim();
+    const objectPath = join(mirrorDir, "objects", blobSha.slice(0, 2), blobSha.slice(2));
+    expect(existsSync(objectPath)).toBe(true);
+    chmodSync(objectPath, 0o644);
+    writeFileSync(objectPath, "not a git object");
+
+    await expect(localReader.readBlob(origin, headSha, "README.md")).rejects.toBeInstanceOf(
+      RepositoryReadError,
+    );
+    localReader.close();
   });
 });
