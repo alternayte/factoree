@@ -119,7 +119,7 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
       );
 
       try {
-        // The Implementer is running and has changed nothing yet.
+        // The Implementer started and changed nothing yet.
         const snapshot = await handle.query(runStatusQuery);
         expect(snapshot.status).toBe("IMPLEMENTING");
 
@@ -173,7 +173,7 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
         expect(prepare?.references.map((entry) => entry.ref)).toEqual([fixture.referenceSha]);
       } finally {
         // The held Implementer must always be released, or the worker cannot shut down. The
-        // stop must reach the running activity before the release, exactly as
+        // stop must reach the activity before the release, exactly as
         // `tests/workflow/agent-run.workflow.test.ts` drives the same double.
         await handle.signal(stopSignal);
         await waitFor(

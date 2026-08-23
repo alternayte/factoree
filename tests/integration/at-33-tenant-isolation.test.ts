@@ -60,13 +60,26 @@ describe("AT-33 tenant isolation", () => {
     expect(await runs.findById(a.id, run.run.id)).not.toBeNull();
   });
 
-  it("records the tenant on every tenant-owned row", async () => {
+  /** Every table of the public schema, ordered by name. */
+  const tableNames = async (): Promise<string[]> => {
+    const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    `;
+    return rows.map((row) => row.table_name).sort();
+  };
+
+  /** Every table that carries a `tenantId` column, ordered by name. */
+  const tenantedTableNames = async (): Promise<string[]> => {
     const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.columns
       WHERE table_schema = 'public' AND column_name = 'tenantId'
     `;
-    const names = rows.map((row) => row.table_name).sort();
-    expect(names).toEqual(
+    return rows.map((row) => row.table_name).sort();
+  };
+
+  it("records the tenant on every tenant-owned row", async () => {
+    expect(await tenantedTableNames()).toEqual(
       [
         "AgentExecution",
         // SDD section 21 and SDD section 52. Phase 4 added the Context Contract tables, and each
@@ -82,5 +95,23 @@ describe("AT-33 tenant isolation", () => {
         "Run",
       ].sort(),
     );
+  });
+
+  /**
+   * SDD section 52. The assertion above reads the columns that exist, so it can never see a
+   * table that forgot the column. This assertion reads the tables that exist instead, and it
+   * names every exemption.
+   *
+   * The exemption list is the point of the test. `Tenant` holds the tenant itself, and
+   * `_prisma_migrations` is the migration ledger of Prisma. Neither belongs to one tenant. A new
+   * table that carries no `tenantId` fails this test until a human adds it here on purpose, so
+   * nobody can add an untenanted table by accident.
+   */
+  const NOT_TENANT_OWNED = ["Tenant", "_prisma_migrations"];
+
+  it("gives every other table a tenant column", async () => {
+    const tenanted = new Set(await tenantedTableNames());
+    const untenanted = (await tableNames()).filter((name) => !tenanted.has(name));
+    expect(untenanted).toEqual([...NOT_TENANT_OWNED].sort());
   });
 });

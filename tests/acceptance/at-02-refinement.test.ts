@@ -55,7 +55,9 @@ describe("AT-02 — refinement of a vague Work Item", () => {
       decisions: [],
     });
 
-    // The correct primary repository, taken from the Project record and not invented.
+    // The Project record decides the primary repository, and Refinement carries the value
+    // through. This is not the AT-02 repository proof. The contract below carries that proof,
+    // because it selects real content from that repository.
     expect(refined.primaryRepository).toBe(PRIMARY_SLUG);
     expect(refined.referenceRepositories).toEqual([REFERENCE_SLUG]);
     expect(refined.status).toBe("ready");
@@ -94,7 +96,7 @@ describe("AT-02 — refinement of a vague Work Item", () => {
 
     // At least one relevant implementation pattern reaches the initial role context.
     expect(paths).toContain("src/retry.ts");
-    // The relevant existing test reaches it as well.
+    // The test that covers that pattern reaches it as well.
     expect(paths).toContain("tests/retry.test.ts");
     // Both were selected from the primary repository the Project names.
     const pattern = preloaded.find((item) => item.reference.path === "src/retry.ts");
