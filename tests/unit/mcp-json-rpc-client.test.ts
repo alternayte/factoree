@@ -75,4 +75,40 @@ describe("McpJsonRpcClient", () => {
     });
     await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/secret-token/);
   });
+
+  it("reports a JSON body that is not an object as an McpError, not a raw TypeError", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(null), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("reports a body with neither result nor error as an McpError, not an empty success", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2 }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("retries the handshake after it fails once", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("boom", { status: 500 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: {} }, { "mcp-session-id": "session-2" }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, result: { content: [{ type: "text", text: "hello" }] } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+
+    await expect(client.callTool("search_docs", {})).rejects.toBeInstanceOf(McpError);
+    expect(await client.callTool("search_docs", {})).toBe("hello");
+
+    // Failed initialize, retried initialize, notifications/initialized, tools/call.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });

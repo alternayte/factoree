@@ -35,11 +35,13 @@ interface JsonRpcFailure {
 
 type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 const isJsonRpcFailure = (value: JsonRpcResponse): value is JsonRpcFailure =>
   "error" in value && value.error !== undefined;
 
-const asRecord = (value: unknown): Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 
 export interface McpJsonRpcClientOptions {
   endpoint: string;
@@ -91,7 +93,13 @@ export class McpJsonRpcClient implements McpToolPort {
   }
 
   private ensureInitialized(): Promise<void> {
-    this.initializePromise ??= this.initialize();
+    this.initializePromise ??= this.initialize().catch((error: unknown) => {
+      // A failed handshake must not poison the client for its whole life. Clear the cached
+      // promise so the next call retries the handshake, the same way a repeat tool call
+      // reaches the server again instead of replaying a stale failure.
+      this.initializePromise = null;
+      throw error;
+    });
     return this.initializePromise;
   }
 
@@ -110,10 +118,21 @@ export class McpJsonRpcClient implements McpToolPort {
 
   private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
     const { body } = await this.send(method, params);
-    if (isJsonRpcFailure(body)) {
-      throw new McpError(`The MCP server refused "${method}": ${body.error.message}.`);
+    if (!isRecord(body)) {
+      throw new McpError(
+        `The MCP server at ${this.endpoint} answered "${method}" with a body that was not a JSON-RPC object.`,
+      );
     }
-    return body.result;
+    const rpcBody = body as unknown as JsonRpcResponse;
+    if (isJsonRpcFailure(rpcBody)) {
+      throw new McpError(`The MCP server refused "${method}": ${rpcBody.error.message}.`);
+    }
+    if (!("result" in rpcBody)) {
+      throw new McpError(
+        `The MCP server at ${this.endpoint} answered "${method}" with neither a result nor an error.`,
+      );
+    }
+    return rpcBody.result;
   }
 
   private buildHeaders(): Record<string, string> {
@@ -126,7 +145,7 @@ export class McpJsonRpcClient implements McpToolPort {
     return headers;
   }
 
-  private async send(method: string, params: Record<string, unknown>): Promise<{ body: JsonRpcResponse; headers: Headers }> {
+  private async send(method: string, params: Record<string, unknown>): Promise<{ body: unknown; headers: Headers }> {
     const id = this.nextId;
     this.nextId += 1;
 
@@ -160,7 +179,7 @@ export class McpJsonRpcClient implements McpToolPort {
       throw new McpError(`The MCP request "${method}" returned a body that was not JSON.`, { cause });
     }
 
-    return { body: body as JsonRpcResponse, headers: response.headers };
+    return { body, headers: response.headers };
   }
 
   /** A notification carries no id and expects no body. */
