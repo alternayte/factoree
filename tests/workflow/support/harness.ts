@@ -101,6 +101,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * from the map reports no label, the same way an issue with no label does in production.
    */
   const workItemLabels = new Map<string, string[]>();
+  /**
+   * The session ids whose label read the fake Linear API fails on every call, in the same way a
+   * transport fault the retry policy has exhausted does in production.
+   */
+  const failingLabelReads = new Set<string>();
   /** Every recorded `refine` call. */
   const refineCalls: RefineActivityInput[] = [];
   /** Every recorded `resolveContext` call. */
@@ -225,8 +230,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
     },
-    fetchWorkItemLabels: async (activityInput: { sessionId: string; issueId: string }) =>
-      workItemLabels.get(activityInput.sessionId) ?? [],
+    fetchWorkItemLabels: async (activityInput: { sessionId: string; issueId: string }) => {
+      if (failingLabelReads.has(activityInput.sessionId)) throw new Error("Linear is down");
+      return workItemLabels.get(activityInput.sessionId) ?? [];
+    },
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       prepared.push(activityInput);
       if (configurationFaults.has(activityInput.runId)) {
@@ -397,6 +404,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     elicitations,
     autonomyLevels,
     workItemLabels,
+    failingLabelReads,
     refineCalls,
     contextCalls,
     refineOverrides,

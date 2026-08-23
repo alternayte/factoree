@@ -27,6 +27,7 @@ const {
   postedProgress,
   autonomyLevels,
   workItemLabels,
+  failingLabelReads,
   configurationFaults,
   contextCalls,
   missingBranches,
@@ -454,6 +455,34 @@ describe("the refinement result the Run records", () => {
       return handle.result();
     });
     expect(autonomyLevels.slice(before)).toEqual(["L2"]);
+  });
+
+  it("continues the Run at the Project default when the label read fails (SDD section 28)", async () => {
+    // A transport fault the retry policy has already exhausted must not fail the Run over a
+    // label read. The Run continues, and the autonomy level stays the Project default.
+    const before = autonomyLevels.length;
+    failingLabelReads.add("ses-label-fault");
+    try {
+      const result = await runWorker(async () => {
+        const handle = await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "ses-label-fault"),
+          args: [
+            {
+              ...input("ses-label-fault"),
+              autonomyLevel: "L2",
+              project: { ...projectInput, defaultAutonomy: "L2" },
+            },
+          ],
+        });
+        await handle.signal(stopSignal);
+        return handle.result();
+      });
+      expect(result.status).toBe("CANCELLED");
+      expect(autonomyLevels.slice(before)).toEqual(["L2"]);
+    } finally {
+      failingLabelReads.delete("ses-label-fault");
+    }
   });
 
   it("reports every refinement risk to the human (SDD section 8)", async () => {

@@ -464,11 +464,19 @@ export async function agentRunWorkflow(
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
       // SDD section 28. The webhook carries no label, so the labels come from the Linear API
-      // before Refinement classifies the risk of this Work Item.
+      // before Refinement classifies the risk of this Work Item. A read that never recovers,
+      // after the activity's own retry policy is exhausted, must not fail the Run: it yields no
+      // label, and the Run then runs at its Project default, the same as an issue with no label
+      // does. A cancellation is not a label-read fault, so it still propagates.
       let labels = input.workItem.labels;
       const issueId = input.workItem.issueId;
       if (issueId !== null) {
-        labels = await activities.fetchWorkItemLabels({ sessionId: input.agentSessionId, issueId });
+        try {
+          labels = await activities.fetchWorkItemLabels({ sessionId: input.agentSessionId, issueId });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          labels = [];
+        }
       }
 
       // SDD section 8. Refinement reads the Work Item and the Project record only. It reaches no
