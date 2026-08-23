@@ -99,6 +99,7 @@ model Run {
   completedAt              DateTime?
   executions               AgentExecution[]
   evidence                 Evidence[]
+  contextContract          ContextContract?
 
   @@index([tenantId])
   @@index([projectId])
@@ -148,6 +149,72 @@ model Evidence {
 
   @@unique([runId, idempotencyKey])
   @@index([tenantId, runId])
+}
+
+model ContextContract {
+  id          String   @id @default(uuid())
+  tenantId    String
+  runId       String   @unique
+  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // SDD section 21 fixes the document schema version. `Run.contextContractVersion` holds the
+  // SHA-256 below, because that value identifies the exact contract. See controller decision 11.
+  version     Int
+  sha256      String
+  // The rendered contract. SDD section 55 forbids a copy of a repository. This text names paths
+  // and hashes. It holds no file body.
+  document    String
+  createdAt   DateTime @default(now())
+  items       ContextItem[]
+  conflicts   ContextConflict[]
+
+  @@index([tenantId])
+}
+
+model ContextItem {
+  id                String          @id @default(uuid())
+  tenantId          String
+  contextContractId String
+  contextContract   ContextContract @relation(fields: [contextContractId], references: [id], onDelete: Cascade)
+  // SDD section 21 requires a source, a stable reference, a source version, an authority class, a
+  // reason, and a classification on every selected item. SDD section 55 adds the repository, the
+  // commit SHA, the path, and the content hash.
+  sourceId          String
+  ref               String
+  repository        String?
+  sha               String?
+  path              String?
+  sourceVersion     String
+  authority         String
+  reason            String
+  classification    String
+  topics            String[]        @default([])
+  contentSha256     String?
+  createdAt         DateTime        @default(now())
+
+  @@unique([contextContractId, ref])
+  @@index([tenantId])
+}
+
+model ContextConflict {
+  id                String          @id @default(uuid())
+  tenantId          String
+  contextContractId String
+  contextContract   ContextContract @relation(fields: [contextContractId], references: [id], onDelete: Cascade)
+  // SDD section 23 fixes this shape. `winnerRef` and `loserRef` are null for an unresolved
+  // conflict, because no authority rule gave a winner.
+  conflictKey       String
+  subject           String
+  // SDD section 22 makes authority domain-specific. The domain with the subject names the
+  // question a human answered, so the record must carry it.
+  authorityDomain   String
+  winnerRef         String?
+  loserRef          String?
+  reason            String
+  resolution        String
+  createdAt         DateTime        @default(now())
+
+  @@unique([contextContractId, conflictKey])
+  @@index([tenantId])
 }
 
 model ProcessedWebhook {

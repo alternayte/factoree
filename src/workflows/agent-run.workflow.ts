@@ -14,22 +14,45 @@ import type { Activities } from "~/activities/index.js";
 import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
+import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
+import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AuthorityDomain } from "~/domain/context/authority.js";
 
 import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias.
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
+// The workflow bundler resolves a relative path only, so this value import does not use the
+// `~/` alias either.
+import { buildRepositoryUrl } from "../domain/projects/repository-url.js";
+// The workflow bundler resolves a relative path only, so this value import does not use the
+// `~/` alias either.
+import { renderRisks } from "../domain/refinement/risk.js";
 
-export interface AgentRunSandboxInput {
-  primary: { url: string; ref: string };
-  references: Array<{ url: string; ref: string }>;
+export interface AgentRunProjectInput {
+  primaryRepository: string;
+  referenceRepositories: string[];
+  defaultBranch: string;
+  /** Turns an `owner/repo` slug into a clone URL until the Phase 9 GitHub adapter exists. */
+  repositoryBaseUrl: string;
   /**
-   * SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the primary
-   * repository. Only the values a repository must not own travel from the control plane.
+   * SDD section 15 and SDD section 57. The runtime configuration comes from
+   * `.factoree/config.yaml` in the primary repository. The Project owns these two values, and a
+   * repository must not widen them.
    */
-  defaults: { stagingRead: boolean; spriteRetentionHours: number };
-  goal: string;
+  stagingRead: boolean;
+  spriteRetentionHours: number;
+  defaultAutonomy: string;
+}
+
+/** SDD section 7. The Work Item text, exactly as the author wrote it. */
+export interface AgentRunWorkItemInput {
+  issueId: string | null;
+  title: string;
+  description: string;
+  url: string | null;
+  labels: string[];
 }
 
 export interface AgentRunWorkflowInput {
@@ -40,8 +63,8 @@ export interface AgentRunWorkflowInput {
   agentSessionId: string;
   autonomyLevel: string;
   maxRunMinutes: number;
-  /** Phase 2. Without this value the workflow keeps the Phase 1 behaviour. */
-  sandbox?: AgentRunSandboxInput;
+  workItem: AgentRunWorkItemInput;
+  project: AgentRunProjectInput;
 }
 
 export interface AgentRunWorkflowResult {
@@ -54,6 +77,14 @@ export interface RunSnapshot {
   status: RunStatus;
   humanInputs: string[];
   spriteId: string | null;
+  /**
+   * SDD section 53. The SHA-256 of the latest context resolution of this Run. SDD section 21
+   * freezes that resolution only after no unresolved conflict remains, so an earlier value is
+   * the hash of a draft.
+   */
+  contextContractVersion: string | null;
+  /** SDD section 23. The one question Factoree waits on, or null. */
+  openQuestion: string | null;
 }
 
 export const stopSignal = defineSignal("stop");
@@ -64,6 +95,44 @@ const activities = proxyActivities<Activities>({
   startToCloseTimeout: "1 minute",
   retry: { maximumAttempts: 5, initialInterval: "1 second", backoffCoefficient: 2 },
 });
+
+/**
+ * Refinement is a pure computation, so it is fast, and a retry costs nothing. One minute is
+ * ample for it.
+ */
+const refineActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "1 minute",
+  retry: { maximumAttempts: 3, initialInterval: "1 second", backoffCoefficient: 2 },
+});
+
+/** The longest one context resolution attempt can take. */
+const RESOLVE_ATTEMPT_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Context resolution clones and reads repositories, so it takes minutes. The remaining Run
+ * budget bounds it, in the same way it bounds preparation.
+ */
+const buildContextActivities = (budgetMs: number) =>
+  proxyActivities<Activities>({
+    startToCloseTimeout: `${Math.min(RESOLVE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
+    scheduleToCloseTimeout: `${budgetMs} milliseconds`,
+    // SDD section 49: a semantic failure must not consume the infrastructure retry policy. A
+    // repository reference that resolves to nothing repeats on every attempt, so it fails fast.
+    retry: {
+      maximumAttempts: 3,
+      initialInterval: "5 seconds",
+      backoffCoefficient: 2,
+      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE],
+    },
+  });
+
+/**
+ * SDD section 8 and SDD section 23 put no bound on the elicitation loop. An unbounded loop is a
+ * workflow that never ends. Five rounds cover a realistic clarification, and then Factoree stops.
+ * Refinement and conflict resolution share the five rounds. The Run budget of SDD section 50
+ * bounds the loop as well. See controller decision 6.
+ */
+export const MAX_QUESTION_ROUNDS = 5;
 
 /** The longest one preparation attempt can take. A retry gets its own attempt of this length. */
 const PREPARE_ATTEMPT_TIMEOUT_MS = 30 * 60_000;
@@ -165,6 +234,11 @@ export async function agentRunWorkflow(
   let implementerSession: AgentSessionRef | null = null;
   /** True once the implement activity itself has cancelled the live session. */
   let implementerCancelled = false;
+  /** SDD section 23. Every answer a human gave to a question Factoree asked in this Run. */
+  const decisions: RecordedDecision[] = [];
+  let openQuestion: string | null = null;
+  let contextContractVersion: string | null = null;
+  let questionRounds = 0;
 
   setHandler(stopSignal, () => {
     stopRequested = true;
@@ -177,6 +251,8 @@ export async function agentRunWorkflow(
     status,
     humanInputs,
     spriteId: sprite?.spriteId ?? null,
+    contextContractVersion,
+    openQuestion,
   }));
 
   const created = await activities.createRun({
@@ -204,7 +280,9 @@ export async function agentRunWorkflow(
       | "RUN_TIMEOUT"
       | "IMPLEMENTATION_FAILED"
       | "CONFIGURATION_INVALID"
-      | "VERIFICATION_FAILED",
+      | "VERIFICATION_FAILED"
+      | "REFINEMENT_UNRESOLVED"
+      | "CONTEXT_UNRESOLVED",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = failureReason === "CONFIGURATION_INVALID" ? "FAILED_CONFIGURATION" : "FAILED";
@@ -223,6 +301,55 @@ export async function agentRunWorkflow(
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
 
   /**
+   * SDD section 23 requires one focused question. The workflow asks that question. It waits for
+   * exactly one human input. It records the answer against that question. The result is false
+   * when the Run must end instead, so every caller must check the result. The remaining Run
+   * budget bounds the wait, and a stop signal ends it as well.
+   */
+  const askAndWait = async (
+    questionId: string,
+    question: string,
+    /**
+     * SDD section 23. The conflict subject this question asks about. The answer settles that
+     * subject only. A refinement question settles no conflict, so the caller passes no subject.
+     */
+    subject?: string,
+    /**
+     * SDD section 22. The authority domain of the conflict. The answer settles that domain with
+     * that subject, and no other pair. A refinement question carries no domain.
+     */
+    domain?: AuthorityDomain,
+  ): Promise<boolean> => {
+    if (questionRounds >= MAX_QUESTION_ROUNDS) return false;
+    // The count is read before the first await. A human can answer as soon as the Run reports
+    // WAITING_FOR_INPUT, which happens before the elicitation reaches Linear. An answer that
+    // arrives in that moment answers this question, and the wait does not miss it.
+    const answersBefore = humanInputs.length;
+    questionRounds += 1;
+    openQuestion = question;
+    status = "WAITING_FOR_INPUT";
+    await activities.setRunStatus({ runId: id, status });
+    await notify(() => activities.postElicitation({ sessionId: input.agentSessionId, question }));
+
+    const answered = await condition(
+      () => stopRequested || humanInputs.length > answersBefore,
+      remainingMs(),
+    );
+    openQuestion = null;
+    if (!answered || stopRequested) return false;
+    // One human input answers the open question only. SDD section 23 permits one question at a
+    // time, so the last input belongs to this question.
+    decisions.push({
+      questionId,
+      question,
+      answer: humanInputs[humanInputs.length - 1] ?? "",
+      ...(subject === undefined ? {} : { subject }),
+      ...(domain === undefined ? {} : { domain }),
+    });
+    return true;
+  };
+
+  /**
    * One Implementer attempt. The cancellation scope, the stop watcher, and the session
    * bookkeeping are unchanged from Phase 2. It returns null when the activity was cancelled.
    */
@@ -231,6 +358,12 @@ export async function agentRunWorkflow(
     goal: string;
     attempt: number;
     repairFindings: string[];
+    /**
+     * SDD section 21 and AT-09. The prompt carries the rendered contract and the
+     * required-context lines. No file body reaches it.
+     */
+    contextContract: string;
+    requiredContext: string[];
   }): Promise<ImplementActivityOutput | null> => {
     const budgetMs = remainingMs();
     const implementActivities = buildImplementActivities(budgetMs);
@@ -247,6 +380,8 @@ export async function agentRunWorkflow(
         primaryPath: attemptInput.prepared.primaryPath,
         referencePaths: attemptInput.prepared.referencePaths,
         goal: attemptInput.goal,
+        contextContract: attemptInput.contextContract,
+        requiredContext: attemptInput.requiredContext,
         humanDecisions: humanInputs,
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
         repairFindings: attemptInput.repairFindings,
@@ -324,10 +459,168 @@ export async function agentRunWorkflow(
     status = "RECEIVED";
     await activities.setRunStatus({ runId: id, status, startedAt: new Date(Date.now()).toISOString() });
 
-    const sandbox = input.sandbox;
-    if (sandbox !== undefined) {
+    {
       // A Run whose budget has already passed must not start work it cannot finish.
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+      // SDD section 8. Refinement reads the Work Item and the Project record only. It reaches no
+      // repository and no sandbox, so it runs before preparation.
+      const refinementInput = () => ({
+        runId: id,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        source: input.workItem,
+        project: {
+          primaryRepository: input.project.primaryRepository,
+          referenceRepositories: input.project.referenceRepositories,
+          defaultAutonomy: input.project.defaultAutonomy,
+        },
+        decisions,
+      });
+
+      status = "REFINING";
+      await activities.setRunStatus({ runId: id, status });
+      let refined = await refineActivities.refine(refinementInput());
+
+      // SDD section 8. A material product question blocks the Run. The rounds are bounded, so
+      // this loop always ends.
+      while (refined.status === "needs_input") {
+        const question = refined.unresolvedQuestions[0];
+        if (question === undefined) break;
+        const proceeded = await askAndWait(question.id, question.question);
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "REFINEMENT_UNRESOLVED",
+            "Factoree could not start, because a material product decision is still open: " +
+              `${question.question} Factoree must not invent product behavior, ` +
+              "so it published nothing.",
+          );
+        }
+        status = "REFINING";
+        await activities.setRunStatus({ runId: id, status });
+        refined = await refineActivities.refine(refinementInput());
+      }
+
+      // SDD section 28. Refinement caps the autonomy level of the Run. The Run row was created
+      // before Refinement ran, so it still holds the raw Project default. The capped level is
+      // the level that governs the Run, so it reaches the row here.
+      await activities.setRunAutonomyLevel({
+        tenantId: input.tenantId,
+        runId: id,
+        autonomyLevel: refined.autonomyLevel,
+      });
+
+      // SDD section 8. Refinement reports a risk that a human must see. Factoree does not block
+      // the Run on one, so the report is the only place a human learns of it. An empty list
+      // produces no message.
+      const riskMessage = renderRisks(refined.risks);
+      if (riskMessage !== null) {
+        await notify(() =>
+          activities.postProgress({ sessionId: input.agentSessionId, message: riskMessage }),
+        );
+      }
+
+      // SDD section 20. Discovery pins one SHA for each repository. The ref below is the ref
+      // discovery starts from. The checkout later uses the pinned SHA.
+      const repositoryRef = (slug: string) => ({
+        slug,
+        url: buildRepositoryUrl(input.project.repositoryBaseUrl, slug),
+        ref: input.project.defaultBranch,
+      });
+
+      // SDD section 23. A conflict without an authority winner blocks the Run. The bounded
+      // rounds end this loop, and the Run budget ends it as well.
+      let resolvedContext: ResolveContextActivityOutput;
+      for (;;) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        status = "RESOLVING_CONTEXT";
+        await activities.setRunStatus({ runId: id, status });
+
+        try {
+          resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
+            runId: id,
+            tenantId: input.tenantId,
+            projectId: input.projectId,
+            goal: refined.goal,
+            acceptanceCriteria: refined.acceptanceCriteria,
+            primaryRepository: repositoryRef(refined.primaryRepository),
+            referenceRepositories: refined.referenceRepositories.map(repositoryRef),
+            workItemReferences: refined.workItemReferences,
+            decisions,
+          });
+        } catch (error) {
+          // SDD section 49. A repository reference that resolves to nothing is a semantic
+          // failure, so it drives a workflow decision. The retry policy already denied a second
+          // attempt. A transport fault is not this type, so it still retries.
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not resolve the context, because the Run configuration is invalid. " +
+                "Repair the repository reference, the reference repositories, or the default branch.",
+            );
+          }
+          throw error;
+        }
+        // SDD section 21. Only a frozen Context Contract has a version. A resolution that still
+        // holds an unresolved conflict stored nothing, so the snapshot reports no version.
+        contextContractVersion =
+          resolvedContext.unresolvedConflict === null ? resolvedContext.sha256 : null;
+
+        await notify(() =>
+          activities.postProgress({
+            sessionId: input.agentSessionId,
+            message: resolvedContext.summary,
+          }),
+        );
+
+        const conflict = resolvedContext.unresolvedConflict;
+        if (conflict === null) break;
+
+        // SDD section 23. No safe resolution exists, so implementation must not start.
+        const proceeded = await askAndWait(
+          conflict.id,
+          conflict.question,
+          conflict.subject,
+          conflict.domain,
+        );
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "CONTEXT_UNRESOLVED",
+            "Factoree could not start, because two equally authoritative sources disagree: " +
+              `${conflict.question} Factoree published nothing.`,
+          );
+        }
+      }
+
+      // A stop that arrived during the context work must prevent preparation.
+      if (stopRequested) return await cancelRun();
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+      // SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the
+      // primary repository. Only the values a repository must not own travel from here.
+      const sandbox = {
+        primary: {
+          url: buildRepositoryUrl(input.project.repositoryBaseUrl, resolvedContext.primary.slug),
+          // SDD section 20. The checkout lands on the SHA discovery pinned. A branch name can
+          // point to a new commit at any time, so the workflow must not use one here. The Run
+          // and the Context Contract then read one state of the repository.
+          ref: resolvedContext.primary.sha,
+        },
+        references: resolvedContext.references.map((repository) => ({
+          url: buildRepositoryUrl(input.project.repositoryBaseUrl, repository.slug),
+          ref: repository.sha,
+        })),
+        defaults: {
+          stagingRead: input.project.stagingRead,
+          spriteRetentionHours: input.project.spriteRetentionHours,
+        },
+        goal: refined.goal,
+      };
 
       status = "PREPARING";
       await activities.setRunStatus({ runId: id, status });
@@ -390,6 +683,8 @@ export async function agentRunWorkflow(
           goal: sandbox.goal,
           attempt,
           repairFindings,
+          contextContract: resolvedContext.document,
+          requiredContext: resolvedContext.requiredContext,
         });
 
         // A stop that arrived while the Implementer ran must end the Run here.

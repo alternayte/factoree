@@ -82,6 +82,19 @@ export interface RunRepository {
   setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<SupersededSandbox>;
   /** Removes the sandbox reference after the sandbox is deleted. The evidence stays. */
   clearSandbox(tenantId: string, runId: string): Promise<void>;
+  /**
+   * SDD section 53. `Run.contextContractVersion` holds the SHA-256 of the frozen contract, because
+   * that value names the exact contract the Run uses. The method throws when it reaches no Run of
+   * that tenant, because a silent success hides a caller defect.
+   */
+  setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
+  /**
+   * SDD section 28. Refinement caps the autonomy level of the Run. `createRun` happens before
+   * Refinement, so the Run row first holds the Project default. This method writes the capped
+   * level. The method throws when it reaches no Run of that tenant, because a silent success
+   * hides a caller defect.
+   */
+  setAutonomyLevel(tenantId: string, runId: string, level: string): Promise<void>;
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
   listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
 }

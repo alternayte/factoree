@@ -139,6 +139,36 @@ export class PrismaRunRepository implements RunRepository {
     });
   }
 
+  async setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { contextContractVersion: version },
+    });
+    // A write that reaches no row must not report success. This value is the only record the
+    // Phase 4 exit evidence reads off the Run. A wrong Run or a wrong tenant is a caller defect.
+    // A silent success makes a Run that holds a frozen contract report that it holds none.
+    if (updated.count === 0) {
+      throw new Error(
+        `no Run "${runId}" of tenant "${tenantId}" received the Context Contract version`,
+      );
+    }
+  }
+
+  async setAutonomyLevel(tenantId: string, runId: string, level: string): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { autonomyLevel: level },
+    });
+    // A write that reaches no row must not report success. SDD section 28 makes this value the
+    // cap on what the Run can do without a human. A wrong Run or a wrong tenant is a caller
+    // defect, and a silent success leaves the Run at an uncapped level.
+    if (updated.count === 0) {
+      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the autonomy level`);
+    }
+  }
+
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {
     const rows = await this.prisma.run.findMany({
       where: { spriteId: { not: null }, spriteRetainUntil: { lte: now } },

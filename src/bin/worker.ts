@@ -17,6 +17,13 @@ import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
+import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
+import { ContextResolver } from "~/domain/context/context-resolver.js";
+import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
+import { LinearContextSource } from "~/domain/context/linear-source.js";
+import { RepositoryContextSource } from "~/domain/context/repository-source.js";
+import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
@@ -78,6 +85,14 @@ async function call(
   await body(createLinearAgentClient(token));
 }
 
+// SDD section 18. The reader clones each repository into a temporary mirror, so the worker owns
+// its lifetime and removes the mirrors at shutdown.
+const repositoryReader = new GitRepositoryReader();
+const contextSources = new ContextSourceRegistry([
+  new LinearContextSource(),
+  new RepositoryContextSource({ reader: repositoryReader }),
+]);
+
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.TEMPORAL_NAMESPACE,
@@ -94,6 +109,9 @@ const worker = await Worker.create({
     evidence: new PrismaEvidenceStore(prisma),
     redactor,
     reaper,
+    refinement: new RefinementEngine(),
+    contextResolver: new ContextResolver({ sources: contextSources }),
+    contextContracts: new PrismaContextContractStore(prisma),
     logger,
   }),
 });
@@ -127,4 +145,5 @@ try {
   await worker.run();
 } finally {
   clearInterval(reapTimer);
+  repositoryReader.close();
 }

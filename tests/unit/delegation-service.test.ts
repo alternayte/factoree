@@ -145,7 +145,7 @@ describe("DelegationService", () => {
     expect(starter.start).not.toHaveBeenCalled();
   });
 
-  it("gives the workflow a sandbox built from the Project record", async () => {
+  it("gives the workflow the Work Item and the Project record", async () => {
     const { service, starter } = build({
       project: {
         ...project,
@@ -164,15 +164,24 @@ describe("DelegationService", () => {
     await service.handleAgentSessionEvent(raw, "delivery-7");
 
     const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
-    expect(started.args[0]?.sandbox).toEqual({
-      primary: { url: "https://github.com/acme/app.git", ref: "release" },
-      references: [{ url: "https://github.com/acme/lib.git", ref: "HEAD" }],
-      defaults: { stagingRead: false, spriteRetentionHours: 24 },
-      goal: "Fix the header\n\nThe header overlaps the logo.",
+    // Phase 4 refines the Work Item inside the workflow, and the workflow derives the sandbox
+    // from the pinned SHAs. The Work Item text therefore travels as the author wrote it.
+    expect(started.args[0]?.project).toEqual({
+      primaryRepository: "acme/app",
+      referenceRepositories: ["acme/lib"],
+      defaultBranch: "release",
+      repositoryBaseUrl: "https://github.com",
+      stagingRead: false,
+      spriteRetentionHours: 24,
+      defaultAutonomy: "L2",
+    });
+    expect(started.args[0]?.workItem).toMatchObject({
+      title: "Fix the header",
+      description: "The header overlaps the logo.",
     });
   });
 
-  it("uses the issue title alone when the issue holds no description", async () => {
+  it("carries an empty description when the issue holds none", async () => {
     const { service, starter } = build();
     const raw = event("agent-session-created");
     raw.agentSession.issue = { ...raw.agentSession.issue!, title: "Fix the header", description: null };
@@ -180,7 +189,7 @@ describe("DelegationService", () => {
     await service.handleAgentSessionEvent(raw, "delivery-8");
 
     const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
-    expect((started.args[0]?.sandbox as { goal: string }).goal).toBe("Fix the header");
+    expect(started.args[0]?.workItem).toMatchObject({ title: "Fix the header", description: "" });
   });
 
   it("does not start a workflow when the repository slug is unusable", async () => {
@@ -193,6 +202,19 @@ describe("DelegationService", () => {
 
     // The marker was released, so a Linear redelivery of the same identifier is not a duplicate.
     const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
+    expect(redelivery.kind).not.toBe("duplicate");
+  });
+
+  it("does not start a workflow when a reference repository slug is unusable", async () => {
+    const { service, starter } = build({
+      project: { ...project, referenceRepositories: ["not-a-slug"] },
+    });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-10");
+    expect(outcome.kind).toBe("unconfigured");
+    expect(starter.start).not.toHaveBeenCalled();
+
+    // The marker was released, so a Linear redelivery of the same identifier is not a duplicate.
+    const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-10");
     expect(redelivery.kind).not.toBe("duplicate");
   });
 });

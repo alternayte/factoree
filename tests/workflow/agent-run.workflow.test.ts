@@ -24,8 +24,13 @@ const {
   failingImplementations,
   cancelledLiveSessions,
   postedErrors,
+  postedProgress,
+  autonomyLevels,
   configurationFaults,
-  sandboxInput,
+  contextCalls,
+  missingBranches,
+  projectInput,
+  workItemInput,
   input,
   runWorker,
 } = harness;
@@ -109,12 +114,12 @@ describe("agentRunWorkflow", () => {
     expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
   });
 
-  it("moves through PREPARING and IMPLEMENTING when the input carries a sandbox", async () => {
+  it("moves through PREPARING and IMPLEMENTING after refinement and context resolution", async () => {
     const result = await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-f"),
-        args: [{ ...input("session-f"), sandbox: sandboxInput }],
+        args: [input("session-f")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-f"),
@@ -124,8 +129,15 @@ describe("agentRunWorkflow", () => {
       return handle.result();
     });
     // Verification now follows the implementation, so the sequence of this Run is longer than
-    // it was in Phase 2. The first three states of this Run are still exactly these three.
-    expect(statusesOf("run-session-f").slice(0, 3)).toEqual(["RECEIVED", "PREPARING", "IMPLEMENTING"]);
+    // it was in Phase 2. Phase 4 puts REFINING and RESOLVING_CONTEXT before PREPARING, per SDD
+    // section 49. The first states of this Run are still exactly these, in this order.
+    expect(statusesOf("run-session-f").slice(0, 5)).toEqual([
+      "RECEIVED",
+      "REFINING",
+      "RESOLVING_CONTEXT",
+      "PREPARING",
+      "IMPLEMENTING",
+    ]);
     expect(implementCalls.at(-1)?.runnerName).toBe(DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner);
     expect(implementCalls.at(-1)?.attempt).toBe(1);
     expect(result.status).toBe("CANCELLED");
@@ -138,7 +150,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-g"),
-        args: [{ ...input("session-g"), sandbox: sandboxInput }],
+        args: [input("session-g")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-g"),
@@ -157,7 +169,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-h"),
-        args: [{ ...input("session-h"), sandbox: sandboxInput }],
+        args: [input("session-h")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-h"),
@@ -187,7 +199,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-i"),
-        args: [{ ...input("session-i"), sandbox: sandboxInput }],
+        args: [input("session-i")],
       });
       // Wait until the workflow has entered PREPARING, then stop it while preparation runs.
       await waitFor(
@@ -217,7 +229,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-j"),
-        args: [{ ...input("session-j"), sandbox: sandboxInput }],
+        args: [input("session-j")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-j"),
@@ -244,7 +256,7 @@ describe("agentRunWorkflow", () => {
         const handle = await environment.client.workflow.start(agentRunWorkflow, {
           taskQueue: "test",
           workflowId: buildWorkflowId("workspace-123", "session-k"),
-          args: [{ ...input("session-k"), sandbox: sandboxInput }],
+          args: [input("session-k")],
         });
         return handle.result();
       });
@@ -278,7 +290,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-l"),
-        args: [{ ...input("session-l", 0.2), sandbox: sandboxInput }],
+        args: [input("session-l", 0.2)],
       });
       await waitFor(
         () => prepared.some((entry) => entry.runId === "run-session-l"),
@@ -327,7 +339,7 @@ describe("a configuration fault during preparation", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "ses-configuration"),
-        args: [{ ...input("ses-configuration"), sandbox: sandboxInput }],
+        args: [input("ses-configuration")],
       });
       return handle.result();
     });
@@ -340,6 +352,40 @@ describe("a configuration fault during preparation", () => {
     const attempts = prepared.filter((entry) => entry.runId === "run-ses-configuration").length - before;
     expect(attempts).toBe(1);
     configurationFaults.delete("run-ses-configuration");
+  });
+});
+
+describe("a Project default branch that does not exist", () => {
+  it("fails with FAILED_CONFIGURATION and resolves the context one time only", async () => {
+    // SDD section 49. A ref that resolves to nothing is a semantic failure, so it drives a
+    // workflow decision. It must not consume the infrastructure retry policy.
+    missingBranches.add("no-such-branch");
+    const before = contextCalls.filter((entry) => entry.runId === "run-ses-badbranch").length;
+
+    const result = await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-badbranch"),
+        args: [
+          {
+            ...input("ses-badbranch"),
+            project: { ...projectInput, defaultBranch: "no-such-branch" },
+          },
+        ],
+      });
+      return handle.result();
+    });
+
+    expect(result.status).toBe("FAILED_CONFIGURATION");
+    const completion = completions.find((entry) => entry.runId === "run-ses-badbranch");
+    expect(completion?.status).toBe("FAILED_CONFIGURATION");
+    expect(completion?.failureReason).toBe("CONFIGURATION_INVALID");
+    const attempts =
+      contextCalls.filter((entry) => entry.runId === "run-ses-badbranch").length - before;
+    expect(attempts).toBe(1);
+    // The Run never reached preparation, so no sandbox exists.
+    expect(prepared.filter((entry) => entry.runId === "run-ses-badbranch")).toEqual([]);
+    missingBranches.delete("no-such-branch");
   });
 });
 
@@ -360,7 +406,7 @@ describe("an Implementer that ends because the Run budget ended", () => {
         const handle = await environment.client.workflow.start(agentRunWorkflow, {
           taskQueue: "test",
           workflowId: buildWorkflowId("workspace-123", "session-timeout"),
-          args: [{ ...input("session-timeout", 0.2), sandbox: sandboxInput }],
+          args: [input("session-timeout", 0.2)],
         });
         await waitFor(
           () => implementCalls.some((entry) => entry.runId === "run-session-timeout"),
@@ -383,3 +429,74 @@ describe("an Implementer that ends because the Run budget ended", () => {
   });
 });
 
+
+describe("the refinement result the Run records", () => {
+  it("records the capped autonomy level, not the Project default (SDD section 28)", async () => {
+    // The Project default is L3. The Work Item carries a high-risk label, so SDD section 28 caps
+    // the level at L2. The Run row must hold the capped level, because that level governs the
+    // Run. The Run row is created before Refinement runs, so it first holds L3.
+    const before = autonomyLevels.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-autonomy"),
+        args: [
+          {
+            ...input("ses-autonomy"),
+            autonomyLevel: "L3",
+            project: { ...projectInput, defaultAutonomy: "L3" },
+            workItem: { ...workItemInput, labels: ["security"] },
+          },
+        ],
+      });
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    expect(autonomyLevels.slice(before)).toEqual(["L2"]);
+  });
+
+  it("reports every refinement risk to the human (SDD section 8)", async () => {
+    const before = postedProgress.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-risks"),
+        args: [
+          {
+            ...input("ses-risks"),
+            workItem: { ...workItemInput, labels: ["security"] },
+          },
+        ],
+      });
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    const message = postedProgress.slice(before).find((entry) => entry.startsWith("Refinement found"));
+    expect(message).toBeDefined();
+    // The message names the risk in plain words, not as the internal token.
+    expect(message).toContain('The Work Item carries the high-risk label "security".');
+    expect(message).toContain("The Work Item states no acceptance criterion.");
+  });
+
+  it("posts no risk message when refinement found no risk", async () => {
+    const before = postedProgress.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-no-risks"),
+        args: [
+          {
+            ...input("ses-no-risks"),
+            workItem: {
+              ...workItemInput,
+              description: "## Goal\n\nAdd the health endpoint.\n\n## Acceptance criteria\n\n- The endpoint answers.\n",
+            },
+          },
+        ],
+      });
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    expect(postedProgress.slice(before).filter((entry) => entry.startsWith("Refinement found"))).toEqual([]);
+  });
+});

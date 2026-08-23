@@ -48,6 +48,18 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     }
   },
 
+  /**
+   * SDD section 28. Refinement caps the autonomy level. The Run row is created before Refinement
+   * runs, so the capped level reaches the row here.
+   */
+  async setRunAutonomyLevel(input: {
+    tenantId: string;
+    runId: string;
+    autonomyLevel: string;
+  }): Promise<void> {
+    await dependencies.runs.setAutonomyLevel(input.tenantId, input.runId, input.autonomyLevel);
+  },
+
   async completeRun(input: {
     tenantId: string;
     runId: string;

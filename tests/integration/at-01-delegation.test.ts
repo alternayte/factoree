@@ -23,6 +23,10 @@ import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { createTemporalWorkflowStarter } from "~/temporal/connection.js";
+import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
+import { ContextResolver } from "~/domain/context/context-resolver.js";
+import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
+import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -123,6 +127,9 @@ beforeAll(async () => {
       evidence: new PrismaEvidenceStore(prisma),
       redactor,
       reaper: new SpriteReaper({ sandboxes: { fake: fakeSandbox }, runs }),
+      refinement: new RefinementEngine(),
+      contextResolver: new ContextResolver({ sources: new ContextSourceRegistry([]) }),
+      contextContracts: new PrismaContextContractStore(prisma),
       logger,
     }),
   });
