@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ContextResolver } from "~/domain/context/context-resolver.js";
+import { ContextResolver, MAX_AUTOMATIC_REFERENCE_REPOSITORIES } from "~/domain/context/context-resolver.js";
 import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
@@ -10,6 +10,46 @@ import {
 import { FakeRepositoryReader } from "../support/fake-repository-reader.js";
 import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
 import type { ResolveContextInput } from "~/domain/context/context-resolver.js";
+import type { ContextCandidate, ContextSource } from "~/domain/context/context-source.js";
+import { DISCOVERY_PRIORITY } from "~/domain/context/context-source.js";
+
+/**
+ * A stub `ContextSource` that mimics a Backstage discovery pass. It reports one candidate per
+ * configured repository, and every candidate carries `discoveredRepository`. The resolver, not
+ * the source, decides whether the repository becomes a reference repository of the Run. The URL
+ * it reports is the bare clone URL, matching what a real catalog entity carries, so the resolver
+ * grows it into the checkout URL the same way `BackstageContextSource` does.
+ */
+const discoveringSource = (
+  ...repositories: Array<{ slug: string; url: string }>
+): ContextSource => {
+  const bareUrl = (url: string): string => (url.endsWith(".git") ? url.slice(0, -4) : url);
+  const id = "discovering-source";
+  return {
+    id: () => id,
+    discover: (request): Promise<ContextCandidate[]> =>
+      Promise.resolve(
+        repositories.map((repository) => ({
+          reference: {
+            sourceId: id,
+            ref: `discovering-source:${repository.slug}`,
+            repository: null,
+            sha: null,
+            path: null,
+          },
+          sourceVersion: "1",
+          authority: "declarative_catalog",
+          reason: "the Backstage catalog names this repository as a location of a related component",
+          priority: DISCOVERY_PRIORITY.backstage_relation,
+          topics: request.topics,
+          sizeBytes: null,
+          suggestedClassification: "reference",
+          discoveredRepository: { slug: repository.slug, url: bareUrl(repository.url) },
+        })),
+      ),
+    fetch: () => Promise.reject(new Error("discoveringSource never offers fetchable content")),
+  };
+};
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
 const REFERENCE_URL = "https://git/acme/notification-service";
@@ -493,5 +533,158 @@ describe("ContextResolver topic enrichment", () => {
     // section 21 and the byte budget test above.
     expect(item?.classification).toBe("reference");
     expect(item?.topics).toEqual(["notification"]);
+  });
+});
+
+describe("automatic reference repository discovery", () => {
+  it("pins a discovered repository and records why it is in the Run", async () => {
+    // A stub source reports one discovered repository. The repository source then reads it in a
+    // second pass, so it reaches the contract with an explicit SHA, as SDD section 20 requires.
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://git.test/acme/library.git": { sha: "b".repeat(40), files: { "README.md": "the library" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "https://git.test/acme/library.git" }),
+      ]),
+    });
+
+    expect(resolved.contract.referenceRepositories).toContainEqual({
+      repo: "acme/library",
+      sha: "b".repeat(40),
+      reason: "the Backstage catalog names this repository as a location of a related component",
+    });
+    expect(resolved.pinned.references.map((repository) => repository.slug)).toContain("acme/library");
+  });
+
+  it("does not add a discovered repository when the repository did not opt in", async () => {
+    // Same fixture, automaticReferenceDiscovery false.
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://git.test/acme/library.git": { sha: "b".repeat(40), files: { "README.md": "the library" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: false },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "https://git.test/acme/library.git" }),
+      ]),
+    });
+
+    expect(resolved.contract.referenceRepositories).toEqual([]);
+    expect(reader.calls.some((call) => call.includes("https://git.test/acme/library.git"))).toBe(
+      false,
+    );
+  });
+
+  it("records a repository on another host as discoverable and never checks it out", async () => {
+    // The discovered URL host differs from the primary host.
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://other.test/acme/library.git": { sha: "b".repeat(40), files: { "README.md": "the library" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "https://other.test/acme/library.git" }),
+      ]),
+    });
+
+    expect(resolved.contract.referenceRepositories).toEqual([]);
+    expect(
+      resolved.contract.items.some((item) => item.reference.ref === "discovering-source:acme/library"),
+    ).toBe(true);
+  });
+
+  it("stops at three automatically discovered repositories", async () => {
+    // Five discovered repositories.
+    const files: Record<string, { sha: string; files: Record<string, string> }> = {
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+    };
+    const discoveredRepositories = ["repo-a", "repo-b", "repo-c", "repo-d", "repo-e"].map(
+      (name) => ({ slug: `acme/${name}`, url: `https://git.test/acme/${name}.git` }),
+    );
+    for (const [index, repository] of discoveredRepositories.entries()) {
+      files[repository.url] = {
+        sha: `${index}`.repeat(40),
+        files: { "README.md": `the ${repository.slug}` },
+      };
+    }
+    const reader = new FakeRepositoryReader(files);
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource(...discoveredRepositories),
+      ]),
+    });
+
+    const discoveredEntries = resolved.contract.referenceRepositories.filter(
+      (repository) =>
+        repository.reason ===
+        "the Backstage catalog names this repository as a location of a related component",
+    );
+    expect(discoveredEntries).toHaveLength(MAX_AUTOMATIC_REFERENCE_REPOSITORIES);
+  });
+
+  it("writes no duplicate item when the second pass repeats a reference", async () => {
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://git.test/acme/library.git": { sha: "b".repeat(40), files: { "README.md": "the library" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "https://git.test/acme/library.git" }),
+      ]),
+    });
+
+    const refs = resolved.contract.items.map((item) => item.reference.ref);
+    expect(new Set(refs).size).toBe(refs.length);
   });
 });

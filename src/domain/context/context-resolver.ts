@@ -69,6 +69,22 @@ const topicsIn = (text: string, topics: string[]): string[] => {
 const mergeTopics = (left: string[], right: string[]): string[] =>
   [...new Set([...left, ...right])].sort();
 
+/** `new URL(url).host` inside a `try`, and `null` on a failure. Two nulls are not equal. */
+const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * SDD section 20 and controller decision 7. A repository a source discovers becomes a real
+ * reference repository of the Run, with an explicit SHA, so the checkout and the Context
+ * Contract name the same commit. Each one costs a mirror clone, so the count is bounded.
+ */
+export const MAX_AUTOMATIC_REFERENCE_REPOSITORIES = 3;
+
 /**
  * SDD section 14 names this module `ContextResolver`. SDD section 18 gives it the discovery
  * priority. SDD section 21 gives it the contract shape and the classification. SDD section 22
@@ -93,8 +109,46 @@ export class ContextResolver {
     for (const source of sources) candidates.push(...(await source.discover(request)));
     candidates.sort(compareCandidates);
 
+    // The primary host is the only host the workflow can rebuild a clone URL for, because it
+    // composes `repositoryBaseUrl` with a slug. A repository elsewhere stays a recorded item.
+    // See controller decision 8.
+    const primaryHost = hostOf(input.primaryRepository.url);
+    const known = new Set([
+      input.primaryRepository.slug,
+      ...input.referenceRepositories.map((repository) => repository.slug),
+    ]);
+    const discovered: RepositoryRef[] = [];
+    if (input.contextConfiguration.automaticReferenceDiscovery) {
+      for (const candidate of candidates) {
+        if (discovered.length >= MAX_AUTOMATIC_REFERENCE_REPOSITORIES) break;
+        const repository = candidate.discoveredRepository;
+        if (repository === undefined) continue;
+        if (known.has(repository.slug)) continue;
+        if (hostOf(repository.url) !== primaryHost) continue;
+        known.add(repository.slug);
+        discovered.push({ slug: repository.slug, url: `${repository.url}.git`, ref: input.primaryRepository.ref });
+      }
+    }
+
+    if (discovered.length > 0) {
+      // The repository source reads the extra repositories in a second pass. It repeats the
+      // primary, so the merge drops a reference it already holds. The reader caches one mirror
+      // per URL, so the repeat costs no second clone.
+      const second = await input.sources.get("repository").discover({
+        ...request,
+        referenceRepositories: discovered,
+      });
+      const seen = new Set(candidates.map((candidate) => candidate.reference.ref));
+      for (const candidate of second) {
+        if (seen.has(candidate.reference.ref)) continue;
+        seen.add(candidate.reference.ref);
+        candidates.push(candidate);
+      }
+    }
+
     // The pinned SHA of each repository comes from the candidate that names the repository and no
-    // path, so the resolver never guesses a SHA a source did not report.
+    // path, so the resolver never guesses a SHA a source did not report. Built after the second
+    // pass, so a discovered repository has its SHA too.
     const shaBySlug = new Map<string, string>();
     for (const candidate of candidates) {
       const slug = candidate.reference.repository;
@@ -193,11 +247,18 @@ export class ContextResolver {
         repo: input.primaryRepository.slug,
         sha: shaBySlug.get(input.primaryRepository.slug) ?? "",
       },
-      referenceRepositories: input.referenceRepositories.map((repository) => ({
-        repo: repository.slug,
-        sha: shaBySlug.get(repository.slug) ?? "",
-        reason: "a configured reference repository",
-      })),
+      referenceRepositories: [
+        ...input.referenceRepositories.map((repository) => ({
+          repo: repository.slug,
+          sha: shaBySlug.get(repository.slug) ?? "",
+          reason: "a configured reference repository",
+        })),
+        ...discovered.map((repository) => ({
+          repo: repository.slug,
+          sha: shaBySlug.get(repository.slug) ?? "",
+          reason: "the Backstage catalog names this repository as a location of a related component",
+        })),
+      ],
       items,
       conflicts,
     };
