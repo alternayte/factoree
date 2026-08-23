@@ -61,6 +61,19 @@ describe("parseWorkItem", () => {
     expect(parseWorkItem(source("")).goal).toBe("Add a webhook retry");
   });
 
+  it("folds a preamble before the first heading into the goal, with no goal heading present", () => {
+    const item = parseWorkItem(
+      source("This must handle timeouts.\n\n## Constraints\n\n- keep API stable\n"),
+    );
+    expect(item.goal).toBe("Add a webhook retry\n\nThis must handle timeouts.");
+    expect(item.constraints).toEqual(["keep API stable"]);
+  });
+
+  it("puts a preamble before the first heading ahead of the goal section text", () => {
+    const item = parseWorkItem(source("Preamble line.\n\n## Goal\n\nGoal text.\n"));
+    expect(item.goal).toBe("Add a webhook retry\n\nPreamble line.\n\nGoal text.");
+  });
+
   it("keeps an unrecognised heading inside the section it follows", () => {
     const item = parseWorkItem(source("## Goal\n\nFix it.\n\n### Background\n\nIt broke.\n"));
     expect(item.goal).toBe("Add a webhook retry\n\nFix it.\n\n### Background\n\nIt broke.");

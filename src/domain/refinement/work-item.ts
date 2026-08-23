@@ -1,8 +1,8 @@
 /**
- * SDD section 7 recommends a Work Item structure and states that Factoree should accept an
- * imperfect ticket. This parser therefore reads the recommended structure when it is present
- * and degrades to "the whole body is the goal" when it is not. It never rewrites text, because
- * SDD section 7 forbids Factoree from inventing material product behavior.
+ * SDD section 7 accepts an imperfect ticket, so this parser reads the recommended structure
+ * when it is present and degrades to "the whole body is the goal" when it is not. It never
+ * rewrites text, because SDD section 7 forbids Factoree from inventing material product
+ * behavior.
  */
 
 export interface WorkItemSource {
@@ -38,8 +38,8 @@ export interface WorkItem {
 
 /**
  * An `owner/repo` slug. Each half permits a letter, a digit, a dot, an underscore, and a
- * hyphen, and no half may be a bare dot segment. `buildRepositoryUrl` applies the same rule, so
- * a slug this parser accepts is a slug a checkout can use.
+ * hyphen, and no half is a bare dot segment. `buildRepositoryUrl` applies the same rule, so a
+ * slug this parser accepts is a slug a checkout can use.
  */
 export const REPOSITORY_SLUG = /^(?!\.{1,2}\/)[A-Za-z0-9._-]+\/(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
 
@@ -63,9 +63,14 @@ const headingKey = (text: string): string =>
     .replace(/[:.*_`]+/g, "")
     .trim();
 
-/** Splits the body into the recognised sections. Unrecognised headings stay inside their section. */
+/**
+ * Splits the body into the recognised sections. Unrecognised headings stay inside their
+ * section. Text before the first recognised heading is a preamble the author wrote without a
+ * section marker, so this function folds it into the goal section, ahead of any `## Goal` text.
+ */
 const splitSections = (body: string): Map<SectionName, string[]> => {
   const sections = new Map<SectionName, string[]>();
+  const preamble: string[] = [];
   let current: SectionName | null = null;
   for (const line of body.split("\n")) {
     const heading = HEADING.exec(line);
@@ -75,8 +80,17 @@ const splitSections = (body: string): Map<SectionName, string[]> => {
       if (!sections.has(named)) sections.set(named, []);
       continue;
     }
-    if (current === null) continue;
+    if (current === null) {
+      preamble.push(line);
+      continue;
+    }
     sections.get(current)?.push(line);
+  }
+  const preambleText = preamble.join("\n").trim();
+  if (preambleText !== "") {
+    const goalText = (sections.get("goal") ?? []).join("\n").trim();
+    const merged = goalText === "" ? preambleText : `${preambleText}\n\n${goalText}`;
+    sections.set("goal", merged.split("\n"));
   }
   return sections;
 };
@@ -151,7 +165,7 @@ const referencesOf = (text: string): WorkItemReference[] => {
 
 /**
  * SDD section 8 requires Factoree to identify a missing decision rather than choose one. A line
- * that ends in a question mark is the one marker an author writes without being asked to.
+ * that ends in a question mark is the one marker an author writes on their own initiative.
  */
 const questionLinesOf = (text: string): string[] =>
   linesOf(text).filter((line) => line.endsWith("?"));
