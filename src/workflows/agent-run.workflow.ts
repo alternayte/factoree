@@ -463,13 +463,21 @@ export async function agentRunWorkflow(
       // A Run whose budget has already passed must not start work it cannot finish.
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+      // SDD section 28. The webhook carries no label, so the labels come from the Linear API
+      // before Refinement classifies the risk of this Work Item.
+      let labels = input.workItem.labels;
+      const issueId = input.workItem.issueId;
+      if (issueId !== null) {
+        labels = await activities.fetchWorkItemLabels({ sessionId: input.agentSessionId, issueId });
+      }
+
       // SDD section 8. Refinement reads the Work Item and the Project record only. It reaches no
       // repository and no sandbox, so it runs before preparation.
       const refinementInput = () => ({
         runId: id,
         tenantId: input.tenantId,
         projectId: input.projectId,
-        source: input.workItem,
+        source: { ...input.workItem, labels },
         project: {
           primaryRepository: input.project.primaryRepository,
           referenceRepositories: input.project.referenceRepositories,

@@ -1,6 +1,6 @@
 import type { Logger } from "~/telemetry/logger.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
-import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
@@ -25,6 +25,7 @@ import { createContextActivities } from "./context.activities.js";
 export interface ActivityDependencies {
   runs: RunRepository;
   agentSession: AgentSessionPort;
+  workItems: WorkItemPort;
   sandboxManager: SandboxManager;
   sandbox: Sandbox;
   runners: AgentRunnerRegistry;
@@ -43,7 +44,7 @@ export interface ActivityDependencies {
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
   ...createRunActivities({ runs: dependencies.runs, logger: dependencies.logger }),
-  ...createLinearActivities({ agentSession: dependencies.agentSession }),
+  ...createLinearActivities({ agentSession: dependencies.agentSession, workItems: dependencies.workItems }),
   ...createSandboxActivities({
     sandboxManager: dependencies.sandboxManager,
     sandbox: dependencies.sandbox,

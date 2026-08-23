@@ -38,7 +38,7 @@ import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/cont
 import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
-import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 
 const env = loadEnv();
 const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
@@ -81,10 +81,16 @@ const agentSession: AgentSessionPort = {
   fail: (sessionId, message) => call(sessionId, (client) => client.fail(sessionId, message)),
 };
 
-async function call(
+// SDD section 28. The session identifier resolves the workspace client, in the same way it
+// already does for `AgentSessionPort` above, and the issue identifier names the Work Item.
+const workItems: WorkItemPort = {
+  labels: (sessionId, issueId) => call(sessionId, (client) => client.labels(issueId)),
+};
+
+async function call<T>(
   sessionId: string,
-  body: (client: ReturnType<typeof createLinearAgentClient>) => Promise<void>,
-): Promise<void> {
+  body: (client: ReturnType<typeof createLinearAgentClient>) => Promise<T>,
+): Promise<T> {
   const run = await prisma.run.findUnique({
     where: { linearAgentSessionId: sessionId },
     select: { temporalWorkflowId: true },
@@ -93,7 +99,7 @@ async function call(
   const { workspaceId } = parseWorkflowId(run.temporalWorkflowId);
   const token = await tenants.getInstallationToken(workspaceId);
   if (!token) throw new Error(`no Linear installation for workspace ${workspaceId}`);
-  await body(createLinearAgentClient(token));
+  return await body(createLinearAgentClient(token));
 }
 
 // SDD section 18. The reader clones each repository into a temporary mirror, so the worker owns
@@ -142,6 +148,7 @@ const worker = await Worker.create({
   activities: createActivities({
     runs,
     agentSession,
+    workItems,
     sandboxManager,
     sandbox,
     runners,

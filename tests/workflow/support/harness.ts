@@ -96,6 +96,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const elicitations: string[] = [];
   /** Every autonomy level the workflow wrote to the Run after Refinement, in order. */
   const autonomyLevels: string[] = [];
+  /**
+   * SDD section 28. The labels the fake Linear API reports for one session id. A session absent
+   * from the map reports no label, the same way an issue with no label does in production.
+   */
+  const workItemLabels = new Map<string, string[]>();
   /** Every recorded `refine` call. */
   const refineCalls: RefineActivityInput[] = [];
   /** Every recorded `resolveContext` call. */
@@ -220,6 +225,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
     },
+    fetchWorkItemLabels: async (activityInput: { sessionId: string; issueId: string }) =>
+      workItemLabels.get(activityInput.sessionId) ?? [],
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       prepared.push(activityInput);
       if (configurationFaults.has(activityInput.runId)) {
@@ -389,6 +396,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     verifyOutcomes,
     elicitations,
     autonomyLevels,
+    workItemLabels,
     refineCalls,
     contextCalls,
     refineOverrides,

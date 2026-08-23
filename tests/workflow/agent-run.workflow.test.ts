@@ -26,6 +26,7 @@ const {
   postedErrors,
   postedProgress,
   autonomyLevels,
+  workItemLabels,
   configurationFaults,
   contextCalls,
   missingBranches,
@@ -436,6 +437,7 @@ describe("the refinement result the Run records", () => {
     // the level at L2. The Run row must hold the capped level, because that level governs the
     // Run. The Run row is created before Refinement runs, so it first holds L3.
     const before = autonomyLevels.length;
+    workItemLabels.set("ses-autonomy", ["security"]);
     await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
@@ -445,7 +447,6 @@ describe("the refinement result the Run records", () => {
             ...input("ses-autonomy"),
             autonomyLevel: "L3",
             project: { ...projectInput, defaultAutonomy: "L3" },
-            workItem: { ...workItemInput, labels: ["security"] },
           },
         ],
       });
@@ -457,16 +458,12 @@ describe("the refinement result the Run records", () => {
 
   it("reports every refinement risk to the human (SDD section 8)", async () => {
     const before = postedProgress.length;
+    workItemLabels.set("ses-risks", ["security"]);
     await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "ses-risks"),
-        args: [
-          {
-            ...input("ses-risks"),
-            workItem: { ...workItemInput, labels: ["security"] },
-          },
-        ],
+        args: [input("ses-risks")],
       });
       await handle.signal(stopSignal);
       return handle.result();

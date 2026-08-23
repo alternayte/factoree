@@ -1,7 +1,8 @@
-import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 
 export interface LinearActivityDependencies {
   agentSession: AgentSessionPort;
+  workItems: WorkItemPort;
 }
 
 export const createLinearActivities = (dependencies: LinearActivityDependencies) => ({
@@ -15,4 +16,13 @@ export const createLinearActivities = (dependencies: LinearActivityDependencies)
     dependencies.agentSession.respond(input.sessionId, input.body),
   postError: (input: { sessionId: string; message: string }): Promise<void> =>
     dependencies.agentSession.fail(input.sessionId, input.message),
+  /**
+   * SDD section 28. The agent session webhook carries no label, so the cap needs a read against
+   * the Linear API. An issue that no longer exists, and a transport fault the retry policy has
+   * already exhausted, both yield no label, and the Run then runs at its Project default. The
+   * cap must never invent a label it did not see.
+   */
+  async fetchWorkItemLabels(input: { sessionId: string; issueId: string }): Promise<string[]> {
+    return await dependencies.workItems.labels(input.sessionId, input.issueId);
+  },
 });

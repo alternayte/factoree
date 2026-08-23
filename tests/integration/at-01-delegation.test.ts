@@ -33,7 +33,7 @@ import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { Env } from "~/config/env.js";
-import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 
 const secret = "webhook-secret";
 const env = {
@@ -62,6 +62,12 @@ const agentSession: AgentSessionPort = {
   elicit: async () => undefined,
   respond: async () => undefined,
   fail: async () => undefined,
+};
+
+// SDD section 28. This test drives no high-risk label, so an empty list keeps the Project
+// default autonomy level, in the same way an issue with no label does in production.
+const workItems: WorkItemPort = {
+  labels: async () => [],
 };
 
 let prisma: FactoreePrismaClient;
@@ -118,6 +124,7 @@ beforeAll(async () => {
     activities: createActivities({
       runs,
       agentSession,
+      workItems,
       // This test drives the Phase 1 path, which carries no sandbox. The doubles below satisfy
       // the dependency shape and never run.
       sandboxManager: new SandboxManager({ sandbox: fakeSandbox, allowUnenforcedNetwork: true }),
