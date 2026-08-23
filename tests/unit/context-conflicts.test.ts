@@ -127,6 +127,52 @@ describe("detectConflicts", () => {
     expect(settled?.reason).toBe("a recorded human decision settles this subject");
   });
 
+  it("records no conflict between the Work Item body and a recorded answer to it", () => {
+    // Both carry `work_item_decision` and every topic of the Run. A recorded answer is an
+    // override, not a competitor, so the pair must produce nothing.
+    const conflicts = detectConflicts(
+      [
+        item("linear:issue:run-1", "work_item_decision", ["notification"], "required"),
+        item("linear:decision:CTX-1", "work_item_decision", ["notification"], "required"),
+      ],
+      { decisionRefs: ["linear:decision:CTX-1"] },
+    );
+    expect(conflicts).toEqual([]);
+  });
+
+  it("records no conflict between two recorded answers that share a topic", () => {
+    const conflicts = detectConflicts(
+      [
+        item("linear:decision:CTX-1", "work_item_decision", ["notification"], "required"),
+        item("linear:decision:CTX-2", "work_item_decision", ["notification"], "required"),
+      ],
+      { decisionRefs: ["linear:decision:CTX-1", "linear:decision:CTX-2"] },
+    );
+    expect(conflicts).toEqual([]);
+  });
+
+  it("still lets a recorded answer settle a conflict between two accepted ADRs", () => {
+    const conflicts = detectConflicts(
+      [
+        item("docs/ADR-031.md", "accepted_adr", ["notification"]),
+        item("docs/ADR-042.md", "accepted_adr", ["notification"]),
+        item("linear:issue:run-1", "work_item_decision", ["notification"], "required"),
+        item("linear:decision:CTX-1", "work_item_decision", ["notification"], "required"),
+      ],
+      { decisionRefs: ["linear:decision:CTX-1"] },
+    );
+    expect(conflicts).toEqual([
+      {
+        id: "CTX-1",
+        subject: "notification",
+        winnerRef: "linear:decision:CTX-1",
+        loserRef: null,
+        reason: "a recorded human decision settles this subject",
+        resolution: "resolved",
+      },
+    ]);
+  });
+
   it("lets no item settle a conflict when the caller names no recorded decision", () => {
     // The Work Item body carries the `work_item_decision` class and answers no question. An
     // absent `decisionRefs` list therefore settles nothing.

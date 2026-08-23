@@ -134,6 +134,36 @@ describe("validateContextContract", () => {
     ).toThrow(/SHA/);
   });
 
+  it("rejects repository content that names no repository", () => {
+    const broken = contract();
+    const item = broken.items[0];
+    if (item === undefined) throw new Error("fixture");
+    item.reference = { ...item.reference, repository: null };
+    expect(() => validateContextContract(broken)).toThrow(/names no repository/);
+  });
+
+  it("rejects repository content whose commit SHA is not forty hexadecimal characters", () => {
+    const broken = contract();
+    const item = broken.items[0];
+    if (item === undefined) throw new Error("fixture");
+    item.reference = { ...item.reference, sha: "main" };
+    expect(() => validateContextContract(broken)).toThrow(/explicit commit SHA/);
+  });
+
+  it("accepts an item that is not repository content and carries no repository or SHA", () => {
+    const fine = contract();
+    const item = fine.items[0];
+    if (item === undefined) throw new Error("fixture");
+    item.reference = {
+      sourceId: "linear",
+      ref: "linear:issue:run-1",
+      repository: null,
+      sha: null,
+      path: null,
+    };
+    expect(() => validateContextContract(fine)).not.toThrow();
+  });
+
   it("rejects two items that share a reference", () => {
     const broken = contract();
     const item = broken.items[0];
@@ -237,10 +267,6 @@ describe("renderContextContract", () => {
     );
     expect(text).toContain("unresolved");
     expect(text).toContain("two equally authoritative sources");
-  });
-
-  it("holds no file body, so a repository is never copied into the contract", () => {
-    expect(renderContextContract(contract())).not.toContain("Status: accepted");
   });
 });
 

@@ -94,6 +94,20 @@ export const validateContextContract = (contract: ContextContract): void => {
     if (item.classification === "required" && !present(item.contentSha256)) {
       fail(`Context item "${name}" is required and records no content hash.`);
     }
+    // SDD section 55. Repository content stays explainable after the repository moves, so the
+    // item must name the repository, the commit SHA, and the path. The path is present here,
+    // because the reference carries it, so the other two must be present too.
+    if (item.reference.sourceId === "repository" && item.reference.path !== null) {
+      if (!present(item.reference.repository)) {
+        fail(`Context item "${name}" is repository content and names no repository.`);
+      }
+      if (item.reference.sha === null || !SHA.test(item.reference.sha)) {
+        fail(
+          `Context item "${name}" is repository content and records no explicit commit SHA: ` +
+            `"${item.reference.sha ?? ""}".`,
+        );
+      }
+    }
     if (seen.has(item.reference.ref)) fail(`Context item "${name}" appears twice.`);
     seen.add(item.reference.ref);
   }

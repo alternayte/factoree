@@ -210,6 +210,48 @@ describe("ContextResolver", () => {
     expect(first?.reference.ref).toBe("linear:issue:run-1");
   });
 
+  it("renders no file body, so no repository content is copied into the contract", async () => {
+    // SDD section 55 and AT-09. `primaryFiles` really holds both lines, and the resolver really
+    // fetches both files, so the document must still name only a path and a hash.
+    const resolved = await build().resolve(input());
+    expect(resolved.document).not.toContain("Status: accepted");
+    expect(resolved.document).not.toContain("The README says notification retry is owned here");
+    expect(resolved.document).toContain("docs/ADR-031.md");
+  });
+
+  it("records no conflict between the Work Item body and a recorded answer", async () => {
+    const resolved = await build().resolve(
+      input({ decisions: [{ questionId: "Q-1", question: "Retry a 4xx?", answer: "No." }] }),
+    );
+    // The body and the answer share every topic of the Run, and `delivery` sorts first among
+    // them. A pair between the two therefore shows up as a conflict on `delivery`. The only real
+    // conflict is the one the README and the ADR raise on `notification`.
+    expect(resolved.contract.conflicts.map((conflict) => conflict.subject)).toEqual([
+      "notification",
+    ]);
+  });
+
+  it("lets no conflict be settled by the Work Item body when a runId equals a questionId", async () => {
+    // The Work Item body records the Run identifier as its source version, so a decision set keyed
+    // on that field admits the body under this collision. The resolver keys on the stable
+    // reference instead, and `linear:issue:run-1` never equals `linear:decision:run-1`.
+    const resolved = await build().resolve(
+      input({
+        runId: "run-1",
+        decisions: [{ questionId: "run-1", question: "Retry a 4xx?", answer: "No." }],
+      }),
+    );
+    expect(
+      resolved.contract.conflicts.filter(
+        (conflict) => conflict.winnerRef === "linear:issue:run-1",
+      ),
+    ).toEqual([]);
+    const settled = resolved.contract.conflicts.find(
+      (conflict) => conflict.winnerRef === "linear:decision:run-1",
+    );
+    expect(settled?.reason).toBe("a recorded human decision settles this subject");
+  });
+
   it("returns a deterministic contract for the same input", async () => {
     const one = await build().resolve(input());
     const two = await build().resolve(input());

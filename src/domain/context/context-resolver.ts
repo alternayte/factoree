@@ -15,6 +15,12 @@ import {
 } from "./context-contract.js";
 import { topicsOf } from "./topics.js";
 
+/**
+ * The stable reference the Linear context source gives to a recorded human answer. SDD section 23
+ * makes the answer a Run decision, and the resolver names it by this reference.
+ */
+const LINEAR_DECISION_PREFIX = "linear:decision:";
+
 export interface ResolveContextInput {
   runId: string;
   goal: string;
@@ -173,14 +179,14 @@ export class ContextResolver {
 
     // SDD section 23. Only a recorded human answer settles a conflict out of band. The Work Item
     // body carries the same authority class, but it answers no question, so it must not settle
-    // one. The resolver names the true decision items by their source version, which is the
-    // identifier of the question a human answered. See the concern in the Task 7 report.
-    const questionIds = new Set(input.decisions.map((decision) => decision.questionId));
+    // one. The stable reference of an answer is the reliable key. A source version is not: the
+    // Work Item body records the Run identifier, and a Run identifier can equal a question
+    // identifier.
+    const answerRefs = new Set(
+      input.decisions.map((decision) => `${LINEAR_DECISION_PREFIX}${decision.questionId}`),
+    );
     const decisionRefs = items
-      .filter(
-        (item) =>
-          item.authority === "work_item_decision" && questionIds.has(item.sourceVersion),
-      )
+      .filter((item) => answerRefs.has(item.reference.ref))
       .map((item) => item.reference.ref);
 
     const conflicts = detectConflicts(items, { decisionRefs });

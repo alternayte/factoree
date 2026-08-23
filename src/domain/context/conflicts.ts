@@ -76,7 +76,7 @@ export interface DetectConflictsOptions {
    * one, although it carries the same authority class, because it answers no question.
    *
    * The caller names the answers, because only the caller holds the Run decisions. An absent list
-   * means no answer exists, so no item settles a conflict. A permissive default would let one
+   * means no answer exists, so no item settles a conflict. A permissive default lets one
    * forgetful call site restore the defect this option removes.
    */
   decisionRefs?: readonly string[];
@@ -98,8 +98,8 @@ export interface DetectConflictsOptions {
  * the ordinary domain pairing found. The caller names those decision items through
  * `decisionRefs`. Only a recorded answer settles a subject, and the Work Item body is not one.
  *
- * A decision item sits in the product-intent domain, so it never pairs with an
- * architecture-intent conflict through the domain rule alone. This second rule is a subject
+ * A recorded decision never enters a pair. It is an override, not a competitor, so it cannot
+ * conflict with the Work Item body or with a second answer. This second rule is a subject
  * check, not a pairing. The rule applies to every pair, not only to an unresolved pair. It is
  * an out-of-band override keyed by the subject, so it never weighs one authority ladder against
  * another. It is why the workflow can make progress after one human answer. Without the rule,
@@ -110,12 +110,16 @@ export const detectConflicts = (
   options: DetectConflictsOptions = {},
 ): ContextConflictRecord[] => {
   const decisionRefs = new Set(options.decisionRefs ?? []);
-  const candidates = items.filter((item) => conflictable(item.classification));
-  const decisions = candidates
+  const conflictables = items.filter((item) => conflictable(item.classification));
+  const decisions = conflictables
     .filter(
       (item) => item.authority === "work_item_decision" && decisionRefs.has(item.reference.ref),
     )
     .sort((a, b) => (a.reference.ref < b.reference.ref ? -1 : a.reference.ref > b.reference.ref ? 1 : 0));
+  // A recorded answer is an out-of-band override, not a competitor. It settles a subject, and it
+  // never enters a pair itself. Otherwise the Work Item body pairs with the answer a human gave to
+  // a question about it, and the contract renders a conflict that does not exist.
+  const candidates = conflictables.filter((item) => !decisionRefs.has(item.reference.ref));
   const found: Omit<ContextConflictRecord, "id">[] = [];
 
   for (let i = 0; i < candidates.length; i += 1) {
