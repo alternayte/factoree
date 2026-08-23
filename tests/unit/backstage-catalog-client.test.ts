@@ -211,19 +211,19 @@ describe("BackstageCatalogClient", () => {
     await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/fragment-secret/);
   });
 
-  it("refuses an answer whose Content-Length passes the cap", async () => {
+  it("refuses an answer whose Content-Length passes the cap, and cancels the undrained body", async () => {
+    const response = new Response("{}", {
+      status: 200,
+      headers: { "content-length": String(BACKSTAGE_MAX_RESPONSE_BYTES + 1) },
+    });
+    const cancelSpy = vi.spyOn(response.body!, "cancel");
     const client = new BackstageCatalogClient({
       endpoint: "https://backstage.test",
       token: null,
-      fetch: () =>
-        Promise.resolve(
-          new Response("{}", {
-            status: 200,
-            headers: { "content-length": String(BACKSTAGE_MAX_RESPONSE_BYTES + 1) },
-          }),
-        ),
+      fetch: () => Promise.resolve(response),
     });
     await expect(client.getByRef("component:default/a")).rejects.toThrow(/larger than/);
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a chunked answer that passes the cap while it is read", async () => {

@@ -9,11 +9,13 @@ const answer = (body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
 
 describe("McpJsonRpcClient", () => {
-  it("initializes once and reuses the session header", async () => {
+  it("initializes once and reuses the session header, and drains the initialized notification body", async () => {
+    const initializedResponse = new Response("", { status: 202 });
+    const cancelSpy = vi.spyOn(initializedResponse.body!, "cancel");
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } }, { "mcp-session-id": "session-1" }))
-      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(initializedResponse)
       .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "hello" }] } }))
       .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, result: { content: [{ type: "text", text: "again" }] } }));
 
@@ -31,6 +33,7 @@ describe("McpJsonRpcClient", () => {
     const last = fetchMock.mock.calls[3] as [string, RequestInit];
     expect((last[1].headers as Record<string, string>)["Mcp-Session-Id"]).toBe("session-1");
     expect((last[1].headers as Record<string, string>)["Authorization"]).toBe("Bearer secret-token");
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
   });
 
   it("reports a JSON-RPC error as an McpError", async () => {

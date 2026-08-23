@@ -204,12 +204,16 @@ export class McpJsonRpcClient implements McpToolPort {
   /** A notification carries no id and expects no body. */
   private async notify(method: string, params: Record<string, unknown>): Promise<void> {
     try {
-      await this.fetchImpl(this.endpoint, {
+      const response = await this.fetchImpl(this.endpoint, {
         method: "POST",
         headers: this.buildHeaders(),
         body: JSON.stringify({ jsonrpc: "2.0", method, params }),
         signal: AbortSignal.timeout(MCP_TIMEOUT_MS),
       });
+      // The notification body is never read, so cancel it to release the connection instead of
+      // holding it until the garbage collector runs. `catch` guards a body that is absent or
+      // already cancelled, which must not throw here.
+      await response.body?.cancel().catch(() => undefined);
     } catch (cause) {
       throw new McpError(`The MCP notification "${method}" failed before it received a response.`, { cause });
     }

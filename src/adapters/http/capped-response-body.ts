@@ -10,7 +10,13 @@ export const readTextWithCap = async (response: Response, maxBytes: number): Pro
   const declared = response.headers.get("content-length");
   if (declared !== null) {
     const length = Number(declared);
-    if (Number.isFinite(length) && length > maxBytes) return null;
+    if (Number.isFinite(length) && length > maxBytes) {
+      // The declared length already fails the cap, so the body is never read. Cancel it so
+      // undici releases the connection instead of holding it until the garbage collector runs.
+      // `catch` guards a body that is absent or already cancelled, which must not throw here.
+      await response.body?.cancel().catch(() => undefined);
+      return null;
+    }
   }
 
   const body = response.body;
