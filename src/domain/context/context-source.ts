@@ -64,9 +64,9 @@ export interface ContextCandidate {
   reason: string;
   /** The SDD section 18 priority of the rule that found this candidate. */
   priority: number;
-  /** The Work Item topics this candidate carries. Ranking and conflict detection both use it. */
+  /** The Work Item topics this candidate carries. The rank rule and conflict detection both use it. */
   topics: string[];
-  /** The size of the content, when the source knows it without fetching. */
+  /** The size of the content, when the source knows it without a fetch. */
   sizeBytes: number | null;
   suggestedClassification: ContextClassification;
 }

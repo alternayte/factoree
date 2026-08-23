@@ -16,7 +16,7 @@ export type AuthorityDomain =
 /**
  * The union is written out rather than derived, so the compiler keeps every class name a literal
  * type. A derived union over a nested array widens to `string`, and a widened authority class
- * would let a typing mistake reach the Context Contract.
+ * lets a typing mistake reach the Context Contract.
  */
 export type AuthorityClass =
   | "work_item_decision"
@@ -36,7 +36,7 @@ export type AuthorityClass =
   | "declarative_catalog"
   | "repository_configuration";
 
-/** Each domain, highest authority first. A rung holding two classes makes them equal. */
+/** Each domain, highest authority first. A rung that holds two classes makes them equal. */
 const LADDERS: Record<AuthorityDomain, readonly (readonly AuthorityClass[])[]> = {
   product_intent: [
     ["work_item_decision"],

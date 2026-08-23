@@ -1,8 +1,8 @@
 /**
- * The one topic definition of Phase 4. Ranking and conflict detection both call it, so they can
- * never disagree about what a Work Item is about. It is deliberately simple and deterministic:
- * SDD section 8 forbids Refinement from silently resolving an ambiguity, so a clever similarity
- * measure would be the wrong control here.
+ * The one topic definition of Phase 4. The rank rule and conflict detection both call it, so they
+ * can never disagree about what a Work Item is about. It is deliberately simple and deterministic:
+ * SDD section 8 forbids a silent resolution of an ambiguity by Refinement, so a clever similarity
+ * measure is the wrong control here.
  */
 
 const MINIMUM_LENGTH = 4;
