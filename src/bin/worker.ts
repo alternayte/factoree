@@ -22,6 +22,9 @@ import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
+import { BackstageContextSource } from "~/domain/context/backstage-source.js";
+import { BackstageCatalogClient } from "~/adapters/backstage/backstage-catalog-client.js";
+import type { BackstageSourceSettings } from "~/domain/context/context-source-configuration.js";
 import { ConfiguredContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { ContextSourceSecretReader } from "~/domain/context/context-source-provider.js";
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
@@ -99,16 +102,19 @@ const contextSecrets: ContextSourceSecretReader = {
   read: (tenantId, projectId, name) => secrets.get(tenantId, projectId, name),
 };
 
-// Controller decision 2. Tasks 5 and 8 build the real Backstage and MCP sources. Until then a
-// configured row of either kind must fail loudly instead of silently building nothing.
+// Controller decision 2. Task 5 built the real Backstage source. Task 8 builds the MCP source.
+// Until then a configured MCP row must fail loudly instead of silently building nothing.
 const contextSources = new ConfiguredContextSourceProvider({
   configurations: new PrismaContextSourceConfigurationStore(prisma),
   secrets: contextSecrets,
   fixedSources: () => [new LinearContextSource(), new RepositoryContextSource({ reader: repositoryReader })],
   factories: {
-    backstage: () => {
-      throw new Error("the Backstage context source is built in Task 5");
-    },
+    backstage: (record, credential) =>
+      new BackstageContextSource({
+        sourceId: record.sourceId,
+        catalog: new BackstageCatalogClient({ endpoint: record.endpoint, token: credential }),
+        settings: record.settings as BackstageSourceSettings,
+      }),
     mcp: () => {
       throw new Error("the MCP context source is built in Task 8");
     },
