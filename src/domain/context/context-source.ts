@@ -1,5 +1,6 @@
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AuthorityClass } from "./authority.js";
+import type { RepositoryContextConfiguration } from "./repository-context-configuration.js";
 
 /** SDD section 21. Required items can enter initial role context. */
 export const CONTEXT_CLASSIFICATIONS = ["required", "reference", "discoverable"] as const;
@@ -40,6 +41,8 @@ export interface ContextDiscoveryRequest {
   workItemReferences: string[];
   /** SDD section 23. Every human answer recorded on this Run so far. */
   decisions: RecordedDecision[];
+  /** SDD section 15. The `context` block of the primary repository, at the pinned SHA. */
+  contextConfiguration: RepositoryContextConfiguration;
 }
 
 /**
@@ -69,6 +72,11 @@ export interface ContextCandidate {
   /** The size of the content, when the source knows it without a fetch. */
   sizeBytes: number | null;
   suggestedClassification: ContextClassification;
+  /**
+   * SDD section 20. A source that learns of a repository Factoree does not yet read reports it
+   * here. The resolver decides whether it becomes a reference repository of the Run.
+   */
+  discoveredRepository?: { slug: string; url: string };
 }
 
 export interface ContextDocument {

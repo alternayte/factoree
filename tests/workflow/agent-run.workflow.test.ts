@@ -26,6 +26,8 @@ const {
   postedErrors,
   postedProgress,
   autonomyLevels,
+  workItemLabels,
+  failingLabelReads,
   configurationFaults,
   contextCalls,
   missingBranches,
@@ -436,6 +438,7 @@ describe("the refinement result the Run records", () => {
     // the level at L2. The Run row must hold the capped level, because that level governs the
     // Run. The Run row is created before Refinement runs, so it first holds L3.
     const before = autonomyLevels.length;
+    workItemLabels.set("ses-autonomy", ["security"]);
     await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
@@ -445,7 +448,6 @@ describe("the refinement result the Run records", () => {
             ...input("ses-autonomy"),
             autonomyLevel: "L3",
             project: { ...projectInput, defaultAutonomy: "L3" },
-            workItem: { ...workItemInput, labels: ["security"] },
           },
         ],
       });
@@ -455,18 +457,52 @@ describe("the refinement result the Run records", () => {
     expect(autonomyLevels.slice(before)).toEqual(["L2"]);
   });
 
+  it("continues the Run at the Project default when the label read fails (SDD section 28)", async () => {
+    // A transport fault the retry policy has already exhausted must not fail the Run over a
+    // label read. The Run continues, and the autonomy level stays the Project default.
+    const before = autonomyLevels.length;
+    const progressBefore = postedProgress.length;
+    failingLabelReads.add("ses-label-fault");
+    try {
+      const result = await runWorker(async () => {
+        const handle = await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "ses-label-fault"),
+          args: [
+            {
+              ...input("ses-label-fault"),
+              autonomyLevel: "L2",
+              project: { ...projectInput, defaultAutonomy: "L2" },
+            },
+          ],
+        });
+        await handle.signal(stopSignal);
+        return handle.result();
+      });
+      expect(result.status).toBe("CANCELLED");
+      expect(autonomyLevels.slice(before)).toEqual(["L2"]);
+      // The cap of SDD section 28 is a security control, so the degrade must be visible.
+      expect(
+        postedProgress
+          .slice(progressBefore)
+          .some(
+            (message) =>
+              message.includes("could not read the labels") && message.includes("risk cap"),
+          ),
+      ).toBe(true);
+    } finally {
+      failingLabelReads.delete("ses-label-fault");
+    }
+  });
+
   it("reports every refinement risk to the human (SDD section 8)", async () => {
     const before = postedProgress.length;
+    workItemLabels.set("ses-risks", ["security"]);
     await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "ses-risks"),
-        args: [
-          {
-            ...input("ses-risks"),
-            workItem: { ...workItemInput, labels: ["security"] },
-          },
-        ],
+        args: [input("ses-risks")],
       });
       await handle.signal(stopSignal);
       return handle.result();

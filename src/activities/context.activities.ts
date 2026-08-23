@@ -4,10 +4,13 @@ import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js"
 import type { ContextResolver } from "~/domain/context/context-resolver.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
 import type { RepositoryRef } from "~/domain/context/context-source.js";
+import type { ContextSourceProvider } from "~/domain/context/context-source-provider.js";
+import { readRepositoryContextConfiguration } from "~/domain/context/repository-context-configuration.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
+import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 
 export interface ResolveContextActivityInput {
   runId: string;
@@ -46,6 +49,8 @@ export interface ContextActivityDependencies {
   contracts: ContextContractStore;
   runs: RunRepository;
   logger: Logger;
+  sources: ContextSourceProvider;
+  repositoryReader: RepositoryReader;
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
@@ -60,6 +65,19 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     const started = Date.now();
     const labels = { tenant_id: input.tenantId, project_id: input.projectId };
 
+    // SDD section 15 and controller decision 2. The `context` block governs discovery, and
+    // discovery runs before the sandbox exists, so the file is read at the pinned primary SHA.
+    const contextConfiguration = await readRepositoryContextConfiguration(
+      dependencies.repositoryReader,
+      input.primaryRepository.url,
+      input.primaryRepository.ref,
+    );
+    const sources = await dependencies.sources.sourcesFor({
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      contextConfiguration,
+    });
+
     const resolved = await dependencies.resolver.resolve({
       runId: input.runId,
       goal: input.goal,
@@ -68,6 +86,8 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       referenceRepositories: input.referenceRepositories,
       workItemReferences: input.workItemReferences,
       decisions: input.decisions,
+      sources,
+      contextConfiguration,
     });
 
     // SDD section 21 freezes the Context Contract. SDD section 23 forbids a start of

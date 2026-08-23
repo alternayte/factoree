@@ -9,6 +9,7 @@ const spyClient = () => {
       calls.push(input);
       return Promise.resolve({ success: true });
     }),
+    issue: vi.fn(() => Promise.resolve(null)),
   };
 };
 
@@ -44,5 +45,23 @@ describe("LinearAgentClient", () => {
     const client = spyClient();
     await new LinearAgentClient(client).fail("session-1", "Run failed.");
     expect(client.calls[0]?.content).toEqual({ type: "error", body: "Run failed." });
+  });
+});
+
+describe("the Work Item labels of SDD section 28", () => {
+  it("reads the label names of one issue", async () => {
+    const client = new LinearAgentClient({
+      createAgentActivity: () => Promise.resolve({}),
+      issue: () => Promise.resolve({ labels: () => Promise.resolve({ nodes: [{ name: "security" }, { name: "backend" }] }) }),
+    });
+    expect(await client.labels("issue-1")).toEqual(["security", "backend"]);
+  });
+
+  it("reports no label when the issue does not exist", async () => {
+    const client = new LinearAgentClient({
+      createAgentActivity: () => Promise.resolve({}),
+      issue: () => Promise.resolve(null),
+    });
+    expect(await client.labels("issue-1")).toEqual([]);
   });
 });

@@ -96,6 +96,16 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const elicitations: string[] = [];
   /** Every autonomy level the workflow wrote to the Run after Refinement, in order. */
   const autonomyLevels: string[] = [];
+  /**
+   * SDD section 28. The labels the fake Linear API reports for one session id. A session absent
+   * from the map reports no label, the same way an issue with no label does in production.
+   */
+  const workItemLabels = new Map<string, string[]>();
+  /**
+   * The session ids whose label read the fake Linear API fails on every call, in the same way a
+   * transport fault the retry policy has exhausted does in production.
+   */
+  const failingLabelReads = new Set<string>();
   /** Every recorded `refine` call. */
   const refineCalls: RefineActivityInput[] = [];
   /** Every recorded `resolveContext` call. */
@@ -219,6 +229,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postFinalResponse: async () => undefined,
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
+    },
+    fetchWorkItemLabels: async (activityInput: { sessionId: string; issueId: string }) => {
+      if (failingLabelReads.has(activityInput.sessionId)) throw new Error("Linear is down");
+      return workItemLabels.get(activityInput.sessionId) ?? [];
     },
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       prepared.push(activityInput);
@@ -389,6 +403,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     verifyOutcomes,
     elicitations,
     autonomyLevels,
+    workItemLabels,
+    failingLabelReads,
     refineCalls,
     contextCalls,
     refineOverrides,

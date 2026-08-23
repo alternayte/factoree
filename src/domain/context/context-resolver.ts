@@ -4,6 +4,7 @@ import type { ContextConflictRecord, SelectedContextItem } from "./conflicts.js"
 import { detectConflicts, firstUnresolved } from "./conflicts.js";
 import type { ContextCandidate, ContextClassification, RepositoryRef } from "./context-source.js";
 import type { ContextSourceRegistry } from "./context-source-registry.js";
+import type { RepositoryContextConfiguration } from "./repository-context-configuration.js";
 import type { ContextContract } from "./context-contract.js";
 import {
   CONTEXT_CONTRACT_VERSION,
@@ -13,7 +14,7 @@ import {
   renderContextContract,
   validateContextContract,
 } from "./context-contract.js";
-import { topicsOf } from "./topics.js";
+import { topicsIn, topicsOf } from "./topics.js";
 
 import { linearDecisionRef } from "./decision-ref.js";
 
@@ -25,6 +26,9 @@ export interface ResolveContextInput {
   referenceRepositories: RepositoryRef[];
   workItemReferences: string[];
   decisions: RecordedDecision[];
+  /** The sources of this Run. SDD section 53 makes the list per Project. */
+  sources: ContextSourceRegistry;
+  contextConfiguration: RepositoryContextConfiguration;
 }
 
 export interface ResolvedContext {
@@ -41,10 +45,6 @@ export interface ResolvedContext {
   unresolvedConflict: ContextConflictRecord | null;
 }
 
-export interface ContextResolverOptions {
-  sources: ContextSourceRegistry;
-}
-
 /**
  * A total order over candidates. SDD section 18 ranks the discovery rules, so the rule decides
  * first. A candidate that carries more Work Item topics is more relevant, so it decides second.
@@ -56,18 +56,24 @@ const compareCandidates = (a: ContextCandidate, b: ContextCandidate): number => 
   return a.reference.ref < b.reference.ref ? -1 : a.reference.ref > b.reference.ref ? 1 : 0;
 };
 
-/**
- * The topics that appear in one text. A source applies the same rule to a path. SDD section 23
- * needs a subject before it can pair two items, and a path alone names too few subjects. A README
- * and an ADR discuss one topic in their text, not in their names.
- */
-const topicsIn = (text: string, topics: string[]): string[] => {
-  const lower = text.toLowerCase();
-  return topics.filter((topic) => lower.includes(topic));
-};
-
 const mergeTopics = (left: string[], right: string[]): string[] =>
   [...new Set([...left, ...right])].sort();
+
+/** `new URL(url).host` inside a `try`, and `null` on a failure. */
+const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * SDD section 20 and controller decision 7. A repository a source discovers becomes a real
+ * reference repository of the Run, with an explicit SHA, so the checkout and the Context
+ * Contract name the same commit. Each one costs a mirror clone, so the count is bounded.
+ */
+export const MAX_AUTOMATIC_REFERENCE_REPOSITORIES = 3;
 
 /**
  * SDD section 14 names this module `ContextResolver`. SDD section 18 gives it the discovery
@@ -75,8 +81,6 @@ const mergeTopics = (left: string[], right: string[]): string[] =>
  * gives it the authority ladders. SDD section 23 gives it the conflict model.
  */
 export class ContextResolver {
-  constructor(private readonly options: ContextResolverOptions) {}
-
   async resolve(input: ResolveContextInput): Promise<ResolvedContext> {
     const topics = topicsOf({ goal: input.goal, acceptanceCriteria: input.acceptanceCriteria });
     const request = {
@@ -87,15 +91,88 @@ export class ContextResolver {
       referenceRepositories: input.referenceRepositories,
       workItemReferences: input.workItemReferences,
       decisions: input.decisions,
+      contextConfiguration: input.contextConfiguration,
     };
 
-    const sources = this.options.sources.all();
+    const sources = input.sources.all();
     const candidates: ContextCandidate[] = [];
-    for (const source of sources) candidates.push(...(await source.discover(request)));
+    // SDD section 21 keeps every `ref` in one contract unique, and controller decision 13 keeps a
+    // source fault from failing a Run. A source that offers one reference twice would therefore
+    // fail the contract validation and fail the Run, so the first occurrence wins here and the
+    // duplicate is dropped.
+    const collected = new Set<string>();
+    for (const source of sources) {
+      for (const candidate of await source.discover(request)) {
+        if (collected.has(candidate.reference.ref)) continue;
+        collected.add(candidate.reference.ref);
+        candidates.push(candidate);
+      }
+    }
+    candidates.sort(compareCandidates);
+
+    // The primary host is the only host the workflow can rebuild a clone URL for, because it
+    // composes `repositoryBaseUrl` with a slug. A repository elsewhere stays a recorded item.
+    // See controller decision 8. `hostOf` returns `null` on a parse failure, and `null === null`
+    // in JavaScript, so a primary URL that fails to parse must be treated as trusting no host at
+    // all. Otherwise an unparsable discovered URL would match it.
+    const primaryHost = hostOf(input.primaryRepository.url);
+    const known = new Set([
+      input.primaryRepository.slug,
+      ...input.referenceRepositories.map((repository) => repository.slug),
+    ]);
+    const nominated: RepositoryRef[] = [];
+    if (input.contextConfiguration.automaticReferenceDiscovery) {
+      for (const candidate of candidates) {
+        if (nominated.length >= MAX_AUTOMATIC_REFERENCE_REPOSITORIES) break;
+        const repository = candidate.discoveredRepository;
+        if (repository === undefined) continue;
+        if (known.has(repository.slug)) continue;
+        if (primaryHost === null || hostOf(repository.url) !== primaryHost) continue;
+        known.add(repository.slug);
+        nominated.push({ slug: repository.slug, url: `${repository.url}.git`, ref: input.primaryRepository.ref });
+      }
+    }
+
+    // The repository source reads each extra repository in its own second pass. It repeats the
+    // primary, so the merge drops a reference it already holds. The reader caches one mirror per
+    // URL, so the repeat costs no second clone.
+    //
+    // Controller decision 13 and SDD section 19. A Backstage catalog entry can name a repository
+    // that is private, archived, renamed, gone, or on another default branch. That repository is
+    // not a repository the operator chose, so it must never fail the Run. One pass per repository
+    // keeps a bad entry from losing the good ones: the failed repository drops out of the
+    // discovered list, contributes no candidate, and the Run continues.
+    const discovered: RepositoryRef[] = [];
+    // The registry lookup stays outside the guard, because a missing repository source is a
+    // configuration fault of Factoree itself, not a fault of one catalog entry.
+    const repositorySource = nominated.length === 0 ? null : input.sources.get("repository");
+    for (const repository of nominated) {
+      if (repositorySource === null) break;
+      let found: ContextCandidate[];
+      try {
+        found = await repositorySource.discover({
+          ...request,
+          referenceRepositories: [repository],
+        });
+      } catch {
+        continue;
+      }
+      discovered.push(repository);
+      for (const candidate of found) {
+        if (collected.has(candidate.reference.ref)) continue;
+        collected.add(candidate.reference.ref);
+        candidates.push(candidate);
+      }
+    }
+
+    // SDD section 18 ranks the discovery rules, and the second pass appended its candidates after
+    // the first sort. The merged list is therefore sorted again, so a candidate of a discovered
+    // repository competes for the preload budget at its own priority, not last.
     candidates.sort(compareCandidates);
 
     // The pinned SHA of each repository comes from the candidate that names the repository and no
-    // path, so the resolver never guesses a SHA a source did not report.
+    // path, so the resolver never guesses a SHA a source did not report. Built after the second
+    // pass, so a discovered repository has its SHA too.
     const shaBySlug = new Map<string, string>();
     for (const candidate of candidates) {
       const slug = candidate.reference.repository;
@@ -161,7 +238,7 @@ export class ContextResolver {
     // gives the prompt the path, the authority, and the hash, which is all the prompt needs.
     for (const item of items) {
       if (item.classification !== "required") continue;
-      const source = this.options.sources.get(item.reference.sourceId);
+      const source = input.sources.get(item.reference.sourceId);
       try {
         const document = await source.fetch(item.reference);
         item.contentSha256 = createHash("sha256").update(document.content, "utf8").digest("hex");
@@ -194,11 +271,24 @@ export class ContextResolver {
         repo: input.primaryRepository.slug,
         sha: shaBySlug.get(input.primaryRepository.slug) ?? "",
       },
-      referenceRepositories: input.referenceRepositories.map((repository) => ({
-        repo: repository.slug,
-        sha: shaBySlug.get(repository.slug) ?? "",
-        reason: "a configured reference repository",
-      })),
+      referenceRepositories: [
+        ...input.referenceRepositories.map((repository) => ({
+          repo: repository.slug,
+          sha: shaBySlug.get(repository.slug) ?? "",
+          reason: "a configured reference repository",
+        })),
+        // SDD section 20. A discovered repository reaches the contract only with an explicit
+        // SHA. A repository the second pass could not pin carries no row at all, because a
+        // reference row with an empty SHA is not a pinned repository.
+        ...discovered
+          .filter((repository) => (shaBySlug.get(repository.slug) ?? "").length > 0)
+          .map((repository) => ({
+            repo: repository.slug,
+            sha: shaBySlug.get(repository.slug) ?? "",
+            reason:
+              "the Backstage catalog names this repository as a location of a related component",
+          })),
+      ],
       items,
       conflicts,
     };

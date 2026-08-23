@@ -463,13 +463,41 @@ export async function agentRunWorkflow(
       // A Run whose budget has already passed must not start work it cannot finish.
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+      // SDD section 28. The webhook carries no label, so the labels come from the Linear API
+      // before Refinement classifies the risk of this Work Item. A read that never recovers,
+      // after the activity's own retry policy is exhausted, must not fail the Run: it yields no
+      // label, and the Run then runs at its Project default, the same as an issue with no label
+      // does. A cancellation is not a label-read fault, so it still propagates.
+      let labels = input.workItem.labels;
+      const issueId = input.workItem.issueId;
+      if (issueId !== null) {
+        try {
+          labels = await activities.fetchWorkItemLabels({ sessionId: input.agentSessionId, issueId });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          // The webhook labels are never worse than an empty list, so the fallback keeps them.
+          labels = input.workItem.labels;
+          // The cap of SDD section 28 is a security control, so a degraded cap must be visible.
+          // A Linear fault must not fail the Run either, so the post stays inside `notify`.
+          await notify(() =>
+            activities.postProgress({
+              sessionId: input.agentSessionId,
+              message:
+                "Factoree could not read the labels of this Work Item. The risk cap of the " +
+                "autonomy level could not be applied. The Run continues at the autonomy level " +
+                "of the Project.",
+            }),
+          );
+        }
+      }
+
       // SDD section 8. Refinement reads the Work Item and the Project record only. It reaches no
       // repository and no sandbox, so it runs before preparation.
       const refinementInput = () => ({
         runId: id,
         tenantId: input.tenantId,
         projectId: input.projectId,
-        source: input.workItem,
+        source: { ...input.workItem, labels },
         project: {
           primaryRepository: input.project.primaryRepository,
           referenceRepositories: input.project.referenceRepositories,

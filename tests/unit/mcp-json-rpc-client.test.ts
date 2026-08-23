@@ -1,0 +1,230 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  MCP_MAX_RESPONSE_BYTES,
+  McpError,
+  McpJsonRpcClient,
+} from "~/adapters/mcp/mcp-json-rpc-client.js";
+
+const answer = (body: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
+
+describe("McpJsonRpcClient", () => {
+  it("initializes once and reuses the session header, and drains the initialized notification body", async () => {
+    const initializedResponse = new Response("", { status: 202 });
+    const cancelSpy = vi.spyOn(initializedResponse.body!, "cancel");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } }, { "mcp-session-id": "session-1" }))
+      .mockResolvedValueOnce(initializedResponse)
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "hello" }] } }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, result: { content: [{ type: "text", text: "again" }] } }));
+
+    const client = new McpJsonRpcClient({
+      endpoint: "https://mcp.test/rpc",
+      token: "secret-token",
+      fetch: fetchMock,
+    });
+
+    expect(await client.callTool("search_docs", { query: "a" })).toBe("hello");
+    expect(await client.callTool("search_docs", { query: "b" })).toBe("again");
+
+    // One initialize, one initialized notification, two calls.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const last = fetchMock.mock.calls[3] as [string, RequestInit];
+    expect((last[1].headers as Record<string, string>)["Mcp-Session-Id"]).toBe("session-1");
+    expect((last[1].headers as Record<string, string>)["Authorization"]).toBe("Bearer secret-token");
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a JSON-RPC error as an McpError", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, error: { code: -32601, message: "no such tool" } }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, error: { code: -32601, message: "no such tool" } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("missing", {})).rejects.toBeInstanceOf(McpError);
+    await expect(client.callTool("missing", {})).rejects.toThrow(/no such tool/);
+  });
+
+  it("calls the server again for a repeat of the same call, with no result cache", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "first" }] } }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, result: { content: [{ type: "text", text: "second" }] } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+
+    expect(await client.callTool("search_docs", { query: "a" })).toBe("first");
+    expect(await client.callTool("search_docs", { query: "a" })).toBe("second");
+
+    // One initialize, one initialized notification, two identical calls, each reaching the server.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports a tool that answered isError as a failure", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: { isError: true, content: [{ type: "text", text: "denied" }] } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toThrow(/denied/);
+  });
+
+  it("keeps the token out of an error message", async () => {
+    const client = new McpJsonRpcClient({
+      endpoint: "https://mcp.test/rpc",
+      token: "secret-token",
+      fetch: () => Promise.resolve(new Response("boom", { status: 500 })),
+    });
+    await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/secret-token/);
+  });
+
+  it("reports a JSON body that is not an object as an McpError, not a raw TypeError", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(null), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("reports a body with neither result nor error as an McpError, not an empty success", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2 }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("retries the handshake after it fails once", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("boom", { status: 500 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: {} }, { "mcp-session-id": "session-2" }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, result: { content: [{ type: "text", text: "hello" }] } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+
+    await expect(client.callTool("search_docs", {})).rejects.toBeInstanceOf(McpError);
+    expect(await client.callTool("search_docs", {})).toBe("hello");
+
+    // Failed initialize, retried initialize, notifications/initialized, tools/call.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+  it("keeps a credential of the endpoint out of the error message", async () => {
+    // SDD section 60. The stored endpoint can carry userinfo, and two messages name the URL.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    const client = new McpJsonRpcClient({
+      endpoint: "https://operator:mcp-token@mcp.test/rpc",
+      token: null,
+      fetch: fetchMock,
+    });
+    await expect(client.callTool("search_docs", {})).rejects.toThrow(/mcp.test/);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://operator:mcp-token@mcp.test/rpc");
+  });
+
+  it("names no credential of the endpoint in the message it raises", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    const client = new McpJsonRpcClient({
+      endpoint: "https://operator:mcp-token@mcp.test/rpc",
+      token: null,
+      fetch: fetchMock,
+    });
+    await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/mcp-token/);
+  });
+  it("keeps a credential outside the userinfo out of the error message", async () => {
+    // SDD section 60. A token can sit in a query parameter too, and the message reaches the
+    // Context Contract and Linear through the resolver.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    const client = new McpJsonRpcClient({
+      endpoint: "https://operator:mcp-token@mcp.test/rpc?token=query-secret#fragment-secret",
+      token: null,
+      fetch: fetchMock,
+    });
+    await expect(client.callTool("search_docs", {})).rejects.toThrow(/mcp\.test\/rpc/);
+    await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/query-secret/);
+    await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/fragment-secret/);
+    await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/mcp-token/);
+  });
+
+  it("refuses a body whose Content-Length passes the cap", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(
+        new Response("{}", {
+          status: 200,
+          headers: { "content-length": String(MCP_MAX_RESPONSE_BYTES + 1) },
+        }),
+      );
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toThrow(/larger than/);
+  });
+
+  it("refuses a chunked body that passes the cap while it is read", async () => {
+    const chunk = new Uint8Array(64 * 1024);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += chunk.byteLength;
+        if (sent > MCP_MAX_RESPONSE_BYTES * 2) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(new Response(stream, { status: 200 }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    await expect(client.callTool("search_docs", {})).rejects.toThrow(/larger than/);
+  });
+
+  it("reads a body below the cap", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "small" }] } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+    expect(await client.callTool("search_docs", {})).toBe("small");
+  });
+});

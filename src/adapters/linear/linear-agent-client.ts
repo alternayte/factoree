@@ -7,15 +7,26 @@ export type AgentActivityContent =
   | { type: "response"; body: string }
   | { type: "error"; body: string };
 
-export interface AgentActivityCreator {
+/** One label the Linear SDK reports on an issue. */
+interface LinearIssueLabel {
+  name: string;
+}
+
+/** The Linear SDK issue shape this adapter reads, narrowed to the fields it uses. */
+interface LinearIssueWithLabels {
+  labels(): Promise<{ nodes: LinearIssueLabel[] } | null>;
+}
+
+export interface LinearApi {
   createAgentActivity(input: {
     agentSessionId: string;
     content: AgentActivityContent;
   }): Promise<unknown>;
+  issue(issueId: string): Promise<LinearIssueWithLabels | null>;
 }
 
 export class LinearAgentClient implements AgentSessionPort {
-  constructor(private readonly client: AgentActivityCreator) {}
+  constructor(private readonly client: LinearApi) {}
 
   private async emit(sessionId: string, content: AgentActivityContent): Promise<void> {
     await this.client.createAgentActivity({ agentSessionId: sessionId, content });
@@ -39,6 +50,18 @@ export class LinearAgentClient implements AgentSessionPort {
 
   fail(sessionId: string, message: string): Promise<void> {
     return this.emit(sessionId, { type: "error", body: message });
+  }
+
+  /**
+   * SDD section 28. A null issue and a null label list both yield an empty list, so the cap
+   * never invents a label it did not see.
+   */
+  async labels(issueId: string): Promise<string[]> {
+    const issue = await this.client.issue(issueId);
+    if (issue === null) return [];
+    const labels = await issue.labels();
+    if (labels === null) return [];
+    return labels.nodes.map((label) => label.name);
   }
 }
 

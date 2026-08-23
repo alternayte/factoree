@@ -211,3 +211,159 @@ describe("administration API", () => {
     expect(stolen.statusCode).toBe(404);
   });
 });
+
+describe("the context source endpoints of SDD section 59", () => {
+  const contextWorkspace = "ws-context";
+  const otherContextWorkspace = "ws-context-other";
+  let projectId: string;
+  let otherTenantProjectId: string;
+
+  beforeAll(async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: contextWorkspace,
+        workspaceName: "Context",
+        key: "ctx",
+        name: "Context",
+        primaryRepository: "acme/ctx",
+      },
+    });
+    projectId = created.json<{ id: string }>().id;
+
+    const otherCreated = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: otherContextWorkspace,
+        workspaceName: "Context Other",
+        key: "ctxo",
+        name: "Context Other",
+        primaryRepository: "acme/ctxo",
+      },
+    });
+    otherTenantProjectId = otherCreated.json<{ id: string }>().id;
+  });
+
+  it("refuses an endpoint that carries a credential", async () => {
+    // SDD section 60. The userinfo of the endpoint would reach a log line and an error message.
+    const refused = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "backstage-credential",
+        kind: "backstage",
+        endpoint: "https://operator:catalog-token@backstage.example.test",
+        settings: {},
+      },
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.body).toContain("user name or a password");
+    expect(refused.body).not.toContain("catalog-token");
+  });
+
+  it("creates, lists, and deletes one source", async () => {
+    // The secret exists with a real value, so the assertion below has something to find.
+    const secretWritten = await app.inject({
+      method: "PUT",
+      url: `/admin/projects/${projectId}/secrets/BACKSTAGE_TOKEN?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: { value: "bs_super_secret_value_87654321" },
+    });
+    expect(secretWritten.statusCode).toBe(204);
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "backstage",
+        kind: "backstage",
+        endpoint: "https://backstage.example.test",
+        secretName: "BACKSTAGE_TOKEN",
+        settings: { maxEntities: 10 },
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<{ sourceId: string }>().sourceId).toBe("backstage");
+    // SDD section 60. The response names the secret and never carries its value.
+    expect(created.body).toContain("BACKSTAGE_TOKEN");
+    expect(created.body).not.toContain("bs_super_secret_value_87654321");
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.body).not.toContain("bs_super_secret_value_87654321");
+    expect(listed.json<{ sourceId: string }[]>().map((row) => row.sourceId)).toEqual(["backstage"]);
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(204);
+
+    const deletedAgain = await app.inject({
+      method: "DELETE",
+      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(deletedAgain.statusCode).toBe(404);
+  });
+
+  it("refuses an invalid setting with 400 and names the key", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "docs",
+        kind: "mcp",
+        endpoint: "https://docs.example.test",
+        settings: { discoverTool: "search", fetchTool: "read", catalogWide: true },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toMatch(/catalogWide/);
+  });
+
+  it("refuses a reserved source identifier with 400", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "linear",
+        kind: "mcp",
+        endpoint: "https://docs.example.test",
+        settings: { discoverTool: "search", fetchTool: "read" },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toMatch(/reserved/);
+  });
+
+  it("refuses a request without the administration token", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("returns 404 for a project of another tenant", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${otherTenantProjectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(response.statusCode).toBe(404);
+  });
+});

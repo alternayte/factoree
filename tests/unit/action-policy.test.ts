@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ActionDeniedError, buildActionPolicy } from "~/domain/policy/action-policy.js";
+import { ActionDeniedError, buildActionPolicy, McpToolDeniedError } from "~/domain/policy/action-policy.js";
 
 describe("buildActionPolicy", () => {
   it("uses the SDD section 29 default table", () => {
@@ -43,5 +43,28 @@ describe("buildActionPolicy", () => {
     const lines = buildActionPolicy().describe();
     expect(lines).toContain("deny: write a reference repository");
     expect(lines).toContain("allow: write the primary worktree");
+  });
+});
+
+describe("the MCP tool gate of SDD section 58", () => {
+  it("denies every tool by default", () => {
+    const policy = buildActionPolicy({});
+    expect(policy.decideMcpTool("search_docs")).toBe("deny");
+  });
+
+  it("allows only a tool the Project allow-listed by name", () => {
+    const policy = buildActionPolicy({ mcpAllowedTools: ["search_docs"] });
+    expect(policy.decideMcpTool("search_docs")).toBe("allow");
+    expect(policy.decideMcpTool("delete_everything")).toBe("deny");
+  });
+
+  it("treats a wildcard as a tool name, so it grants nothing broad", () => {
+    const policy = buildActionPolicy({ mcpAllowedTools: ["*"] });
+    expect(policy.decideMcpTool("search_docs")).toBe("deny");
+  });
+
+  it("throws with the tool name when a call is refused", () => {
+    expect(() => buildActionPolicy({}).assertMcpTool("search_docs")).toThrow(/search_docs/);
+    expect(() => buildActionPolicy({}).assertMcpTool("search_docs")).toThrow(McpToolDeniedError);
   });
 });

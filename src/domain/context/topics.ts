@@ -27,3 +27,14 @@ export const topicsOf = (input: { goal: string; acceptanceCriteria: string[] }):
     .filter((word) => word.length >= MINIMUM_LENGTH && !STOP_WORDS.has(word));
   return [...new Set(words)].sort();
 };
+
+/**
+ * The topics that appear in one text. A source applies the same rule to a path. SDD section 23
+ * needs a subject before it can pair two items, and a path alone names too few subjects. A README
+ * and an ADR discuss one topic in their text, not in their names. The resolver and every source
+ * call this one definition, so they can never disagree about the topics of one text.
+ */
+export const topicsIn = (text: string, topics: string[]): string[] => {
+  const lower = text.toLowerCase();
+  return topics.filter((topic) => lower.includes(topic));
+};

@@ -53,9 +53,14 @@ const LABELS: Record<AgentAction, string> = {
   merge: "merge",
 };
 
-/** SDD section 29 permits exactly one Project override: staging read. */
+/**
+ * SDD section 29 permits exactly one Project override: staging read. SDD section 58 adds a
+ * second, separate override: the exact MCP tool names a Project allow-lists. An empty list, the
+ * default, denies every tool. See controller decision 10.
+ */
 export interface ActionPolicyOverrides {
   stagingRead?: boolean;
+  mcpAllowedTools?: string[];
 }
 
 export class ActionDeniedError extends Error {
@@ -65,11 +70,30 @@ export class ActionDeniedError extends Error {
   }
 }
 
+/** SDD section 58. Thrown by `assertMcpTool` when the Project did not allow-list the tool. */
+export class McpToolDeniedError extends Error {
+  constructor(readonly toolName: string) {
+    super(
+      `The Action Policy denies the MCP tool "${toolName}". SDD section 58 requires an explicit ` +
+        "allow list, and this Project did not name the tool.",
+    );
+    this.name = "McpToolDeniedError";
+  }
+}
+
 export interface ActionPolicy {
   decide(action: AgentAction): ActionDecision;
   assertAllowed(action: AgentAction): void;
   /** One line per action, for the Implementer prompt. The prompt is not the boundary. */
   describe(): string[];
+  /**
+   * SDD section 58. MCP is an extension mechanism, not an unrestricted trust boundary. Every
+   * tool call passes this decision, and an Implementer receives no organization-wide access by
+   * default, because the allow list starts empty. A name is matched exactly: a pattern would
+   * reintroduce the broad access the specification forbids. See controller decision 10.
+   */
+  decideMcpTool(name: string): ActionDecision;
+  assertMcpTool(name: string): void;
 }
 
 export const buildActionPolicy = (overrides: ActionPolicyOverrides = {}): ActionPolicy => {
@@ -77,6 +101,9 @@ export const buildActionPolicy = (overrides: ActionPolicyOverrides = {}): Action
     ...DEFAULTS,
     stagingRead: overrides.stagingRead === true ? "allow" : "deny",
   };
+  const mcpAllowedTools = overrides.mcpAllowedTools ?? [];
+
+  const decideMcpTool = (name: string): ActionDecision => (mcpAllowedTools.includes(name) ? "allow" : "deny");
 
   return {
     decide: (action) => table[action],
@@ -84,5 +111,9 @@ export const buildActionPolicy = (overrides: ActionPolicyOverrides = {}): Action
       if (table[action] === "deny") throw new ActionDeniedError(action);
     },
     describe: () => AGENT_ACTIONS.map((action) => `${table[action]}: ${LABELS[action]}`),
+    decideMcpTool,
+    assertMcpTool: (name) => {
+      if (decideMcpTool(name) === "deny") throw new McpToolDeniedError(name);
+    },
   };
 };

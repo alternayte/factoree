@@ -87,6 +87,9 @@ describe("AT-33 tenant isolation", () => {
         "ContextConflict",
         "ContextContract",
         "ContextItem",
+        // SDD section 53. Phase 5 added the ContextSourceConfiguration table, and it is
+        // tenant-owned as well.
+        "ContextSourceConfiguration",
         "Evidence",
         "LinearInstallation",
         "ProcessedWebhook",

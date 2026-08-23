@@ -26,6 +26,7 @@ const activities = {
   postElicitation: async () => undefined,
   postFinalResponse: async () => undefined,
   postError: async () => undefined,
+  fetchWorkItemLabels: async () => [],
   // Phase 4 puts refinement and context resolution before preparation, so this Run reaches
   // every activity below. Each double returns at once, and none of them holds state.
   refine: async (input: { project: { primaryRepository: string; referenceRepositories: string[] } }) => ({
