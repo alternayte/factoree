@@ -69,7 +69,7 @@ const topicsIn = (text: string, topics: string[]): string[] => {
 const mergeTopics = (left: string[], right: string[]): string[] =>
   [...new Set([...left, ...right])].sort();
 
-/** `new URL(url).host` inside a `try`, and `null` on a failure. Two nulls are not equal. */
+/** `new URL(url).host` inside a `try`, and `null` on a failure. */
 const hostOf = (url: string): string | null => {
   try {
     return new URL(url).host;
@@ -111,7 +111,9 @@ export class ContextResolver {
 
     // The primary host is the only host the workflow can rebuild a clone URL for, because it
     // composes `repositoryBaseUrl` with a slug. A repository elsewhere stays a recorded item.
-    // See controller decision 8.
+    // See controller decision 8. `hostOf` returns `null` on a parse failure, and `null === null`
+    // in JavaScript, so a primary URL that fails to parse must be treated as trusting no host at
+    // all. Otherwise an unparsable discovered URL would match it.
     const primaryHost = hostOf(input.primaryRepository.url);
     const known = new Set([
       input.primaryRepository.slug,
@@ -124,7 +126,7 @@ export class ContextResolver {
         const repository = candidate.discoveredRepository;
         if (repository === undefined) continue;
         if (known.has(repository.slug)) continue;
-        if (hostOf(repository.url) !== primaryHost) continue;
+        if (primaryHost === null || hostOf(repository.url) !== primaryHost) continue;
         known.add(repository.slug);
         discovered.push({ slug: repository.slug, url: `${repository.url}.git`, ref: input.primaryRepository.ref });
       }

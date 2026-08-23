@@ -687,4 +687,60 @@ describe("automatic reference repository discovery", () => {
     const refs = resolved.contract.items.map((item) => item.reference.ref);
     expect(new Set(refs).size).toBe(refs.length);
   });
+
+  it("adds no reference repository when the primary repository URL itself does not parse", async () => {
+    // `new URL(...)` throws on both URLs, so `hostOf` returns `null` for each. A primary host of
+    // `null` must trust no host, or an unparsable discovered URL would wrongly match it.
+    const reader = new FakeRepositoryReader({
+      "not-a-url": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "also-not-a-url": { sha: "b".repeat(40), files: { "README.md": "the library" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "not-a-url", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "also-not-a-url" }),
+      ]),
+    });
+
+    expect(resolved.contract.referenceRepositories).toEqual([]);
+    expect(
+      resolved.contract.items.some((item) => item.reference.ref === "discovering-source:acme/library"),
+    ).toBe(true);
+  });
+
+  it("adds no reference repository when only the discovered URL does not parse", async () => {
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "not-a-url": { sha: "b".repeat(40), files: { "README.md": "the library" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "not-a-url" }),
+      ]),
+    });
+
+    expect(resolved.contract.referenceRepositories).toEqual([]);
+    expect(
+      resolved.contract.items.some((item) => item.reference.ref === "discovering-source:acme/library"),
+    ).toBe(true);
+  });
 });
