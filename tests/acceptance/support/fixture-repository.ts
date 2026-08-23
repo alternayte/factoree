@@ -27,6 +27,18 @@ export const git = async (path: string, args: string[]): Promise<string> => {
 };
 
 /**
+ * Stages every file of the fixture repository at `path` and commits it. The commit carries the
+ * fixture identity, so a test machine needs no global git identity. Every fixture builder calls
+ * this helper, so the suite holds one commit rule only.
+ */
+export const commitAll = async (path: string, message: string): Promise<string> => {
+  await run("git", ["-C", path, "add", "-A"]);
+  await run("git", ["-C", path, ...IDENTITY, "commit", "-m", message]);
+  const head = await run("git", ["-C", path, "rev-parse", "HEAD"]);
+  return head.stdout.trim();
+};
+
+/**
  * Creates a git repository on disk that a clone can reach through a plain path. The Phase 2
  * acceptance tests never reach the network, so the fixture is local.
  *
@@ -47,8 +59,7 @@ export const createFixtureRepository = async (
   await writeFile(join(path, "CONTRIBUTING.md"), "Keep the change small.\n", "utf8");
   await mkdir(join(path, ".factoree"), { recursive: true });
   await writeFile(join(path, ".factoree", "config.yaml"), configYaml, "utf8");
-  await run("git", ["-C", path, "add", "."]);
-  await run("git", ["-C", path, ...IDENTITY, "commit", "-m", "initial"]);
+  await commitAll(path, "initial");
   return path;
 };
 

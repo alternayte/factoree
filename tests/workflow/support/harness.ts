@@ -379,18 +379,26 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
 export const waitForStatus = async (
   handle: WorkflowHandle,
   status: string,
+  timeoutMs?: number,
 ): Promise<void> => {
-  await waitFor(async () => (await handle.query(runStatusQuery)).status === status, `status ${status}`);
+  await waitFor(
+    async () => (await handle.query(runStatusQuery)).status === status,
+    `status ${status}`,
+    timeoutMs,
+  );
 };
 
 /** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
 export const waitFor = async (
   predicate: () => boolean | Promise<boolean>,
   what = "the condition",
+  timeoutMs = 10_000,
 ): Promise<void> => {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
-    if (Date.now() > deadline) throw new Error(`the test waited ten seconds for ${what}`);
+    if (Date.now() > deadline) {
+      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 };

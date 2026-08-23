@@ -67,7 +67,20 @@ describe("AT-33 tenant isolation", () => {
     `;
     const names = rows.map((row) => row.table_name).sort();
     expect(names).toEqual(
-      ["AgentExecution", "Evidence", "LinearInstallation", "ProcessedWebhook", "Project", "ProjectSecret", "Run"].sort(),
+      [
+        "AgentExecution",
+        // SDD section 21 and SDD section 52. Phase 4 added the Context Contract tables, and each
+        // one is tenant-owned.
+        "ContextConflict",
+        "ContextContract",
+        "ContextItem",
+        "Evidence",
+        "LinearInstallation",
+        "ProcessedWebhook",
+        "Project",
+        "ProjectSecret",
+        "Run",
+      ].sort(),
     );
   });
 });
