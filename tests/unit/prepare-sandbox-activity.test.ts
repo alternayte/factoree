@@ -68,7 +68,10 @@ const build = (
     createIfAbsent: vi.fn(),
     findByAgentSession: vi.fn(),
     updateStatus: vi.fn(),
-    setContextContractVersion: vi.fn().mockResolvedValue(undefined),
+    // The real store throws when the write reaches no row. The fake must not be more permissive.
+    setContextContractVersion: vi.fn().mockRejectedValue(
+      new Error('no Run "run-1" of tenant "tenant-1" received the Context Contract version'),
+    ),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({

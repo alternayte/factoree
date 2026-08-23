@@ -141,10 +141,18 @@ export class PrismaRunRepository implements RunRepository {
 
   async setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
-    await this.prisma.run.updateMany({
+    const updated = await this.prisma.run.updateMany({
       where: { id: runId, tenantId },
       data: { contextContractVersion: version },
     });
+    // A write that reaches no row must not report success. This value is the only record the
+    // Phase 4 exit evidence reads off the Run. A wrong Run or a wrong tenant is a caller defect.
+    // A silent success makes a Run that holds a frozen contract report that it holds none.
+    if (updated.count === 0) {
+      throw new Error(
+        `no Run "${runId}" of tenant "${tenantId}" received the Context Contract version`,
+      );
+    }
   }
 
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {

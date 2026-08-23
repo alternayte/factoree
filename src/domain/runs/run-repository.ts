@@ -84,7 +84,8 @@ export interface RunRepository {
   clearSandbox(tenantId: string, runId: string): Promise<void>;
   /**
    * SDD section 53. `Run.contextContractVersion` holds the SHA-256 of the frozen contract, because
-   * that value names the exact contract the Run uses.
+   * that value names the exact contract the Run uses. The method throws when it reaches no Run of
+   * that tenant, because a silent success hides a caller defect.
    */
   setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */

@@ -13,7 +13,7 @@ import { CONTEXT_CLASSIFICATIONS } from "~/domain/context/context-source.js";
 const CLASSIFICATIONS = new Set<string>(CONTEXT_CLASSIFICATIONS);
 
 /** The store throws this error when a column holds a value no domain list allows. */
-class ContextContractRowInvalidError extends Error {
+export class ContextContractRowInvalidError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ContextContractRowInvalidError";

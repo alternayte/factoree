@@ -210,9 +210,17 @@ describe("PrismaRunRepository.setContextContractVersion", () => {
     expect(run?.contextContractVersion).toBe(FIRST_SHA256);
   });
 
-  it("does not write across the tenant boundary", async () => {
-    await runs.setContextContractVersion(otherTenantId, runId, "f".repeat(64));
+  it("throws for a Run of another tenant, and writes nothing", async () => {
+    await expect(
+      runs.setContextContractVersion(otherTenantId, runId, "f".repeat(64)),
+    ).rejects.toThrow(/received the Context Contract version/);
     const run = await runs.findById(tenantId, runId);
     expect(run?.contextContractVersion).toBe(FIRST_SHA256);
+  });
+
+  it("throws for a Run identifier that does not exist", async () => {
+    await expect(
+      runs.setContextContractVersion(tenantId, "00000000-0000-0000-0000-000000000000", FIRST_SHA256),
+    ).rejects.toThrow(/received the Context Contract version/);
   });
 });
