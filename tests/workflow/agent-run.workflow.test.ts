@@ -108,7 +108,7 @@ describe("agentRunWorkflow", () => {
     expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
   });
 
-  it("moves through PREPARING and IMPLEMENTING when the input carries a sandbox", async () => {
+  it("moves through PREPARING and IMPLEMENTING after refinement and context resolution", async () => {
     const result = await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",

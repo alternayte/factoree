@@ -73,7 +73,11 @@ export interface RunSnapshot {
   status: RunStatus;
   humanInputs: string[];
   spriteId: string | null;
-  /** SDD section 53. The SHA-256 of the Context Contract of this Run. */
+  /**
+   * SDD section 53. The SHA-256 of the latest context resolution of this Run. SDD section 21
+   * freezes that resolution only after no unresolved conflict remains, so an earlier value is
+   * the hash of a draft.
+   */
   contextContractVersion: string | null;
   /** SDD section 23. The one question Factoree waits on, or null. */
   openQuestion: string | null;
@@ -531,8 +535,9 @@ export async function agentRunWorkflow(
       const sandbox = {
         primary: {
           url: buildRepositoryUrl(input.project.repositoryBaseUrl, resolvedContext.primary.slug),
-          // SDD section 20. The checkout lands on the SHA discovery pinned, never on a moving
-          // ref, so the Run and the Context Contract read one state of the repository.
+          // SDD section 20. The checkout lands on the SHA discovery pinned. A branch name can
+          // point to a new commit at any time, so the workflow must not use one here. The Run
+          // and the Context Contract then read one state of the repository.
           ref: resolvedContext.primary.sha,
         },
         references: resolvedContext.references.map((repository) => ({

@@ -68,7 +68,7 @@ afterAll(async () => {
   await environment.teardown();
 });
 
-/** Starts one Run with a sandbox and returns its handle. */
+/** Starts one Run of the default fixture Work Item and Project, and returns its handle. */
 const startRun = async (sessionId: string) =>
   environment.client.workflow.start(agentRunWorkflow, {
     taskQueue: "test",

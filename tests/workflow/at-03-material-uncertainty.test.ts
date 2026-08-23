@@ -39,6 +39,7 @@ const completionsOf = (runId: string) => completions.filter((entry) => entry.run
 
 describe("AT-03 — a material uncertainty stops the Run before any implementation", () => {
   it("waits for one human input and starts no Implementer", async () => {
+    const before = elicitations.length;
     await runWorker(async () => {
       const handle = await start("ses-at03a", { workItem: openQuestionWorkItem });
       await waitForStatus(handle, "WAITING_FOR_INPUT");
@@ -47,7 +48,7 @@ describe("AT-03 — a material uncertainty stops the Run before any implementati
       expect(snapshot.status).toBe("WAITING_FOR_INPUT");
       expect(snapshot.openQuestion).toBe("Which channel do we use?");
       // SDD section 23 permits one focused question at a time.
-      expect(elicitations).toEqual(["Which channel do we use?"]);
+      expect(elicitations.slice(before)).toEqual(["Which channel do we use?"]);
       // Nothing ran inside a sandbox, so nothing was implemented and nothing was published.
       expect(implementsOf("run-ses-at03a")).toEqual([]);
 

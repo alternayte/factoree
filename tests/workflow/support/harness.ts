@@ -171,7 +171,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       return {
         sha256: createHash("sha256").update(`${input.runId}|${document}`, "utf8").digest("hex"),
         document,
-        requiredContext: ["docs/ADR-031.md (accepted ADR, sha256 " + "0".repeat(64) + ")"],
+        // The line carries the run id, so a test can prove the workflow forwarded the
+        // resolution of this Run and not a constant.
+        requiredContext: [
+          `docs/ADR-031.md (accepted ADR, run ${input.runId}, sha256 ${"0".repeat(64)})`,
+        ],
         primary: { slug: input.primaryRepository.slug, sha: PRIMARY_SHA },
         references: input.referenceRepositories.map((repository, index) => ({
           slug: repository.slug,

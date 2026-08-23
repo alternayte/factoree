@@ -87,7 +87,7 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       // AT-09. The prompt carries the rendered contract and the required-context lines only.
       const call = implementsOf("run-ses-at08b")[0];
       expect(call?.contextContract).toContain("# Context Contract");
-      expect(call?.requiredContext).toHaveLength(1);
+      expect(call?.requiredContext).toEqual([expect.stringContaining("run-ses-at08b")]);
 
       await handle.signal(stopSignal);
       await handle.result();

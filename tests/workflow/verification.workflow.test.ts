@@ -39,7 +39,7 @@ const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.r
 const verifiesOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 
-/** Starts one Run with a sandbox and returns its handle. */
+/** Starts one Run of the default fixture Work Item and Project, and returns its handle. */
 const startRun = async (sessionId: string, maxRunMinutes = 90) =>
   environment.client.workflow.start(agentRunWorkflow, {
     taskQueue: "test",
