@@ -76,6 +76,26 @@ export const metrics = {
     buckets: [5, 15, 60, 180, 600, 1800],
     registers: [registry],
   }),
+  refinementDuration: new Histogram({
+    name: "factoree_refinement_duration_seconds",
+    help: "Refinement duration in seconds",
+    labelNames,
+    buckets: [0.01, 0.1, 1, 5, 30],
+    registers: [registry],
+  }),
+  contextResolutionDuration: new Histogram({
+    name: "factoree_context_resolution_duration_seconds",
+    help: "Context resolution duration in seconds",
+    labelNames,
+    buckets: [1, 5, 15, 60, 300, 900],
+    registers: [registry],
+  }),
+  contextConflicts: new Counter({
+    name: "factoree_context_conflicts_total",
+    help: "Context conflicts recorded on a Context Contract",
+    labelNames: [...labelNames, "resolution"],
+    registers: [registry],
+  }),
   repairs: new Counter({
     name: "factoree_repairs_total",
     help: "Repair attempts started",

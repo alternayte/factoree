@@ -9,11 +9,16 @@ import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js"
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { Redactor } from "~/telemetry/redaction.js";
+import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
+import type { ContextResolver } from "~/domain/context/context-resolver.js";
+import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
 import { createAgentActivities } from "./agent.activities.js";
 import { createVerificationActivities } from "./verification.activities.js";
+import { createRefinementActivities } from "./refinement.activities.js";
+import { createContextActivities } from "./context.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -26,6 +31,9 @@ export interface ActivityDependencies {
   evidence: EvidenceStore;
   redactor: Redactor;
   reaper: SpriteReaper;
+  refinement: RefinementEngine;
+  contextResolver: ContextResolver;
+  contextContracts: ContextContractStore;
   logger: Logger;
 }
 
@@ -47,6 +55,16 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     executions: dependencies.executions,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
+    logger: dependencies.logger,
+  }),
+  ...createRefinementActivities({
+    refinement: dependencies.refinement,
+    logger: dependencies.logger,
+  }),
+  ...createContextActivities({
+    resolver: dependencies.contextResolver,
+    contracts: dependencies.contextContracts,
+    runs: dependencies.runs,
     logger: dependencies.logger,
   }),
   ...createVerificationActivities({
