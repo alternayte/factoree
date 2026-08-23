@@ -87,7 +87,7 @@ describe("ContextResolver", () => {
     for (const item of required) expect(item.contentSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("never preloads a repository itself", async () => {
+  it("classifies a repository itself as discoverable, so no prompt ever holds one", async () => {
     const resolved = await build().resolve(input());
     for (const slug of ["acme/webhook-service", "acme/notification-service"]) {
       const repository = resolved.contract.items.find(

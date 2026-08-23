@@ -119,7 +119,7 @@ describe("detectConflicts", () => {
       item("docs/ADR-031.md", "accepted_adr", ["notification"]),
       item("docs/ADR-042.md", "accepted_adr", ["notification"]),
       item("linear:decision:CTX-1", "work_item_decision", ["notification"], "required"),
-    ]);
+    ], { decisionRefs: ["linear:decision:CTX-1"] });
     const unresolved = conflicts.filter((conflict) => conflict.resolution === "unresolved");
     expect(unresolved).toEqual([]);
     const settled = conflicts.find((conflict) => conflict.subject === "notification");
@@ -127,12 +127,36 @@ describe("detectConflicts", () => {
     expect(settled?.reason).toBe("a recorded human decision settles this subject");
   });
 
+  it("lets no item settle a conflict when the caller names no recorded decision", () => {
+    // The Work Item body carries the `work_item_decision` class and answers no question. An
+    // absent `decisionRefs` list therefore settles nothing.
+    const conflicts = detectConflicts([
+      item("docs/ADR-031.md", "accepted_adr", ["notification"]),
+      item("docs/ADR-042.md", "accepted_adr", ["notification"]),
+      item("linear:issue:run-1", "work_item_decision", ["notification"], "required"),
+    ]);
+    expect(conflicts.find((conflict) => conflict.subject === "notification")?.resolution).toBe(
+      "unresolved",
+    );
+  });
+
+  it("does not pair two items of one combined evidence domain", () => {
+    // SDD section 22 joins source code and an executable test with `+`. They are evidence about
+    // one behavior, so they never compete.
+    expect(
+      detectConflicts([
+        item("src/retry.ts", "source_code", ["retry"]),
+        item("tests/retry.test.ts", "executable_tests", ["retry"]),
+      ]),
+    ).toEqual([]);
+  });
+
   it("does not let a decision on another subject settle this conflict", () => {
     const conflicts = detectConflicts([
       item("docs/ADR-031.md", "accepted_adr", ["notification"]),
       item("docs/ADR-042.md", "accepted_adr", ["notification"]),
       item("linear:decision:CTX-9", "work_item_decision", ["billing"], "required"),
-    ]);
+    ], { decisionRefs: ["linear:decision:CTX-9"] });
     const settled = conflicts.find((conflict) => conflict.subject === "notification");
     expect(settled?.resolution).toBe("unresolved");
     expect(settled?.winnerRef).toBeNull();
@@ -163,7 +187,7 @@ describe("firstUnresolved", () => {
       item("docs/ADR-031.md", "accepted_adr", ["billing"]),
       item("docs/ADR-042.md", "accepted_adr", ["billing"]),
       item("linear:decision:CTX-1", "work_item_decision", ["billing"], "required"),
-    ]);
+    ], { decisionRefs: ["linear:decision:CTX-1"] });
     expect(firstUnresolved(conflicts)).toBeNull();
   });
 });

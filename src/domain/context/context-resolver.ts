@@ -151,6 +151,11 @@ export class ContextResolver {
     // The fetched text also carries topics. A source derives a topic from the path alone, and a
     // path names too few subjects for SDD section 23. The resolver therefore adds the topics of
     // the content before it detects a conflict.
+    //
+    // The resolver reads the content to hash it and to derive its topics, and then discards it on
+    // purpose. SDD section 55 forbids a copy of repository content into the control plane. The
+    // Implementer reaches a file by path inside the sandbox checkout, and `requiredContextLines`
+    // gives the prompt the path, the authority, and the hash, which is all the prompt needs.
     for (const item of items) {
       if (item.classification !== "required") continue;
       const source = this.options.sources.get(item.reference.sourceId);

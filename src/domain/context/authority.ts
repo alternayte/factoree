@@ -2,8 +2,10 @@
  * SDD section 22. Authority is domain-specific, so a class can be compared only with another
  * class of the same domain. Inside a domain the specification writes a ladder with `>`, except
  * for current implementation and system topology, which it writes as evidence joined with `+`.
- * Those two domains therefore have one rung, and any conflict inside them is unresolvable by
- * policy. See controller decision 8.
+ * Those two domains therefore have one rung, and `compareAuthority` reports `equal` for a pair
+ * inside them. The members of those two domains are combined evidence under SDD section 22, so
+ * they do not conflict with one another. `detectConflicts` skips such a pair. This corrects
+ * controller decision 8, which the controller overturned in the Task 7 review.
  */
 
 export type AuthorityDomain =
