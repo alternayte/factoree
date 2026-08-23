@@ -139,6 +139,14 @@ export class PrismaRunRepository implements RunRepository {
     });
   }
 
+  async setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { contextContractVersion: version },
+    });
+  }
+
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {
     const rows = await this.prisma.run.findMany({
       where: { spriteId: { not: null }, spriteRetainUntil: { lte: now } },

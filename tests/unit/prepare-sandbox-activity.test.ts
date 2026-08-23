@@ -68,6 +68,7 @@ const build = (
     createIfAbsent: vi.fn(),
     findByAgentSession: vi.fn(),
     updateStatus: vi.fn(),
+    setContextContractVersion: vi.fn().mockResolvedValue(undefined),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({

@@ -82,6 +82,11 @@ export interface RunRepository {
   setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<SupersededSandbox>;
   /** Removes the sandbox reference after the sandbox is deleted. The evidence stays. */
   clearSandbox(tenantId: string, runId: string): Promise<void>;
+  /**
+   * SDD section 53. `Run.contextContractVersion` holds the SHA-256 of the frozen contract, because
+   * that value names the exact contract the Run uses.
+   */
+  setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
   listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
 }
