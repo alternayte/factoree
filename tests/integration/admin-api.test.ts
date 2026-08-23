@@ -211,3 +211,130 @@ describe("administration API", () => {
     expect(stolen.statusCode).toBe(404);
   });
 });
+
+describe("the context source endpoints of SDD section 59", () => {
+  const contextWorkspace = "ws-context";
+  const otherContextWorkspace = "ws-context-other";
+  let projectId: string;
+  let otherTenantProjectId: string;
+
+  beforeAll(async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: contextWorkspace,
+        workspaceName: "Context",
+        key: "ctx",
+        name: "Context",
+        primaryRepository: "acme/ctx",
+      },
+    });
+    projectId = created.json<{ id: string }>().id;
+
+    const otherCreated = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: otherContextWorkspace,
+        workspaceName: "Context Other",
+        key: "ctxo",
+        name: "Context Other",
+        primaryRepository: "acme/ctxo",
+      },
+    });
+    otherTenantProjectId = otherCreated.json<{ id: string }>().id;
+  });
+
+  it("creates, lists, and deletes one source", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "backstage",
+        kind: "backstage",
+        endpoint: "https://backstage.example.test",
+        secretName: "BACKSTAGE_TOKEN",
+        settings: { maxEntities: 10 },
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<{ sourceId: string }>().sourceId).toBe("backstage");
+    // SDD section 60. The response names the secret and never carries its value.
+    expect(created.body).not.toContain("secretValue");
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json<{ sourceId: string }[]>().map((row) => row.sourceId)).toEqual(["backstage"]);
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(204);
+
+    const deletedAgain = await app.inject({
+      method: "DELETE",
+      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(deletedAgain.statusCode).toBe(404);
+  });
+
+  it("refuses an invalid setting with 400 and names the key", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "docs",
+        kind: "mcp",
+        endpoint: "https://docs.example.test",
+        settings: { discoverTool: "search", fetchTool: "read", catalogWide: true },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toMatch(/catalogWide/);
+  });
+
+  it("refuses a reserved source identifier with 400", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "linear",
+        kind: "mcp",
+        endpoint: "https://docs.example.test",
+        settings: { discoverTool: "search", fetchTool: "read" },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toMatch(/reserved/);
+  });
+
+  it("refuses a request without the administration token", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("returns 404 for a project of another tenant", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${otherTenantProjectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(response.statusCode).toBe(404);
+  });
+});

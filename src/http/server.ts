@@ -11,7 +11,9 @@ import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProjectRoutes } from "./admin/projects.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
+import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
+import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -59,6 +61,11 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     });
     registerRunRoutes(admin, { runs: dependencies.runs, tenants: dependencies.tenants });
     registerInstallationRoutes(admin, { tenants: dependencies.tenants });
+    registerContextSourceRoutes(admin, {
+      projects: dependencies.projects,
+      tenants: dependencies.tenants,
+      contextSources: new PrismaContextSourceConfigurationStore(dependencies.prisma),
+    });
     registerMetricsRoute(admin);
   });
 
