@@ -48,6 +48,14 @@ export const BACKSTAGE_TIMEOUT_MS = 15_000;
 /** SDD section 18. A filtered query never returns more than this. */
 export const BACKSTAGE_QUERY_LIMIT = 5;
 
+/**
+ * SDD section 18. The exact `github.com/project-slug` query needs only one row, so it keeps the
+ * tight cap above. The source-location fallback scan matches on a parsed URL rather than an
+ * indexed field, so it needs a wider single page to find the entity in a larger catalog. This
+ * cap stays a single bounded query; it never triggers a second page.
+ */
+export const BACKSTAGE_REPOSITORY_SCAN_LIMIT = 50;
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -99,6 +107,14 @@ const sourceLocationOf = (
   };
 };
 
+/**
+ * `github.com/project-slug` holds exactly an `owner/repo` slug, with no URL to parse. It is the
+ * exact-match field `findByRepositorySlug` queries on. When `backstage.io/source-location` is
+ * missing or unparsable, this annotation still gives a usable slug, though never a URL.
+ */
+const projectSlugOf = (annotations: Record<string, unknown>): string | null =>
+  asString(annotations["github.com/project-slug"]);
+
 export const parseBackstageEntity = (document: unknown): BackstageEntity => {
   const entity = asRecord(document);
   const metadata = asRecord(entity["metadata"]);
@@ -117,7 +133,9 @@ export const parseBackstageEntity = (document: unknown): BackstageEntity => {
   }
   const owner = asString(spec["owner"]);
   const system = asString(spec["system"]);
-  const location = sourceLocationOf(asRecord(metadata["annotations"]));
+  const annotations = asRecord(metadata["annotations"]);
+  const location = sourceLocationOf(annotations);
+  const repositorySlug = location.slug ?? projectSlugOf(annotations);
 
   return {
     ref: `${kind.toLowerCase()}:${namespace}/${name}`,
@@ -131,7 +149,7 @@ export const parseBackstageEntity = (document: unknown): BackstageEntity => {
     dependsOn: asStrings(spec["dependsOn"]).map((value) => normalizeRef(value, "component", namespace)),
     providesApis: asStrings(spec["providesApis"]).map((value) => normalizeRef(value, "api", namespace)),
     consumesApis: asStrings(spec["consumesApis"]).map((value) => normalizeRef(value, "api", namespace)),
-    repositorySlug: location.slug,
+    repositorySlug,
     repositoryUrl: location.url,
     definition: asString(spec["definition"]),
     sourceVersion,
@@ -194,28 +212,48 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
   }
 
   /**
-   * SDD section 18 forbids unbounded retrieval. The query filters on the annotation and caps the
-   * answer, so the catalog never streams its whole contents into Factoree. The filter carries
-   * the annotation key so the catalog itself does the matching; the client then checks the exact
-   * slug on the candidates the catalog returns.
+   * SDD section 18 forbids unbounded retrieval. Every query below is filtered and capped, so the
+   * catalog never streams its whole contents into Factoree.
+   *
+   * The first query filters on `github.com/project-slug`, an exact-match annotation that holds
+   * only the `owner/repo` slug. The catalog does the matching, so a small limit is enough. When
+   * that query answers nothing, this falls back to `backstage.io/source-location`, a URL
+   * annotation almost every Component carries. That annotation cannot narrow to one candidate by
+   * presence alone, so the fallback takes a wider single page and matches the parsed slug on the
+   * client side.
    */
   async findByRepositorySlug(slug: string): Promise<BackstageEntity | null> {
+    const exact = await this.queryEntities(
+      `kind=component,github.com/project-slug=${slug}`,
+      BACKSTAGE_QUERY_LIMIT,
+    );
+    const exactMatch = exact.find((entity) => entity.repositorySlug === slug);
+    if (exactMatch !== undefined) return exactMatch;
+
+    const scanned = await this.queryEntities(
+      "kind=component,metadata.annotations.backstage.io/source-location",
+      BACKSTAGE_REPOSITORY_SCAN_LIMIT,
+    );
+    const scannedMatch = scanned.find((entity) => entity.repositorySlug === slug);
+    return scannedMatch ?? null;
+  }
+
+  private async queryEntities(filter: string, limit: number): Promise<BackstageEntity[]> {
     const parameters = new URLSearchParams();
-    parameters.set("filter", "kind=component,metadata.annotations.backstage.io/source-location");
-    parameters.set("limit", String(BACKSTAGE_QUERY_LIMIT));
+    parameters.set("filter", filter);
+    parameters.set("limit", String(limit));
     parameters.set("fields", "kind,metadata,spec");
     const document = await this.request(`/api/catalog/entities/by-query?${parameters.toString()}`);
     const rawItems = asRecord(document)["items"];
     const items = Array.isArray(rawItems) ? rawItems : [];
+    const entities: BackstageEntity[] = [];
     for (const item of items) {
-      let entity: BackstageEntity;
       try {
-        entity = parseBackstageEntity(item);
+        entities.push(parseBackstageEntity(item));
       } catch {
         continue;
       }
-      if (entity.repositorySlug === slug) return entity;
     }
-    return null;
+    return entities;
   }
 }

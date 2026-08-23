@@ -67,6 +67,22 @@ describe("parseBackstageEntity", () => {
   it("rejects a document that is not an entity", () => {
     expect(() => parseBackstageEntity({ kind: "Component" })).toThrow(/entity/);
   });
+
+  it("reads a repository slug from github.com/project-slug when source-location is absent", () => {
+    const entity = parseBackstageEntity({
+      metadata: {
+        uid: "uid-3",
+        etag: "etag-3",
+        name: "billing-service",
+        namespace: "default",
+        annotations: { "github.com/project-slug": "acme/billing-service" },
+      },
+      kind: "Component",
+      spec: { type: "service", owner: "team-a" },
+    });
+    expect(entity.repositorySlug).toBe("acme/billing-service");
+    expect(entity.repositoryUrl).toBeNull();
+  });
 });
 
 describe("BackstageCatalogClient", () => {
@@ -108,6 +124,58 @@ describe("BackstageCatalogClient", () => {
     // SDD section 18. The query is filtered and bounded. It is not a catalog dump.
     expect(url).toContain("filter=");
     expect(url).toContain("limit=");
+  });
+
+  it("finds the entity of a repository through the exact github.com/project-slug filter", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ items: [ENTITY] }), { status: 200 })));
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: fetchMock,
+    });
+    const entity = await client.findByRepositorySlug("acme/manuscript-service");
+    expect(entity?.ref).toBe("component:default/manuscript-service");
+    expect(fetchMock.mock.calls.length).toBe(1);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain("github.com/project-slug=acme/manuscript-service");
+    expect(decoded).toContain("limit=5");
+  });
+
+  it("falls back to the source-location scan when the exact query answers nothing", async () => {
+    const fetchMock = vi.fn((url: string | URL | Request) => {
+      const asText = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      const decoded = decodeURIComponent(asText);
+      const body = decoded.includes("github.com/project-slug")
+        ? { items: [] }
+        : { items: [ENTITY] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: fetchMock,
+    });
+    const entity = await client.findByRepositorySlug("acme/manuscript-service");
+    expect(entity?.ref).toBe("component:default/manuscript-service");
+    expect(fetchMock.mock.calls.length).toBe(2);
+    const [firstUrl] = fetchMock.mock.calls[0] as unknown as [string];
+    const [secondUrl] = fetchMock.mock.calls[1] as unknown as [string];
+    expect(decodeURIComponent(firstUrl)).toContain("github.com/project-slug=acme/manuscript-service");
+    const decodedSecond = decodeURIComponent(secondUrl);
+    expect(decodedSecond).toContain("metadata.annotations.backstage.io/source-location");
+    expect(decodedSecond).toContain("limit=50");
+  });
+
+  it("reports null for a repository slug neither query finds", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 })));
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: fetchMock,
+    });
+    expect(await client.findByRepositorySlug("acme/missing-repository")).toBeNull();
+    expect(fetchMock.mock.calls.length).toBe(2);
   });
 
   it("keeps the token out of the error message", async () => {
