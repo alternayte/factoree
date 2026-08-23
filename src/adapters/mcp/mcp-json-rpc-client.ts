@@ -1,3 +1,5 @@
+import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
+
 /**
  * SDD section 17 and SDD section 10. One MCP server, reached over JSON-RPC 2.0 on HTTP.
  * Controller decision 9: this is a small hand-written JSON-RPC client over `fetch`, not an npm
@@ -58,6 +60,8 @@ export interface McpJsonRpcClientOptions {
  */
 export class McpJsonRpcClient implements McpToolPort {
   private readonly endpoint: string;
+  /** The endpoint without its userinfo. SDD section 60 keeps a credential out of a message. */
+  private readonly safeEndpoint: string;
   private readonly token: string | null;
   private readonly fetchImpl: typeof fetch;
   private nextId = 1;
@@ -66,6 +70,7 @@ export class McpJsonRpcClient implements McpToolPort {
 
   constructor(options: McpJsonRpcClientOptions) {
     this.endpoint = options.endpoint;
+    this.safeEndpoint = withoutUrlCredentials(options.endpoint);
     this.token = options.token;
     this.fetchImpl = options.fetch;
   }
@@ -120,7 +125,7 @@ export class McpJsonRpcClient implements McpToolPort {
     const { body } = await this.send(method, params);
     if (!isRecord(body)) {
       throw new McpError(
-        `The MCP server at ${this.endpoint} answered "${method}" with a body that was not a JSON-RPC object.`,
+        `The MCP server at ${this.safeEndpoint} answered "${method}" with a body that was not a JSON-RPC object.`,
       );
     }
     const rpcBody = body as unknown as JsonRpcResponse;
@@ -129,7 +134,7 @@ export class McpJsonRpcClient implements McpToolPort {
     }
     if (!("result" in rpcBody)) {
       throw new McpError(
-        `The MCP server at ${this.endpoint} answered "${method}" with neither a result nor an error.`,
+        `The MCP server at ${this.safeEndpoint} answered "${method}" with neither a result nor an error.`,
       );
     }
     return rpcBody.result;

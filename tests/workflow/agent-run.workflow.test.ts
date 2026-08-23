@@ -461,6 +461,7 @@ describe("the refinement result the Run records", () => {
     // A transport fault the retry policy has already exhausted must not fail the Run over a
     // label read. The Run continues, and the autonomy level stays the Project default.
     const before = autonomyLevels.length;
+    const progressBefore = postedProgress.length;
     failingLabelReads.add("ses-label-fault");
     try {
       const result = await runWorker(async () => {
@@ -480,6 +481,15 @@ describe("the refinement result the Run records", () => {
       });
       expect(result.status).toBe("CANCELLED");
       expect(autonomyLevels.slice(before)).toEqual(["L2"]);
+      // The cap of SDD section 28 is a security control, so the degrade must be visible.
+      expect(
+        postedProgress
+          .slice(progressBefore)
+          .some(
+            (message) =>
+              message.includes("could not read the labels") && message.includes("risk cap"),
+          ),
+      ).toBe(true);
     } finally {
       failingLabelReads.delete("ses-label-fault");
     }

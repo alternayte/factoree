@@ -14,7 +14,7 @@ import {
   renderContextContract,
   validateContextContract,
 } from "./context-contract.js";
-import { topicsOf } from "./topics.js";
+import { topicsIn, topicsOf } from "./topics.js";
 
 import { linearDecisionRef } from "./decision-ref.js";
 
@@ -54,16 +54,6 @@ const compareCandidates = (a: ContextCandidate, b: ContextCandidate): number => 
   if (a.priority !== b.priority) return a.priority - b.priority;
   if (a.topics.length !== b.topics.length) return b.topics.length - a.topics.length;
   return a.reference.ref < b.reference.ref ? -1 : a.reference.ref > b.reference.ref ? 1 : 0;
-};
-
-/**
- * The topics that appear in one text. A source applies the same rule to a path. SDD section 23
- * needs a subject before it can pair two items, and a path alone names too few subjects. A README
- * and an ADR discuss one topic in their text, not in their names.
- */
-const topicsIn = (text: string, topics: string[]): string[] => {
-  const lower = text.toLowerCase();
-  return topics.filter((topic) => lower.includes(topic));
 };
 
 const mergeTopics = (left: string[], right: string[]): string[] =>
@@ -119,29 +109,46 @@ export class ContextResolver {
       input.primaryRepository.slug,
       ...input.referenceRepositories.map((repository) => repository.slug),
     ]);
-    const discovered: RepositoryRef[] = [];
+    const nominated: RepositoryRef[] = [];
     if (input.contextConfiguration.automaticReferenceDiscovery) {
       for (const candidate of candidates) {
-        if (discovered.length >= MAX_AUTOMATIC_REFERENCE_REPOSITORIES) break;
+        if (nominated.length >= MAX_AUTOMATIC_REFERENCE_REPOSITORIES) break;
         const repository = candidate.discoveredRepository;
         if (repository === undefined) continue;
         if (known.has(repository.slug)) continue;
         if (primaryHost === null || hostOf(repository.url) !== primaryHost) continue;
         known.add(repository.slug);
-        discovered.push({ slug: repository.slug, url: `${repository.url}.git`, ref: input.primaryRepository.ref });
+        nominated.push({ slug: repository.slug, url: `${repository.url}.git`, ref: input.primaryRepository.ref });
       }
     }
 
-    if (discovered.length > 0) {
-      // The repository source reads the extra repositories in a second pass. It repeats the
-      // primary, so the merge drops a reference it already holds. The reader caches one mirror
-      // per URL, so the repeat costs no second clone.
-      const second = await input.sources.get("repository").discover({
-        ...request,
-        referenceRepositories: discovered,
-      });
-      const seen = new Set(candidates.map((candidate) => candidate.reference.ref));
-      for (const candidate of second) {
+    // The repository source reads each extra repository in its own second pass. It repeats the
+    // primary, so the merge drops a reference it already holds. The reader caches one mirror per
+    // URL, so the repeat costs no second clone.
+    //
+    // Controller decision 13 and SDD section 19. A Backstage catalog entry can name a repository
+    // that is private, archived, renamed, gone, or on another default branch. That repository is
+    // not a repository the operator chose, so it must never fail the Run. One pass per repository
+    // keeps a bad entry from losing the good ones: the failed repository drops out of the
+    // discovered list, contributes no candidate, and the Run continues.
+    const discovered: RepositoryRef[] = [];
+    const seen = new Set(candidates.map((candidate) => candidate.reference.ref));
+    // The registry lookup stays outside the guard, because a missing repository source is a
+    // configuration fault of Factoree itself, not a fault of one catalog entry.
+    const repositorySource = nominated.length === 0 ? null : input.sources.get("repository");
+    for (const repository of nominated) {
+      if (repositorySource === null) break;
+      let found: ContextCandidate[];
+      try {
+        found = await repositorySource.discover({
+          ...request,
+          referenceRepositories: [repository],
+        });
+      } catch {
+        continue;
+      }
+      discovered.push(repository);
+      for (const candidate of found) {
         if (seen.has(candidate.reference.ref)) continue;
         seen.add(candidate.reference.ref);
         candidates.push(candidate);
@@ -255,11 +262,17 @@ export class ContextResolver {
           sha: shaBySlug.get(repository.slug) ?? "",
           reason: "a configured reference repository",
         })),
-        ...discovered.map((repository) => ({
-          repo: repository.slug,
-          sha: shaBySlug.get(repository.slug) ?? "",
-          reason: "the Backstage catalog names this repository as a location of a related component",
-        })),
+        // SDD section 20. A discovered repository reaches the contract only with an explicit
+        // SHA. A repository the second pass could not pin carries no row at all, because a
+        // reference row with an empty SHA is not a pinned repository.
+        ...discovered
+          .filter((repository) => (shaBySlug.get(repository.slug) ?? "").length > 0)
+          .map((repository) => ({
+            repo: repository.slug,
+            sha: shaBySlug.get(repository.slug) ?? "",
+            reason:
+              "the Backstage catalog names this repository as a location of a related component",
+          })),
       ],
       items,
       conflicts,

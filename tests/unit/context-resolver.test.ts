@@ -717,6 +717,98 @@ describe("automatic reference repository discovery", () => {
     ).toBe(true);
   });
 
+  it("drops a discovered repository the reader cannot read, and keeps the readable one", async () => {
+    // Controller decision 13 and SDD section 19. A stale catalog entry names a repository the
+    // reader cannot read. That entry must not fail the Run, and it must not lose the second
+    // repository the same catalog named.
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://git.test/acme/library.git": {
+        sha: "b".repeat(40),
+        files: { "README.md": "the library" },
+      },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource(
+          { slug: "acme/gone", url: "https://git.test/acme/gone.git" },
+          { slug: "acme/library", url: "https://git.test/acme/library.git" },
+        ),
+      ]),
+    });
+
+    // The Run still resolves, and the readable repository is still pinned.
+    expect(resolved.contract.referenceRepositories).toEqual([
+      {
+        repo: "acme/library",
+        sha: "b".repeat(40),
+        reason:
+          "the Backstage catalog names this repository as a location of a related component",
+      },
+    ]);
+    expect(resolved.pinned.references.map((repository) => repository.slug)).toEqual([
+      "acme/library",
+    ]);
+    // SDD section 20. No reference row carries an empty SHA.
+    expect(
+      resolved.contract.referenceRepositories.every((repository) => repository.sha.length === 40),
+    ).toBe(true);
+    // The unreadable repository contributes no repository candidate at all.
+    expect(
+      resolved.contract.items.some((item) => item.reference.repository === "acme/gone"),
+    ).toBe(false);
+  });
+
+  it("fetches a required item of a discovered repository the second pass pinned", async () => {
+    // Two discovered repositories, each read in its own pass. The pass of the second must not
+    // lose the pinned URL of the first, or a required item of the first becomes unreadable.
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://git.test/acme/library.git": {
+        sha: "b".repeat(40),
+        files: { "README.md": "the library retries a notification" },
+      },
+      "https://git.test/acme/tools.git": {
+        sha: "c".repeat(40),
+        files: { "README.md": "the tools" },
+      },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Retry a failed notification delivery.",
+      acceptanceCriteria: ["A failed notification is retried."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource(
+          { slug: "acme/library", url: "https://git.test/acme/library.git" },
+          { slug: "acme/tools", url: "https://git.test/acme/tools.git" },
+        ),
+      ]),
+    });
+
+    const item = resolved.contract.items.find(
+      (candidate) => candidate.reference.ref === "repository:acme/library:README.md",
+    );
+    expect(item?.classification).toBe("required");
+    expect(item?.contentSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it("adds no reference repository when only the discovered URL does not parse", async () => {
     const reader = new FakeRepositoryReader({
       "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },

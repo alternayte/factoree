@@ -130,6 +130,27 @@ describe("McpContextSource", () => {
     expect(calls[1]).toEqual({ name: "read_doc", args: { ref: "runbook/notification-retry" } });
   });
 
+  it("refuses to fetch a tool the Action Policy denies, and calls no tool", async () => {
+    // SDD section 58. The allow list names the discovery tool only, so the fetch tool is denied.
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const source = sourceOf(
+      calls,
+      { search_docs: ANSWER, read_doc: "retry after ten minutes" },
+      buildActionPolicy({ mcpAllowedTools: ["search_docs"] }),
+    );
+    await source.discover(request);
+    await expect(
+      source.fetch({
+        sourceId: "docs",
+        ref: "docs:runbook/notification-retry",
+        repository: null,
+        sha: null,
+        path: null,
+      }),
+    ).rejects.toThrow(/read_doc/);
+    expect(calls.map((call) => call.name)).toEqual(["search_docs"]);
+  });
+
   it("refuses a fetch for a reference it never offered", async () => {
     const source = sourceOf([], { search_docs: ANSWER });
     await source.discover(request);

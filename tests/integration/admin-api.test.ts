@@ -248,7 +248,34 @@ describe("the context source endpoints of SDD section 59", () => {
     otherTenantProjectId = otherCreated.json<{ id: string }>().id;
   });
 
+  it("refuses an endpoint that carries a credential", async () => {
+    // SDD section 60. The userinfo of the endpoint would reach a log line and an error message.
+    const refused = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "backstage-credential",
+        kind: "backstage",
+        endpoint: "https://operator:catalog-token@backstage.example.test",
+        settings: {},
+      },
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.body).toContain("user name or a password");
+    expect(refused.body).not.toContain("catalog-token");
+  });
+
   it("creates, lists, and deletes one source", async () => {
+    // The secret exists with a real value, so the assertion below has something to find.
+    const secretWritten = await app.inject({
+      method: "PUT",
+      url: `/admin/projects/${projectId}/secrets/BACKSTAGE_TOKEN?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: { value: "bs_super_secret_value_87654321" },
+    });
+    expect(secretWritten.statusCode).toBe(204);
+
     const created = await app.inject({
       method: "POST",
       url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
@@ -264,7 +291,8 @@ describe("the context source endpoints of SDD section 59", () => {
     expect(created.statusCode).toBe(201);
     expect(created.json<{ sourceId: string }>().sourceId).toBe("backstage");
     // SDD section 60. The response names the secret and never carries its value.
-    expect(created.body).not.toContain("secretValue");
+    expect(created.body).toContain("BACKSTAGE_TOKEN");
+    expect(created.body).not.toContain("bs_super_secret_value_87654321");
 
     const listed = await app.inject({
       method: "GET",
@@ -272,6 +300,7 @@ describe("the context source endpoints of SDD section 59", () => {
       headers: auth,
     });
     expect(listed.statusCode).toBe(200);
+    expect(listed.body).not.toContain("bs_super_secret_value_87654321");
     expect(listed.json<{ sourceId: string }[]>().map((row) => row.sourceId)).toEqual(["backstage"]);
 
     const deleted = await app.inject({

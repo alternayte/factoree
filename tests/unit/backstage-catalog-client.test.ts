@@ -187,4 +187,15 @@ describe("BackstageCatalogClient", () => {
     await expect(client.getByRef("component:default/a")).rejects.toThrow(/500/);
     await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/secret-token/);
   });
+  it("keeps a credential of the endpoint out of the error message", async () => {
+    // SDD section 60. The stored endpoint can carry userinfo, and the message names the URL.
+    const client = new BackstageCatalogClient({
+      endpoint: "https://operator:catalog-token@backstage.test",
+      token: null,
+      fetch: () => Promise.reject(new Error("connection refused")),
+    });
+    await expect(client.getByRef("component:default/a")).rejects.toThrow(/backstage.test/);
+    await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/catalog-token/);
+    await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/operator/);
+  });
 });

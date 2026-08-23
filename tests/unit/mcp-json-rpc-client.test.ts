@@ -111,4 +111,43 @@ describe("McpJsonRpcClient", () => {
     // Failed initialize, retried initialize, notifications/initialized, tools/call.
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
+  it("keeps a credential of the endpoint out of the error message", async () => {
+    // SDD section 60. The stored endpoint can carry userinfo, and two messages name the URL.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    const client = new McpJsonRpcClient({
+      endpoint: "https://operator:mcp-token@mcp.test/rpc",
+      token: null,
+      fetch: fetchMock,
+    });
+    await expect(client.callTool("search_docs", {})).rejects.toThrow(/mcp.test/);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://operator:mcp-token@mcp.test/rpc");
+  });
+
+  it("names no credential of the endpoint in the message it raises", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    const client = new McpJsonRpcClient({
+      endpoint: "https://operator:mcp-token@mcp.test/rpc",
+      token: null,
+      fetch: fetchMock,
+    });
+    await expect(client.callTool("search_docs", {})).rejects.not.toThrow(/mcp-token/);
+  });
 });

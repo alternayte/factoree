@@ -5,7 +5,7 @@ import type {
 import { parseBackstageEntity } from "~/adapters/backstage/backstage-catalog-client.js";
 import type { BackstageSourceSettings } from "~/domain/context/context-source-configuration.js";
 import { parseContextSourceSettings } from "~/domain/context/context-source-configuration.js";
-import { PRIMARY_SLUG, REFERENCE_SLUG } from "./context-fixture-repository.js";
+import { DISCOVERED_SLUG, PRIMARY_SLUG, REFERENCE_SLUG } from "./context-fixture-repository.js";
 
 /** The default Backstage source settings, typed narrowly so a test needs no cast. */
 export const backstageFixtureSettings = (): BackstageSourceSettings =>
@@ -71,8 +71,49 @@ const RAW_ENTITIES: unknown[] = [
  * `parseBackstageEntity`. It answers `findByRepositorySlug` and `getByRef` from that parsed set,
  * with no network involved.
  */
-export const buildBackstageFixtureCatalog = (): BackstageCatalogPort => {
+/**
+ * The entity of the repository the Project does not configure. The Phase 5 exit test turns it
+ * on, so every other test keeps the three entities above.
+ */
+const RAW_DISCOVERED_ENTITY: unknown = {
+  kind: "Component",
+  metadata: {
+    name: "audit-service",
+    namespace: "default",
+    etag: "etag-audit-service",
+    annotations: {
+      "backstage.io/source-location": `url:https://github.com/${DISCOVERED_SLUG}/tree/main/`,
+    },
+  },
+  spec: { type: "service" },
+};
+
+export interface BackstageFixtureCatalogOptions {
+  /**
+   * The clone URL of the fixture repository the catalog names. The parser derives a repository
+   * URL from `backstage.io/source-location`, and that annotation cannot express a temporary
+   * directory as an `owner/repo` URL. The fixture therefore parses the entity for real and then
+   * replaces the two location fields with the real fixture repository. A trailing `.git` is
+   * removed, because a catalog carries the browse URL and the resolver appends `.git` itself.
+   */
+  discoveredRepositoryUrl?: string;
+}
+
+export const buildBackstageFixtureCatalog = (
+  options: BackstageFixtureCatalogOptions = {},
+): BackstageCatalogPort => {
   const entities = RAW_ENTITIES.map((document) => parseBackstageEntity(document));
+  if (options.discoveredRepositoryUrl !== undefined) {
+    const url = options.discoveredRepositoryUrl.replace(/\.git$/, "");
+    entities.push({
+      ...parseBackstageEntity(RAW_DISCOVERED_ENTITY),
+      repositorySlug: DISCOVERED_SLUG,
+      repositoryUrl: url,
+    });
+    const root = entities[0];
+    if (root === undefined) throw new Error("the fixture catalog has no root entity");
+    entities[0] = { ...root, dependsOn: [...root.dependsOn, "component:default/audit-service"] };
+  }
   const byRef = new Map(entities.map((entity) => [entity.ref, entity]));
 
   return {

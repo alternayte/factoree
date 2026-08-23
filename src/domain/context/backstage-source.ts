@@ -11,6 +11,7 @@ import type {
   ContextSource,
 } from "./context-source.js";
 import { DISCOVERY_PRIORITY } from "./context-source.js";
+import { topicsIn } from "./topics.js";
 
 /** The stable reference of one catalog entity inside one Context Contract. */
 export const backstageEntityRef = (entityRef: string): string => `backstage:${entityRef}`;
@@ -20,11 +21,6 @@ export interface BackstageContextSourceOptions {
   catalog: BackstageCatalogPort;
   settings: BackstageSourceSettings;
 }
-
-const topicsIn = (text: string, topics: string[]): string[] => {
-  const lower = text.toLowerCase();
-  return topics.filter((topic) => lower.includes(topic));
-};
 
 /** The bare name of an entity reference, for a sentence a human reads. */
 const nameOf = (ref: string): string => ref.slice(ref.lastIndexOf("/") + 1);

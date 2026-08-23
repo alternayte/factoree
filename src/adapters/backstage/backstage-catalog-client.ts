@@ -1,3 +1,5 @@
+import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
+
 /**
  * SDD section 19. The Backstage Catalog is a topology source. This client reads it over the
  * Backstage Catalog HTTP API. SDD section 14 keeps a provider client in `src/adapters`, so
@@ -174,6 +176,7 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
 
   private async request(path: string): Promise<unknown> {
     const url = `${this.endpoint}${path}`;
+    const safeUrl = withoutUrlCredentials(url);
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.options.token !== null) headers["Authorization"] = `Bearer ${this.options.token}`;
 
@@ -185,19 +188,20 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
         signal: AbortSignal.timeout(BACKSTAGE_TIMEOUT_MS),
       });
     } catch (error) {
-      // SDD section 60. The message names the URL and never the header.
-      throw new BackstageCatalogError(`the Backstage request to ${url} failed`, { cause: error });
+      // SDD section 60. The message names the URL and never the header. A configured endpoint
+      // can carry userinfo, so the URL loses its credentials before it reaches a message.
+      throw new BackstageCatalogError(`the Backstage request to ${safeUrl} failed`, { cause: error });
     }
     if (response.status === 404) return null;
     if (!response.ok) {
       throw new BackstageCatalogError(
-        `the Backstage request to ${url} answered ${response.status}`,
+        `the Backstage request to ${safeUrl} answered ${response.status}`,
       );
     }
     try {
       return await response.json();
     } catch (error) {
-      throw new BackstageCatalogError(`the Backstage answer from ${url} is not JSON`, { cause: error });
+      throw new BackstageCatalogError(`the Backstage answer from ${safeUrl} is not JSON`, { cause: error });
     }
   }
 

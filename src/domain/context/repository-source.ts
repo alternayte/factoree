@@ -14,6 +14,7 @@ import type {
   RepositoryRef,
 } from "./context-source.js";
 import { DISCOVERY_PRIORITY } from "./context-source.js";
+import { topicsIn } from "./topics.js";
 
 export interface PathClassification {
   authority: AuthorityClass;
@@ -123,11 +124,6 @@ export const classifyPath = (path: string): PathClassification | null => {
   }
 
   return null;
-};
-
-const topicsIn = (path: string, topics: string[]): string[] => {
-  const lower = path.toLowerCase();
-  return topics.filter((topic) => lower.includes(topic));
 };
 
 export interface RepositoryContextSourceOptions {
@@ -253,8 +249,9 @@ export class RepositoryContextSource implements ContextSource {
   }
 
   async discover(request: ContextDiscoveryRequest): Promise<ContextCandidate[]> {
-    this.urls.clear();
-    this.shas.clear();
+    // The two maps are not cleared here. The resolver calls this source again for each
+    // automatically discovered repository, and `fetch` must still reach a repository an earlier
+    // pass pinned. Both maps are keyed by slug, so a repeated pass overwrites its own entry.
     const primary = await this.discoverRepository(request.primaryRepository, request, "primary");
     const references: ContextCandidate[] = [];
     for (const repository of request.referenceRepositories) {

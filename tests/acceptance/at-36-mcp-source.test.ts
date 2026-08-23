@@ -12,13 +12,19 @@ import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import type { ContextFixture } from "./support/context-fixture-repository.js";
 import { buildContextFixture } from "./support/context-fixture-repository.js";
 import type { McpFixtureServer } from "./support/mcp-fixture-server.js";
-import { MCP_FIXTURE_ITEM_REF } from "./support/mcp-fixture-server.js";
+import { MCP_FIXTURE_ITEM_REF, MCP_FIXTURE_SOURCE_VERSION } from "./support/mcp-fixture-server.js";
 import { start } from "./support/mcp-fixture-server.js";
 import { resolveFixtureContext } from "./support/resolve-fixture-context.js";
 
 let fixture: ContextFixture;
 let server: McpFixtureServer;
 let resolved: ResolvedContext;
+/**
+ * The tool calls the resolution above made, snapshotted at the end of `beforeAll`. A later test
+ * resolves again over the same server, so the assertion must not depend on the order in which
+ * vitest declares the cases.
+ */
+let callsOfResolution: Array<{ method: string; tool: string | null }>;
 const reader = new GitRepositoryReader();
 
 const buildMcpSource = (settings: McpSourceSettings): McpContextSource =>
@@ -71,6 +77,7 @@ beforeAll(async () => {
     buildMcpSource(settings),
   ]);
   resolved = await resolveFixtureContext({ fixture, reader, runId: "run-at-36", sources });
+  callsOfResolution = [...server.calls];
 });
 
 afterAll(async () => {
@@ -88,15 +95,16 @@ describe("AT-36 — the MCP context source", () => {
     const item = resolved.contract.items.find((candidate) => candidate.reference.sourceId === "docs");
     expect(item).toBeDefined();
     expect(item?.reference.ref).toBe(`docs:${MCP_FIXTURE_ITEM_REF}`);
-    expect(item?.sourceVersion).toBe("2026-02-01T00:00:00Z");
+    expect(item?.sourceVersion).toBe(MCP_FIXTURE_SOURCE_VERSION);
     expect(item?.authority).toBe("prose_documentation");
     expect(item?.reason).toContain('the MCP source "docs" reports:');
-    expect(["required", "reference"]).toContain(item?.classification);
+    // The document is small, so it fits the required budget of SDD section 21.
+    expect(item?.classification).toBe("required");
     expect(resolved.document).toContain(`docs:${MCP_FIXTURE_ITEM_REF}`);
   });
 
   it("makes exactly the two allow-listed tool calls and no other", () => {
-    expect(server.calls.filter((call) => call.tool !== null).map((call) => call.tool)).toEqual([
+    expect(callsOfResolution.filter((call) => call.tool !== null).map((call) => call.tool)).toEqual([
       "search_docs",
       "read_doc",
     ]);

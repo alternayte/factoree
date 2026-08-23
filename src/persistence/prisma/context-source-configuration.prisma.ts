@@ -61,11 +61,21 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
     assertContextSourceId(input.sourceId);
     const settings = parseContextSourceSettings(input.kind, input.settings);
     // The endpoint must be a URL an operator can repair now, not a fault inside a Run.
+    let endpoint: URL;
     try {
-      new URL(input.endpoint);
+      endpoint = new URL(input.endpoint);
     } catch {
       throw new ContextSourceConfigurationError(
         `The endpoint "${input.endpoint}" is not a valid URL.`,
+      );
+    }
+    // SDD section 60. A credential in the userinfo of the endpoint would reach a log line, an
+    // error message, and the Context Contract. The token belongs in a Project secret, which the
+    // source reads through `secretName`. The message never echoes the credential.
+    if (endpoint.username !== "" || endpoint.password !== "") {
+      throw new ContextSourceConfigurationError(
+        `The endpoint of the context source "${input.sourceId}" carries a user name or a ` +
+          "password. Remove the credential from the URL, and name a Project secret instead.",
       );
     }
     const data = {

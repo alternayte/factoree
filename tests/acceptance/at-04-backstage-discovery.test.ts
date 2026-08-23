@@ -13,6 +13,7 @@ import { ConfiguredContextSourceProvider } from "~/domain/context/context-source
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
 import { readRepositoryContextConfiguration } from "~/domain/context/repository-context-configuration.js";
+import type { RepositoryContextConfiguration } from "~/domain/context/repository-context-configuration.js";
 import { topicsOf } from "~/domain/context/topics.js";
 import { backstageFixtureSettings, buildBackstageFixtureCatalog } from "./support/backstage-fixture-catalog.js";
 import type { ContextFixture } from "./support/context-fixture-repository.js";
@@ -44,10 +45,19 @@ const withBackstage = (): ContextSourceRegistry =>
     }),
   ]);
 
-const topologyConfiguration = { backstageEnabled: true, automaticReferenceDiscovery: true };
+/**
+ * SDD section 15. The switch comes from the `.factoree/config.yaml` of the fixture repository,
+ * read through the real reader at the SHA the Run uses, never from a literal this test writes.
+ */
+let topologyConfiguration: RepositoryContextConfiguration;
 
 beforeAll(async () => {
   fixture = await buildContextFixture({ primaryConfig: CONTEXT_FIXTURE_CONFIG_WITH_TOPOLOGY });
+  topologyConfiguration = await readRepositoryContextConfiguration(reader, fixture.primaryUrl, "main");
+  expect(topologyConfiguration).toEqual({
+    backstageEnabled: true,
+    automaticReferenceDiscovery: true,
+  });
   resolved = await resolveFixtureContext({
     fixture,
     reader,

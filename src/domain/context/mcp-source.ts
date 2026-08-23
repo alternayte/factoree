@@ -9,6 +9,7 @@ import type {
   ContextSource,
 } from "./context-source.js";
 import { DISCOVERY_PRIORITY } from "./context-source.js";
+import { topicsIn } from "./topics.js";
 
 export interface McpContextSourceOptions {
   sourceId: string;
@@ -16,11 +17,6 @@ export interface McpContextSourceOptions {
   policy: ActionPolicy;
   tools: McpToolPort;
 }
-
-const topicsIn = (text: string, topics: string[]): string[] => {
-  const lower = text.toLowerCase();
-  return topics.filter((topic) => lower.includes(topic));
-};
 
 const isNonEmptyString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 

@@ -25,9 +25,6 @@ export interface LinearApi {
   issue(issueId: string): Promise<LinearIssueWithLabels | null>;
 }
 
-/** @deprecated Use `LinearApi`, which also carries the `issue` lookup of SDD section 28. */
-export type AgentActivityCreator = LinearApi;
-
 export class LinearAgentClient implements AgentSessionPort {
   constructor(private readonly client: LinearApi) {}
 

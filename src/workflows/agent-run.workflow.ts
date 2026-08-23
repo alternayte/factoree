@@ -475,7 +475,19 @@ export async function agentRunWorkflow(
           labels = await activities.fetchWorkItemLabels({ sessionId: input.agentSessionId, issueId });
         } catch (error) {
           if (isCancellation(error)) throw error;
-          labels = [];
+          // The webhook labels are never worse than an empty list, so the fallback keeps them.
+          labels = input.workItem.labels;
+          // The cap of SDD section 28 is a security control, so a degraded cap must be visible.
+          // A Linear fault must not fail the Run either, so the post stays inside `notify`.
+          await notify(() =>
+            activities.postProgress({
+              sessionId: input.agentSessionId,
+              message:
+                "Factoree could not read the labels of this Work Item. The risk cap of the " +
+                "autonomy level could not be applied. The Run continues at the autonomy level " +
+                "of the Project.",
+            }),
+          );
         }
       }
 
