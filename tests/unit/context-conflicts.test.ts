@@ -127,6 +127,62 @@ describe("detectConflicts", () => {
     expect(settled?.reason).toBe("a recorded human decision settles this subject");
   });
 
+  it("lets a decision recorded against one subject leave another subject unresolved", () => {
+    // SDD section 23 makes a human answer decisive for the question Factoree asked. The answer
+    // carries that subject only, so a second subject the human never saw stays open.
+    const conflicts = detectConflicts(
+      [
+        item("docs/ADR-031.md", "accepted_adr", ["notification"]),
+        item("docs/ADR-042.md", "accepted_adr", ["notification"]),
+        item("docs/ADR-051.md", "accepted_adr", ["billing"]),
+        item("docs/ADR-052.md", "accepted_adr", ["billing"]),
+        item("linear:decision:subject:billing", "work_item_decision", ["billing"], "required"),
+      ],
+      { decisionRefs: ["linear:decision:subject:billing"] },
+    );
+    const billing = conflicts.find((conflict) => conflict.subject === "billing");
+    expect(billing?.resolution).toBe("resolved");
+    expect(billing?.reason).toBe("a recorded human decision settles this subject");
+    const notification = conflicts.find((conflict) => conflict.subject === "notification");
+    expect(notification?.resolution).toBe("unresolved");
+    expect(notification?.winnerRef).toBeNull();
+  });
+
+  it("keeps the authority ladder reason when an unrelated decision exists", () => {
+    const conflicts = detectConflicts(
+      [
+        item("docs/ADR-031.md", "accepted_adr", ["notification"]),
+        item("README.md", "repository_readme", ["notification"]),
+        item("linear:decision:subject:billing", "work_item_decision", ["billing"], "required"),
+      ],
+      { decisionRefs: ["linear:decision:subject:billing"] },
+    );
+    expect(conflicts).toEqual([
+      {
+        id: "CTX-1",
+        subject: "notification",
+        winnerRef: "docs/ADR-031.md",
+        loserRef: "README.md",
+        reason: "accepted ADR has higher architecture authority than repository README",
+        resolution: "resolved",
+      },
+    ]);
+  });
+
+  it("settles nothing for a recorded answer that carries no subject", () => {
+    // A refinement answer settles no conflict, so the Linear source gives it no topic. It stays
+    // a required context item, and every conflict stays open.
+    const conflicts = detectConflicts(
+      [
+        item("docs/ADR-031.md", "accepted_adr", ["notification"]),
+        item("docs/ADR-042.md", "accepted_adr", ["notification"]),
+        item("linear:decision:Q-1", "work_item_decision", [], "required"),
+      ],
+      { decisionRefs: ["linear:decision:Q-1"] },
+    );
+    expect(conflicts.map((conflict) => conflict.resolution)).toEqual(["unresolved"]);
+  });
+
   it("records no conflict between the Work Item body and a recorded answer to it", () => {
     // Both carry `work_item_decision` and every topic of the Run. A recorded answer is an
     // override, not a competitor, so the pair must produce nothing.

@@ -98,6 +98,11 @@ export interface DetectConflictsOptions {
  * the ordinary domain pairing found. The caller names those decision items through
  * `decisionRefs`. Only a recorded answer settles a subject, and the Work Item body is not one.
  *
+ * A recorded answer carries the subject of the conflict it settled, and no other topic. SDD
+ * section 23 makes a human answer decisive for the question Factoree asked. One answer therefore
+ * settles one subject. It never settles a second subject, and it never settles a conflict in
+ * another authority domain that no human ever saw.
+ *
  * A recorded decision never enters a pair. It is an override, not a competitor, so it cannot
  * conflict with the Work Item body or with a second answer. This second rule is a subject
  * check, not a pairing. The rule applies to every pair, not only to an unresolved pair. It is

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,9 +64,23 @@ export class RepositoryReadError extends Error {
 /** A stable directory name for one URL. The URL itself can hold a credential, so the reader hashes it. */
 const mirrorName = (url: string): string => createHash("sha256").update(url).digest("hex").slice(0, 32);
 
+/** Test-only knobs. Production uses the module constants. */
+export interface GitRepositoryReaderOptions {
+  /**
+   * The tree entry ceiling. A test lowers it, because a fixture repository with the production
+   * number of files is too slow to create. Production never sets it.
+   */
+  maxTreeEntries?: number;
+}
+
 export class GitRepositoryReader implements RepositoryReader {
   private root: string | null = null;
   private readonly mirrors = new Map<string, Promise<string>>();
+  private readonly maxTreeEntries: number;
+
+  constructor(options: GitRepositoryReaderOptions = {}) {
+    this.maxTreeEntries = options.maxTreeEntries ?? MAX_TREE_ENTRIES;
+  }
 
   private workspace(): string {
     this.root ??= mkdtempSync(join(tmpdir(), "factoree-context-"));
@@ -163,33 +177,102 @@ export class GitRepositoryReader implements RepositoryReader {
 
   async listTree(url: string, sha: string): Promise<TreeListing> {
     const path = await this.mirror(url);
+    const subject = `the tree of ${withoutUrlCredentials(url)} at ${sha} could not be listed`;
     // `-z` ends each record with a NUL byte instead of a newline, so git never quotes or
     // C-escapes a path. Without `-z`, a non-ASCII byte or a control character in a path comes
     // back rewritten, and a stored path then fails to match the real file at a later read.
-    const stdout = await this.git(
-      path,
-      ["ls-tree", "-r", "-l", "-z", "--full-tree", sha],
-      `the tree of ${withoutUrlCredentials(url)} at ${sha} could not be listed`,
-    );
+    //
+    // The reader consumes the output as a stream and stops at the entry ceiling. A buffered read
+    // reaches its own byte ceiling first on a very large repository, and that ceiling throws
+    // instead of a truncation. SDD section 18 requires the truncation, so the entry ceiling must
+    // be the only limit the reader hits.
+    const child = spawn("git", ["ls-tree", "-r", "-l", "-z", "--full-tree", sha], {
+      cwd: path,
+      // A private repository must fail immediately instead of a wait for a password. No
+      // interactive helper runs.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
     const entries: TreeEntry[] = [];
     let truncated = false;
-    for (const record of stdout.split("\0")) {
-      if (record === "") continue;
-      if (entries.length >= MAX_TREE_ENTRIES) {
+    let pending = "";
+    let stderr = "";
+    let stopped = false;
+
+    const take = (record: string): void => {
+      if (record === "") return;
+      if (entries.length >= this.maxTreeEntries) {
         truncated = true;
-        break;
+        return;
       }
       // Format: `<mode> <type> <object> <size>\t<path>`. The path itself can hold a tab, so the
       // split stops at the first tab only, and everything after it is the path.
       const tab = record.indexOf("\t");
-      if (tab < 0) continue;
+      if (tab < 0) return;
       const meta = record.slice(0, tab);
       const entryPath = record.slice(tab + 1);
       const size = meta.trim().split(/\s+/)[3] ?? "-";
       // A submodule entry reports its size as `-`, because a submodule has no blob of its own
       // in this repository. The reader excludes it, because there is no byte count to report.
-      if (entryPath === "" || size === "-") continue;
+      if (entryPath === "" || size === "-") return;
       entries.push({ path: entryPath, sizeBytes: Number.parseInt(size, 10) });
+    };
+
+    const outcome = await new Promise<{ ok: boolean; detail: string }>((resolve) => {
+      const timer = setTimeout(() => {
+        stopped = true;
+        child.kill("SIGKILL");
+        resolve({ ok: false, detail: `the read timed out after ${GIT_READ_TIMEOUT_MS} ms` });
+      }, GIT_READ_TIMEOUT_MS);
+
+      const finish = (result: { ok: boolean; detail: string }): void => {
+        clearTimeout(timer);
+        resolve(result);
+      };
+
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        // The message stays bounded, because a caller only needs the reason.
+        if (stderr.length < 8_192) stderr += chunk;
+      });
+      child.stdout.on("data", (chunk: string) => {
+        if (stopped) return;
+        pending += chunk;
+        let cut = pending.indexOf("\0");
+        while (cut >= 0) {
+          take(pending.slice(0, cut));
+          pending = pending.slice(cut + 1);
+          cut = pending.indexOf("\0");
+        }
+        // The ceiling is reached, so the reader stops git rather than a read of the whole tree.
+        if (truncated) {
+          stopped = true;
+          pending = "";
+          child.kill("SIGTERM");
+          finish({ ok: true, detail: "" });
+        }
+      });
+      child.on("error", (error: Error) => {
+        stopped = true;
+        finish({ ok: false, detail: String(error) });
+      });
+      child.on("close", (code: number | null) => {
+        if (stopped) return;
+        // The last record of `-z` output also ends with a NUL byte, so `pending` is normally
+        // empty here. A final record without one is still taken.
+        take(pending);
+        pending = "";
+        if (code === 0) finish({ ok: true, detail: "" });
+        else finish({ ok: false, detail: `git exited with code ${String(code)}: ${stderr.trim()}` });
+      });
+    });
+
+    if (!outcome.ok) {
+      // SDD section 60. A clone URL can carry an access token, and that token is not a Project
+      // secret. This removal is the only guard that keeps the token out of the message.
+      throw new RepositoryReadError(withoutUrlCredentials(`${subject}: ${outcome.detail}`));
     }
     return { entries, truncated };
   }

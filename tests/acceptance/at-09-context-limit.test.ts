@@ -46,12 +46,15 @@ describe("AT-09 — the context limit", () => {
     expect(repository?.classification).toBe("discoverable");
 
     // The large file is above the context budget, so it stays out of the initial role context
-    // and stays visible to a human and to a tool.
+    // and stays visible to a human and to a tool. SDD section 21 names that state `reference`:
+    // the Context Contract document summarizes the item, and the prompt never preloads its line.
+    // `discoverable` names an item only a sandbox tool reaches, which the repository above is.
+    // The second test of this file proves the "not preloaded" part against the real prompt.
     const large = resolved.contract.items.find(
       (item) => item.reference.path === LARGE_FILE_PATH,
     );
     expect(large).toBeDefined();
-    expect(large?.classification).toBe("discoverable");
+    expect(large?.classification).toBe("reference");
     expect(large?.reference.sha).toBe(fixture.primarySha);
     // The context budget excluded it before any read. The resolver never fetched the file, so
     // the large content never entered the control plane at all.

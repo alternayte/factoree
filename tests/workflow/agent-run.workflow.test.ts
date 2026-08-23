@@ -24,7 +24,11 @@ const {
   failingImplementations,
   cancelledLiveSessions,
   postedErrors,
+  postedProgress,
+  autonomyLevels,
   configurationFaults,
+  projectInput,
+  workItemInput,
   input,
   runWorker,
 } = harness;
@@ -389,3 +393,74 @@ describe("an Implementer that ends because the Run budget ended", () => {
   });
 });
 
+
+describe("the refinement result the Run records", () => {
+  it("records the capped autonomy level, not the Project default (SDD section 28)", async () => {
+    // The Project default is L3. The Work Item carries a high-risk label, so SDD section 28 caps
+    // the level at L2. The Run row must hold the capped level, because that level governs the
+    // Run. The Run row is created before Refinement runs, so it first holds L3.
+    const before = autonomyLevels.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-autonomy"),
+        args: [
+          {
+            ...input("ses-autonomy"),
+            autonomyLevel: "L3",
+            project: { ...projectInput, defaultAutonomy: "L3" },
+            workItem: { ...workItemInput, labels: ["security"] },
+          },
+        ],
+      });
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    expect(autonomyLevels.slice(before)).toEqual(["L2"]);
+  });
+
+  it("reports every refinement risk to the human (SDD section 8)", async () => {
+    const before = postedProgress.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-risks"),
+        args: [
+          {
+            ...input("ses-risks"),
+            workItem: { ...workItemInput, labels: ["security"] },
+          },
+        ],
+      });
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    const message = postedProgress.slice(before).find((entry) => entry.startsWith("Refinement found"));
+    expect(message).toBeDefined();
+    // The message names the risk in plain words, not as the internal token.
+    expect(message).toContain('The Work Item carries the high-risk label "security".');
+    expect(message).toContain("The Work Item states no acceptance criterion.");
+  });
+
+  it("posts no risk message when refinement found no risk", async () => {
+    const before = postedProgress.length;
+    await runWorker(async () => {
+      const handle = await environment.client.workflow.start(agentRunWorkflow, {
+        taskQueue: "test",
+        workflowId: buildWorkflowId("workspace-123", "ses-no-risks"),
+        args: [
+          {
+            ...input("ses-no-risks"),
+            workItem: {
+              ...workItemInput,
+              description: "## Goal\n\nAdd the health endpoint.\n\n## Acceptance criteria\n\n- The endpoint answers.\n",
+            },
+          },
+        ],
+      });
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+    expect(postedProgress.slice(before).filter((entry) => entry.startsWith("Refinement found"))).toEqual([]);
+  });
+});

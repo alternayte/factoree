@@ -17,6 +17,7 @@ const activities = {
     return { runId: `run-${input.linearAgentSessionId}`, created: createCalls.length === 1 };
   },
   setRunStatus: async () => undefined,
+  setRunAutonomyLevel: async () => undefined,
   completeRun: async (input: { runId: string }) => {
     completions.push(input.runId);
   },

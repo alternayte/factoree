@@ -84,6 +84,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const verifyOutcomes = new Map<string, (attempt: number) => boolean>();
   /** Every question the workflow elicited, in order. */
   const elicitations: string[] = [];
+  /** Every autonomy level the workflow wrote to the Run after Refinement, in order. */
+  const autonomyLevels: string[] = [];
   /** Every recorded `refine` call. */
   const refineCalls: RefineActivityInput[] = [];
   /** Every recorded `resolveContext` call. */
@@ -123,6 +125,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     setRunStatus: async (input: { runId: string; status: string; repairCount?: number }) => {
       statuses.push(input.status);
       statusCalls.push(input);
+    },
+    setRunAutonomyLevel: async (input: { autonomyLevel: string }) => {
+      autonomyLevels.push(input.autonomyLevel);
     },
     completeRun: async (input: CompletionCall) => {
       completions.push(input);
@@ -361,6 +366,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     runtimeOverrides,
     verifyOutcomes,
     elicitations,
+    autonomyLevels,
     refineCalls,
     contextCalls,
     refineOverrides,

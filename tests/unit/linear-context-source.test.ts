@@ -43,6 +43,29 @@ describe("LinearContextSource", () => {
     expect(decision?.authority).toBe("work_item_decision");
     expect(decision?.suggestedClassification).toBe("required");
     expect(decision?.reason).toBe('a human answered "Do we retry a 4xx response?"');
+    // A refinement answer settles no conflict, so it carries no topic.
+    expect(decision?.topics).toEqual([]);
+  });
+
+  it("gives a conflict answer the subject it settled and no other topic", async () => {
+    const candidates = await new LinearContextSource().discover(
+      request({
+        decisions: [
+          {
+            questionId: "CTX-1",
+            question: "Which one governs notification?",
+            answer: "The ADR.",
+            subject: "notification",
+          },
+        ],
+      }),
+    );
+    // The reference comes from the subject, because a conflict identifier is not unique across
+    // the rounds of one Run.
+    const decision = candidates.find(
+      (candidate) => candidate.reference.ref === "linear:decision:subject:notification",
+    );
+    expect(decision?.topics).toEqual(["notification"]);
   });
 
   it("offers a declared link as a discoverable item", async () => {

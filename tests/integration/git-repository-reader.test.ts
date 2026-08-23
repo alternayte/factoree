@@ -97,6 +97,33 @@ describe("GitRepositoryReader", () => {
     await expect(reader.readBlob(origin, headSha, "big.bin")).resolves.toBeNull();
   });
 
+  it("truncates a tree that holds more entries than the ceiling", async () => {
+    // The production ceiling is 5,000 entries. A fixture repository of that size is slow to
+    // create, so the test lowers the ceiling through the test-only option. Production keeps
+    // `MAX_TREE_ENTRIES`. The point of the test is that the entry ceiling is the limit the
+    // reader hits, and that a buffer ceiling never turns a large tree into a failure.
+    const ceiling = 25;
+    const wide = join(root, "wide");
+    mkdirSync(wide, { recursive: true });
+    for (let index = 0; index < ceiling * 4; index += 1) {
+      writeFileSync(join(wide, `file-${String(index)}.txt`), `${String(index)}\n`);
+    }
+    git(wide, "init", "--initial-branch", "main");
+    git(wide, "add", ".");
+    git(wide, "commit", "-m", "wide");
+    const wideSha = git(wide, "rev-parse", "HEAD").trim();
+
+    const localReader = new GitRepositoryReader({ maxTreeEntries: ceiling });
+    try {
+      const tree = await localReader.listTree(wide, wideSha);
+      expect(tree.truncated).toBe(true);
+      expect(tree.entries.length).toBe(ceiling);
+      expect(new Set(tree.entries.map((entry) => entry.path)).size).toBe(ceiling);
+    } finally {
+      localReader.close();
+    }
+  });
+
   it("does not modify the source repository", async () => {
     await reader.listTree(origin, headSha);
     await reader.readBlob(origin, headSha, "README.md");

@@ -15,11 +15,7 @@ import {
 } from "./context-contract.js";
 import { topicsOf } from "./topics.js";
 
-/**
- * The stable reference the Linear context source gives to a recorded human answer. SDD section 23
- * makes the answer a Run decision, and the resolver names it by this reference.
- */
-const LINEAR_DECISION_PREFIX = "linear:decision:";
+import { linearDecisionRef } from "./linear-source.js";
 
 export interface ResolveContextInput {
   runId: string;
@@ -116,7 +112,8 @@ export class ContextResolver {
       // repository by path inside the sandbox, and AT-09 requires exactly that. A repository is
       // therefore `discoverable`: a tool reaches it, and the prompt never holds it. Every other
       // candidate a source offered as `required` or `reference` competes for the budget. A
-      // candidate that does not fit becomes `discoverable` too. No candidate is ever dropped.
+      // candidate that does not fit becomes `reference`: the Context Contract document names it,
+      // and the prompt never preloads its line. No candidate is ever dropped.
       const isRepository =
         candidate.reference.path === null && candidate.reference.repository !== null;
       const competes =
@@ -132,7 +129,7 @@ export class ContextResolver {
         const fits =
           requiredCount < CONTEXT_REQUIRED_MAX_ITEMS &&
           requiredBytes + size <= CONTEXT_REQUIRED_MAX_BYTES;
-        classification = fits ? "required" : "discoverable";
+        classification = fits ? "required" : "reference";
         if (fits) {
           requiredCount += 1;
           requiredBytes += size;
@@ -182,9 +179,7 @@ export class ContextResolver {
     // one. The stable reference of an answer is the reliable key. A source version is not: the
     // Work Item body records the Run identifier, and a Run identifier can equal a question
     // identifier.
-    const answerRefs = new Set(
-      input.decisions.map((decision) => `${LINEAR_DECISION_PREFIX}${decision.questionId}`),
-    );
+    const answerRefs = new Set(input.decisions.map(linearDecisionRef));
     const decisionRefs = items
       .filter((item) => answerRefs.has(item.reference.ref))
       .map((item) => item.reference.ref);

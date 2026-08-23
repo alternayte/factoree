@@ -161,7 +161,11 @@ describe("ContextResolver", () => {
       const item = resolved.contract.items.find(
         (candidate) => candidate.reference.path === path,
       );
-      expect(item?.classification).toBe("discoverable");
+      // SDD section 21. A candidate that competed for the required budget and did not fit is
+      // `reference`: the Context Contract document names it, and the prompt never preloads its
+      // line. `discoverable` names an item only a sandbox tool reaches, which a repository file
+      // that lost the budget race is not.
+      expect(item?.classification).toBe("reference");
     }
   });
 
@@ -238,7 +242,15 @@ describe("ContextResolver", () => {
     const resolved = await build().resolve(
       input({
         runId: "run-1",
-        decisions: [{ questionId: "run-1", question: "Retry a 4xx?", answer: "No." }],
+        decisions: [
+          { questionId: "run-1", question: "Retry a 4xx?", answer: "No." },
+          {
+            questionId: "CTX-1",
+            question: "Which one governs notification?",
+            answer: "The ADR.",
+            subject: "notification",
+          },
+        ],
       }),
     );
     expect(
@@ -246,10 +258,96 @@ describe("ContextResolver", () => {
         (conflict) => conflict.winnerRef === "linear:issue:run-1",
       ),
     ).toEqual([]);
+    // The answer that settles a subject is the one recorded against that subject. The refinement
+    // answer, whose source version collides with the Run identifier, settles nothing.
     const settled = resolved.contract.conflicts.find(
-      (conflict) => conflict.winnerRef === "linear:decision:run-1",
+      (conflict) => conflict.winnerRef === "linear:decision:subject:notification",
     );
     expect(settled?.reason).toBe("a recorded human decision settles this subject");
+    expect(
+      resolved.contract.conflicts.filter(
+        (conflict) => conflict.winnerRef === "linear:decision:run-1",
+      ),
+    ).toEqual([]);
+  });
+
+  // Two independent conflicts of one Run. Each pair sits in the architecture domain, holds one
+  // topic, and holds no topic of the other pair. So the pairs never cross, and each pair raises
+  // one unresolved conflict of its own subject.
+  const twoSubjects = {
+    "docs/ADR-031.md": "Status: accepted\n\nThe notification is owned here.\n",
+    "docs/ADR-042.md": "Status: accepted\n\nThe notification is owned elsewhere.\n",
+    "docs/ADR-051.md": "Status: accepted\n\nThe billing is owned here.\n",
+    "docs/ADR-052.md": "Status: accepted\n\nThe billing is owned elsewhere.\n",
+  };
+  const twoSubjectInput = (decisions: ResolveContextInput["decisions"]): ResolveContextInput =>
+    input({
+      goal: "Retry a failed notification delivery and correct the billing invoice.",
+      acceptanceCriteria: ["A failed notification is retried.", "The billing invoice is correct."],
+      decisions,
+    });
+
+  it("leaves a second subject unresolved after a decision on the first subject", async () => {
+    const resolved = await build({ primary: twoSubjects }).resolve(
+      twoSubjectInput([
+        {
+          questionId: "CTX-1",
+          question: "Which one governs billing?",
+          answer: "ADR-051 governs it.",
+          subject: "billing",
+        },
+      ]),
+    );
+    const billing = resolved.contract.conflicts.find((conflict) => conflict.subject === "billing");
+    expect(billing?.resolution).toBe("resolved");
+    expect(billing?.reason).toBe("a recorded human decision settles this subject");
+    // The human never saw this question, so the answer must not settle it.
+    const notification = resolved.contract.conflicts.find(
+      (conflict) => conflict.subject === "notification",
+    );
+    expect(notification?.resolution).toBe("unresolved");
+    expect(resolved.unresolvedConflict?.subject).toBe("notification");
+  });
+
+  it("keeps two answers to two conflicts that carry the same conflict identifier", async () => {
+    // Factoree numbers a conflict after a sort of one resolution, so two rounds of one Run can
+    // each answer a conflict named `CTX-1`. The recorded reference comes from the subject, so the
+    // two answers never collide, and the contract validator accepts both.
+    const resolved = await build({ primary: twoSubjects }).resolve(
+      twoSubjectInput([
+        {
+          questionId: "CTX-1",
+          question: "Which one governs billing?",
+          answer: "ADR-051 governs it.",
+          subject: "billing",
+        },
+        {
+          questionId: "CTX-1",
+          question: "Which one governs notification?",
+          answer: "ADR-031 governs it.",
+          subject: "notification",
+        },
+      ]),
+    );
+    expect(
+      resolved.contract.items
+        .map((item) => item.reference.ref)
+        .filter((ref) => ref.startsWith("linear:decision:")),
+    ).toEqual(["linear:decision:subject:billing", "linear:decision:subject:notification"]);
+    expect(resolved.unresolvedConflict).toBeNull();
+  });
+
+  it("settles no conflict for an answer to a refinement question", async () => {
+    const resolved = await build({ primary: twoSubjects }).resolve(
+      twoSubjectInput([{ questionId: "Q-1", question: "Retry a 4xx?", answer: "No." }]),
+    );
+    expect(
+      resolved.contract.conflicts.every((conflict) => conflict.resolution === "unresolved"),
+    ).toBe(true);
+    // The answer stays a required context item, although it settles nothing.
+    expect(resolved.contract.items.map((item) => item.reference.ref)).toContain(
+      "linear:decision:Q-1",
+    );
   });
 
   it("returns a deterministic contract for the same input", async () => {
@@ -296,7 +394,9 @@ describe("ContextResolver topic enrichment", () => {
     const item = resolved.contract.items.find(
       (candidate) => candidate.reference.path === "docs/ADR-031-notification.md",
     );
-    expect(item?.classification).toBe("discoverable");
+    // A candidate that lost the budget race is `reference`, not `discoverable`. See SDD
+    // section 21 and the byte budget test above.
+    expect(item?.classification).toBe("reference");
     expect(item?.topics).toEqual(["notification"]);
   });
 });

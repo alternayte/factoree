@@ -25,6 +25,9 @@ import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-e
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { buildRepositoryUrl } from "../domain/projects/repository-url.js";
+// The workflow bundler resolves a relative path only, so this value import does not use the
+// `~/` alias either.
+import { renderRisks } from "../domain/refinement/risk.js";
 
 export interface AgentRunProjectInput {
   primaryRepository: string;
@@ -295,7 +298,15 @@ export async function agentRunWorkflow(
    * when the Run must end instead, so every caller must check the result. The remaining Run
    * budget bounds the wait, and a stop signal ends it as well.
    */
-  const askAndWait = async (questionId: string, question: string): Promise<boolean> => {
+  const askAndWait = async (
+    questionId: string,
+    question: string,
+    /**
+     * SDD section 23. The conflict subject this question asks about. The answer settles that
+     * subject only. A refinement question settles no conflict, so the caller passes no subject.
+     */
+    subject?: string,
+  ): Promise<boolean> => {
     if (questionRounds >= MAX_QUESTION_ROUNDS) return false;
     // The count is read before the first await. A human can answer as soon as the Run reports
     // WAITING_FOR_INPUT, which happens before the elicitation reaches Linear. An answer that
@@ -315,7 +326,12 @@ export async function agentRunWorkflow(
     if (!answered || stopRequested) return false;
     // One human input answers the open question only. SDD section 23 permits one question at a
     // time, so the last input belongs to this question.
-    decisions.push({ questionId, question, answer: humanInputs[humanInputs.length - 1] ?? "" });
+    decisions.push({
+      questionId,
+      question,
+      answer: humanInputs[humanInputs.length - 1] ?? "",
+      ...(subject === undefined ? {} : { subject }),
+    });
     return true;
   };
 
@@ -473,6 +489,25 @@ export async function agentRunWorkflow(
         refined = await refineActivities.refine(refinementInput());
       }
 
+      // SDD section 28. Refinement caps the autonomy level of the Run. The Run row was created
+      // before Refinement ran, so it still holds the raw Project default. The capped level is
+      // the level that governs the Run, so it reaches the row here.
+      await activities.setRunAutonomyLevel({
+        tenantId: input.tenantId,
+        runId: id,
+        autonomyLevel: refined.autonomyLevel,
+      });
+
+      // SDD section 8. Refinement reports a risk that a human must see. Factoree does not block
+      // the Run on one, so the report is the only place a human learns of it. An empty list
+      // produces no message.
+      const riskMessage = renderRisks(refined.risks);
+      if (riskMessage !== null) {
+        await notify(() =>
+          activities.postProgress({ sessionId: input.agentSessionId, message: riskMessage }),
+        );
+      }
+
       // SDD section 20. Discovery pins one SHA for each repository. The ref below is the ref
       // discovery starts from. The checkout later uses the pinned SHA.
       const repositoryRef = (slug: string) => ({
@@ -514,7 +549,7 @@ export async function agentRunWorkflow(
         if (conflict === null) break;
 
         // SDD section 23. No safe resolution exists, so implementation must not start.
-        const proceeded = await askAndWait(conflict.id, conflict.question);
+        const proceeded = await askAndWait(conflict.id, conflict.question, conflict.subject);
         if (stopRequested) return await cancelRun();
         if (!proceeded) {
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);

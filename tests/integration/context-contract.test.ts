@@ -6,6 +6,7 @@ import type { ContextContract } from "~/domain/context/context-contract.js";
 import { validateContextContract } from "~/domain/context/context-contract.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { startDatabase, seedTenantProjectAndRun } from "./support/database.js";
+import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 
 const SHA_A = "a".repeat(40);
 const CONTENT_SHA = "c".repeat(64);
@@ -222,5 +223,48 @@ describe("PrismaRunRepository.setContextContractVersion", () => {
     await expect(
       runs.setContextContractVersion(tenantId, "00000000-0000-0000-0000-000000000000", FIRST_SHA256),
     ).rejects.toThrow(/received the Context Contract version/);
+  });
+});
+
+describe("PrismaRunRepository.setAutonomyLevel", () => {
+  it("ends the Run at the capped level, not at the Project default (SDD section 28)", async () => {
+    // The Run row starts at the raw Project default, because `createRun` happens before
+    // Refinement. Refinement caps a high-risk Work Item at L2, and the capped level is the level
+    // that governs the Run.
+    await runs.setAutonomyLevel(tenantId, runId, "L3");
+    expect((await runs.findById(tenantId, runId))?.autonomyLevel).toBe("L3");
+
+    const refined = new RefinementEngine().refine({
+      source: {
+        issueId: "issue-1",
+        title: "Rotate the signing key",
+        description: "## Goal\n\nRotate the signing key.\n",
+        url: null,
+        labels: ["security"],
+      },
+      project: {
+        primaryRepository: "acme/demo",
+        referenceRepositories: [],
+        defaultAutonomy: "L3",
+      },
+      decisions: [],
+    });
+    expect(refined.autonomyLevel).toBe("L2");
+
+    await runs.setAutonomyLevel(tenantId, runId, refined.autonomyLevel);
+    expect((await runs.findById(tenantId, runId))?.autonomyLevel).toBe("L2");
+  });
+
+  it("throws for a Run of another tenant, and writes nothing", async () => {
+    await expect(runs.setAutonomyLevel(otherTenantId, runId, "L0")).rejects.toThrow(
+      /received the autonomy level/,
+    );
+    expect((await runs.findById(tenantId, runId))?.autonomyLevel).toBe("L2");
+  });
+
+  it("throws for a Run identifier that does not exist", async () => {
+    await expect(
+      runs.setAutonomyLevel(tenantId, "00000000-0000-0000-0000-000000000000", "L1"),
+    ).rejects.toThrow(/received the autonomy level/);
   });
 });

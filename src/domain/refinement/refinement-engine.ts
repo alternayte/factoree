@@ -15,6 +15,12 @@ export interface RecordedDecision {
   questionId: string;
   question: string;
   answer: string;
+  /**
+   * SDD section 23. The conflict subject this answer settled. A human answer is decisive for the
+   * question Factoree asked, not for the whole contract. The subject scopes it to that question.
+   * A refinement answer settles no conflict, so it carries no subject.
+   */
+  subject?: string;
 }
 
 export interface RefinementProject {
