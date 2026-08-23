@@ -24,7 +24,13 @@ import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
 import { BackstageContextSource } from "~/domain/context/backstage-source.js";
 import { BackstageCatalogClient } from "~/adapters/backstage/backstage-catalog-client.js";
-import type { BackstageSourceSettings } from "~/domain/context/context-source-configuration.js";
+import { McpContextSource } from "~/domain/context/mcp-source.js";
+import { McpJsonRpcClient } from "~/adapters/mcp/mcp-json-rpc-client.js";
+import { buildActionPolicy } from "~/domain/policy/action-policy.js";
+import type {
+  BackstageSourceSettings,
+  McpSourceSettings,
+} from "~/domain/context/context-source-configuration.js";
 import { ConfiguredContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { ContextSourceSecretReader } from "~/domain/context/context-source-provider.js";
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
@@ -115,8 +121,15 @@ const contextSources = new ConfiguredContextSourceProvider({
         catalog: new BackstageCatalogClient({ endpoint: record.endpoint, token: credential }),
         settings: record.settings as BackstageSourceSettings,
       }),
-    mcp: () => {
-      throw new Error("the MCP context source is built in Task 8");
+    mcp: (record, credential) => {
+      const settings = record.settings as McpSourceSettings;
+      return new McpContextSource({
+        sourceId: record.sourceId,
+        settings,
+        // SDD section 58. The allow list of this Project is the whole permission.
+        policy: buildActionPolicy({ mcpAllowedTools: settings.allowedTools }),
+        tools: new McpJsonRpcClient({ endpoint: record.endpoint, token: credential, fetch }),
+      });
     },
   },
 });
