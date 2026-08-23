@@ -47,6 +47,7 @@ model Project {
   updatedAt          DateTime        @updatedAt
   secrets            ProjectSecret[]
   runs               Run[]
+  contextSources     ContextSourceConfiguration[]
 
   @@unique([tenantId, key])
   @@index([tenantId])
@@ -66,6 +67,26 @@ model ProjectSecret {
   updatedAt   DateTime @updatedAt
 
   @@unique([projectId, name])
+  @@index([tenantId])
+}
+
+model ContextSourceConfiguration {
+  id          String   @id @default(uuid())
+  tenantId    String
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // The identifier the built source reports from `ContextSource.id()`.
+  sourceId    String
+  kind        String
+  enabled     Boolean  @default(true)
+  endpoint    String
+  // SDD section 30. This column names a ProjectSecret. It never holds a credential.
+  secretName  String?
+  settings    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, sourceId])
   @@index([tenantId])
 }
 
