@@ -4,6 +4,10 @@ import type { RefinementInput } from "~/domain/refinement/refinement-engine.js";
 
 const engine = new RefinementEngine();
 
+const WHY_OPEN_QUESTION =
+  "The Work Item leaves this decision open. Factoree must not invent product behavior, " +
+  "so implementation cannot start safely without an answer.";
+
 const input = (over: Partial<RefinementInput> = {}): RefinementInput => ({
   source: {
     issueId: "issue-1",
@@ -39,7 +43,7 @@ describe("RefinementEngine", () => {
     expect(output.primaryRepository).toBe("acme/webhook-service");
   });
 
-  it("selects a reference repository the Work Item names and the Project record lists", () => {
+  it("keeps the configured reference repositories when the Work Item names one of them", () => {
     const output = engine.refine(
       input({
         source: {
@@ -154,6 +158,68 @@ describe("RefinementEngine", () => {
     ]);
   });
 
+  it("keeps the Work Item's own open questions when the goal is empty", () => {
+    const output = engine.refine(
+      input({
+        source: {
+          ...input().source,
+          title: "",
+          description: "## Open questions\n\n- First?\n- Second?\n",
+        },
+      }),
+    );
+    expect(output.unresolvedQuestions).toHaveLength(3);
+    expect(output.unresolvedQuestions[0]?.id).toBe("Q-1");
+    expect(output.unresolvedQuestions[0]?.question).toMatch(/required outcome/i);
+    expect(output.unresolvedQuestions[1]).toEqual({
+      id: "Q-2",
+      question: "First?",
+      whyMaterial: WHY_OPEN_QUESTION,
+    });
+    expect(output.unresolvedQuestions[2]).toEqual({
+      id: "Q-3",
+      question: "Second?",
+      whyMaterial: WHY_OPEN_QUESTION,
+    });
+  });
+
+  it("becomes the answer to the required-outcome question once it is answered, leaving the other questions open", () => {
+    const withNoGoal = input({
+      source: {
+        ...input().source,
+        title: "",
+        description: "## Open questions\n\n- First?\n- Second?\n",
+      },
+    });
+    const output = engine.refine({
+      ...withNoGoal,
+      decisions: [{ questionId: "Q-1", question: "What is the required outcome of this work?", answer: "Retry a failed delivery." }],
+    });
+    expect(output.status).toBe("needs_input");
+    expect(output.goal).toBe("Retry a failed delivery.");
+    expect(output.unresolvedQuestions.map((question) => question.id)).toEqual(["Q-2", "Q-3"]);
+  });
+
+  it("is ready once every question is answered, and the goal is the answer to the required-outcome question", () => {
+    const withNoGoal = input({
+      source: {
+        ...input().source,
+        title: "",
+        description: "## Open questions\n\n- First?\n- Second?\n",
+      },
+    });
+    const output = engine.refine({
+      ...withNoGoal,
+      decisions: [
+        { questionId: "Q-1", question: "What is the required outcome of this work?", answer: "Retry a failed delivery." },
+        { questionId: "Q-2", question: "First?", answer: "Yes." },
+        { questionId: "Q-3", question: "Second?", answer: "No." },
+      ],
+    });
+    expect(output.status).toBe("ready");
+    expect(output.goal).toBe("Retry a failed delivery.");
+  });
+
   it("gives each question a stable identifier across two refinements", () => {
     const twoQuestions = input({
       source: {
@@ -191,8 +257,8 @@ describe("RefinementEngine", () => {
 
   it("changes no source code, because it holds no file system port", () => {
     // The engine constructor takes no argument, so it cannot reach a file, a repository, or a
-    // network. SDD section 8 forbids Refinement from modifying source code, and this test states
-    // the structural reason that prohibition holds.
+    // network. SDD section 8 forbids Refinement to modify source code. This test states the
+    // structural reason that prohibition holds.
     expect(RefinementEngine.length).toBe(0);
   });
 });
