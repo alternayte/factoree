@@ -96,7 +96,18 @@ export class ContextResolver {
 
     const sources = input.sources.all();
     const candidates: ContextCandidate[] = [];
-    for (const source of sources) candidates.push(...(await source.discover(request)));
+    // SDD section 21 keeps every `ref` in one contract unique, and controller decision 13 keeps a
+    // source fault from failing a Run. A source that offers one reference twice would therefore
+    // fail the contract validation and fail the Run, so the first occurrence wins here and the
+    // duplicate is dropped.
+    const collected = new Set<string>();
+    for (const source of sources) {
+      for (const candidate of await source.discover(request)) {
+        if (collected.has(candidate.reference.ref)) continue;
+        collected.add(candidate.reference.ref);
+        candidates.push(candidate);
+      }
+    }
     candidates.sort(compareCandidates);
 
     // The primary host is the only host the workflow can rebuild a clone URL for, because it
@@ -132,7 +143,6 @@ export class ContextResolver {
     // keeps a bad entry from losing the good ones: the failed repository drops out of the
     // discovered list, contributes no candidate, and the Run continues.
     const discovered: RepositoryRef[] = [];
-    const seen = new Set(candidates.map((candidate) => candidate.reference.ref));
     // The registry lookup stays outside the guard, because a missing repository source is a
     // configuration fault of Factoree itself, not a fault of one catalog entry.
     const repositorySource = nominated.length === 0 ? null : input.sources.get("repository");
@@ -149,11 +159,16 @@ export class ContextResolver {
       }
       discovered.push(repository);
       for (const candidate of found) {
-        if (seen.has(candidate.reference.ref)) continue;
-        seen.add(candidate.reference.ref);
+        if (collected.has(candidate.reference.ref)) continue;
+        collected.add(candidate.reference.ref);
         candidates.push(candidate);
       }
     }
+
+    // SDD section 18 ranks the discovery rules, and the second pass appended its candidates after
+    // the first sort. The merged list is therefore sorted again, so a candidate of a discovered
+    // repository competes for the preload budget at its own priority, not last.
+    candidates.sort(compareCandidates);
 
     // The pinned SHA of each repository comes from the candidate that names the repository and no
     // path, so the resolver never guesses a SHA a source did not report. Built after the second

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BACKSTAGE_MAX_RESPONSE_BYTES,
   BackstageCatalogClient,
   parseBackstageEntity,
 } from "~/adapters/backstage/backstage-catalog-client.js";
@@ -197,5 +198,97 @@ describe("BackstageCatalogClient", () => {
     await expect(client.getByRef("component:default/a")).rejects.toThrow(/backstage.test/);
     await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/catalog-token/);
     await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/operator/);
+  });
+  it("keeps a credential outside the userinfo out of the error message", async () => {
+    // SDD section 60. A token can sit in a query parameter of the configured endpoint.
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test/api?token=query-secret#fragment-secret",
+      token: null,
+      fetch: () => Promise.reject(new Error("connection refused")),
+    });
+    await expect(client.getByRef("component:default/a")).rejects.toThrow(/backstage\.test/);
+    await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/query-secret/);
+    await expect(client.getByRef("component:default/a")).rejects.not.toThrow(/fragment-secret/);
+  });
+
+  it("refuses an answer whose Content-Length passes the cap", async () => {
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: () =>
+        Promise.resolve(
+          new Response("{}", {
+            status: 200,
+            headers: { "content-length": String(BACKSTAGE_MAX_RESPONSE_BYTES + 1) },
+          }),
+        ),
+    });
+    await expect(client.getByRef("component:default/a")).rejects.toThrow(/larger than/);
+  });
+
+  it("refuses a chunked answer that passes the cap while it is read", async () => {
+    const chunk = new Uint8Array(64 * 1024);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += chunk.byteLength;
+        if (sent > BACKSTAGE_MAX_RESPONSE_BYTES * 2) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: () => Promise.resolve(new Response(stream, { status: 200 })),
+    });
+    await expect(client.getByRef("component:default/a")).rejects.toThrow(/larger than/);
+  });
+
+  it("reads an answer below the cap", async () => {
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: () => Promise.resolve(new Response(JSON.stringify(ENTITY), { status: 200 })),
+    });
+    expect((await client.getByRef("component:default/manuscript-service"))?.name).toBe(
+      "manuscript-service",
+    );
+  });
+
+  it("prefers the entity whose repository host equals the primary host", async () => {
+    // One slug, two hosts. Only the host tells the two components apart.
+    const onGitlab = {
+      ...ENTITY,
+      metadata: {
+        ...ENTITY.metadata,
+        uid: "uid-gitlab",
+        etag: "etag-gitlab",
+        name: "manuscript-service-gitlab",
+        annotations: {
+          "backstage.io/source-location": "url:https://gitlab.test/acme/manuscript-service/tree/main/",
+        },
+      },
+    };
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ items: [onGitlab, ENTITY] }), { status: 200 })),
+    );
+    const client = new BackstageCatalogClient({
+      endpoint: "https://backstage.test",
+      token: null,
+      fetch: fetchMock,
+    });
+    const chosen = await client.findByRepositorySlug("acme/manuscript-service", "github.com");
+    expect(chosen?.repositoryUrl).toBe("https://github.com/acme/manuscript-service");
+    const other = await client.findByRepositorySlug("acme/manuscript-service", "gitlab.test");
+    expect(other?.repositoryUrl).toBe("https://gitlab.test/acme/manuscript-service");
+    // With no host known, the first slug match of the exact query stays the answer, and no
+    // second query runs.
+    fetchMock.mockClear();
+    const fallback = await client.findByRepositorySlug("acme/manuscript-service", null);
+    expect(fallback?.ref).toBe("component:default/manuscript-service-gitlab");
+    expect(fetchMock.mock.calls.length).toBe(1);
   });
 });

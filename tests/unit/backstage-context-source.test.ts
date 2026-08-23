@@ -45,8 +45,14 @@ const IDENTITY_API = entity({
 
 const catalog = (entities: BackstageEntity[]): BackstageCatalogPort => ({
   getByRef: (ref) => Promise.resolve(entities.find((candidate) => candidate.ref === ref) ?? null),
-  findByRepositorySlug: (slug) =>
-    Promise.resolve(entities.find((candidate) => candidate.repositorySlug === slug) ?? null),
+  findByRepositorySlug: (slug, preferredHost) => {
+    const matches = entities.filter((candidate) => candidate.repositorySlug === slug);
+    const onHost =
+      preferredHost === null
+        ? undefined
+        : matches.find((candidate) => candidate.repositoryUrl?.includes(`//${preferredHost}/`) === true);
+    return Promise.resolve(onHost ?? matches[0] ?? null);
+  },
 });
 
 const request = (over: Partial<Parameters<BackstageContextSource["discover"]>[0]> = {}) => ({

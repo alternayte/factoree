@@ -158,4 +158,23 @@ describe("McpContextSource", () => {
       source.fetch({ sourceId: "docs", ref: "docs:other", repository: null, sha: null, path: null }),
     ).rejects.toThrow(/never offered/);
   });
+  it("drops a duplicate reference, so one MCP answer never fails a Run", async () => {
+    // Controller decision 13 and SDD section 21. Two items with one `ref` would make two
+    // candidates with one contract reference, and the contract validation would fail the Run.
+    const answer = JSON.stringify({
+      items: [
+        { ref: "runbook/a", sourceVersion: "1", reason: "the first" },
+        { ref: "runbook/a", sourceVersion: "2", reason: "the second" },
+        { ref: "runbook/b", sourceVersion: "1", reason: "another" },
+      ],
+    });
+    const candidates = await sourceOf([], { search_docs: answer }).discover(request);
+    expect(candidates.map((candidate) => candidate.reference.ref)).toEqual([
+      "docs:runbook/a",
+      "docs:runbook/b",
+    ]);
+    // The first occurrence wins.
+    expect(candidates[0]?.sourceVersion).toBe("1");
+    expect(candidates[0]?.reason).toContain("the first");
+  });
 });

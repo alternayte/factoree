@@ -835,4 +835,100 @@ describe("automatic reference repository discovery", () => {
       resolved.contract.items.some((item) => item.reference.ref === "discovering-source:acme/library"),
     ).toBe(true);
   });
+  it("sorts the second pass into the priority order before the preload budget decides", async () => {
+    // SDD section 18. An accepted ADR inside a discovered repository has priority 6, and a
+    // semantic-search candidate of the first pass has priority 8. The higher priority must take
+    // the last of the budget, whichever pass found it.
+    const adr = "A".repeat(400);
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+      "https://git.test/acme/library.git": {
+        sha: "b".repeat(40),
+        files: { "docs/adr/ADR-001.md": adr },
+      },
+    });
+    const bulkyRef = "bulky-source:one";
+    const bulky: ContextSource = {
+      id: () => "bulky-source",
+      discover: (request): Promise<ContextCandidate[]> =>
+        Promise.resolve([
+          {
+            reference: { sourceId: "bulky-source", ref: bulkyRef, repository: null, sha: null, path: null },
+            sourceVersion: "1",
+            authority: "prose_documentation",
+            reason: "a semantic search hit",
+            priority: DISCOVERY_PRIORITY.scoped_semantic_search,
+            topics: request.topics,
+            // Large enough that only one of the two candidates fits the byte budget.
+            sizeBytes: CONTEXT_REQUIRED_MAX_BYTES - 100,
+            suggestedClassification: "reference",
+          },
+        ]),
+      fetch: (reference) =>
+        Promise.resolve({ reference, sourceVersion: "1", content: "x" }),
+    };
+
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Use the shared library.",
+      acceptanceCriteria: ["The library is used."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+        discoveringSource({ slug: "acme/library", url: "https://git.test/acme/library.git" }),
+        bulky,
+      ]),
+    });
+
+    const adrItem = resolved.contract.items.find(
+      (item) => item.reference.ref === "repository:acme/library:docs/adr/ADR-001.md",
+    );
+    const bulkyItem = resolved.contract.items.find((item) => item.reference.ref === bulkyRef);
+    expect(adrItem?.classification).toBe("required");
+    expect(bulkyItem?.classification).toBe("reference");
+  });
+
+  it("drops a duplicate reference a source offers, so no source can fail a Run", async () => {
+    // Controller decision 13 and SDD section 21. Two candidates with one reference would fail the
+    // contract validation, and the Run with it.
+    const twice: ContextSource = {
+      id: () => "twice",
+      discover: (request): Promise<ContextCandidate[]> =>
+        Promise.resolve(
+          ["first", "second"].map((reason) => ({
+            reference: { sourceId: "twice", ref: "twice:one", repository: null, sha: null, path: null },
+            sourceVersion: "1",
+            authority: "prose_documentation",
+            reason,
+            priority: DISCOVERY_PRIORITY.scoped_semantic_search,
+            topics: request.topics,
+            sizeBytes: 10,
+            suggestedClassification: "reference",
+          })),
+        ),
+      fetch: (reference) => Promise.resolve({ reference, sourceVersion: "1", content: "x" }),
+    };
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": { sha: "a".repeat(40), files: { "README.md": "the app" } },
+    });
+    const resolved = await new ContextResolver().resolve({
+      runId: "run-1",
+      goal: "Read the documentation.",
+      acceptanceCriteria: ["The documentation is read."],
+      primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
+      referenceRepositories: [],
+      workItemReferences: [],
+      decisions: [],
+      contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
+      sources: new ContextSourceRegistry([new RepositoryContextSource({ reader }), twice]),
+    });
+    const matches = resolved.contract.items.filter((item) => item.reference.ref === "twice:one");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.reason).toBe("first");
+  });
 });

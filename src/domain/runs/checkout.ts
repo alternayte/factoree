@@ -37,6 +37,22 @@ const SHA = /^[0-9a-f]{40}$/;
 export const withoutUrlCredentials = (text: string): string =>
   text.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/\s@]+@/g, "$1");
 
+/**
+ * The safe form of one URL for an error message. SDD section 60. A credential can sit in the
+ * userinfo, but it can also sit in a query parameter or in a fragment, and an error message
+ * reaches the Context Contract and Linear. Only the scheme, the host, and the path survive. A
+ * text that is not a URL degrades to a fixed placeholder rather than being echoed raw.
+ */
+export const safeUrlForMessage = (url: string): string => {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "the configured URL";
+  }
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+};
+
 // The command line of a clone holds the repository URL, and that URL can carry an access
 // token. Every message therefore passes through `withoutUrlCredentials`.
 const run = async (

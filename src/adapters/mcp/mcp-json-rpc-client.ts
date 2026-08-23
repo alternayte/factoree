@@ -1,4 +1,5 @@
-import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
+import { safeUrlForMessage } from "~/domain/runs/checkout.js";
+import { readTextWithCap } from "~/adapters/http/capped-response-body.js";
 
 /**
  * SDD section 17 and SDD section 10. One MCP server, reached over JSON-RPC 2.0 on HTTP.
@@ -20,6 +21,13 @@ export class McpError extends Error {
 
 /** The longest one MCP request may take. A slow MCP server must not hold a Run. */
 export const MCP_TIMEOUT_MS = 15_000;
+
+/**
+ * SDD section 18. The longest body one MCP answer may carry. An MCP tool answer is text a prompt
+ * later reads, and the Context Contract caps preloaded content far below this, so four mebibytes
+ * is generous for a real answer and small enough that a hostile server cannot exhaust the worker.
+ */
+export const MCP_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -60,7 +68,7 @@ export interface McpJsonRpcClientOptions {
  */
 export class McpJsonRpcClient implements McpToolPort {
   private readonly endpoint: string;
-  /** The endpoint without its userinfo. SDD section 60 keeps a credential out of a message. */
+  /** The endpoint as a message may name it. SDD section 60 keeps a credential out of a message. */
   private readonly safeEndpoint: string;
   private readonly token: string | null;
   private readonly fetchImpl: typeof fetch;
@@ -70,7 +78,7 @@ export class McpJsonRpcClient implements McpToolPort {
 
   constructor(options: McpJsonRpcClientOptions) {
     this.endpoint = options.endpoint;
-    this.safeEndpoint = withoutUrlCredentials(options.endpoint);
+    this.safeEndpoint = safeUrlForMessage(options.endpoint);
     this.token = options.token;
     this.fetchImpl = options.fetch;
   }
@@ -170,11 +178,17 @@ export class McpJsonRpcClient implements McpToolPort {
       throw new McpError(`The MCP request "${method}" received an unexpected status ${response.status}.`);
     }
 
-    let text: string;
+    let text: string | null;
     try {
-      text = await response.text();
+      text = await readTextWithCap(response, MCP_MAX_RESPONSE_BYTES);
     } catch (cause) {
       throw new McpError(`The MCP request "${method}" returned a body that could not be read.`, { cause });
+    }
+    if (text === null) {
+      throw new McpError(
+        `The MCP server at ${this.safeEndpoint} answered "${method}" with a body larger than ` +
+          `${MCP_MAX_RESPONSE_BYTES} bytes.`,
+      );
     }
 
     let body: unknown;

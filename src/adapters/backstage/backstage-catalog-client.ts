@@ -1,4 +1,5 @@
-import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
+import { safeUrlForMessage } from "~/domain/runs/checkout.js";
+import { readTextWithCap } from "~/adapters/http/capped-response-body.js";
 
 /**
  * SDD section 19. The Backstage Catalog is a topology source. This client reads it over the
@@ -34,7 +35,12 @@ export interface BackstageEntity {
 
 export interface BackstageCatalogPort {
   getByRef(ref: string): Promise<BackstageEntity | null>;
-  findByRepositorySlug(slug: string): Promise<BackstageEntity | null>;
+  /**
+   * `preferredHost` is the host of the primary repository URL, or `null` when the caller knows
+   * no host. A slug alone is host-agnostic, so an entity whose repository URL sits on that host
+   * wins over an entity with the same slug on another host.
+   */
+  findByRepositorySlug(slug: string, preferredHost: string | null): Promise<BackstageEntity | null>;
 }
 
 export class BackstageCatalogError extends Error {
@@ -57,6 +63,13 @@ export const BACKSTAGE_QUERY_LIMIT = 5;
  * cap stays a single bounded query; it never triggers a second page.
  */
 export const BACKSTAGE_REPOSITORY_SCAN_LIMIT = 50;
+
+/**
+ * SDD section 18. The longest body one catalog answer may carry. A single entity is a few
+ * kilobytes, and the widest query above returns fifty of them, so four mebibytes is generous for
+ * a real catalog and small enough that a hostile catalog cannot exhaust the worker.
+ */
+export const BACKSTAGE_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -158,6 +171,29 @@ export const parseBackstageEntity = (document: unknown): BackstageEntity => {
   };
 };
 
+/** `new URL(url).host` inside a `try`, and `null` on a failure. */
+const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The first entity a host-aware match accepts. A slug is host-agnostic, so two hosts can hold one
+ * `owner/repo`, and only the host tells them apart. An entity that carries no repository URL
+ * keeps the slug match of today, because nothing about it contradicts the expected host.
+ */
+const onHost = (entities: BackstageEntity[], preferredHost: string | null): BackstageEntity | null => {
+  if (preferredHost === null) return null;
+  return (
+    entities.find(
+      (entity) => entity.repositoryUrl === null || hostOf(entity.repositoryUrl) === preferredHost,
+    ) ?? null
+  );
+};
+
 export interface BackstageCatalogClientOptions {
   endpoint: string;
   /** SDD section 30. A static Backstage token, or null for an unauthenticated catalog. */
@@ -176,7 +212,7 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
 
   private async request(path: string): Promise<unknown> {
     const url = `${this.endpoint}${path}`;
-    const safeUrl = withoutUrlCredentials(url);
+    const safeUrl = safeUrlForMessage(url);
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.options.token !== null) headers["Authorization"] = `Bearer ${this.options.token}`;
 
@@ -189,7 +225,8 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
       });
     } catch (error) {
       // SDD section 60. The message names the URL and never the header. A configured endpoint
-      // can carry userinfo, so the URL loses its credentials before it reaches a message.
+      // can carry a credential in its userinfo or in a query parameter, so only the origin and
+      // the path of the URL reach a message.
       throw new BackstageCatalogError(`the Backstage request to ${safeUrl} failed`, { cause: error });
     }
     if (response.status === 404) return null;
@@ -198,8 +235,23 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
         `the Backstage request to ${safeUrl} answered ${response.status}`,
       );
     }
+    // SDD section 18. The timeout bounds the duration of the answer, never its size, so the body
+    // is read as a stream and stops at a cap.
+    let text: string | null;
     try {
-      return await response.json();
+      text = await readTextWithCap(response, BACKSTAGE_MAX_RESPONSE_BYTES);
+    } catch (error) {
+      throw new BackstageCatalogError(`the Backstage answer from ${safeUrl} could not be read`, {
+        cause: error,
+      });
+    }
+    if (text === null) {
+      throw new BackstageCatalogError(
+        `the Backstage answer from ${safeUrl} is larger than ${BACKSTAGE_MAX_RESPONSE_BYTES} bytes`,
+      );
+    }
+    try {
+      return JSON.parse(text) as unknown;
     } catch (error) {
       throw new BackstageCatalogError(`the Backstage answer from ${safeUrl} is not JSON`, { cause: error });
     }
@@ -226,20 +278,27 @@ export class BackstageCatalogClient implements BackstageCatalogPort {
    * presence alone, so the fallback takes a wider single page and matches the parsed slug on the
    * client side.
    */
-  async findByRepositorySlug(slug: string): Promise<BackstageEntity | null> {
-    const exact = await this.queryEntities(
-      `kind=component,github.com/project-slug=${slug}`,
-      BACKSTAGE_QUERY_LIMIT,
-    );
-    const exactMatch = exact.find((entity) => entity.repositorySlug === slug);
-    if (exactMatch !== undefined) return exactMatch;
+  async findByRepositorySlug(slug: string, preferredHost: string | null = null): Promise<BackstageEntity | null> {
+    const exact = (
+      await this.queryEntities(`kind=component,github.com/project-slug=${slug}`, BACKSTAGE_QUERY_LIMIT)
+    ).filter((entity) => entity.repositorySlug === slug);
+    // With no expected host, the exact query keeps its answer of today and no second query runs.
+    if (preferredHost === null && exact[0] !== undefined) return exact[0];
+    const exactOnHost = onHost(exact, preferredHost);
+    if (exactOnHost !== null) return exactOnHost;
 
-    const scanned = await this.queryEntities(
-      "kind=component,metadata.annotations.backstage.io/source-location",
-      BACKSTAGE_REPOSITORY_SCAN_LIMIT,
-    );
-    const scannedMatch = scanned.find((entity) => entity.repositorySlug === slug);
-    return scannedMatch ?? null;
+    const scanned = (
+      await this.queryEntities(
+        "kind=component,metadata.annotations.backstage.io/source-location",
+        BACKSTAGE_REPOSITORY_SCAN_LIMIT,
+      )
+    ).filter((entity) => entity.repositorySlug === slug);
+    const scannedOnHost = onHost(scanned, preferredHost);
+    if (scannedOnHost !== null) return scannedOnHost;
+
+    // No entity names the expected host, or the caller knows no host. The slug match of today
+    // stays the answer, so a catalog that works now keeps working.
+    return exact[0] ?? scanned[0] ?? null;
   }
 
   private async queryEntities(filter: string, limit: number): Promise<BackstageEntity[]> {

@@ -72,6 +72,10 @@ export class McpContextSource implements ContextSource {
     if (!isRecord(parsed) || !Array.isArray(parsed["items"])) return [];
 
     const candidates: ContextCandidate[] = [];
+    // SDD section 21 keeps every `ref` of one Context Contract unique, and controller decision 13
+    // keeps an MCP fault from failing a Run. A server that names one item twice must therefore
+    // yield one candidate. The first occurrence wins, the same way the Backstage walk works.
+    const seen = new Set<string>();
     for (const rawItem of parsed["items"]) {
       if (candidates.length >= this.options.settings.maxCandidates) break;
       if (!isRecord(rawItem)) continue;
@@ -87,6 +91,8 @@ export class McpContextSource implements ContextSource {
       const sizeBytes = isFiniteNonNegative(rawItem["sizeBytes"]) ? rawItem["sizeBytes"] : null;
 
       const ref = `${this.id()}:${itemRef}`;
+      if (seen.has(ref)) continue;
+      seen.add(ref);
       this.documents.set(ref, { itemRef, sourceVersion });
 
       candidates.push({

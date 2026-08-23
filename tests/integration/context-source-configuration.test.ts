@@ -86,6 +86,29 @@ describe("PrismaContextSourceConfigurationStore", () => {
     expect(await store.list(tenant.id, project.id)).toHaveLength(1);
   });
 
+  it("refuses an endpoint that carries a credential anywhere", async () => {
+    // SDD section 60. A token hides in the userinfo, in a query string, or in a fragment, and
+    // every one of them would reach an error message and the Context Contract.
+    const store = new PrismaContextSourceConfigurationStore(prisma);
+    const put = (endpoint: string) =>
+      store.put({
+        tenantId: tenant.id,
+        projectId: project.id,
+        sourceId: "backstage",
+        kind: "backstage",
+        endpoint,
+      });
+    await expect(put("https://operator:token@a.test")).rejects.toThrow(/user name or a password/);
+    await expect(put("https://a.test/rpc?token=SECRET")).rejects.toThrow(/query string or a fragment/);
+    await expect(put("https://a.test/rpc#token=SECRET")).rejects.toThrow(/query string or a fragment/);
+    // The message never echoes the value.
+    await expect(put("https://a.test/rpc?token=SECRET")).rejects.not.toThrow(/SECRET/);
+    await expect(put("https://operator:token@a.test")).rejects.not.toThrow(/operator/);
+    // A plain base address still passes.
+    expect((await put("https://a.test/api")).endpoint).toBe("https://a.test/api");
+    await store.remove(tenant.id, project.id, "backstage");
+  });
+
   it("refuses settings that do not belong to the kind", async () => {
     const store = new PrismaContextSourceConfigurationStore(prisma);
     await expect(

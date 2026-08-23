@@ -78,6 +78,15 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
           "password. Remove the credential from the URL, and name a Project secret instead.",
       );
     }
+    // A configuration endpoint is a base address. A query string or a fragment carries no base
+    // address, and it is where a token outside the userinfo hides. The message names the problem
+    // and never echoes the value.
+    if (endpoint.search !== "" || endpoint.hash !== "") {
+      throw new ContextSourceConfigurationError(
+        `The endpoint of the context source "${input.sourceId}" carries a query string or a ` +
+          "fragment. An endpoint is a base address, and a credential belongs in a Project secret.",
+      );
+    }
     const data = {
       tenantId: input.tenantId,
       projectId: input.projectId,

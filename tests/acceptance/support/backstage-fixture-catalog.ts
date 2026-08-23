@@ -119,7 +119,13 @@ export const buildBackstageFixtureCatalog = (
   return {
     getByRef: (ref: string): Promise<BackstageEntity | null> =>
       Promise.resolve(byRef.get(ref.trim().toLowerCase()) ?? null),
-    findByRepositorySlug: (slug: string): Promise<BackstageEntity | null> =>
-      Promise.resolve(entities.find((entity) => entity.repositorySlug === slug) ?? null),
+    findByRepositorySlug: (slug: string, preferredHost: string | null): Promise<BackstageEntity | null> => {
+      const matches = entities.filter((entity) => entity.repositorySlug === slug);
+      const onHost =
+        preferredHost === null
+          ? undefined
+          : matches.find((entity) => entity.repositoryUrl?.includes(`//${preferredHost}/`) === true);
+      return Promise.resolve(onHost ?? matches[0] ?? null);
+    },
   };
 };

@@ -22,6 +22,15 @@ export interface BackstageContextSourceOptions {
   settings: BackstageSourceSettings;
 }
 
+/** `new URL(url).host` inside a `try`, and `null` on a failure. */
+const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+};
+
 /** The bare name of an entity reference, for a sentence a human reads. */
 const nameOf = (ref: string): string => ref.slice(ref.lastIndexOf("/") + 1);
 
@@ -110,7 +119,12 @@ export class BackstageContextSource implements ContextSource {
   private async walk(request: ContextDiscoveryRequest): Promise<ContextCandidate[]> {
     const root =
       this.options.settings.primaryComponent === null
-        ? await this.options.catalog.findByRepositorySlug(request.primaryRepository.slug)
+        ? // A slug alone is host-agnostic, so the catalog also receives the host of the primary
+          // repository. An entity with the same slug on another host is then not preferred.
+          await this.options.catalog.findByRepositorySlug(
+            request.primaryRepository.slug,
+            hostOf(request.primaryRepository.url),
+          )
         : await this.options.catalog.getByRef(this.options.settings.primaryComponent);
     if (root === null) return [];
 
