@@ -43,6 +43,10 @@ export interface ContextActivityDependencies {
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
 
+/** A human reads the summary in Linear, so the noun agrees with the count. */
+const count = (total: number, singular: string, plural: string): string =>
+  `${total} ${total === 1 ? singular : plural}`;
+
 /** SDD section 63 names this file. */
 export const createContextActivities = (dependencies: ContextActivityDependencies) => ({
   async resolveContext(input: ResolveContextActivityInput): Promise<ResolveContextActivityOutput> {
@@ -64,16 +68,26 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     // conflict is therefore not the contract of this Run, so Factoree does not freeze it. Only
     // the resolution a human settled reaches the store, and it reaches the store one time. The
     // store is idempotent, so an activity retry returns the frozen contract.
+    // A retry finds the contract already frozen. The activity reads it first, so it can tell a
+    // first freeze from a repeat and count each conflict one time only.
+    const existing =
+      resolved.unresolvedConflict === null
+        ? await dependencies.contracts.findByRun(input.tenantId, input.runId)
+        : null;
+
     const stored =
       resolved.unresolvedConflict === null
-        ? await dependencies.contracts.save({
+        ? (existing ??
+          (await dependencies.contracts.save({
             tenantId: input.tenantId,
             runId: input.runId,
             contract: resolved.contract,
             sha256: resolved.sha256,
             document: resolved.document,
-          })
+          })))
         : null;
+
+    const froze = stored !== null && existing === null;
 
     if (stored !== null) {
       await dependencies.runs.setContextContractVersion(input.tenantId, input.runId, stored.sha256);
@@ -81,8 +95,13 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     // A Temporal workflow must stay deterministic, so the metric belongs here.
     metrics.contextResolutionDuration.observe(labels, (Date.now() - started) / 1000);
-    for (const conflict of resolved.contract.conflicts) {
-      metrics.contextConflicts.inc({ ...labels, resolution: conflict.resolution });
+    // A conflict counts once it reaches a frozen contract, so a retry cannot inflate the counter.
+    // SDD section 62 names the metric for a conflict recorded on a Context Contract, and an
+    // unfrozen resolution records none.
+    if (froze) {
+      for (const conflict of resolved.contract.conflicts) {
+        metrics.contextConflicts.inc({ ...labels, resolution: conflict.resolution });
+      }
     }
 
     dependencies.logger.info("context resolved", {
@@ -115,8 +134,9 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     const summary =
       `Factoree resolved the context of this Run. Repositories: ${repositories}. ` +
-      `${resolved.contract.items.length} context items, ${required.length} of them preloaded. ` +
-      `${resolved.contract.conflicts.length} conflicts recorded. ${outcome}`;
+      `${count(resolved.contract.items.length, "context item", "context items")}, ` +
+      `${required.length} of them preloaded. ` +
+      `${count(resolved.contract.conflicts.length, "conflict", "conflicts")} recorded. ${outcome}`;
 
     return {
       sha256,

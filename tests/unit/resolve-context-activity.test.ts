@@ -7,6 +7,7 @@ import { RepositoryContextSource } from "~/domain/context/repository-source.js";
 import { FakeContextContractStore } from "../support/fake-context-contract-store.js";
 import { FakeRepositoryReader } from "../support/fake-repository-reader.js";
 import { createLogger } from "~/telemetry/logger.js";
+import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
@@ -55,6 +56,32 @@ const files = {
   "README.md": "# Service\n\nThe README claims notification retry lives here.\n",
   "docs/ADR-031.md": "Status: accepted. Notification retry lives elsewhere.\n",
   "src/retry.ts": "export const retry = () => undefined;\n",
+};
+
+const threeWayFiles = {
+  "docs/ADR-031.md": "Status: accepted. Notification retry lives here.\n",
+  "docs/ADR-042.md": "Status: accepted. Notification retry lives elsewhere.\n",
+  "docs/ADR-055.md": "Status: accepted. Notification retry lives in a third place.\n",
+};
+
+const decision = {
+  questionId: "CTX-1",
+  question: "Which ADR governs notification retry?",
+  answer: "ADR-031 governs notification retry.",
+};
+
+/**
+ * Reads the recorded value of the counter from the registry. The test proves the value, not the
+ * call, so a spy is not enough.
+ */
+const conflictTotal = async (tenantId: string): Promise<number> => {
+  const all = await metrics.registry.getMetricsAsJSON();
+  const metric = all.find((entry) => entry.name === "factoree_context_conflicts_total") as
+    | { values: Array<{ labels: Record<string, string>; value: number }> }
+    | undefined;
+  return (metric?.values ?? [])
+    .filter((entry) => entry.labels.tenant_id === tenantId)
+    .reduce((total, entry) => total + entry.value, 0);
 };
 
 const conflictedFiles = {
@@ -132,6 +159,41 @@ describe("resolveContext activity", () => {
     const output = await activities.resolveContext(input());
     expect(output.summary).toMatch(/did not freeze/i);
     expect(output.summary).toMatch(/conflict is unresolved/i);
+  });
+
+  it("counts no conflict while the resolution stays unfrozen", async () => {
+    const tenantId = "tenant-unfrozen";
+    const { activities } = build(conflictedFiles);
+    const before = await conflictTotal(tenantId);
+    const output = await activities.resolveContext(input({ tenantId }));
+    expect(output.unresolvedConflict).not.toBeNull();
+    expect(await conflictTotal(tenantId)).toBe(before);
+  });
+
+  it("counts the conflict once when the settled contract is stored", async () => {
+    const tenantId = "tenant-frozen";
+    const { activities, contracts } = build(conflictedFiles);
+    const before = await conflictTotal(tenantId);
+    await activities.resolveContext(input({ tenantId, decisions: [decision] }));
+    expect(contracts.all()).toHaveLength(1);
+    const afterFirst = await conflictTotal(tenantId);
+    expect(afterFirst).toBe(before + 1);
+    // A Temporal retry repeats the work. The store writes nothing, so the counter must not move.
+    await activities.resolveContext(input({ tenantId, decisions: [decision] }));
+    expect(await conflictTotal(tenantId)).toBe(afterFirst);
+  });
+
+  it("agrees the noun with the count in the summary", async () => {
+    const one = await build(conflictedFiles).activities.resolveContext(
+      input({ decisions: [decision] }),
+    );
+    expect(one.summary).toContain("1 conflict recorded");
+
+    const many = await build(threeWayFiles).activities.resolveContext(
+      input({ decisions: [decision] }),
+    );
+    expect(many.summary).toMatch(/[2-9]\d* conflicts recorded/);
+    expect(many.summary).toMatch(/\d+ context items/);
   });
 
   it("freezes the settled contract once the human answer arrives", async () => {
