@@ -128,7 +128,6 @@ The phase is complete when all of the following hold, and the controller has see
 - `src/adapters/mcp/mcp-json-rpc-client.ts` — the MCP JSON-RPC client.
 - `src/persistence/prisma/context-source-configuration.prisma.ts` — the Prisma store.
 - `src/http/admin/context-sources.routes.ts` — the three SDD section 59 endpoints.
-- `src/activities/github.activities.ts` — no. Not in this phase. (See "Out of scope".)
 - `prisma/migrations/20260824120000_add_context_source_configuration/migration.sql`
 - Tests, listed inside each task.
 
