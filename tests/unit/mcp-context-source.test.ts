@@ -16,7 +16,7 @@ const SETTINGS = {
 const request = {
   runId: "run-1",
   goal: "Retry a failed notification.",
-  topics: ["notification", "retry"],
+  topics: ["notification", "retry", "urgent"],
   primaryRepository: { slug: "acme/app", url: "https://git.test/acme/app.git", ref: "main" },
   referenceRepositories: [],
   workItemReferences: [],
@@ -75,8 +75,12 @@ describe("McpContextSource", () => {
     // Deviation from the brief: its fixture's title ("Notification retry runbook") and reason
     // ("the internal runbook for notification retry") both literally contain "retry", so the
     // substring topic match used by every other source (backstage-source.ts,
-    // repository-source.ts) necessarily reports both topics, not just "notification".
+    // repository-source.ts) necessarily reports both topics, not just "notification". The
+    // request adds "urgent", which appears in neither field, so this assertion proves real
+    // filtering: the requested topics that are present pass through, and the one that is not
+    // present in the item text is excluded.
     expect(candidate?.topics).toEqual(["notification", "retry"]);
+    expect(candidate?.topics).not.toContain("urgent");
     expect(calls[0]).toEqual({
       name: "search_docs",
       args: { goal: request.goal, topics: request.topics, repository: "acme/app" },
