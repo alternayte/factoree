@@ -73,7 +73,8 @@ const DECISION_REASON = "a recorded human decision settles this subject";
  * product-intent authority. SDD section 23 requires the human answer to persist as a Run
  * decision that governs the Run. So when the item list holds a `work_item_decision` item whose
  * topics include a conflict subject, the decision resolves that conflict. This happens whatever
- * the ordinary domain pairing found.
+ * the ordinary domain pairing found. The caller names those decision items through
+ * `decisionRefs`, because only a recorded answer settles a subject.
  *
  * A decision item sits in the product-intent domain, so it never pairs with an
  * architecture-intent conflict through the domain rule alone. This second rule is a subject
@@ -82,10 +83,36 @@ const DECISION_REASON = "a recorded human decision settles this subject";
  * another. It is why the workflow can make progress after one human answer. Without the rule,
  * the same question repeats without end.
  */
-export const detectConflicts = (items: SelectedContextItem[]): ContextConflictRecord[] => {
+/**
+ * SDD section 22 writes these two domains with `+`, not with `>`. The specification calls them
+ * evidence, so the members combine and never compete. Source code and an executable test tell one
+ * story about the same behavior. A pair inside such a domain is therefore no conflict at all.
+ * AT-08 reserves the human question for two equally authoritative architecture decisions.
+ */
+const COMBINED_EVIDENCE_DOMAINS = new Set(["current_implementation", "system_topology"]);
+
+export interface DetectConflictsOptions {
+  /**
+   * SDD section 23. The stable reference of every recorded human answer of this Run. The caller
+   * knows which item records an answer, because the caller holds the Run decisions. Without this
+   * list the detector treats every `work_item_decision` item as an answer, and the Work Item body
+   * then settles every conflict in silence.
+   */
+  decisionRefs?: readonly string[];
+}
+
+export const detectConflicts = (
+  items: SelectedContextItem[],
+  options: DetectConflictsOptions = {},
+): ContextConflictRecord[] => {
+  const decisionRefs = options.decisionRefs;
   const candidates = items.filter((item) => conflictable(item.classification));
   const decisions = candidates
-    .filter((item) => item.authority === "work_item_decision")
+    .filter(
+      (item) =>
+        item.authority === "work_item_decision" &&
+        (decisionRefs === undefined || decisionRefs.includes(item.reference.ref)),
+    )
     .sort((a, b) => (a.reference.ref < b.reference.ref ? -1 : a.reference.ref > b.reference.ref ? 1 : 0));
   const found: Omit<ContextConflictRecord, "id">[] = [];
 
@@ -96,6 +123,7 @@ export const detectConflicts = (items: SelectedContextItem[]): ContextConflictRe
       if (left === undefined || right === undefined) continue;
       if (left.reference.ref === right.reference.ref) continue;
       if (authorityDomainOf(left.authority) !== authorityDomainOf(right.authority)) continue;
+      if (COMBINED_EVIDENCE_DOMAINS.has(authorityDomainOf(left.authority))) continue;
 
       const shared = left.topics.filter((topic) => right.topics.includes(topic)).sort();
       const subject = shared[0];
