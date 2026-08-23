@@ -1,8 +1,8 @@
 /**
- * SDD section 7 accepts an imperfect ticket, so this parser reads the recommended structure
- * when it is present and degrades to "the whole body is the goal" when it is not. It never
- * rewrites text, because SDD section 7 forbids Factoree from inventing material product
- * behavior.
+ * SDD section 7 recommends a Work Item structure. It recommends that Factoree accept an
+ * imperfect ticket. This parser therefore reads the recommended structure when it is present
+ * and degrades to "the whole body is the goal" when it is not. It never rewrites text, because
+ * SDD section 7 forbids Factoree from inventing material product behavior.
  */
 
 export interface WorkItemSource {
