@@ -56,15 +56,20 @@ beforeAll(async () => {
     },
   } as unknown as RunRepository;
   const contextActivities = createContextActivities({
-    resolver: new ContextResolver({
-      sources: new ContextSourceRegistry([
-        new LinearContextSource(),
-        new RepositoryContextSource({ reader }),
-      ]),
-    }),
+    resolver: new ContextResolver(),
     contracts,
     runs,
     logger: createLogger({ level: "error", redactor: new Redactor() }),
+    sources: {
+      sourcesFor: () =>
+        Promise.resolve(
+          new ContextSourceRegistry([
+            new LinearContextSource(),
+            new RepositoryContextSource({ reader }),
+          ]),
+        ),
+    },
+    repositoryReader: reader,
   });
   harness.activities.resolveContext = (input) => contextActivities.resolveContext(input);
 

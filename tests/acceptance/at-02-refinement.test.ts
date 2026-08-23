@@ -6,6 +6,7 @@ import { ContextSourceRegistry } from "~/domain/context/context-source-registry.
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
+import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
 import type { ContextFixture } from "./support/context-fixture-repository.js";
 import {
   PRIMARY_SLUG,
@@ -74,12 +75,7 @@ describe("AT-02 — refinement of a vague Work Item", () => {
       "A failed notification delivery is never retried.",
     );
 
-    const resolved = await new ContextResolver({
-      sources: new ContextSourceRegistry([
-        new LinearContextSource(),
-        new RepositoryContextSource({ reader }),
-      ]),
-    }).resolve({
+    const resolved = await new ContextResolver().resolve({
       runId: "run-at-02",
       goal: refined.goal,
       acceptanceCriteria: refined.proposedAcceptanceCriteria.map((criterion) => criterion.statement),
@@ -89,6 +85,11 @@ describe("AT-02 — refinement of a vague Work Item", () => {
       ],
       workItemReferences: [],
       decisions: [],
+      sources: new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader }),
+      ]),
+      contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
     });
 
     const preloaded = resolved.contract.items.filter((item) => item.classification === "required");

@@ -4,6 +4,8 @@ import { ContextResolver } from "~/domain/context/context-resolver.js";
 import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
+import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
+import type { RepositoryContextConfiguration } from "~/domain/context/repository-context-configuration.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { ContextFixture } from "./context-fixture-repository.js";
 import { PRIMARY_SLUG, REFERENCE_SLUG } from "./context-fixture-repository.js";
@@ -19,6 +21,9 @@ export interface ResolveFixtureContextInput {
   reader: RepositoryReader;
   runId: string;
   decisions?: RecordedDecision[];
+  /** Defaults to Linear plus the two repository sources of Phase 4. Task 10 adds Backstage. */
+  sources?: ContextSourceRegistry;
+  contextConfiguration?: RepositoryContextConfiguration;
 }
 
 /**
@@ -29,12 +34,7 @@ export interface ResolveFixtureContextInput {
 export const resolveFixtureContext = (
   input: ResolveFixtureContextInput,
 ): Promise<ResolvedContext> =>
-  new ContextResolver({
-    sources: new ContextSourceRegistry([
-      new LinearContextSource(),
-      new RepositoryContextSource({ reader: input.reader }),
-    ]),
-  }).resolve({
+  new ContextResolver().resolve({
     runId: input.runId,
     goal: FIXTURE_GOAL,
     acceptanceCriteria: FIXTURE_CRITERIA,
@@ -44,4 +44,11 @@ export const resolveFixtureContext = (
     ],
     workItemReferences: [],
     decisions: input.decisions ?? [],
+    sources:
+      input.sources ??
+      new ContextSourceRegistry([
+        new LinearContextSource(),
+        new RepositoryContextSource({ reader: input.reader }),
+      ]),
+    contextConfiguration: input.contextConfiguration ?? DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
   });

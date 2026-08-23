@@ -4,6 +4,7 @@ import type { ContextConflictRecord, SelectedContextItem } from "./conflicts.js"
 import { detectConflicts, firstUnresolved } from "./conflicts.js";
 import type { ContextCandidate, ContextClassification, RepositoryRef } from "./context-source.js";
 import type { ContextSourceRegistry } from "./context-source-registry.js";
+import type { RepositoryContextConfiguration } from "./repository-context-configuration.js";
 import type { ContextContract } from "./context-contract.js";
 import {
   CONTEXT_CONTRACT_VERSION,
@@ -25,6 +26,9 @@ export interface ResolveContextInput {
   referenceRepositories: RepositoryRef[];
   workItemReferences: string[];
   decisions: RecordedDecision[];
+  /** The sources of this Run. SDD section 53 makes the list per Project. */
+  sources: ContextSourceRegistry;
+  contextConfiguration: RepositoryContextConfiguration;
 }
 
 export interface ResolvedContext {
@@ -39,10 +43,6 @@ export interface ResolvedContext {
   };
   /** SDD section 23. A non-null value means implementation must not start. */
   unresolvedConflict: ContextConflictRecord | null;
-}
-
-export interface ContextResolverOptions {
-  sources: ContextSourceRegistry;
 }
 
 /**
@@ -75,8 +75,6 @@ const mergeTopics = (left: string[], right: string[]): string[] =>
  * gives it the authority ladders. SDD section 23 gives it the conflict model.
  */
 export class ContextResolver {
-  constructor(private readonly options: ContextResolverOptions) {}
-
   async resolve(input: ResolveContextInput): Promise<ResolvedContext> {
     const topics = topicsOf({ goal: input.goal, acceptanceCriteria: input.acceptanceCriteria });
     const request = {
@@ -87,9 +85,10 @@ export class ContextResolver {
       referenceRepositories: input.referenceRepositories,
       workItemReferences: input.workItemReferences,
       decisions: input.decisions,
+      contextConfiguration: input.contextConfiguration,
     };
 
-    const sources = this.options.sources.all();
+    const sources = input.sources.all();
     const candidates: ContextCandidate[] = [];
     for (const source of sources) candidates.push(...(await source.discover(request)));
     candidates.sort(compareCandidates);
@@ -161,7 +160,7 @@ export class ContextResolver {
     // gives the prompt the path, the authority, and the hash, which is all the prompt needs.
     for (const item of items) {
       if (item.classification !== "required") continue;
-      const source = this.options.sources.get(item.reference.sourceId);
+      const source = input.sources.get(item.reference.sourceId);
       try {
         const document = await source.fetch(item.reference);
         item.contentSha256 = createHash("sha256").update(document.content, "utf8").digest("hex");

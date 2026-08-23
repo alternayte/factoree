@@ -26,15 +26,20 @@ const build = (files: Record<string, string>) => {
     },
   } as unknown as RunRepository;
   const activities = createContextActivities({
-    resolver: new ContextResolver({
-      sources: new ContextSourceRegistry([
-        new LinearContextSource(),
-        new RepositoryContextSource({ reader }),
-      ]),
-    }),
+    resolver: new ContextResolver(),
     contracts,
     runs,
     logger: createLogger({ level: "error", redactor: new Redactor() }),
+    sources: {
+      sourcesFor: () =>
+        Promise.resolve(
+          new ContextSourceRegistry([
+            new LinearContextSource(),
+            new RepositoryContextSource({ reader }),
+          ]),
+        ),
+    },
+    repositoryReader: reader,
   });
   return { activities, contracts, versions };
 };

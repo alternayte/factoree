@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import type { ContextDiscoveryRequest } from "~/domain/context/context-source.js";
+import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
 
 const request = (over: Partial<ContextDiscoveryRequest> = {}): ContextDiscoveryRequest => ({
   runId: "run-1",
@@ -10,6 +11,7 @@ const request = (over: Partial<ContextDiscoveryRequest> = {}): ContextDiscoveryR
   referenceRepositories: [],
   workItemReferences: [],
   decisions: [],
+  contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
   ...over,
 });
 

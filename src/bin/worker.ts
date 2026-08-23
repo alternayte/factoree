@@ -20,10 +20,12 @@ import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.j
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
-import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
 import { RepositoryContextSource } from "~/domain/context/repository-source.js";
+import { ConfiguredContextSourceProvider } from "~/domain/context/context-source-provider.js";
+import type { ContextSourceSecretReader } from "~/domain/context/context-source-provider.js";
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
+import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
@@ -88,10 +90,30 @@ async function call(
 // SDD section 18. The reader clones each repository into a temporary mirror, so the worker owns
 // its lifetime and removes the mirrors at shutdown.
 const repositoryReader = new GitRepositoryReader();
-const contextSources = new ContextSourceRegistry([
-  new LinearContextSource(),
-  new RepositoryContextSource({ reader: repositoryReader }),
-]);
+const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+
+// Controller decision 1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
+// the real `SecretStore` answers it directly through `get`, which already takes a tenant and a
+// Project.
+const contextSecrets: ContextSourceSecretReader = {
+  read: (tenantId, projectId, name) => secrets.get(tenantId, projectId, name),
+};
+
+// Controller decision 2. Tasks 5 and 8 build the real Backstage and MCP sources. Until then a
+// configured row of either kind must fail loudly instead of silently building nothing.
+const contextSources = new ConfiguredContextSourceProvider({
+  configurations: new PrismaContextSourceConfigurationStore(prisma),
+  secrets: contextSecrets,
+  fixedSources: () => [new LinearContextSource(), new RepositoryContextSource({ reader: repositoryReader })],
+  factories: {
+    backstage: () => {
+      throw new Error("the Backstage context source is built in Task 5");
+    },
+    mcp: () => {
+      throw new Error("the MCP context source is built in Task 8");
+    },
+  },
+});
 
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
@@ -105,13 +127,15 @@ const worker = await Worker.create({
     sandbox,
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),
-    secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+    secrets,
     evidence: new PrismaEvidenceStore(prisma),
     redactor,
     reaper,
     refinement: new RefinementEngine(),
-    contextResolver: new ContextResolver({ sources: contextSources }),
+    contextResolver: new ContextResolver(),
     contextContracts: new PrismaContextContractStore(prisma),
+    contextSources,
+    repositoryReader,
     logger,
   }),
 });

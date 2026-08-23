@@ -8,6 +8,7 @@ import {
   CONTEXT_REQUIRED_MAX_ITEMS,
 } from "~/domain/context/context-contract.js";
 import { FakeRepositoryReader } from "../support/fake-repository-reader.js";
+import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
 import type { ResolveContextInput } from "~/domain/context/context-resolver.js";
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
@@ -36,10 +37,20 @@ const build = (
     new LinearContextSource(),
     new RepositoryContextSource({ reader }),
   ]);
-  return new ContextResolver({ sources: registry });
+  const resolver = new ContextResolver();
+  return {
+    resolve: (partial: Omit<ResolveContextInput, "sources" | "contextConfiguration">) =>
+      resolver.resolve({
+        ...partial,
+        sources: registry,
+        contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
+      }),
+  };
 };
 
-const input = (over: Partial<ResolveContextInput> = {}): ResolveContextInput => ({
+const input = (
+  over: Partial<Omit<ResolveContextInput, "sources" | "contextConfiguration">> = {},
+): Omit<ResolveContextInput, "sources" | "contextConfiguration"> => ({
   runId: "run-1",
   goal: "Retry a failed notification delivery.",
   acceptanceCriteria: ["A failed notification is retried."],
@@ -200,7 +211,11 @@ describe("ContextResolver", () => {
       new LinearContextSource(),
       new RepositoryContextSource({ reader }),
     ]);
-    const resolved = await new ContextResolver({ sources: registry }).resolve(input());
+    const resolved = await new ContextResolver().resolve({
+      ...input(),
+      sources: registry,
+      contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
+    });
     const item = resolved.contract.items.find(
       (candidate) => candidate.reference.ref === "repository:acme/webhook-service:docs/ADR-031.md",
     );
@@ -282,7 +297,9 @@ describe("ContextResolver", () => {
     "docs/ADR-051.md": "Status: accepted\n\nThe billing is owned here.\n",
     "docs/ADR-052.md": "Status: accepted\n\nThe billing is owned elsewhere.\n",
   };
-  const twoSubjectInput = (decisions: ResolveContextInput["decisions"]): ResolveContextInput =>
+  const twoSubjectInput = (
+    decisions: ResolveContextInput["decisions"],
+  ): Omit<ResolveContextInput, "sources" | "contextConfiguration"> =>
     input({
       goal: "Retry a failed notification delivery and correct the billing invoice.",
       acceptanceCriteria: ["A failed notification is retried.", "The billing invoice is correct."],

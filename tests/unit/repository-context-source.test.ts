@@ -8,6 +8,7 @@ import {
 } from "~/adapters/github/git-repository-reader.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FakeRepositoryReader } from "../support/fake-repository-reader.js";
+import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
 const REFERENCE_URL = "https://git/acme/notification-service";
@@ -38,6 +39,7 @@ const request = (over: Partial<ContextDiscoveryRequest> = {}): ContextDiscoveryR
   referenceRepositories: [{ slug: "acme/notification-service", url: REFERENCE_URL, ref: "main" }],
   workItemReferences: [],
   decisions: [],
+  contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
   ...over,
 });
 
