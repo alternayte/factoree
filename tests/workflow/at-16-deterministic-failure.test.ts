@@ -7,7 +7,7 @@ import { VERIFY_FAILURE_TEXT, createWorkflowHarness, waitFor } from "./support/h
 let environment: TestWorkflowEnvironment;
 
 const harness = createWorkflowHarness(() => environment);
-const { completions, statusesOf, implementCalls, verifyCalls, runtimeOverrides, verifyOutcomes, sandboxInput, input, runWorker } =
+const { completions, statusesOf, implementCalls, verifyCalls, runtimeOverrides, verifyOutcomes, input, runWorker } =
   harness;
 
 /** One recorded activity call. The run id is absent on the two session-scoped activities. */
@@ -73,7 +73,7 @@ const startRun = async (sessionId: string) =>
   environment.client.workflow.start(agentRunWorkflow, {
     taskQueue: "test",
     workflowId: buildWorkflowId("workspace-123", sessionId),
-    args: [{ ...input(sessionId), sandbox: sandboxInput }],
+    args: [input(sessionId)],
   });
 
 describe("AT-16 — a failing deterministic command blocks publication and triggers repair", () => {
@@ -103,6 +103,10 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     // activity on this path changes the list, so the reader must judge it again.
     expect(namesFor("run-ses-at16a")).toEqual([
       "setRunStatus",
+      "setRunStatus",
+      "refine",
+      "setRunStatus",
+      "resolveContext",
       "setRunStatus",
       "prepareSandbox",
       "setRunStatus",
@@ -141,6 +145,10 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     // implement calls and three verify calls appear, and no publishing activity appears.
     expect(namesFor("run-ses-at16b")).toEqual([
       "setRunStatus",
+      "setRunStatus",
+      "refine",
+      "setRunStatus",
+      "resolveContext",
       "setRunStatus",
       "prepareSandbox",
       "setRunStatus",

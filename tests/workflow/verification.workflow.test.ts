@@ -23,7 +23,6 @@ const {
   configurationFaults,
   runtimeOverrides,
   verifyOutcomes,
-  sandboxInput,
   input,
   runWorker,
 } = harness;
@@ -45,7 +44,7 @@ const startRun = async (sessionId: string, maxRunMinutes = 90) =>
   environment.client.workflow.start(agentRunWorkflow, {
     taskQueue: "test",
     workflowId: buildWorkflowId("workspace-123", sessionId),
-    args: [{ ...input(sessionId, maxRunMinutes), sandbox: sandboxInput }],
+    args: [input(sessionId, maxRunMinutes)],
   });
 
 describe("deterministic verification in the workflow", () => {
@@ -99,7 +98,9 @@ describe("deterministic verification in the workflow", () => {
       return handle.result();
     });
 
-    expect(statusesOf("run-ses-v3").slice(3)).toEqual([
+    // The first five states are RECEIVED, REFINING, RESOLVING_CONTEXT, PREPARING, and
+    // IMPLEMENTING. The repair loop follows them.
+    expect(statusesOf("run-ses-v3").slice(5)).toEqual([
       "VERIFYING",
       "REPAIRING",
       "IMPLEMENTING",

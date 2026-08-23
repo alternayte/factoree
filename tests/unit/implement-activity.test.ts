@@ -52,6 +52,8 @@ const input = {
   primaryPath: "/workspace/primary",
   referencePaths: [],
   goal: "Add the health endpoint.",
+  contextContract: null,
+  requiredContext: [],
   humanDecisions: [],
   repositoryInstructions: "Use the existing test idiom.",
   repairFindings: [],

@@ -30,6 +30,10 @@ export interface ImplementActivityInput {
   primaryPath: string;
   referencePaths: string[];
   goal: string;
+  /** SDD section 21. The rendered Context Contract of this Run. */
+  contextContract: string | null;
+  /** SDD section 21 and AT-09. The required-context lines. No file body travels with them. */
+  requiredContext: string[];
   humanDecisions: string[];
   repositoryInstructions: string;
   repairFindings: string[];
@@ -117,8 +121,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       goal: input.goal,
       humanDecisions: input.humanDecisions,
       validationContract: null,
-      contextContract: null,
-      requiredContext: [],
+      contextContract: input.contextContract,
+      requiredContext: input.requiredContext,
       primaryRepositoryPath: input.primaryPath,
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,

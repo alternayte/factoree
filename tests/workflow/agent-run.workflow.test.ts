@@ -25,7 +25,6 @@ const {
   cancelledLiveSessions,
   postedErrors,
   configurationFaults,
-  sandboxInput,
   input,
   runWorker,
 } = harness;
@@ -114,7 +113,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-f"),
-        args: [{ ...input("session-f"), sandbox: sandboxInput }],
+        args: [input("session-f")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-f"),
@@ -124,8 +123,15 @@ describe("agentRunWorkflow", () => {
       return handle.result();
     });
     // Verification now follows the implementation, so the sequence of this Run is longer than
-    // it was in Phase 2. The first three states of this Run are still exactly these three.
-    expect(statusesOf("run-session-f").slice(0, 3)).toEqual(["RECEIVED", "PREPARING", "IMPLEMENTING"]);
+    // it was in Phase 2. Phase 4 puts REFINING and RESOLVING_CONTEXT before PREPARING, per SDD
+    // section 49. The first states of this Run are still exactly these, in this order.
+    expect(statusesOf("run-session-f").slice(0, 5)).toEqual([
+      "RECEIVED",
+      "REFINING",
+      "RESOLVING_CONTEXT",
+      "PREPARING",
+      "IMPLEMENTING",
+    ]);
     expect(implementCalls.at(-1)?.runnerName).toBe(DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner);
     expect(implementCalls.at(-1)?.attempt).toBe(1);
     expect(result.status).toBe("CANCELLED");
@@ -138,7 +144,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-g"),
-        args: [{ ...input("session-g"), sandbox: sandboxInput }],
+        args: [input("session-g")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-g"),
@@ -157,7 +163,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-h"),
-        args: [{ ...input("session-h"), sandbox: sandboxInput }],
+        args: [input("session-h")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-h"),
@@ -187,7 +193,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-i"),
-        args: [{ ...input("session-i"), sandbox: sandboxInput }],
+        args: [input("session-i")],
       });
       // Wait until the workflow has entered PREPARING, then stop it while preparation runs.
       await waitFor(
@@ -217,7 +223,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-j"),
-        args: [{ ...input("session-j"), sandbox: sandboxInput }],
+        args: [input("session-j")],
       });
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === "run-session-j"),
@@ -244,7 +250,7 @@ describe("agentRunWorkflow", () => {
         const handle = await environment.client.workflow.start(agentRunWorkflow, {
           taskQueue: "test",
           workflowId: buildWorkflowId("workspace-123", "session-k"),
-          args: [{ ...input("session-k"), sandbox: sandboxInput }],
+          args: [input("session-k")],
         });
         return handle.result();
       });
@@ -278,7 +284,7 @@ describe("agentRunWorkflow", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "session-l"),
-        args: [{ ...input("session-l", 0.2), sandbox: sandboxInput }],
+        args: [input("session-l", 0.2)],
       });
       await waitFor(
         () => prepared.some((entry) => entry.runId === "run-session-l"),
@@ -327,7 +333,7 @@ describe("a configuration fault during preparation", () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
         workflowId: buildWorkflowId("workspace-123", "ses-configuration"),
-        args: [{ ...input("ses-configuration"), sandbox: sandboxInput }],
+        args: [input("ses-configuration")],
       });
       return handle.result();
     });
@@ -360,7 +366,7 @@ describe("an Implementer that ends because the Run budget ended", () => {
         const handle = await environment.client.workflow.start(agentRunWorkflow, {
           taskQueue: "test",
           workflowId: buildWorkflowId("workspace-123", "session-timeout"),
-          args: [{ ...input("session-timeout", 0.2), sandbox: sandboxInput }],
+          args: [input("session-timeout", 0.2)],
         });
         await waitFor(
           () => implementCalls.some((entry) => entry.runId === "run-session-timeout"),

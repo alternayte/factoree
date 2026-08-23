@@ -5,7 +5,11 @@ import type { ProjectRegistry, TenantRegistry } from "~/domain/projects/project-
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
 import type { AgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import { classifyAgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
-import type { AgentRunSandboxInput, AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
+import type {
+  AgentRunProjectInput,
+  AgentRunWorkItemInput,
+  AgentRunWorkflowInput,
+} from "~/workflows/agent-run.workflow.js";
 import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 
@@ -96,25 +100,35 @@ export class DelegationService {
       return { kind: "unconfigured", reason: `no project for Linear team ${teamId ?? "unknown"}` };
     }
 
-    // SDD section 15 and section 32. A Run needs a primary repository and a ref before a
-    // sandbox can exist. The rest of the configuration lives in `.factoree/config.yaml` inside
-    // that repository, so nothing here reads it.
-    let sandbox: AgentRunSandboxInput;
+    // SDD section 7 and SDD section 8. The Work Item text travels as the author wrote it. The
+    // workflow refines it, resolves the context, and derives the sandbox from the pinned SHAs.
+    const workItem: AgentRunWorkItemInput = {
+      issueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
+      title: event.agentSession.issue?.title ?? "",
+      description: event.agentSession.issue?.description ?? "",
+      url: event.agentSession.issue?.url ?? null,
+      labels: [],
+    };
+
+    // SDD section 15. The Project owns the two default values. Every other runtime value comes
+    // from `.factoree/config.yaml` inside the primary repository, so nothing here reads it.
+    const workflowProject: AgentRunProjectInput = {
+      primaryRepository: project.primaryRepository,
+      referenceRepositories: project.referenceRepositories,
+      defaultBranch: project.defaultBranch,
+      repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
+      stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
+      spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
+      defaultAutonomy: project.defaultAutonomy,
+    };
+
+    // An unusable slug must stop the Run here, and not inside the workflow. This call validates
+    // every slug and discards the result. The workflow builds the real clone URL later.
     try {
-      sandbox = {
-        primary: {
-          url: buildRepositoryUrl(this.dependencies.repositoryBaseUrl, project.primaryRepository),
-          ref: project.defaultBranch,
-        },
-        // A reference repository has no configured ref yet. Phase 4 discovers one and pins it.
-        references: project.referenceRepositories.map((slug) => ({
-          url: buildRepositoryUrl(this.dependencies.repositoryBaseUrl, slug),
-          ref: "HEAD",
-        })),
-        defaults: DEFAULT_PROJECT_DEFAULTS,
-        // Phase 4 replaces this with the refined Work Item. Until then the issue is the goal.
-        goal: buildGoal(event),
-      };
+      buildRepositoryUrl(this.dependencies.repositoryBaseUrl, project.primaryRepository);
+      for (const slug of project.referenceRepositories) {
+        buildRepositoryUrl(this.dependencies.repositoryBaseUrl, slug);
+      }
     } catch (error) {
       await this.dependencies.webhookLog.remove(deliveryId);
       return {
@@ -134,7 +148,8 @@ export class DelegationService {
           agentSessionId: event.agentSession.id,
           autonomyLevel: project.defaultAutonomy,
           maxRunMinutes: project.maxRunMinutes,
-          sandbox,
+          workItem,
+          project: workflowProject,
         },
       ],
     });
@@ -142,10 +157,3 @@ export class DelegationService {
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId };
   }
 }
-
-/** The Work Item text the Implementer receives. Phase 4 replaces it with a refined Work Item. */
-const buildGoal = (event: AgentSessionEvent): string => {
-  const title = event.agentSession.issue?.title ?? "";
-  const description = event.agentSession.issue?.description ?? "";
-  return description === "" ? title : `${title}\n\n${description}`;
-};

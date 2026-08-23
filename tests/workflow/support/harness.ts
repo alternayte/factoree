@@ -1,7 +1,21 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
+import { createHash } from "node:crypto";
 import { Context } from "@temporalio/activity";
 import { Worker } from "@temporalio/worker";
 import type { TestWorkflowEnvironment } from "@temporalio/testing";
+import type { WorkflowHandle } from "@temporalio/client";
+import {
+  agentRunWorkflow,
+  runStatusQuery,
+  type AgentRunWorkflowInput,
+} from "~/workflows/agent-run.workflow.js";
+import { buildWorkflowId } from "~/temporal/workflow-id.js";
+import type {
+  RefineActivityInput,
+  RefineActivityOutput,
+} from "~/activities/refinement.activities.js";
+import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
+import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
 import type { VerifyActivityInput } from "~/activities/verification.activities.js";
@@ -68,6 +82,32 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const runtimeOverrides = new Map<string, Partial<ProjectRuntimeConfig>>();
   /** Reports whether the verification pass of one run id and one attempt passes. */
   const verifyOutcomes = new Map<string, (attempt: number) => boolean>();
+  /** Every question the workflow elicited, in order. */
+  const elicitations: string[] = [];
+  /** Every recorded `refine` call. */
+  const refineCalls: RefineActivityInput[] = [];
+  /** Every recorded `resolveContext` call. */
+  const contextCalls: ResolveContextActivityInput[] = [];
+  /**
+   * A run id in this map replaces the refinement result. The real engine answers every other
+   * run id, so a test that states no override drives the real Refinement rules.
+   */
+  const refineOverrides = new Map<string, (input: RefineActivityInput) => RefineActivityOutput>();
+  /**
+   * The conflict the context double reports for one run id. It reports the conflict until the
+   * Run records a decision for it. `detectConflicts` applies the same rule, and
+   * `tests/unit/context-conflicts.test.ts` proves that rule against the real domain. A conflict
+   * marked `settledByDecision: false` survives every answer, which is the case the bounded
+   * question rounds exist for.
+   */
+  const contextConflicts = new Map<
+    string,
+    { id: string; subject: string; question: string; settledByDecision?: boolean }
+  >();
+  /** The pinned SHA of the primary repository of a Run. Discovery reports it in production. */
+  const PRIMARY_SHA = "b".repeat(40);
+
+  const refinement = new RefinementEngine();
 
   const statusesOf = (runId: string): string[] =>
     statusCalls.filter((entry) => entry.runId === runId).map((entry) => entry.status);
@@ -94,7 +134,57 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postProgress: async (input: { message: string }) => {
       postedProgress.push(input.message);
     },
-    postElicitation: async () => undefined,
+    postElicitation: async (input: { question: string }) => {
+      elicitations.push(input.question);
+    },
+    refine: async (input: RefineActivityInput): Promise<RefineActivityOutput> => {
+      refineCalls.push(input);
+      const override = refineOverrides.get(input.runId);
+      if (override !== undefined) return override(input);
+      // The real Refinement engine holds no port, so a test double for it adds no fidelity.
+      const output = refinement.refine({
+        source: input.source,
+        project: input.project,
+        decisions: input.decisions,
+      });
+      return {
+        status: output.status,
+        goal: output.goal,
+        primaryRepository: output.primaryRepository,
+        referenceRepositories: output.referenceRepositories,
+        acceptanceCriteria: output.proposedAcceptanceCriteria.map((entry) => entry.statement),
+        workItemReferences: output.workItem.references.map((entry) => entry.value),
+        risks: output.risks,
+        unresolvedQuestions: output.unresolvedQuestions,
+        autonomyLevel: output.autonomyLevel,
+      };
+    },
+    resolveContext: async (input: ResolveContextActivityInput) => {
+      contextCalls.push(input);
+      const conflict = contextConflicts.get(input.runId) ?? null;
+      const settled =
+        conflict !== null &&
+        conflict.settledByDecision !== false &&
+        input.decisions.some((decision) => decision.questionId === conflict.id);
+      const unresolvedConflict = settled ? null : conflict;
+      const document = `# Context Contract\n\nGoal: ${input.goal}\n`;
+      return {
+        sha256: createHash("sha256").update(`${input.runId}|${document}`, "utf8").digest("hex"),
+        document,
+        requiredContext: ["docs/ADR-031.md (accepted ADR, sha256 " + "0".repeat(64) + ")"],
+        primary: { slug: input.primaryRepository.slug, sha: PRIMARY_SHA },
+        references: input.referenceRepositories.map((repository, index) => ({
+          slug: repository.slug,
+          sha: `${index}`.repeat(40),
+        })),
+        unresolvedConflict,
+        conflictCount: conflict === null ? 0 : 1,
+        summary:
+          unresolvedConflict === null
+            ? "Factoree resolved the context of this Run."
+            : "Factoree did not freeze this Context Contract, because one conflict is unresolved.",
+      };
+    },
     postFinalResponse: async () => undefined,
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
@@ -189,15 +279,30 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     },
   };
 
-  /** The sandbox input of a Run. SDD section 15: only the Project defaults travel from here. */
-  const sandboxInput = {
-    primary: { url: "https://example.invalid/primary.git", ref: "main" },
-    references: [],
-    defaults: DEFAULT_PROJECT_DEFAULTS,
-    goal: "Add the health endpoint.",
+  /**
+   * The Work Item of a Run. It states a goal and no open question, so Refinement is ready at
+   * once. A test that needs a question states its own Work Item.
+   */
+  const workItemInput = {
+    issueId: "issue-1",
+    title: "Add the health endpoint",
+    description: "## Goal\n\nAdd the health endpoint.\n",
+    url: null,
+    labels: [],
   };
 
-  const input = (sessionId: string, maxRunMinutes = 90) => ({
+  /** The Project of a Run. SDD section 15: only the Project defaults travel from here. */
+  const projectInput = {
+    primaryRepository: "acme/primary",
+    referenceRepositories: [],
+    defaultBranch: "main",
+    repositoryBaseUrl: "https://example.invalid",
+    stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
+    spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
+    defaultAutonomy: "L2",
+  };
+
+  const input = (sessionId: string, maxRunMinutes = 90): AgentRunWorkflowInput => ({
     tenantId: "tenant-1",
     workspaceId: "workspace-123",
     projectId: "project-1",
@@ -205,7 +310,17 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     agentSessionId: sessionId,
     autonomyLevel: "L2",
     maxRunMinutes,
+    workItem: workItemInput,
+    project: projectInput,
   });
+
+  /** Starts one Run of the default fixture Project, with the given overrides. */
+  const start = async (sessionId: string, overrides: Partial<AgentRunWorkflowInput> = {}) =>
+    environment().client.workflow.start(agentRunWorkflow, {
+      taskQueue: "test",
+      workflowId: buildWorkflowId("workspace-123", sessionId),
+      args: [{ ...input(sessionId), ...overrides }],
+    });
 
   const runWorker = async <T>(body: () => Promise<T>): Promise<T> => {
     const worker = await Worker.create({
@@ -241,16 +356,36 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     configurationFaults,
     runtimeOverrides,
     verifyOutcomes,
-    sandboxInput,
+    elicitations,
+    refineCalls,
+    contextCalls,
+    refineOverrides,
+    contextConflicts,
+    workItemInput,
+    projectInput,
+    PRIMARY_SHA,
     input,
+    start,
+    runStatusQuery,
     runWorker,
   };
 };
 
+/** Polls the run status query until the Run reaches the given status. */
+export const waitForStatus = async (
+  handle: WorkflowHandle,
+  status: string,
+): Promise<void> => {
+  await waitFor(async () => (await handle.query(runStatusQuery)).status === status, `status ${status}`);
+};
+
 /** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
-export const waitFor = async (predicate: () => boolean, what = "the condition"): Promise<void> => {
+export const waitFor = async (
+  predicate: () => boolean | Promise<boolean>,
+  what = "the condition",
+): Promise<void> => {
   const deadline = Date.now() + 10_000;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() > deadline) throw new Error(`the test waited ten seconds for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

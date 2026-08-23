@@ -4,6 +4,7 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { agentRunWorkflow, stopSignal } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
+import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
 
 let environment: TestWorkflowEnvironment;
 const createCalls: string[] = [];
@@ -24,6 +25,55 @@ const activities = {
   postElicitation: async () => undefined,
   postFinalResponse: async () => undefined,
   postError: async () => undefined,
+  // Phase 4 puts refinement and context resolution before preparation, so this Run reaches
+  // every activity below. Each double returns at once, and none of them holds state.
+  refine: async (input: { project: { primaryRepository: string; referenceRepositories: string[] } }) => ({
+    status: "ready",
+    goal: "Add the health endpoint.",
+    primaryRepository: input.project.primaryRepository,
+    referenceRepositories: input.project.referenceRepositories,
+    acceptanceCriteria: [],
+    workItemReferences: [],
+    risks: [],
+    unresolvedQuestions: [],
+    autonomyLevel: "L2",
+  }),
+  resolveContext: async (input: { primaryRepository: { slug: string } }) => ({
+    sha256: "c".repeat(64),
+    document: "# Context Contract\n",
+    requiredContext: [],
+    primary: { slug: input.primaryRepository.slug, sha: "b".repeat(40) },
+    references: [],
+    unresolvedConflict: null,
+    conflictCount: 0,
+    summary: "Factoree resolved the context of this Run.",
+  }),
+  prepareSandbox: async (input: { runId: string }) => ({
+    spriteId: `sprite-${input.runId}`,
+    adapter: "fake",
+    workspacePath: "/workspace",
+    primaryPath: "/workspace/primary",
+    baseSha: "b".repeat(40),
+    referencePaths: [],
+    referenceBaseShas: [],
+    baselineCheckpointId: null,
+    runtime: DEFAULT_PROJECT_RUNTIME_CONFIG,
+    verifyCommands: [],
+    repositoryInstructions: "",
+  }),
+  implement: async (input: { runnerName: string }) => ({
+    sessionId: "ses_fake",
+    processId: "process-fake",
+    runner: input.runnerName,
+    completed: true,
+    exitCode: 0,
+    cancelled: false,
+    summary: "The change is applied.",
+    durationMs: 10,
+    cancelledSession: false,
+  }),
+  verify: async () => ({ passed: true, checks: [], summary: "Every check passed.", failures: [] }),
+  cancelImplementer: async () => undefined,
 };
 
 const newWorker = async (): Promise<Worker> =>
@@ -60,6 +110,22 @@ describe("AT-35 worker restart", () => {
           agentSessionId: "session-at35",
           autonomyLevel: "L2",
           maxRunMinutes: 90,
+          workItem: {
+            issueId: "issue-1",
+            title: "Add the health endpoint",
+            description: "## Goal\n\nAdd the health endpoint.\n",
+            url: null,
+            labels: [],
+          },
+          project: {
+            primaryRepository: "acme/primary",
+            referenceRepositories: [],
+            defaultBranch: "main",
+            repositoryBaseUrl: "https://example.invalid",
+            stagingRead: false,
+            spriteRetentionHours: 24,
+            defaultAutonomy: "L2",
+          },
         },
       ],
     });
