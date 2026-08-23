@@ -204,4 +204,17 @@ describe("DelegationService", () => {
     const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
     expect(redelivery.kind).not.toBe("duplicate");
   });
+
+  it("does not start a workflow when a reference repository slug is unusable", async () => {
+    const { service, starter } = build({
+      project: { ...project, referenceRepositories: ["not-a-slug"] },
+    });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-10");
+    expect(outcome.kind).toBe("unconfigured");
+    expect(starter.start).not.toHaveBeenCalled();
+
+    // The marker was released, so a Linear redelivery of the same identifier is not a duplicate.
+    const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-10");
+    expect(redelivery.kind).not.toBe("duplicate");
+  });
 });

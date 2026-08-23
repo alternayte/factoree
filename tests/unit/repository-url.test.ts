@@ -23,4 +23,18 @@ describe("buildRepositoryUrl", () => {
     expect(() => buildRepositoryUrl("https://github.com", "../etc")).toThrow();
     expect(() => buildRepositoryUrl("https://github.com", "a/..")).toThrow();
   });
+
+  it("rejects a slug half that is a single dot segment", () => {
+    expect(() => buildRepositoryUrl("https://github.com", "owner/.")).toThrow(/owner\/repo/);
+    expect(() => buildRepositoryUrl("https://github.com", "owner/..")).toThrow(/owner\/repo/);
+    expect(() => buildRepositoryUrl("https://github.com", "./repo")).toThrow(/owner\/repo/);
+    expect(() => buildRepositoryUrl("https://github.com", "../repo")).toThrow(/owner\/repo/);
+    expect(() => buildRepositoryUrl("https://github.com", "owner/../repo")).toThrow(/owner\/repo/);
+  });
+
+  it("accepts an ordinary slug that holds a dot", () => {
+    expect(buildRepositoryUrl("https://github.com", "owner/my.repo")).toBe(
+      "https://github.com/owner/my.repo.git",
+    );
+  });
 });

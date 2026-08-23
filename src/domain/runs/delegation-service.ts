@@ -10,7 +10,7 @@ import type {
   AgentRunWorkItemInput,
   AgentRunWorkflowInput,
 } from "~/workflows/agent-run.workflow.js";
-import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
+import { assertRepositorySlug } from "~/domain/projects/repository-url.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 
 export interface WorkflowStarter {
@@ -122,12 +122,12 @@ export class DelegationService {
       defaultAutonomy: project.defaultAutonomy,
     };
 
-    // An unusable slug must stop the Run here, and not inside the workflow. This call validates
-    // every slug and discards the result. The workflow builds the real clone URL later.
+    // An unusable slug must stop the Run here, and not inside the workflow, where the operator
+    // sees only a failed Run. The workflow builds the real clone URL later.
     try {
-      buildRepositoryUrl(this.dependencies.repositoryBaseUrl, project.primaryRepository);
+      assertRepositorySlug(project.primaryRepository);
       for (const slug of project.referenceRepositories) {
-        buildRepositoryUrl(this.dependencies.repositoryBaseUrl, slug);
+        assertRepositorySlug(slug);
       }
     } catch (error) {
       await this.dependencies.webhookLog.remove(deliveryId);
