@@ -61,12 +61,6 @@ export class McpJsonRpcClient implements McpToolPort {
   private nextId = 1;
   private sessionId: string | null = null;
   private initializePromise: Promise<void> | null = null;
-  /**
-   * Coalesces an identical tool call, by name and arguments, to a single outbound request for
-   * the life of this client. The cached promise is reused whether it settled or is still in
-   * flight, so a repeat of the same call never doubles a side effect on the MCP server.
-   */
-  private readonly callCache = new Map<string, Promise<string>>();
 
   constructor(options: McpJsonRpcClientOptions) {
     this.endpoint = options.endpoint;
@@ -74,17 +68,12 @@ export class McpJsonRpcClient implements McpToolPort {
     this.fetchImpl = options.fetch;
   }
 
-  callTool(name: string, args: Record<string, unknown>): Promise<string> {
-    const key = `${name}:${JSON.stringify(args)}`;
-    const cached = this.callCache.get(key);
-    if (cached !== undefined) return cached;
-
-    const promise = this.callToolUncached(name, args);
-    this.callCache.set(key, promise);
-    return promise;
-  }
-
-  private async callToolUncached(name: string, args: Record<string, unknown>): Promise<string> {
+  /**
+   * Calls the server on every invocation. An MCP server is a live source, so two identical calls
+   * at different moments can legitimately answer differently, and a Run that retries a failed
+   * call needs a real retry, not a replayed failure. See SDD section 17 and SDD section 58.
+   */
+  async callTool(name: string, args: Record<string, unknown>): Promise<string> {
     await this.ensureInitialized();
     const result = asRecord(await this.request("tools/call", { name, arguments: args }));
     const content = Array.isArray(result["content"]) ? (result["content"] as unknown[]) : [];

@@ -34,10 +34,27 @@ describe("McpJsonRpcClient", () => {
       .fn()
       .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
       .mockResolvedValueOnce(new Response("", { status: 202 }))
-      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, error: { code: -32601, message: "no such tool" } }));
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, error: { code: -32601, message: "no such tool" } }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, error: { code: -32601, message: "no such tool" } }));
     const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
     await expect(client.callTool("missing", {})).rejects.toBeInstanceOf(McpError);
     await expect(client.callTool("missing", {})).rejects.toThrow(/no such tool/);
+  });
+
+  it("calls the server again for a repeat of the same call, with no result cache", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response("", { status: 202 }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "first" }] } }))
+      .mockResolvedValueOnce(answer({ jsonrpc: "2.0", id: 3, result: { content: [{ type: "text", text: "second" }] } }));
+    const client = new McpJsonRpcClient({ endpoint: "https://mcp.test/rpc", token: null, fetch: fetchMock });
+
+    expect(await client.callTool("search_docs", { query: "a" })).toBe("first");
+    expect(await client.callTool("search_docs", { query: "a" })).toBe("second");
+
+    // One initialize, one initialized notification, two identical calls, each reaching the server.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("reports a tool that answered isError as a failure", async () => {
