@@ -24,6 +24,13 @@ export interface RefineActivityOutput {
   referenceRepositories: string[];
   /** The statements only. The workflow needs them for the context topics. */
   acceptanceCriteria: string[];
+  /**
+   * The proposed acceptance criteria with their identifiers. SDD section 24 requires each
+   * validation assertion to name its source requirement, and the identifier is that name.
+   * `acceptanceCriteria` above stays a list of statements, because the context topics need the
+   * statements only.
+   */
+  criteria: Array<{ id: string; statement: string; source: string }>;
   /** Every reference the Work Item declared, as written. */
   workItemReferences: string[];
   risks: string[];
@@ -67,6 +74,11 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       primaryRepository: output.primaryRepository,
       referenceRepositories: output.referenceRepositories,
       acceptanceCriteria: output.proposedAcceptanceCriteria.map((criterion) => criterion.statement),
+      criteria: output.proposedAcceptanceCriteria.map((criterion) => ({
+        id: criterion.id,
+        statement: criterion.statement,
+        source: criterion.source,
+      })),
       workItemReferences: output.workItem.references.map((reference) => reference.value),
       risks: output.risks,
       unresolvedQuestions: output.unresolvedQuestions,

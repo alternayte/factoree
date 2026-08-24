@@ -73,6 +73,10 @@ const build = (
       new Error('no Run "run-1" of tenant "tenant-1" received the Context Contract version'),
     ),
     // The real store throws when the write reaches no row. The fake must not be more permissive.
+    setValidationContractVersion: vi.fn().mockRejectedValue(
+      new Error('no Run "run-1" of tenant "tenant-1" received the Validation Contract version'),
+    ),
+    // The real store throws when the write reaches no row. The fake must not be more permissive.
     setAutonomyLevel: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the autonomy level'),
     ),

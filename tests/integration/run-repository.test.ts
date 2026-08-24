@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { startDatabase } from "./support/database.js";
+import { startDatabase, seedTenantProjectAndRun } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
@@ -174,6 +174,24 @@ describe("PrismaRunRepository", () => {
     expect(superseded).toEqual(["sprite-8-original", loser].sort());
   });
 
+});
+
+describe("PrismaRunRepository.setValidationContractVersion", () => {
+  it("writes the frozen Validation Contract hash to the Run", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    await runs.setValidationContractVersion(tenantId, runId, "a".repeat(64));
+    const reloaded = await runs.findById(tenantId, runId);
+    expect(reloaded?.validationContractVersion).toBe("a".repeat(64));
+  });
+
+  it("throws when it reaches no Run of that tenant, because a silent success hides a caller defect", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { runId } = await seedTenantProjectAndRun(prisma);
+    await expect(
+      runs.setValidationContractVersion("other-tenant", runId, "b".repeat(64)),
+    ).rejects.toThrow();
+  });
 });
 
 describe("PrismaWebhookLog", () => {

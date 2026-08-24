@@ -34,6 +34,7 @@ import type {
 import { ConfiguredContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { ContextSourceSecretReader } from "~/domain/context/context-source-provider.js";
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
+import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
@@ -161,6 +162,7 @@ const worker = await Worker.create({
     contextResolver: new ContextResolver(),
     contextContracts: new PrismaContextContractStore(prisma),
     contextSources,
+    validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     logger,
   }),

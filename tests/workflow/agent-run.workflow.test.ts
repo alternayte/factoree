@@ -132,11 +132,13 @@ describe("agentRunWorkflow", () => {
     });
     // Verification now follows the implementation, so the sequence of this Run is longer than
     // it was in Phase 2. Phase 4 puts REFINING and RESOLVING_CONTEXT before PREPARING, per SDD
-    // section 49. The first states of this Run are still exactly these, in this order.
-    expect(statusesOf("run-session-f").slice(0, 5)).toEqual([
+    // section 49. Phase 6 adds BUILDING_VALIDATION_CONTRACT between them. The first states of
+    // this Run are still exactly these, in this order.
+    expect(statusesOf("run-session-f").slice(0, 6)).toEqual([
       "RECEIVED",
       "REFINING",
       "RESOLVING_CONTEXT",
+      "BUILDING_VALIDATION_CONTRACT",
       "PREPARING",
       "IMPLEMENTING",
     ]);

@@ -96,6 +96,10 @@ describe("AT-33 tenant isolation", () => {
         "Project",
         "ProjectSecret",
         "Run",
+        // SDD section 24 and SDD section 52. Phase 6 added the Validation Contract tables, and
+        // each one is tenant-owned.
+        "ValidationAssertion",
+        "ValidationContract",
       ].sort(),
     );
   });

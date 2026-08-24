@@ -12,6 +12,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import type { ContextResolver } from "~/domain/context/context-resolver.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
+import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { createRunActivities } from "./run.activities.js";
@@ -21,6 +22,7 @@ import { createAgentActivities } from "./agent.activities.js";
 import { createVerificationActivities } from "./verification.activities.js";
 import { createRefinementActivities } from "./refinement.activities.js";
 import { createContextActivities } from "./context.activities.js";
+import { createValidationActivities } from "./validation.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -38,6 +40,7 @@ export interface ActivityDependencies {
   contextResolver: ContextResolver;
   contextContracts: ContextContractStore;
   contextSources: ContextSourceProvider;
+  validationContracts: ValidationContractStore;
   repositoryReader: RepositoryReader;
   logger: Logger;
 }
@@ -73,6 +76,11 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     sources: dependencies.contextSources,
     repositoryReader: dependencies.repositoryReader,
+  }),
+  ...createValidationActivities({
+    contracts: dependencies.validationContracts,
+    runs: dependencies.runs,
+    logger: dependencies.logger,
   }),
   ...createVerificationActivities({
     sandbox: dependencies.sandbox,

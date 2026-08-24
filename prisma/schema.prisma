@@ -121,6 +121,7 @@ model Run {
   executions               AgentExecution[]
   evidence                 Evidence[]
   contextContract          ContextContract?
+  validationContract       ValidationContract?
 
   @@index([tenantId])
   @@index([projectId])
@@ -235,6 +236,44 @@ model ContextConflict {
   createdAt         DateTime        @default(now())
 
   @@unique([contextContractId, conflictKey])
+  @@index([tenantId])
+}
+
+model ValidationContract {
+  id          String   @id @default(uuid())
+  tenantId    String
+  runId       String   @unique
+  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // SDD section 24 fixes the document schema version. `Run.validationContractVersion` holds the
+  // SHA-256 below, because that value identifies the exact frozen contract. See controller
+  // decision 5.
+  version     Int
+  sha256      String
+  workItem    String
+  goal        String
+  // The rendered contract. It reaches the Implementer, the User Validator, and the Proof Pack.
+  document    String
+  createdAt   DateTime @default(now())
+  assertions  ValidationAssertion[]
+
+  @@index([tenantId])
+}
+
+model ValidationAssertion {
+  id                   String             @id @default(uuid())
+  tenantId             String
+  validationContractId String
+  validationContract   ValidationContract @relation(fields: [validationContractId], references: [id], onDelete: Cascade)
+  // SDD section 24 requires a unique identifier, a source requirement, an observable behavior, a
+  // method, required evidence, and permitted preconditions on every assertion.
+  assertionKey         String
+  requirement          String
+  statement            String
+  method               String
+  evidence             String[]
+  preconditions        String[]
+
+  @@unique([validationContractId, assertionKey])
   @@index([tenantId])
 }
 

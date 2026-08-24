@@ -35,6 +35,7 @@ const activities = {
     primaryRepository: input.project.primaryRepository,
     referenceRepositories: input.project.referenceRepositories,
     acceptanceCriteria: [],
+    criteria: [],
     workItemReferences: [],
     risks: [],
     unresolvedQuestions: [],
@@ -49,6 +50,15 @@ const activities = {
     unresolvedConflict: null,
     conflictCount: 0,
     summary: "Factoree resolved the context of this Run.",
+  }),
+  buildValidationContract: async () => ({
+    status: "ready",
+    sha256: "c".repeat(64),
+    document: "# Validation Contract\n\nThe health endpoint answers 200.\n",
+    assertionCount: 1,
+    frozenAt: "2026-01-01T00:00:00.000Z",
+    question: null,
+    summary: "Factoree froze the Validation Contract with 1 assertion.",
   }),
   prepareSandbox: async (input: { runId: string }) => ({
     spriteId: `sprite-${input.runId}`,
