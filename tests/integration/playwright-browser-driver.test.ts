@@ -1,0 +1,157 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { PlaywrightBrowserDriver } from "../../src/adapters/browser/playwright/playwright-browser-driver.js";
+import type { BrowserScenario, BrowserStepResult, BrowserArtifact } from "../../src/domain/validation/browser-driver.js";
+
+const PAGE_HTML = `<!doctype html>
+<html>
+<head><title>Fixture</title></head>
+<body>
+  <p id="current">Original</p>
+  <form id="form">
+    <input id="name" type="text" value="Original" />
+    <button id="save" type="submit">Save</button>
+  </form>
+  <script>
+    console.log("fixture page loaded");
+    var stored = localStorage.getItem("name") || "Original";
+    document.getElementById("current").textContent = stored;
+    document.getElementById("name").value = stored;
+    document.getElementById("form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var value = document.getElementById("name").value;
+      localStorage.setItem("name", value);
+      document.getElementById("current").textContent = value;
+    });
+  </script>
+</body>
+</html>`;
+
+const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
+  new Promise((resolve) => {
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "text/html");
+      response.writeHead(200);
+      response.end(PAGE_HTML);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as AddressInfo;
+      resolve({ server, baseUrl: `http://127.0.0.1:${address.port}` });
+    });
+  });
+
+describe("PlaywrightBrowserDriver", () => {
+  let server: Server;
+  let baseUrl: string;
+  let driver: PlaywrightBrowserDriver;
+  const scenario: BrowserScenario = {
+    baseUrl: "",
+    steps: [{ action: "goto", path: "/" }],
+    captureVideo: false,
+    captureTrace: false,
+    timeoutMs: 30_000,
+  };
+
+  beforeAll(async () => {
+    const fixture = await startFixtureServer();
+    server = fixture.server;
+    baseUrl = fixture.baseUrl;
+    scenario.baseUrl = baseUrl;
+    driver = new PlaywrightBrowserDriver();
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  afterEach(() => {
+    // Each test only reads scenario.baseUrl; nothing to reset per test.
+  });
+
+  it("has the name playwright", () => {
+    expect(driver.name).toBe("playwright");
+  });
+
+  it("runs a scenario, asserts the page state, and returns a screenshot", async () => {
+    const result = await driver.run({
+      baseUrl,
+      steps: [
+        { action: "goto", path: "/" },
+        { action: "fill", selector: "#name", value: "Renamed" },
+        { action: "click", selector: "#save" },
+        { action: "reload" },
+        { action: "expectText", selector: "#current", text: "Renamed" },
+        { action: "screenshot", name: "after-reload" },
+      ],
+      captureVideo: false,
+      captureTrace: false,
+      timeoutMs: 30_000,
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.steps.every((step: BrowserStepResult) => step.passed)).toBe(true);
+    const screenshot = result.artifacts.find((a: BrowserArtifact) => a.name === "after-reload");
+    expect(screenshot?.kind).toBe("screenshot");
+    expect(screenshot!.bytes.byteLength).toBeGreaterThan(1_000);
+    expect(result.network.some((entry: { status: number | null }) => entry.status === 200)).toBe(true);
+  }, 60_000);
+
+  it("fails the scenario when the expected text is absent, and still returns a screenshot", async () => {
+    const result = await driver.run({
+      ...scenario,
+      steps: [
+        { action: "goto", path: "/" },
+        { action: "expectText", selector: "#current", text: "Never" },
+      ],
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toBeTruthy();
+    expect(result.artifacts.some((a: BrowserArtifact) => a.name === "final")).toBe(true);
+  }, 60_000);
+
+  it("stops the scenario after a thrown step and marks later steps not run", async () => {
+    const result = await driver.run({
+      ...scenario,
+      steps: [
+        { action: "goto", path: "/" },
+        { action: "click", selector: "#does-not-exist" },
+        { action: "expectVisible", selector: "#current" },
+      ],
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.steps[1]!.passed).toBe(false);
+    expect(result.steps[2]!.passed).toBe(false);
+    expect(result.steps[2]!.detail).toBe("not run");
+  }, 60_000);
+
+  it("captures a trace when the scenario asks for one", async () => {
+    const result = await driver.run({ ...scenario, captureTrace: true });
+    const trace = result.artifacts.find((a: BrowserArtifact) => a.kind === "trace");
+    expect(trace).toBeDefined();
+    expect(trace!.bytes.byteLength).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("captures a video when the scenario asks for one", async () => {
+    const result = await driver.run({ ...scenario, captureVideo: true });
+    const video = result.artifacts.find((a: BrowserArtifact) => a.kind === "video");
+    expect(video).toBeDefined();
+    expect(video!.bytes.byteLength).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("reports console output from the page", async () => {
+    const result = await driver.run(scenario);
+    expect(result.consoleLines.some((line: string) => line.includes("fixture page loaded"))).toBe(true);
+  }, 60_000);
+
+  it("rejects a goto path that does not start with a slash", async () => {
+    const result = await driver.run({
+      ...scenario,
+      steps: [{ action: "goto", path: "https://example.com" }],
+    });
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toBeTruthy();
+  }, 60_000);
+});
