@@ -56,6 +56,12 @@ export const RUN_FAILURE_REASONS = [
   "VALIDATION_BLOCKED",
   // SDD section 36. An assertion needs a human, so an L3 Run cannot complete on its own.
   "VALIDATION_MANUAL_REQUIRED",
+  // SDD section 41 and section 42. The review reported at least one blocking finding, and the
+  // repair budget of SDD section 42 is spent.
+  "REVIEW_BLOCKING_FINDINGS",
+  // SDD section 40. Factoree could not obtain a usable review, so it proved nothing about the
+  // change. A repair cannot help. See controller decision 7.
+  "REVIEW_UNAVAILABLE",
   "INTERNAL_ERROR",
 ] as const;
 

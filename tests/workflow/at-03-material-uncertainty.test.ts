@@ -90,6 +90,7 @@ describe("AT-03 — a material uncertainty stops the Run before any implementati
       acceptanceCriteria: [],
       criteria: [],
       workItemReferences: [],
+      constraints: [],
       risks: [],
       unresolvedQuestions: [
         { id: "Q-1", question: "Which channel do we use?", whyMaterial: "The Work Item is open." },

@@ -41,6 +41,13 @@ describe("run status", () => {
     expect([...RUN_FAILURE_REASONS]).toContain("VERIFICATION_FAILED");
   });
 
+  it("declares the two failure reasons of the independent review", () => {
+    // SDD section 40, section 41, and section 42. A blocking finding with a spent repair budget
+    // and an unusable report are two different outcomes, so they carry two different reasons.
+    expect([...RUN_FAILURE_REASONS]).toContain("REVIEW_BLOCKING_FINDINGS");
+    expect([...RUN_FAILURE_REASONS]).toContain("REVIEW_UNAVAILABLE");
+  });
+
   it("classifies terminal and non-terminal states", () => {
     expect(isTerminalRunStatus("READY_FOR_HUMAN")).toBe(true);
     expect(isTerminalRunStatus("IMPLEMENTING")).toBe(false);

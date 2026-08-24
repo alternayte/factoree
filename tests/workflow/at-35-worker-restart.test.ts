@@ -38,6 +38,7 @@ const activities = {
     criteria: [],
     workItemReferences: [],
     risks: [],
+    constraints: [],
     unresolvedQuestions: [],
     autonomyLevel: "L2",
   }),
@@ -102,6 +103,20 @@ const activities = {
     summary: "Every user validation assertion passed.",
     failures: [],
     sessionId: "ses_fake_validator",
+  }),
+  // Phase 8 adds the review activity to the bounded loop. This map is a plain object literal and
+  // is not typed as `Activities`, so `npm run typecheck` cannot catch a missing entry here
+  // either. A missing entry fails a Run intermittently after a worker restart.
+  review: async () => ({
+    passed: true,
+    verdict: "pass",
+    findingCount: 0,
+    blockingCount: 0,
+    summary: "The independent review found no blocking finding.",
+    failures: [],
+    sessionId: "ses_fake_reviewer",
+    reportUsable: true,
+    reportProblem: null,
   }),
 };
 

@@ -25,6 +25,10 @@ import type {
   UserValidateActivityInput,
   UserValidateActivityOutput,
 } from "~/activities/validation.activities.js";
+import type {
+  ReviewActivityInput,
+  ReviewActivityOutput,
+} from "~/activities/review.activities.js";
 import type { ProjectRuntimeConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import {
   DEFAULT_PROJECT_DEFAULTS,
@@ -47,6 +51,8 @@ export interface StatusCall {
   runId: string;
   status: string;
   repairCount?: number;
+  /** SDD section 42 and section 62. The stage that asked for this repair. */
+  repairReason?: "VERIFICATION" | "VALIDATION" | "REVIEW";
 }
 
 /** One recorded `completeRun` call. */
@@ -64,6 +70,10 @@ export const VALIDATION_SHA = "c".repeat(64);
 
 /** The frozen Validation Contract document the double reports. */
 export const VALIDATION_DOCUMENT = "# Validation Contract\n\nThe health endpoint answers 200.\n";
+
+/** The failure text the review double reports when it blocks a change. */
+export const REVIEW_FAILURE_TEXT =
+  "REV-001: the change drops the retry of the delivery worker (blocking).";
 
 /** The failure text the verify double reports when it fails a check. */
 export const VERIFY_FAILURE_TEXT = 'Verification check "unit" failed with exit code 1.';
@@ -138,6 +148,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const heldUserValidations = new Map<string, Promise<void>>();
   /** The run ids whose live User Validator session the activity observed a cancellation for. */
   const cancelledLiveValidations: string[] = [];
+  /** Every recorded `review` call, in order. */
+  const reviewCalls: ReviewActivityInput[] = [];
+  /**
+   * A run id in this map replaces the `review` result. The function reads the attempt number of
+   * the call, so a test can block first and pass next. The partial result overrides the passing
+   * default field by field.
+   */
+  const reviewOutcomes = new Map<string, (attempt: number) => Partial<ReviewActivityOutput>>();
+  /** A run id in this map holds the review pass open until the test resolves the promise. */
+  const heldReviews = new Map<string, Promise<void>>();
+  /** The run ids whose `review` double raises a configuration fault. */
+  const reviewerConfigurationFaults = new Set<string>();
+  /** The run ids whose live Reviewer session the activity observed a cancellation for. */
+  const cancelledLiveReviews: string[] = [];
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
@@ -194,7 +218,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         created: created.filter((id) => id === input.linearAgentSessionId).length === 1,
       };
     },
-    setRunStatus: async (input: { runId: string; status: string; repairCount?: number }) => {
+    setRunStatus: async (input: StatusCall) => {
       statuses.push(input.status);
       statusCalls.push(input);
       await heldStatuses.get(`${input.runId}:${input.status}`);
@@ -238,6 +262,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         })),
         workItemReferences: output.workItem.references.map((entry) => entry.value),
         risks: output.risks,
+        constraints: output.workItem.constraints,
         unresolvedQuestions: output.unresolvedQuestions,
         autonomyLevel: output.autonomyLevel,
       };
@@ -440,6 +465,46 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         sessionId: "ses_fake_validator",
       };
     },
+    review: async (activityInput: ReviewActivityInput): Promise<ReviewActivityOutput> => {
+      activityOrder.push("review");
+      reviewCalls.push(activityInput);
+      if (reviewerConfigurationFaults.has(activityInput.runId)) {
+        throw new RunConfigurationError(
+          `The Project configures the reviewer runner "${activityInput.runnerName}", which is not registered.`,
+        );
+      }
+      const held = heldReviews.get(activityInput.runId);
+      if (held !== undefined) {
+        // The real activity heartbeats while the live Reviewer session runs, and it observes the
+        // cancellation signal. This double copies both, the same way the `userValidate` double
+        // does, so a scope cancellation reaches it before the test releases the held pass.
+        Context.current().cancellationSignal.addEventListener(
+          "abort",
+          () => cancelledLiveReviews.push(activityInput.runId),
+          { once: true },
+        );
+        const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
+        try {
+          await held;
+        } finally {
+          clearInterval(heartbeat);
+        }
+      }
+      const passing: ReviewActivityOutput = {
+        passed: true,
+        verdict: "pass",
+        findingCount: 0,
+        blockingCount: 0,
+        summary: "The independent review found no blocking finding.",
+        failures: [],
+        sessionId: "ses_fake_reviewer",
+        reportUsable: true,
+        reportProblem: null,
+      };
+      const outcome = reviewOutcomes.get(activityInput.runId);
+      if (outcome === undefined) return passing;
+      return { ...passing, ...outcome(activityInput.attempt) };
+    },
   };
 
   /**
@@ -530,6 +595,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     userValidationOutcomes,
     heldUserValidations,
     cancelledLiveValidations,
+    reviewCalls,
+    reviewOutcomes,
+    heldReviews,
+    reviewerConfigurationFaults,
+    cancelledLiveReviews,
     activityOrder,
     workItemLabels,
     failingLabelReads,

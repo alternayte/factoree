@@ -34,6 +34,8 @@ export interface RefineActivityOutput {
   /** Every reference the Work Item declared, as written. */
   workItemReferences: string[];
   risks: string[];
+  /** SDD section 7 and section 40. The constraints the Work Item stated. */
+  constraints: string[];
   unresolvedQuestions: RefinementQuestion[];
   autonomyLevel: string;
 }
@@ -81,6 +83,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       })),
       workItemReferences: output.workItem.references.map((reference) => reference.value),
       risks: output.risks,
+      constraints: output.workItem.constraints,
       unresolvedQuestions: output.unresolvedQuestions,
       autonomyLevel: output.autonomyLevel,
     });
