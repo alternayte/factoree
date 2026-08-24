@@ -52,7 +52,7 @@ const TEST_WORDS = ["test", "tests", "unit test", "integration test", "test suit
 
 const COMMAND_WORDS = ["command", "cli", "exit code", "exits with", "build", "lint", "script", "npm run"] as const;
 
-const REVIEW_WORDS = ["code review", "reviewed", "review confirms", "no production file"] as const;
+const REVIEW_WORDS = ["code review", "reviewed", "review confirms"] as const;
 
 /**
  * The rule order is the confidence order. An explicit HTTP call beats every other signal, because
