@@ -172,16 +172,31 @@ const planText = JSON.stringify({
   ],
 });
 
+/**
+ * Models `PrismaAgentExecutionRepository`, which upserts on the unique `idempotencyKey`. A
+ * double that always pushes a new row cannot catch a duplicate write on a Temporal retry.
+ */
+class FakeAgentExecutionRepository {
+  readonly rows: AgentExecutionRecord[] = [];
+  private readonly keys = new Map<string, AgentExecutionRecord>();
+
+  record(recordInput: RecordAgentExecutionInput): Promise<AgentExecutionRecord> {
+    const existing = this.keys.get(recordInput.idempotencyKey);
+    if (existing !== undefined) return Promise.resolve(existing);
+    const row: AgentExecutionRecord = { ...recordInput, id: `exec-${this.rows.length + 1}`, createdAt: new Date() };
+    this.rows.push(row);
+    this.keys.set(recordInput.idempotencyKey, row);
+    return Promise.resolve(row);
+  }
+
+  listForRun(): Promise<AgentExecutionRecord[]> {
+    return Promise.resolve(this.rows);
+  }
+}
+
 const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => {
   sandbox.scriptExec(/^cat /, { exitCode: 0, stdout: planText });
-  const executed: RecordAgentExecutionInput[] = [];
-  const executions = {
-    record: (recordInput: RecordAgentExecutionInput): Promise<AgentExecutionRecord> => {
-      executed.push(recordInput);
-      return Promise.resolve({ ...recordInput, id: "exec-1", createdAt: new Date() });
-    },
-    listForRun: () => Promise.resolve([]),
-  };
+  const executions = new FakeAgentExecutionRepository();
   const evidence = new FakeEvidenceStore();
   const results = new FakeResultStore();
   const storage = new FakeEvidenceStorage();
@@ -203,7 +218,7 @@ const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => 
       evidencePersistence: createEvidencePersistence({ evidence, results, storage, logger }),
     },
   });
-  return { activities, sandbox, executed, evidence, results, storage };
+  return { activities, sandbox, executions, evidence, results, storage };
 };
 
 const input = {
@@ -229,7 +244,7 @@ const input = {
 describe("the userValidate activity", () => {
   it("runs a fresh validator session and records its prompt version", async () => {
     const runner = new FakeRunner();
-    const { activities, executed } = build(runner);
+    const { activities, executions } = build(runner);
     const environment = new MockActivityEnvironment();
 
     const output: UserValidateActivityOutput = await environment.run(
@@ -238,7 +253,7 @@ describe("the userValidate activity", () => {
     );
 
     expect(runner.runs[0]?.role).toBe("validator");
-    expect(executed[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@1" });
+    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@1" });
     expect(output.sessionId).toBe("ses_fake");
   });
 
@@ -291,12 +306,17 @@ describe("the userValidate activity", () => {
 
   it("writes nothing new on a second call with the same attempt", async () => {
     const runner = new FakeRunner();
-    const { activities, results } = build(runner);
+    const { activities, executions, evidence, results } = build(runner);
     const environment = new MockActivityEnvironment();
 
     await environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input);
+    // A second call with the same attempt models a Temporal retry. The idempotency key of every
+    // row it writes must stay the same, so every store must still hold the same rows, not a
+    // second copy.
     await environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input);
 
+    expect(executions.rows).toHaveLength(1);
+    expect(evidence.rows).toHaveLength(5);
     expect(results.rows).toHaveLength(2);
   });
 
