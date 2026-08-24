@@ -424,8 +424,8 @@ export async function agentRunWorkflow(
     } finally {
       // The activity has settled by now. This cancel unblocks the watcher's own pending
       // `condition`, which never settles on its own when no stop arrives. The cancel reaches
-      // no live activity: the SDK sends a cancel command only while the activity is still
-      // pending, so a cancel after the activity settled produces no command at all.
+      // no live activity. The SDK sends a cancel command only while the activity is still
+      // pending, so a cancel after the activity settled produces no command.
       scope.cancel();
       await watching;
     }
@@ -989,6 +989,15 @@ export async function agentRunWorkflow(
           // User validation is bounded by the remaining budget, the same way verification is. A
           // budget that ran out during the pass is a Run timeout, not an internal fault.
           if (isCancellation(error)) throw error;
+          // A validator runner the Project names but no worker registers is a configuration
+          // fault. The Run ends in `FAILED_CONFIGURATION`, not in an internal error.
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not start the User Validator, because the Run configuration is " +
+                "invalid. Repair `validator_runner` in `.factoree/config.yaml`.",
+            );
+          }
           if (remainingMs() > 0) throw error;
           return await failRun("RUN_TIMEOUT", timeoutMessage);
         }

@@ -106,6 +106,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const postedProgress: string[] = [];
   /** The run ids whose preparation double raises a configuration fault. */
   const configurationFaults = new Set<string>();
+  /** The run ids whose `userValidate` double raises a configuration fault. */
+  const validatorConfigurationFaults = new Set<string>();
   /** The runtime values one run id overrides on the prepared sandbox. */
   const runtimeOverrides = new Map<string, Partial<ProjectRuntimeConfig>>();
   /** Reports whether the verification pass of one run id and one attempt passes. */
@@ -403,6 +405,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     ): Promise<UserValidateActivityOutput> => {
       activityOrder.push("userValidate");
       userValidateCalls.push(activityInput);
+      if (validatorConfigurationFaults.has(activityInput.runId)) {
+        throw new RunConfigurationError(
+          `The Project configures the validator runner "${activityInput.runnerName}", which is not registered.`,
+        );
+      }
       const held = heldUserValidations.get(activityInput.runId);
       if (held !== undefined) {
         // The real activity heartbeats while the live validator session runs, and it observes
@@ -511,6 +518,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postedErrors,
     postedProgress,
     configurationFaults,
+    validatorConfigurationFaults,
     runtimeOverrides,
     verifyOutcomes,
     elicitations,

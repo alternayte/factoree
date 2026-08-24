@@ -177,7 +177,9 @@ const executeBrowserAssertion = async (
       source: `browser:${assertion.id}:${artifact.kind}`,
       contentType: artifact.contentType,
       bytes: artifact.bytes,
-      metadata: { assertionId: assertion.id, name: artifact.name },
+      // SDD section 60. The artefact name comes from the agent-authored plan, and that session
+      // holds Project test secrets. Redact it before it reaches a persisted record.
+      metadata: { assertionId: assertion.id, name: dependencies.redactor.redactText(artifact.name) },
     });
   }
 

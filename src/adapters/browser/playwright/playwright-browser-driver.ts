@@ -114,9 +114,10 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
 
       if (scenario.captureTrace) {
         const tracePath = path.join(tempDir, "trace.zip");
-        await context.tracing.stop({ path: tracePath });
-        // Rule 4: a read failure must not reject run(). Record the loss and continue.
+        // Rule 4: a stop failure or a read failure must not reject run(). Every other capture
+        // failure is caught here too. Record the loss and continue.
         try {
+          await context.tracing.stop({ path: tracePath });
           const traceBytes = await readFile(tracePath);
           artifacts.push({
             kind: "trace",

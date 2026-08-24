@@ -10,7 +10,8 @@ import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execu
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { PlaywrightBrowserDriver } from "~/adapters/browser/playwright/playwright-browser-driver.js";
-import { FilesystemEvidenceStorage } from "~/adapters/evidence/filesystem-evidence-storage.js";
+import { createEvidenceStorage } from "~/adapters/evidence/evidence-storage-factory.js";
+import { createLinearFileUploadApi } from "~/adapters/linear/linear-evidence-storage.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
@@ -158,6 +159,26 @@ const previewProbe: ReadinessProbe = async (url) => {
   }
 };
 
+// SDD section 39 and `EVIDENCE_STORAGE`. The Linear access token belongs to one workspace, so
+// the port resolves it for the tenant of each artifact. The tenant row carries the workspace
+// identifier.
+const linearFileUploadApiForTenant = async (tenantId: string) => {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { linearWorkspaceId: true },
+  });
+  if (!tenant) throw new Error(`no tenant ${tenantId} for the evidence upload`);
+  const token = await tenants.getInstallationToken(tenant.linearWorkspaceId);
+  if (!token) throw new Error(`no Linear installation for workspace ${tenant.linearWorkspaceId}`);
+  return createLinearFileUploadApi(token);
+};
+
+const evidenceStorage = createEvidenceStorage({
+  storage: env.EVIDENCE_STORAGE,
+  localRoot: env.EVIDENCE_LOCAL_ROOT,
+  linearApiForTenant: linearFileUploadApiForTenant,
+});
+
 const httpValidationFetch: HttpValidationFetch = async (url, init) => {
   const response = await fetch(url, {
     method: init.method,
@@ -197,7 +218,7 @@ const worker = await Worker.create({
     browser: new PlaywrightBrowserDriver(),
     httpValidationFetch,
     previewProbe,
-    evidenceStorage: new FilesystemEvidenceStorage({ rootDirectory: env.EVIDENCE_LOCAL_ROOT }),
+    evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
     logger,
   }),

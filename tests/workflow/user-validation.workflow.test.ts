@@ -20,6 +20,7 @@ const {
   postedProgress,
   activityOrder,
   runtimeOverrides,
+  validatorConfigurationFaults,
   input,
   runWorker,
 } = harness;
@@ -244,5 +245,26 @@ describe("USER_VALIDATING", () => {
     });
 
     expect(postedProgress).toContain(passing.summary);
+  });
+
+  it("ends in FAILED_CONFIGURATION when no worker registers the configured validator runner", async () => {
+    const runId = "run-ses-uv9";
+    validatorConfigurationFaults.add(runId);
+
+    const result = await runWorker(async () => {
+      const handle = await startRun("ses-uv9");
+      return handle.result();
+    });
+
+    validatorConfigurationFaults.delete(runId);
+
+    // SDD section 49. An unregistered runner is a repairable configuration fault, not an
+    // internal error, and it must not consume the infrastructure retry policy.
+    expect(result.status).toBe("FAILED_CONFIGURATION");
+    expect(completionsOf(runId).at(-1)).toMatchObject({
+      status: "FAILED_CONFIGURATION",
+      failureReason: "CONFIGURATION_INVALID",
+    });
+    expect(userValidatesOf(runId)).toHaveLength(1);
   });
 });

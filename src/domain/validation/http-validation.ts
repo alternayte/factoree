@@ -70,10 +70,17 @@ const sanitizeHeaders = (
   return output;
 };
 
-/** Redacts a body, then truncates it. Evidence must stay a record, not a data dump. */
-const sanitizeBody = (body: string | null, redactor: Redactor): SanitizedBody | null => {
-  if (body === null) return null;
-  const redacted = redactor.redactText(body);
+/** Redacts a body. A secret never reaches an evidence record, and never reaches a match. */
+const redactBody = (body: string | null, redactor: Redactor): string | null =>
+  body === null ? null : redactor.redactText(body);
+
+/**
+ * Truncates an already redacted body for storage. Evidence must stay a record, not a data dump.
+ * The caller matches `expectBodyContains` against the untruncated redacted body, so a substring
+ * past the cut still passes.
+ */
+const truncateBody = (redacted: string | null): SanitizedBody | null => {
+  if (redacted === null) return null;
   const bodyLength = redacted.length;
   const bodyTruncated = bodyLength > MAX_BODY_LENGTH;
   return {
@@ -119,7 +126,7 @@ export const executeHttpAssertion = async (
   const { assertion, request, baseUrl, fetchImpl, redactor } = input;
   const url = new URL(request.path, baseUrl).toString();
   const sanitizedRequestHeaders = sanitizeHeaders(request.headers, redactor);
-  const sanitizedRequestBody = sanitizeBody(request.body, redactor);
+  const sanitizedRequestBody = truncateBody(redactBody(request.body, redactor));
 
   let response: HttpValidationResponse;
   try {
@@ -153,12 +160,15 @@ export const executeHttpAssertion = async (
   }
 
   const sanitizedResponseHeaders = sanitizeHeaders(response.headers, redactor);
-  const sanitizedResponseBody = sanitizeBody(response.body, redactor);
+  const redactedResponseBody = redactBody(response.body, redactor);
+  const sanitizedResponseBody = truncateBody(redactedResponseBody);
 
   const statusMatches = response.status === request.expectStatus;
+  // The match reads the untruncated redacted body. Truncation is a storage rule, and it must
+  // never turn a correct implementation into a FAIL.
   const bodyMatches =
     request.expectBodyContains === null ||
-    (sanitizedResponseBody !== null && sanitizedResponseBody.body.includes(request.expectBodyContains));
+    (redactedResponseBody !== null && redactedResponseBody.includes(request.expectBodyContains));
   const passed = statusMatches && bodyMatches;
 
   const metadata = {

@@ -1,7 +1,7 @@
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
-import type { AssertionOutcome } from "~/domain/validation/validation-result.js";
+import type { AssertionOutcome, EvidenceArtifact } from "~/domain/validation/validation-result.js";
 import type { Logger } from "~/telemetry/logger.js";
 
 export interface EvidencePersistenceDependencies {
@@ -24,6 +24,40 @@ export interface EvidencePersistence {
   persistAssertionOutcome(input: PersistAssertionOutcomeInput): Promise<void>;
 }
 
+/** The file extension of every content type an evidence artefact carries today. */
+const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "video/webm": "webm",
+  "video/mp4": "mp4",
+  "application/zip": "zip",
+  "application/json": "json",
+  "text/plain": "txt",
+};
+
+/** Reads the extension of a content type. An unknown type gets `bin`, never an empty suffix. */
+const extensionOf = (contentType: string): string => {
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return EXTENSION_BY_CONTENT_TYPE[mediaType] ?? "bin";
+};
+
+/** Replaces every character a file name must not hold. */
+const safeSegment = (value: string): string =>
+  value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+
+/**
+ * Builds the storage file name of one artefact. `artifact.source` holds a colon and carries no
+ * extension, so it is not a file name. The assertion key and the artefact kind give a readable
+ * name, and the content type gives the extension.
+ */
+export const storageNameOf = (assertionKey: string, artifact: EvidenceArtifact): string => {
+  const base = [safeSegment(assertionKey), safeSegment(artifact.kind)]
+    .filter((segment) => segment.length > 0)
+    .join("-");
+  return `${base.length > 0 ? base : "artifact"}.${extensionOf(artifact.contentType)}`;
+};
+
 /**
  * SDD section 63 requires this file to exist, because a Temporal workflow must never carry an
  * evidence byte through a workflow payload. `userValidate` calls this function in process, so a
@@ -42,7 +76,7 @@ export const createEvidencePersistence = (
       const stored = await dependencies.storage.put({
         tenantId: input.tenantId,
         runId: input.runId,
-        name: artifact.source,
+        name: storageNameOf(input.outcome.assertionId, artifact),
         contentType: artifact.contentType,
         bytes: artifact.bytes,
       });

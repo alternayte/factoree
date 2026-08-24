@@ -51,6 +51,7 @@ const env = {
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
   GITHUB_BASE_URL: "https://github.com",
+  EVIDENCE_STORAGE: "filesystem",
   EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
 } satisfies Env;
 

@@ -4,6 +4,7 @@ import { createValidationActivities } from "~/activities/validation.activities.j
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import { createEvidencePersistence } from "~/activities/evidence.activities.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRecord, RecordAgentExecutionInput } from "~/domain/runs/agent-execution.js";
 import type {
   RecordAssertionResultInput,
@@ -349,5 +350,24 @@ describe("the userValidate activity", () => {
     // honest outcome for each affected assertion.
     expect(output.hasBlocked).toBe(true);
     expect(output.passed).toBe(false);
+  });
+
+  it("reports an unregistered validator runner as a configuration fault", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner);
+    const environment = new MockActivityEnvironment();
+
+    // SDD section 15 states `claude` as the default validator runner, and SDD section 69 gives
+    // `ClaudeCodeRunner` to Phase 11. A stock configuration must fail as a repairable
+    // configuration fault, not as an internal error.
+    const promise = environment.run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      { ...input, runnerName: "claude" },
+    );
+
+    await expect(promise).rejects.toThrow(RunConfigurationError);
+    await expect(promise).rejects.toThrow(/validator runner "claude"/);
+    // The message names the registered runners, so an operator can repair the configuration.
+    await expect(promise).rejects.toThrow(/opencode/);
   });
 });

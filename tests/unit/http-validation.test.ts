@@ -154,4 +154,35 @@ describe("executeHttpAssertion", () => {
     expect(metadata.response.bodyLength).toBe(20000);
     expect(metadata.response.body.length).toBeLessThanOrEqual(8192);
   });
+
+  it("matches expectBodyContains past the truncation cut", async () => {
+    // The needle sits after character 8192. Truncation is a storage rule, so a correct
+    // implementation must not be sent into the SDD section 42 repair budget.
+    const needle = "the-late-marker";
+    const longBody = `${"x".repeat(10000)}${needle}${"y".repeat(100)}`;
+    const outcome = await executeHttpAssertion({
+      ...baseInput,
+      request: { ...baseRequest, expectBodyContains: needle },
+      fetchImpl: () => Promise.resolve({ status: 403, headers: {}, body: longBody }),
+    });
+
+    expect(outcome.result).toBe("PASS");
+    const metadata = outcome.artifacts[0]!.metadata as {
+      response: { body: string; bodyTruncated: boolean };
+    };
+    // The stored body stays truncated, so the evidence stays a record.
+    expect(metadata.response.bodyTruncated).toBe(true);
+    expect(metadata.response.body).not.toContain(needle);
+  });
+
+  it("never matches expectBodyContains against an unredacted body", async () => {
+    const outcome = await executeHttpAssertion({
+      ...baseInput,
+      redactor: new Redactor(["super-secret-value"]),
+      request: { ...baseRequest, expectBodyContains: "super-secret-value" },
+      fetchImpl: () => Promise.resolve({ status: 403, headers: {}, body: "token super-secret-value" }),
+    });
+
+    expect(outcome.result).toBe("FAIL");
+  });
 });

@@ -203,6 +203,9 @@ describe("Phase 7 exit — a UI fixture change produces independent acceptance e
       expect(validationRows.some((row) => row.kind === "request-response")).toBe(true);
 
       const resultRows = await results.listForRun(tenantId, runId);
+      // `Array.every` is true on an empty array. The length check makes a persistence regression
+      // that writes no row fail this proof.
+      expect(resultRows).toHaveLength(2);
       expect(resultRows.every((row) => row.result === "PASS")).toBe(true);
     } finally {
       await rig.sandbox.destroy(rig.ref);
@@ -247,6 +250,17 @@ describe("Phase 7 exit — a UI fixture change produces independent acceptance e
       expect(outcome.passed).toBe(false);
       const uiOutcome = outcome.outcomes.find((assertionOutcome) => assertionOutcome.assertionId === "VAL-UI-001")!;
       expect(uiOutcome.result).toBe("FAIL");
+      // The FAIL must come from the missing UI behavior, not from a preview failure or a
+      // transport error. The reason names the expected name the page never showed.
+      expect(uiOutcome.reason).toContain(NEW_NAME);
+      // The assertion log names the `expectText` step that failed, and no earlier step.
+      const assertionLog = uiOutcome.artifacts.find((artifact) => artifact.kind === "assertion-log");
+      expect(assertionLog).toBeDefined();
+      const loggedSteps = (assertionLog!.metadata as { steps: Array<{ action: string; passed: boolean }> })
+        .steps;
+      const failedSteps = loggedSteps.filter((step) => !step.passed);
+      expect(failedSteps).toHaveLength(1);
+      expect(failedSteps[0]!.action).toBe("expectText");
       // A reader can still see what the page showed.
       expect(uiOutcome.artifacts.some((artifact) => artifact.kind === "screenshot")).toBe(true);
     } finally {

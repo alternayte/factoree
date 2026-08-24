@@ -1,3 +1,4 @@
+import { LinearClient } from "@linear/sdk";
 import type {
   EvidenceStorage,
   PutArtifactInput,
@@ -69,3 +70,17 @@ export class LinearEvidenceStorage implements EvidenceStorage {
     };
   }
 }
+
+/**
+ * Builds the narrow upload port over the Linear SDK, in the style of `createLinearAgentClient`.
+ * The access token belongs to one Linear workspace, so the caller resolves it per tenant.
+ */
+export const createLinearFileUploadApi = (accessToken: string): LinearFileUploadApi => {
+  const client = new LinearClient({ accessToken });
+  return {
+    async fileUpload(contentType, filename, size) {
+      const payload = await client.fileUpload(contentType, filename, size);
+      return { success: payload.success, uploadFile: payload.uploadFile ?? null };
+    },
+  };
+};

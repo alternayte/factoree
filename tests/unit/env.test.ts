@@ -53,4 +53,18 @@ describe("loadEnv", () => {
   it("rejects a GitHub base URL that is not a URL", () => {
     expect(() => loadEnv({ ...base, GITHUB_BASE_URL: "not-a-url" })).toThrow();
   });
+
+  it("defaults the evidence storage to the filesystem adapter", () => {
+    const env = loadEnv(base);
+    expect(env.EVIDENCE_STORAGE).toBe("filesystem");
+  });
+
+  it("accepts the Linear evidence storage adapter", () => {
+    const env = loadEnv({ ...base, EVIDENCE_STORAGE: "linear" });
+    expect(env.EVIDENCE_STORAGE).toBe("linear");
+  });
+
+  it("rejects an unknown evidence storage adapter", () => {
+    expect(() => loadEnv({ ...base, EVIDENCE_STORAGE: "s3" })).toThrow();
+  });
 });

@@ -9,6 +9,8 @@ import { validateValidationContract } from "~/domain/validation/validation-contr
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -355,7 +357,20 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the
       // Implementer summary, or a Reviewer finding, because this activity never receives them
       // either.
-      const runner = uv.runners.get(input.runnerName);
+      // SDD section 49. An unregistered validator runner is a fault in `.factoree/config.yaml`,
+      // not a fault in the infrastructure. `RunConfigurationError` routes the Run to
+      // `FAILED_CONFIGURATION`, so an operator can repair the name.
+      let runner: AgentRunner;
+      try {
+        runner = uv.runners.get(input.runnerName);
+      } catch (error) {
+        if (!(error instanceof UnknownAgentRunnerError)) throw error;
+        throw new RunConfigurationError(
+          `The Project configures the validator runner "${input.runnerName}", which is not registered. ` +
+            `Registered runners: ${uv.runners.names().join(", ")}. ` +
+            "Repair `validator_runner` in `.factoree/config.yaml`.",
+        );
+      }
       const context = Context.current();
 
       const heartbeat = setInterval(() => {

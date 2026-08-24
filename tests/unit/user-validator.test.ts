@@ -346,4 +346,29 @@ describe("runUserValidation", () => {
     expect(outcome.outcomes[0]!.result).toBe("PASS");
     expect(outcome.outcomes[0]!.artifacts[0]!.kind).toBe("command-output");
   });
+
+  it("redacts the browser artefact name before it reaches the persisted metadata", async () => {
+    // The name comes from the agent-authored `screenshot` step, and that session holds Project
+    // test secrets. SDD section 60 requires redaction before persistence.
+    const browser = new FakeBrowserDriver();
+    browser.result = {
+      ...passingBrowserResult,
+      artifacts: [
+        {
+          kind: "screenshot",
+          name: "after-login-with-super-secret-value",
+          contentType: "image/png",
+          bytes: new Uint8Array([1]),
+        },
+      ],
+    };
+    const deps = buildDeps({ browser, redactor: new Redactor(["super-secret-value"]) });
+    const outcome = await runUserValidation(deps, buildInput());
+
+    const browserOutcome = outcome.outcomes.find((entry) => entry.assertionId === "VAL-UI-001")!;
+    const screenshot = browserOutcome.artifacts.find((artifact) => artifact.kind === "screenshot")!;
+    const metadata = screenshot.metadata as { name: string };
+    expect(metadata.name).not.toContain("super-secret-value");
+    expect(metadata.name).toContain("after-login-with-");
+  });
 });
