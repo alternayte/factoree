@@ -2,6 +2,7 @@ import type { AssertionOutcome, EvidenceArtifact } from "~/domain/validation/val
 import type { ValidationAssertion } from "~/domain/validation/validation-contract.js";
 import type { HttpPlanRequest } from "~/domain/validation/validation-plan.js";
 import type { Redactor } from "~/telemetry/redaction.js";
+import { resolvePreviewUrl } from "~/domain/validation/preview-url.js";
 
 /** SDD section 38. What one HTTP transport call returned. */
 export interface HttpValidationResponse {
@@ -124,9 +125,42 @@ export const executeHttpAssertion = async (
   input: ExecuteHttpAssertionInput,
 ): Promise<AssertionOutcome> => {
   const { assertion, request, baseUrl, fetchImpl, redactor } = input;
-  const url = new URL(request.path, baseUrl).toString();
+  // SDD section 60. The path and the expected body substring come from the agent-authored plan,
+  // and that session holds Project test secrets. Redact both before either one reaches a
+  // persisted metadata field or a persisted reason. The match below still reads the raw value.
+  const redactedPath = redactor.redactText(request.path);
+  const redactedExpectBodyContains =
+    request.expectBodyContains === null ? null : redactor.redactText(request.expectBodyContains);
   const sanitizedRequestHeaders = sanitizeHeaders(request.headers, redactor);
   const sanitizedRequestBody = truncateBody(redactBody(request.body, redactor));
+
+  // Defence in depth. The plan parser already rejects a path that can leave the preview origin.
+  // This control repeats the check, because it must not trust the parser. A refusal is BLOCKED.
+  let url: string;
+  try {
+    url = resolvePreviewUrl(baseUrl, request.path);
+  } catch (error) {
+    const message = redactor.redactText(error instanceof Error ? error.message : String(error));
+    const metadata = {
+      method: request.method,
+      path: redactedPath,
+      expectStatus: request.expectStatus,
+      expectBodyContains: redactedExpectBodyContains,
+      request: {
+        headers: sanitizedRequestHeaders,
+        ...bodyMetadata(sanitizedRequestBody),
+      },
+      error: message,
+      passed: false,
+    };
+    return {
+      assertionId: assertion.id,
+      method: assertion.method,
+      result: "BLOCKED",
+      reason: `Factoree refused the HTTP assertion path: ${message}`,
+      artifacts: [buildArtifact(assertion.id, metadata)],
+    };
+  }
 
   let response: HttpValidationResponse;
   try {
@@ -140,9 +174,9 @@ export const executeHttpAssertion = async (
     const redactedMessage = redactor.redactText(message);
     const metadata = {
       method: request.method,
-      path: request.path,
+      path: redactedPath,
       expectStatus: request.expectStatus,
-      expectBodyContains: request.expectBodyContains,
+      expectBodyContains: redactedExpectBodyContains,
       request: {
         headers: sanitizedRequestHeaders,
         ...bodyMetadata(sanitizedRequestBody),
@@ -154,7 +188,7 @@ export const executeHttpAssertion = async (
       assertionId: assertion.id,
       method: assertion.method,
       result: "BLOCKED",
-      reason: `The HTTP transport call to "${request.method} ${request.path}" failed: ${redactedMessage}`,
+      reason: `The HTTP transport call to "${request.method} ${redactedPath}" failed: ${redactedMessage}`,
       artifacts: [buildArtifact(assertion.id, metadata)],
     };
   }
@@ -173,10 +207,10 @@ export const executeHttpAssertion = async (
 
   const metadata = {
     method: request.method,
-    path: request.path,
+    path: redactedPath,
     status: response.status,
     expectStatus: request.expectStatus,
-    expectBodyContains: request.expectBodyContains,
+    expectBodyContains: redactedExpectBodyContains,
     passed,
     request: {
       headers: sanitizedRequestHeaders,
@@ -195,14 +229,14 @@ export const executeHttpAssertion = async (
       assertionId: assertion.id,
       method: assertion.method,
       result: "PASS",
-      reason: `${request.method} ${request.path} returned the expected status ${String(request.expectStatus)}.`,
+      reason: `${request.method} ${redactedPath} returned the expected status ${String(request.expectStatus)}.`,
       artifacts: [artifact],
     };
   }
 
   const reason = !statusMatches
-    ? `${request.method} ${request.path} expected status ${String(request.expectStatus)} but observed ${String(response.status)}.`
-    : `${request.method} ${request.path} expected the response body to hold "${String(request.expectBodyContains)}", which was absent.`;
+    ? `${request.method} ${redactedPath} expected status ${String(request.expectStatus)} but observed ${String(response.status)}.`
+    : `${request.method} ${redactedPath} expected the response body to hold "${String(redactedExpectBodyContains)}", which was absent.`;
 
   return {
     assertionId: assertion.id,

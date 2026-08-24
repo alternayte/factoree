@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
-import { runUserValidation, type UserValidatorDependencies, type UserValidationInput } from "~/domain/validation/user-validator.js";
+import {
+  executeBrowserAssertion,
+  runUserValidation,
+  type UserValidatorDependencies,
+  type UserValidationInput,
+} from "~/domain/validation/user-validator.js";
 import type { ValidationContract, ValidationAssertion } from "~/domain/validation/validation-contract.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import type { BrowserDriver, BrowserRunResult, BrowserScenario } from "~/domain/validation/browser-driver.js";
@@ -370,5 +375,109 @@ describe("runUserValidation", () => {
     const metadata = screenshot.metadata as { name: string };
     expect(metadata.name).not.toContain("super-secret-value");
     expect(metadata.name).toContain("after-login-with-");
+  });
+
+  it("redacts the plan command before it reaches the persisted metadata or the reason", async () => {
+    // The command text comes from the agent-authored plan, and that session holds Project test
+    // secrets. SDD section 60 requires redaction before persistence.
+    const secret = "sk-live-abcdef123456";
+    const commandAssertion: ValidationAssertion = {
+      id: "VAL-CMD-001",
+      requirement: "AC-4",
+      statement: "The seed command exits zero.",
+      method: "command",
+      evidence: ["command-output"],
+      preconditions: [],
+    };
+    const commandContract: ValidationContract = { ...contract, assertions: [commandAssertion] };
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/seed/, { exitCode: 1, stdout: "", stderr: "" });
+    const deps = buildDeps({ sandbox, redactor: new Redactor([secret]) });
+    const plan = JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          assertionId: "VAL-CMD-001",
+          kind: "command",
+          command: { run: `npm run seed -- --token ${secret}`, expectExitCode: 0 },
+        },
+      ],
+    });
+    const input = buildInput({ contract: commandContract, planText: plan, preview: null });
+    const outcome = await runUserValidation(deps, input);
+
+    const result = outcome.outcomes[0]!;
+    expect(result.result).toBe("FAIL");
+    expect(result.reason).not.toContain(secret);
+    const artifact = result.artifacts[0]!;
+    expect(JSON.stringify(artifact.metadata)).not.toContain(secret);
+    expect(new TextDecoder().decode(artifact.bytes)).not.toContain(secret);
+  });
+});
+
+describe("executeBrowserAssertion", () => {
+  it("blocks a goto path that resolves to another origin, and never drives the browser", async () => {
+    // The plan parser rejects such a path. This control repeats the check, because a defence in
+    // depth control must not trust the parser. A refusal is BLOCKED, never a PASS.
+    const browser = new FakeBrowserDriver();
+    const deps = buildDeps({ browser });
+    const handle = {
+      process: { id: "process-1" },
+      baseUrl: "http://127.0.0.1:8080",
+      port: 8080,
+      readyUrl: "http://127.0.0.1:8080/health",
+      startedAt: "1970-01-01T00:00:00.000Z",
+      startupLog: "",
+    };
+
+    for (const path of ["//example.com", "///example.com", "/\\example.com"]) {
+      const outcome = await executeBrowserAssertion(
+        deps,
+        browserAssertion,
+        {
+          assertionId: "VAL-UI-001",
+          kind: "browser",
+          steps: [
+            { action: "goto", path },
+            { action: "expectText", selector: "h1", text: "Welcome" },
+          ],
+        },
+        handle,
+        5_000,
+      );
+
+      expect(outcome.result).toBe("BLOCKED");
+      expect(outcome.artifacts).toHaveLength(0);
+    }
+    expect(browser.calls).toHaveLength(0);
+  });
+
+  it("drives the browser for a relative goto path", async () => {
+    const browser = new FakeBrowserDriver();
+    const deps = buildDeps({ browser });
+    const outcome = await executeBrowserAssertion(
+      deps,
+      browserAssertion,
+      {
+        assertionId: "VAL-UI-001",
+        kind: "browser",
+        steps: [
+          { action: "goto", path: "/projects/1" },
+          { action: "expectText", selector: "h1", text: "Welcome" },
+        ],
+      },
+      {
+        process: { id: "process-1" },
+        baseUrl: "http://127.0.0.1:8080",
+        port: 8080,
+        readyUrl: "http://127.0.0.1:8080/health",
+        startedAt: "1970-01-01T00:00:00.000Z",
+        startupLog: "",
+      },
+      5_000,
+    );
+
+    expect(outcome.result).toBe("PASS");
+    expect(browser.calls).toHaveLength(1);
   });
 });

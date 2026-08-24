@@ -274,6 +274,71 @@ describe("parseValidationPlan", () => {
     ).toThrow(/VAL-API-001/);
   });
 
+  it.each(["//example.com", "///example.com", "/\\example.com", "\\/example.com"])(
+    "rejects an http entry whose path %s can leave the preview origin",
+    (path) => {
+      expect(() =>
+        parseValidationPlan(
+          JSON.stringify({
+            version: 1,
+            entries: [
+              {
+                assertionId: "VAL-API-001",
+                kind: "http",
+                request: { ...validHttpRequest, path },
+              },
+            ],
+          }),
+          contract,
+        ),
+      ).toThrow(ValidationPlanInvalidError);
+    },
+  );
+
+  it.each(["//example.com", "///example.com", "/\\example.com", "\\/example.com"])(
+    "rejects a browser goto path %s that can leave the preview origin",
+    (path) => {
+      expect(() =>
+        parseValidationPlan(
+          JSON.stringify({
+            version: 1,
+            entries: [
+              {
+                assertionId: "VAL-UI-001",
+                kind: "browser",
+                steps: [{ action: "goto", path }, ...validBrowserSteps.slice(1)],
+              },
+            ],
+          }),
+          contract,
+        ),
+      ).toThrow(ValidationPlanInvalidError);
+    },
+  );
+
+  it("accepts a bare slash as an http path and as a goto path", () => {
+    const plan = parseValidationPlan(
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            assertionId: "VAL-UI-001",
+            kind: "browser",
+            steps: [{ action: "goto", path: "/" }, ...validBrowserSteps.slice(1)],
+          },
+          {
+            assertionId: "VAL-API-001",
+            kind: "http",
+            request: { ...validHttpRequest, path: "/" },
+          },
+        ],
+      }),
+      contract,
+    );
+
+    expect(plan.entries).toHaveLength(2);
+  });
+
   it("does not require every assertion to have an entry (rule 10)", () => {
     const plan = parseValidationPlan(
       JSON.stringify({

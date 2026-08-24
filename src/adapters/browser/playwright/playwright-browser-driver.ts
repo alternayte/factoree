@@ -11,6 +11,7 @@ import type {
   BrowserStepResult,
 } from "../../../domain/validation/browser-driver.js";
 import type { BrowserStep } from "../../../domain/validation/validation-plan.js";
+import { resolvePreviewUrl } from "../../../domain/validation/preview-url.js";
 
 const MIN_STEP_TIMEOUT_MS = 1000;
 
@@ -20,12 +21,13 @@ const redact = (error: unknown): string => {
   return message.split("\n")[0] ?? message;
 };
 
-const resolveGotoUrl = (scenarioBaseUrl: string, requestedPath: string): string => {
-  if (!requestedPath.startsWith("/")) {
-    throw new Error(`The goto path "${requestedPath}" does not begin with a slash.`);
-  }
-  return new URL(requestedPath, scenarioBaseUrl).toString();
-};
+/**
+ * Resolves one goto path against the preview base URL. The plan parser rejects a path that can
+ * leave the preview origin. This control repeats the check at the moment of use, because a
+ * defence in depth control must not trust the parser.
+ */
+export const resolveGotoUrl = (scenarioBaseUrl: string, requestedPath: string): string =>
+  resolvePreviewUrl(scenarioBaseUrl, requestedPath);
 
 /**
  * Drives a real Chromium browser against an exposed preview URL. This is

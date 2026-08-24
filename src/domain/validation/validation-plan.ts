@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ValidationContract, ValidationMethod } from "~/domain/validation/validation-contract.js";
+import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 
 export type PlanEntryKind = "http" | "browser" | "command";
 
@@ -193,12 +194,26 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
             "must hold at least one step whose action begins with expect.",
         );
       }
+      // A goto path resolves against the exposed preview base URL. A protocol-relative path
+      // replaces the origin, so an assertion can drive a foreign host and still report PASS.
+      for (const step of entry.steps) {
+        if (step.action === "goto" && !isPreviewRelativePath(step.path)) {
+          fail(
+            `The Validation Plan browser entry for "${entry.assertionId}" holds the goto path ` +
+              `"${step.path}", which is not a relative preview path. A path must begin with a ` +
+              "single slash, and the character after that slash must be neither a slash nor a " +
+              "backslash.",
+          );
+        }
+      }
     }
 
-    if (entry.kind === "http" && !entry.request.path.startsWith("/")) {
+    if (entry.kind === "http" && !isPreviewRelativePath(entry.request.path)) {
       fail(
         `The Validation Plan http entry for "${entry.assertionId}" holds the path ` +
-          `"${entry.request.path}", which does not begin with a slash.`,
+          `"${entry.request.path}", which is not a relative preview path. A path must begin ` +
+          "with a single slash, and the character after that slash must be neither a slash nor " +
+          "a backslash.",
       );
     }
   }

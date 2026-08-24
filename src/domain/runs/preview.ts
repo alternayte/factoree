@@ -86,59 +86,75 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
     env: input.environment,
   });
 
-  // Rule 3. The deadline is measured from the first poll, not from the process start.
-  const deadline = now() + input.preview.timeoutSeconds * 1000;
+  const pollUntilReady = async (): Promise<PreviewHandle> => {
+    // Rule 3. The deadline is measured from the first poll, not from the process start.
+    const deadline = now() + input.preview.timeoutSeconds * 1000;
 
-  for (;;) {
-    // Rule 4. A process that has exited is polled no further; a dead server never turns ready.
-    const snapshot = await input.sandbox.readProcess(input.ref, processRef);
-    if (!snapshot.running) {
-      throw new PreviewStartError(
-        `The preview command "${input.preview.command}" exited before it answered.`,
-        "exited",
-        buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
-      );
-    }
-
-    // Rule 5. Any status outside 200 to 399, and a null answer, means keep polling.
-    const result = await input.probe(input.preview.readyUrl);
-    if (isReady(result)) {
-      // Rule 7. The exposed URL, not the readiness URL, is the URL a client outside the
-      // sandbox uses. A sandbox adapter that cannot expose a service, for example the Fly
-      // adapter's recorded Phase 2 limitation, must fail this call the same honest way every
-      // other preview failure does, rather than an unwrapped rejection the caller cannot read.
-      let service;
-      try {
-        service = await input.sandbox.exposeService(input.ref, port);
-      } catch (error) {
+    for (;;) {
+      // Rule 4. A process that has exited is polled no further; a dead server never turns ready.
+      const snapshot = await input.sandbox.readProcess(input.ref, processRef);
+      if (!snapshot.running) {
         throw new PreviewStartError(
-          `The sandbox could not expose the preview on port ${String(port)}: ` +
-            `${error instanceof Error ? error.message : String(error)}`,
-          "expose_failed",
+          `The preview command "${input.preview.command}" exited before it answered.`,
+          "exited",
           buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
         );
       }
-      return {
-        process: processRef,
-        baseUrl: service.url,
-        port,
-        readyUrl: input.preview.readyUrl,
-        startedAt,
-        startupLog: buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
-      };
-    }
 
-    // Rule 6. The deadline passes with the process still alive but never ready.
-    if (now() >= deadline) {
-      throw new PreviewStartError(
-        `The preview command "${input.preview.command}" did not answer within ` +
-          `${input.preview.timeoutSeconds} seconds.`,
-        "not_ready",
-        buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
-      );
-    }
+      // Rule 5. Any status outside 200 to 399, and a null answer, means keep polling.
+      const result = await input.probe(input.preview.readyUrl);
+      if (isReady(result)) {
+        // Rule 7. The exposed URL, not the readiness URL, is the URL a client outside the
+        // sandbox uses. A sandbox adapter that cannot expose a service, for example the Fly
+        // adapter's recorded Phase 2 limitation, must fail this call the same honest way every
+        // other preview failure does, rather than an unwrapped rejection the caller cannot read.
+        let service;
+        try {
+          service = await input.sandbox.exposeService(input.ref, port);
+        } catch (error) {
+          throw new PreviewStartError(
+            `The sandbox could not expose the preview on port ${String(port)}: ` +
+              `${error instanceof Error ? error.message : String(error)}`,
+            "expose_failed",
+            buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
+          );
+        }
+        return {
+          process: processRef,
+          baseUrl: service.url,
+          port,
+          readyUrl: input.preview.readyUrl,
+          startedAt,
+          startupLog: buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
+        };
+      }
 
-    await sleep(POLL_INTERVAL_MS);
+      // Rule 6. The deadline passes with the process still alive but never ready.
+      if (now() >= deadline) {
+        throw new PreviewStartError(
+          `The preview command "${input.preview.command}" did not answer within ` +
+            `${input.preview.timeoutSeconds} seconds.`,
+          "not_ready",
+          buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
+        );
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+  };
+
+  // Rule 10. The process is already running. Every failure below must cancel it, or the
+  // preview leaks until the sandbox reaper removes the whole sandbox. A failure to cancel
+  // must not replace the original error, because the operator needs the original error.
+  try {
+    return await pollUntilReady();
+  } catch (error) {
+    try {
+      await input.sandbox.cancelProcess(input.ref, processRef);
+    } catch {
+      // The original error stands.
+    }
+    throw error;
   }
 };
 

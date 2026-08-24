@@ -20,6 +20,7 @@ import type {
 } from "~/domain/validation/validation-result.js";
 import { summarizeUserValidation } from "~/domain/validation/validation-result.js";
 import { executeHttpAssertion, type HttpValidationFetch } from "~/domain/validation/http-validation.js";
+import { resolvePreviewUrl } from "~/domain/validation/preview-url.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { ValidationAssertion, ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
@@ -124,8 +125,11 @@ const executeCommandAssertion = async (
 
   const redactedStdout = dependencies.redactor.redactText(result.stdout);
   const redactedStderr = dependencies.redactor.redactText(result.stderr);
+  // SDD section 60. The command text comes from the agent-authored plan, and that session holds
+  // Project test secrets. Redact it before it reaches a persisted record or a persisted reason.
+  const redactedRun = dependencies.redactor.redactText(entry.command.run);
   const metadata = {
-    command: entry.command.run,
+    command: redactedRun,
     exitCode: result.exitCode,
     expectExitCode: entry.command.expectExitCode,
     stdoutHash: hash(dependencies.redactor, result.stdout),
@@ -146,20 +150,41 @@ const executeCommandAssertion = async (
     method: assertion.method,
     result: passed ? "PASS" : "FAIL",
     reason: passed
-      ? `"${entry.command.run}" exited with the expected code ${String(entry.command.expectExitCode)}.`
-      : `"${entry.command.run}" exited with code ${String(result.exitCode)}, expected ${String(entry.command.expectExitCode)}.`,
+      ? `"${redactedRun}" exited with the expected code ${String(entry.command.expectExitCode)}.`
+      : `"${redactedRun}" exited with code ${String(result.exitCode)}, expected ${String(entry.command.expectExitCode)}.`,
     artifacts: [artifact],
   };
 };
 
 /** Runs a `browser` assertion against the exposed preview. Rule 8. */
-const executeBrowserAssertion = async (
+export const executeBrowserAssertion = async (
   dependencies: UserValidatorDependencies,
   assertion: ValidationAssertion,
   entry: Extract<ValidationPlanEntry, { kind: "browser" }>,
   handle: PreviewHandle,
   timeoutMs: number,
 ): Promise<AssertionOutcome> => {
+  // Defence in depth. The plan parser already rejects a goto path that can leave the preview
+  // origin. This control repeats the check, because it must not trust the parser. A refusal is
+  // BLOCKED, never a PASS and never a silent skip.
+  for (const step of entry.steps) {
+    if (step.action !== "goto") continue;
+    try {
+      resolvePreviewUrl(handle.baseUrl, step.path);
+    } catch (error) {
+      const message = dependencies.redactor.redactText(
+        error instanceof Error ? error.message : String(error),
+      );
+      return {
+        assertionId: assertion.id,
+        method: assertion.method,
+        result: "BLOCKED",
+        reason: `Factoree refused the browser goto path: ${message}`,
+        artifacts: [],
+      };
+    }
+  }
+
   const captureVideo = assertion.evidence.includes("video");
   const captureTrace = assertion.evidence.includes("trace");
   const run = await dependencies.browser.run({
@@ -172,14 +197,18 @@ const executeBrowserAssertion = async (
 
   const artifacts: EvidenceArtifact[] = [];
   for (const artifact of run.artifacts) {
+    // SDD section 60. The artefact name comes from the agent-authored plan, and that session
+    // holds Project test secrets. Redact it before it reaches a persisted record.
+    const name = dependencies.redactor.redactText(artifact.name);
     artifacts.push({
       kind: artifact.kind,
-      source: `browser:${assertion.id}:${artifact.kind}`,
+      // SDD section 39. Each artefact records its own evidence row. The evidence idempotency key
+      // derives from this source, so a run with a named screenshot and the final screenshot must
+      // not produce one source twice. The name makes the source unique and keeps it readable.
+      source: `browser:${assertion.id}:${artifact.kind}:${name}`,
       contentType: artifact.contentType,
       bytes: artifact.bytes,
-      // SDD section 60. The artefact name comes from the agent-authored plan, and that session
-      // holds Project test secrets. Redact it before it reaches a persisted record.
-      metadata: { assertionId: assertion.id, name: dependencies.redactor.redactText(artifact.name) },
+      metadata: { assertionId: assertion.id, name },
     });
   }
 

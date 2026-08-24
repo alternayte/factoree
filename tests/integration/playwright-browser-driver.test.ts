@@ -15,7 +15,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
   return { ...actual, readFile };
 });
-import { PlaywrightBrowserDriver } from "../../src/adapters/browser/playwright/playwright-browser-driver.js";
+import {
+  PlaywrightBrowserDriver,
+  resolveGotoUrl,
+} from "../../src/adapters/browser/playwright/playwright-browser-driver.js";
 import type { BrowserScenario, BrowserStepResult, BrowserArtifact } from "../../src/domain/validation/browser-driver.js";
 
 const PAGE_HTML = `<!doctype html>
@@ -182,4 +185,25 @@ describe("PlaywrightBrowserDriver", () => {
     expect(result.passed).toBe(false);
     expect(result.failureReason).toBeTruthy();
   }, 60_000);
+  it.each(["//example.com", "///example.com", "/\\example.com"])(
+    "refuses the goto path %s, which resolves to a foreign origin",
+    async (path) => {
+      // The plan parser rejects such a path. This control repeats the check, because a defence
+      // in depth control must not trust the parser.
+      expect(() => resolveGotoUrl(baseUrl, path)).toThrow();
+      const result = await driver.run({ ...scenario, steps: [{ action: "goto", path }] });
+      expect(result.passed).toBe(false);
+      expect(result.failureReason).toBeTruthy();
+      // The driver never left the preview origin, so no response of a foreign host was recorded.
+      for (const entry of result.network) {
+        expect(new URL(entry.url).origin).toBe(new URL(baseUrl).origin);
+      }
+    },
+    60_000,
+  );
+
+  it("resolves an ordinary goto path onto the preview origin", () => {
+    expect(resolveGotoUrl(baseUrl, "/projects/1")).toBe(`${baseUrl}/projects/1`);
+    expect(new URL(resolveGotoUrl(baseUrl, "/")).origin).toBe(new URL(baseUrl).origin);
+  });
 });

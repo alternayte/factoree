@@ -185,4 +185,79 @@ describe("executeHttpAssertion", () => {
 
     expect(outcome.result).toBe("FAIL");
   });
+  it.each(["//example.com", "///example.com", "/\\example.com"])(
+    "refuses the path %s with BLOCKED, and never calls the transport",
+    async (path) => {
+      let calledUrl: string | null = null;
+      const outcome = await executeHttpAssertion({
+        ...baseInput,
+        request: { ...baseRequest, path },
+        fetchImpl: (url) => {
+          calledUrl = url;
+          return Promise.resolve({ status: 403, headers: {}, body: "" });
+        },
+      });
+
+      expect(outcome.result).toBe("BLOCKED");
+      expect(calledUrl).toBeNull();
+      expect(outcome.artifacts).toHaveLength(1);
+    },
+  );
+
+  it("still resolves an ordinary path against the preview origin", async () => {
+    let calledUrl: string | null = null;
+    await executeHttpAssertion({
+      ...baseInput,
+      fetchImpl: (url) => {
+        calledUrl = url;
+        return Promise.resolve({ status: 403, headers: {}, body: "" });
+      },
+    });
+
+    expect(calledUrl).toBe("http://preview.invalid:8080/projects/1");
+  });
+
+  it("redacts the plan path before it reaches metadata or a reason", async () => {
+    const secret = "sk-live-abcdef123456";
+    const outcome = await executeHttpAssertion({
+      ...baseInput,
+      redactor: new Redactor([secret]),
+      request: { ...baseRequest, path: `/projects/1?api_key=${secret}` },
+      fetchImpl: () => Promise.resolve({ status: 500, headers: {}, body: "" }),
+    });
+
+    expect(outcome.result).toBe("FAIL");
+    expect(outcome.reason).not.toContain(secret);
+    expect(JSON.stringify(outcome.artifacts[0]!.metadata)).not.toContain(secret);
+    expect(new TextDecoder().decode(outcome.artifacts[0]!.bytes)).not.toContain(secret);
+  });
+
+  it("redacts the plan path when the transport call fails", async () => {
+    const secret = "sk-live-abcdef123456";
+    const outcome = await executeHttpAssertion({
+      ...baseInput,
+      redactor: new Redactor([secret]),
+      request: { ...baseRequest, path: `/projects/1?api_key=${secret}` },
+      fetchImpl: () => Promise.reject(new Error("connection refused")),
+    });
+
+    expect(outcome.result).toBe("BLOCKED");
+    expect(outcome.reason).not.toContain(secret);
+    expect(JSON.stringify(outcome.artifacts[0]!.metadata)).not.toContain(secret);
+  });
+
+  it("redacts expectBodyContains in metadata and in the FAIL reason", async () => {
+    const secret = "sk-live-abcdef123456";
+    const outcome = await executeHttpAssertion({
+      ...baseInput,
+      redactor: new Redactor([secret]),
+      request: { ...baseRequest, expectBodyContains: secret },
+      fetchImpl: () => Promise.resolve({ status: 403, headers: {}, body: "nothing here" }),
+    });
+
+    expect(outcome.result).toBe("FAIL");
+    expect(outcome.reason).not.toContain(secret);
+    expect(JSON.stringify(outcome.artifacts[0]!.metadata)).not.toContain(secret);
+    expect(new TextDecoder().decode(outcome.artifacts[0]!.bytes)).not.toContain(secret);
+  });
 });

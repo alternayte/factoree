@@ -75,6 +75,41 @@ describe("startPreview", () => {
     ).rejects.toMatchObject({ name: "PreviewStartError", reason: "not_ready" });
   });
 
+  it("cancels the process it started when the deadline passes", async () => {
+    const sandbox = new FakeSandbox();
+    const base = buildBase(sandbox);
+    let clock = 0;
+    await expect(
+      startPreview({ ...base, probe: async () => null, now: () => (clock += 1_000) }),
+    ).rejects.toMatchObject({ reason: "not_ready" });
+
+    // Rule 10. The caller holds no handle on this path, so nothing else can stop the process.
+    expect(sandbox.calls).toContain("cancelProcess");
+    expect((await sandbox.readProcess(ref, { id: "process-1" })).running).toBe(false);
+  });
+
+  it("cancels the process it started when the sandbox cannot expose the service", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.exposeService = () => Promise.reject(new Error("this adapter cannot expose a port"));
+    const base = buildBase(sandbox);
+    await expect(startPreview({ ...base, probe: async () => ({ status: 200 }) })).rejects.toMatchObject(
+      { reason: "expose_failed" },
+    );
+
+    expect(sandbox.calls).toContain("cancelProcess");
+    expect((await sandbox.readProcess(ref, { id: "process-1" })).running).toBe(false);
+  });
+
+  it("keeps the original error when the cancel of the leaked process fails", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.cancelProcess = () => Promise.reject(new Error("the cancel call failed"));
+    const base = buildBase(sandbox);
+    let clock = 0;
+    await expect(
+      startPreview({ ...base, probe: async () => null, now: () => (clock += 1_000) }),
+    ).rejects.toMatchObject({ name: "PreviewStartError", reason: "not_ready" });
+  });
+
   it("refuses a readiness URL with no explicit port", async () => {
     const sandbox = new FakeSandbox();
     const base = buildBase(sandbox);
