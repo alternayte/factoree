@@ -79,7 +79,7 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
 
   const startedAt = new Date(now()).toISOString();
   // Rule 2. `startProcess` ignores `Command.timeoutMs`, so this function owns the deadline below.
-  const process = await input.sandbox.startProcess(input.ref, {
+  const processRef = await input.sandbox.startProcess(input.ref, {
     file: "sh",
     args: ["-c", input.preview.command],
     cwd: input.workingDirectory,
@@ -91,7 +91,7 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
 
   for (;;) {
     // Rule 4. A process that has exited is polled no further; a dead server never turns ready.
-    const snapshot = await input.sandbox.readProcess(input.ref, process);
+    const snapshot = await input.sandbox.readProcess(input.ref, processRef);
     if (!snapshot.running) {
       throw new PreviewStartError(
         `The preview command "${input.preview.command}" exited before it answered.`,
@@ -107,7 +107,7 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
       // sandbox uses.
       const service = await input.sandbox.exposeService(input.ref, port);
       return {
-        process,
+        process: processRef,
         baseUrl: service.url,
         port,
         readyUrl: input.preview.readyUrl,

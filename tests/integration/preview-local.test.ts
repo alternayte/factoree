@@ -82,17 +82,19 @@ describe("startPreview and stopPreview against a real local process", () => {
     });
 
     try {
-      expect(handle.port).toBe(port);
-      expect(handle.baseUrl).toBe(`http://127.0.0.1:${port}`);
-      const response = await fetch(`${handle.baseUrl}/health`);
-      expect(response.status).toBe(200);
+      try {
+        expect(handle.port).toBe(port);
+        expect(handle.baseUrl).toBe(`http://127.0.0.1:${port}`);
+        const response = await fetch(`${handle.baseUrl}/health`);
+        expect(response.status).toBe(200);
+      } finally {
+        await stopPreview(sandbox, ref, handle);
+      }
+
+      // The stopped preview no longer answers.
+      await expect(fetch(`${handle.baseUrl}/health`)).rejects.toThrow();
     } finally {
-      await stopPreview(sandbox, ref, handle);
+      await sandbox.destroy(ref);
     }
-
-    // The stopped preview no longer answers.
-    await expect(fetch(`${handle.baseUrl}/health`)).rejects.toThrow();
-
-    await sandbox.destroy(ref);
   });
 });
