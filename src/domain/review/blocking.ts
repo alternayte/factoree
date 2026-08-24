@@ -35,9 +35,20 @@ export interface ReviewDecision {
   failures: string[];
 }
 
-/** Removes a trailing `:84`, `:80-90`, or `:84:12` location, and a leading `./`. */
+/**
+ * Reads the file part of one token. A Reviewer can wrap a path in backticks, in quotation
+ * marks, or in brackets, and can end a sentence directly after it. This function removes that
+ * punctuation, then removes a trailing `:84`, `:80-90`, or `:84:12` location, then removes a
+ * trailing full stop and a leading `./`. The gate must not fail open: a finding that really
+ * names a changed file must block.
+ */
 const stripLocation = (token: string): string =>
-  token.replace(/(:\d+(?:-\d+)?){1,2}$/, "").replace(/^\.\//, "");
+  token
+    .replace(/^[`'"([{<*]+/, "")
+    .replace(/[`'")\];}>*,;:]+$/, "")
+    .replace(/(:\d+(?:-\d+)?){1,2}$/, "")
+    .replace(/\.+$/, "")
+    .replace(/^\.\//, "");
 
 /**
  * Reads the file part of an evidence string. SDD section 41 shows the `path:line` form. A

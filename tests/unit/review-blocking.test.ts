@@ -216,4 +216,56 @@ describe("decideReview", () => {
     expect(decision.passed).toBe(true);
     expect(decision.nonBlocking[0]?.reason).toContain("changed");
   });
+
+  it("blocks a finding whose evidence wraps the path in backticks", () => {
+    const evidence = "`src/auth.ts:84`";
+    expect(evidence).toBe("`src/auth.ts:84`");
+    const decision = decideReview({
+      report: report([finding({ evidence })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence wraps the path in quotation marks", () => {
+    const evidence = '"src/auth.ts:84"';
+    expect(evidence).toBe('"src/auth.ts:84"');
+    const decision = decideReview({
+      report: report([finding({ evidence })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence ends the sentence with a full stop", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "The defect is in src/auth.ts." })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence wraps the path in parentheses", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "(src/auth.ts:84)" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("does not block a finding whose evidence wraps an unrelated path in backticks", () => {
+    const evidence = "`src/other.ts:12`";
+    expect(evidence).toBe("`src/other.ts:12`");
+    const decision = decideReview({
+      report: report([finding({ evidence })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(true);
+    expect(decision.nonBlocking[0]?.reason).toContain("changed");
+  });
 });
