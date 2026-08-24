@@ -46,6 +46,9 @@ export const RUN_FAILURE_REASONS = [
   "REFINEMENT_UNRESOLVED",
   // SDD section 23. A conflict with no authority winner stayed open after the bounded rounds.
   "CONTEXT_UNRESOLVED",
+  // SDD section 9 item 5. The Work Item states no observable success assertion, and the bounded
+  // question rounds ended with no human answer. Implementation must not start.
+  "VALIDATION_UNRESOLVED",
   "INTERNAL_ERROR",
 ] as const;
 

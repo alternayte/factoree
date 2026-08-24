@@ -89,6 +89,13 @@ export interface RunRepository {
    */
   setContextContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
   /**
+   * SDD section 53. `Run.validationContractVersion` holds the SHA-256 of the frozen Validation
+   * Contract, because that value names the exact contract the Run must satisfy. See controller
+   * decision 5. The method throws when it reaches no Run of that tenant, because a silent success
+   * hides a caller defect.
+   */
+  setValidationContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
+  /**
    * SDD section 28. Refinement caps the autonomy level of the Run. `createRun` happens before
    * Refinement, so the Run row first holds the Project default. This method writes the capped
    * level. The method throws when it reaches no Run of that tenant, because a silent success

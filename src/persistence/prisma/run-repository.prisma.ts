@@ -155,6 +155,22 @@ export class PrismaRunRepository implements RunRepository {
     }
   }
 
+  async setValidationContractVersion(tenantId: string, runId: string, version: string): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { validationContractVersion: version },
+    });
+    // A write that reaches no row must not report success. This value names the exact frozen
+    // Validation Contract the Run must satisfy. A wrong Run or a wrong tenant is a caller defect.
+    // A silent success makes a Run that holds a frozen contract report that it holds none.
+    if (updated.count === 0) {
+      throw new Error(
+        `no Run "${runId}" of tenant "${tenantId}" received the Validation Contract version`,
+      );
+    }
+  }
+
   async setAutonomyLevel(tenantId: string, runId: string, level: string): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
     const updated = await this.prisma.run.updateMany({
