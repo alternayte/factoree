@@ -19,6 +19,10 @@ import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
 import type { VerifyActivityInput } from "~/activities/verification.activities.js";
+import type {
+  BuildValidationContractActivityInput,
+  BuildValidationContractActivityOutput,
+} from "~/activities/validation.activities.js";
 import type { ProjectRuntimeConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import {
   DEFAULT_PROJECT_DEFAULTS,
@@ -52,6 +56,12 @@ export interface CompletionCall {
 
 /** The single verification command every Run of the harness gets by default. */
 export const DEFAULT_VERIFY_COMMANDS: VerificationCommand[] = [{ name: "unit", run: "npm test" }];
+
+/** The frozen Validation Contract hash the double reports. */
+export const VALIDATION_SHA = "c".repeat(64);
+
+/** The frozen Validation Contract document the double reports. */
+export const VALIDATION_DOCUMENT = "# Validation Contract\n\nThe health endpoint answers 200.\n";
 
 /** The failure text the verify double reports when it fails a check. */
 export const VERIFY_FAILURE_TEXT = 'Verification check "unit" failed with exit code 1.';
@@ -92,6 +102,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const runtimeOverrides = new Map<string, Partial<ProjectRuntimeConfig>>();
   /** Reports whether the verification pass of one run id and one attempt passes. */
   const verifyOutcomes = new Map<string, (attempt: number) => boolean>();
+  /** Every recorded `buildValidationContract` call, in order. */
+  const validationCalls: BuildValidationContractActivityInput[] = [];
+  /**
+   * A run id in this map replaces the Validation Contract result. The function reads the number
+   * of the call, which starts at one, so a test can answer `needs_input` first and `ready` next.
+   */
+  const validationOutcomes = new Map<
+    string,
+    (call: number) => BuildValidationContractActivityOutput
+  >();
+  /** A run id in this map holds the contract build open until the test resolves the promise. */
+  const heldValidations = new Map<string, Promise<void>>();
+  /** Every activity name the workflow called, in order. */
+  const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
   const elicitations: string[] = [];
   /** Every autonomy level the workflow wrote to the Run after Refinement, in order. */
@@ -194,6 +218,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       };
     },
     resolveContext: async (input: ResolveContextActivityInput) => {
+      activityOrder.push("resolveContext");
       contextCalls.push(input);
       if (missingBranches.has(input.primaryRepository.ref)) {
         throw new RunConfigurationError(
@@ -231,6 +256,25 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
             : "Factoree did not freeze this Context Contract, because one conflict is unresolved.",
       };
     },
+    buildValidationContract: async (
+      activityInput: BuildValidationContractActivityInput,
+    ): Promise<BuildValidationContractActivityOutput> => {
+      activityOrder.push("buildValidationContract");
+      validationCalls.push(activityInput);
+      await heldValidations.get(activityInput.runId);
+      const outcome = validationOutcomes.get(activityInput.runId);
+      const call = validationCalls.filter((entry) => entry.runId === activityInput.runId).length;
+      if (outcome !== undefined) return outcome(call);
+      return {
+        status: "ready",
+        sha256: VALIDATION_SHA,
+        document: VALIDATION_DOCUMENT,
+        assertionCount: 1,
+        frozenAt: "2026-01-01T00:00:00.000Z",
+        question: null,
+        summary: "Factoree froze the Validation Contract with 1 assertion.",
+      };
+    },
     postFinalResponse: async () => undefined,
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
@@ -240,6 +284,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       return workItemLabels.get(activityInput.sessionId) ?? [];
     },
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
+      activityOrder.push("prepareSandbox");
       prepared.push(activityInput);
       if (configurationFaults.has(activityInput.runId)) {
         throw new RunConfigurationError("the bootstrap command failed with exit code 1: no such file");
@@ -408,6 +453,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     verifyOutcomes,
     elicitations,
     autonomyLevels,
+    validationCalls,
+    validationOutcomes,
+    heldValidations,
+    activityOrder,
     workItemLabels,
     failingLabelReads,
     refineCalls,

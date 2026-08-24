@@ -98,9 +98,9 @@ describe("deterministic verification in the workflow", () => {
       return handle.result();
     });
 
-    // The first five states are RECEIVED, REFINING, RESOLVING_CONTEXT, PREPARING, and
-    // IMPLEMENTING. The repair loop follows them.
-    expect(statusesOf("run-ses-v3").slice(5)).toEqual([
+    // The first six states are RECEIVED, REFINING, RESOLVING_CONTEXT,
+    // BUILDING_VALIDATION_CONTRACT, PREPARING, and IMPLEMENTING. The repair loop follows them.
+    expect(statusesOf("run-ses-v3").slice(6)).toEqual([
       "VERIFYING",
       "REPAIRING",
       "IMPLEMENTING",

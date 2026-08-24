@@ -83,6 +83,11 @@ export interface RunSnapshot {
    * the hash of a draft.
    */
   contextContractVersion: string | null;
+  /**
+   * SDD section 53. The SHA-256 of the frozen Validation Contract of this Run, or null while no
+   * contract is frozen. SDD section 25 makes this value stable once it is set.
+   */
+  validationContractVersion: string | null;
   /** SDD section 23. The one question Factoree waits on, or null. */
   openQuestion: string | null;
 }
@@ -103,6 +108,15 @@ const activities = proxyActivities<Activities>({
 const refineActivities = proxyActivities<Activities>({
   startToCloseTimeout: "1 minute",
   retry: { maximumAttempts: 3, initialInterval: "1 second", backoffCoefficient: 2 },
+});
+
+/**
+ * The Validation Contract build is a pure computation plus one database write, so it is fast and
+ * a retry costs nothing. One minute is ample for it.
+ */
+const validationActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "1 minute",
+  retry: { maximumAttempts: 5, initialInterval: "1 second", backoffCoefficient: 2 },
 });
 
 /** The longest one context resolution attempt can take. */
@@ -238,6 +252,7 @@ export async function agentRunWorkflow(
   const decisions: RecordedDecision[] = [];
   let openQuestion: string | null = null;
   let contextContractVersion: string | null = null;
+  let validationContractVersion: string | null = null;
   let questionRounds = 0;
 
   setHandler(stopSignal, () => {
@@ -252,6 +267,7 @@ export async function agentRunWorkflow(
     humanInputs,
     spriteId: sprite?.spriteId ?? null,
     contextContractVersion,
+    validationContractVersion,
     openQuestion,
   }));
 
@@ -282,7 +298,8 @@ export async function agentRunWorkflow(
       | "CONFIGURATION_INVALID"
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
-      | "CONTEXT_UNRESOLVED",
+      | "CONTEXT_UNRESOLVED"
+      | "VALIDATION_UNRESOLVED",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = failureReason === "CONFIGURATION_INVALID" ? "FAILED_CONFIGURATION" : "FAILED";
@@ -365,8 +382,8 @@ export async function agentRunWorkflow(
     contextContract: string;
     requiredContext: string[];
     /**
-     * SDD section 34. The frozen Validation Contract. Task 6 replaces the placeholder value at
-     * the call site with the frozen document.
+     * SDD section 34. The Implementer receives the frozen Validation Contract. SDD section 25
+     * denies it the authority to change the contract, which the store enforces, not this prompt.
      */
     validationContract: string;
   }): Promise<ImplementActivityOutput | null> => {
@@ -635,6 +652,70 @@ export async function agentRunWorkflow(
       if (stopRequested) return await cancelRun();
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+      // SDD section 49 places the Validation Contract between context resolution and sandbox
+      // preparation. SDD section 24 requires the contract to freeze before implementation starts.
+      // The loop ends because `askAndWait` is bounded by the question rounds and by the budget.
+      const validationAnswers: string[] = [];
+      let validation: Awaited<ReturnType<Activities["buildValidationContract"]>>;
+      for (;;) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        status = "BUILDING_VALIDATION_CONTRACT";
+        await activities.setRunStatus({ runId: id, status });
+
+        validation = await validationActivities.buildValidationContract({
+          runId: id,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          workItem: input.workItem.issueId ?? id,
+          goal: refined.goal,
+          acceptanceCriteria: refined.criteria,
+          humanAssertions: validationAnswers,
+        });
+
+        if (validation.status === "ready") {
+          validationContractVersion = validation.sha256;
+          break;
+        }
+
+        await notify(() =>
+          activities.postProgress({
+            sessionId: input.agentSessionId,
+            message: validation.summary,
+          }),
+        );
+
+        // SDD section 9 item 5. No observable success assertion exists, so implementation must
+        // not start. The human states one, and it becomes an assertion of the contract.
+        const question = validation.question;
+        if (question === null) {
+          return await failRun(
+            "VALIDATION_UNRESOLVED",
+            "Factoree could not define success for this Work Item, and it published nothing.",
+          );
+        }
+        const proceeded = await askAndWait(question.id, question.question);
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "VALIDATION_UNRESOLVED",
+            "Factoree could not start, because this Work Item states no observable success " +
+              "assertion. Factoree must not invent product behavior, so it published nothing.",
+          );
+        }
+        const answer = decisions[decisions.length - 1]?.answer ?? "";
+        if (answer.trim() !== "") validationAnswers.push(answer);
+      }
+
+      await notify(() =>
+        activities.postProgress({ sessionId: input.agentSessionId, message: validation.summary }),
+      );
+
+      // A stop that arrived while the contract was built must prevent preparation.
+      if (stopRequested) return await cancelRun();
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
       // SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the
       // primary repository. Only the values a repository must not own travel from here.
       const sandbox = {
@@ -719,8 +800,7 @@ export async function agentRunWorkflow(
           repairFindings,
           contextContract: resolvedContext.document,
           requiredContext: resolvedContext.requiredContext,
-          // Task 6 replaces this placeholder with the frozen Validation Contract document.
-          validationContract: "No Validation Contract exists yet.",
+          validationContract: validation.document,
         });
 
         // A stop that arrived while the Implementer ran must end the Run here.
