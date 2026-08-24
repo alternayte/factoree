@@ -30,11 +30,12 @@ const baseInput: ExecuteHttpAssertionInput = {
   assertion,
   request: baseRequest,
   baseUrl: "http://preview.invalid:8080",
-  fetchImpl: async () => ({
-    status: 403,
-    headers: { "content-type": "application/json" },
-    body: '{"error":"forbidden"}',
-  }),
+  fetchImpl: () =>
+    Promise.resolve({
+      status: 403,
+      headers: { "content-type": "application/json" },
+      body: '{"error":"forbidden"}',
+    }),
   redactor: new Redactor(),
 };
 
@@ -58,7 +59,7 @@ describe("executeHttpAssertion", () => {
       passed: true,
     });
     // bytes must be the UTF-8 encoding of the canonical JSON of the metadata
-    const decoded = JSON.parse(new TextDecoder().decode(artifact.bytes));
+    const decoded: unknown = JSON.parse(new TextDecoder().decode(artifact.bytes));
     expect(decoded).toEqual(artifact.metadata);
   });
 
@@ -74,7 +75,7 @@ describe("executeHttpAssertion", () => {
         expectBodyContains: null,
       },
       baseUrl: "http://preview.invalid:8080",
-      fetchImpl: async () => ({ status: 200, headers: {}, body: "token super-secret-value" }),
+      fetchImpl: () => Promise.resolve({ status: 200, headers: {}, body: "token super-secret-value" }),
       redactor: new Redactor(["super-secret-value"]),
     });
 
@@ -98,7 +99,7 @@ describe("executeHttpAssertion", () => {
   it("fails when the status differs from the expected status", async () => {
     const outcome = await executeHttpAssertion({
       ...baseInput,
-      fetchImpl: async () => ({ status: 200, headers: {}, body: "" }),
+      fetchImpl: () => Promise.resolve({ status: 200, headers: {}, body: "" }),
     });
 
     expect(outcome.result).toBe("FAIL");
@@ -110,7 +111,7 @@ describe("executeHttpAssertion", () => {
     const outcome = await executeHttpAssertion({
       ...baseInput,
       request: { ...baseRequest, expectStatus: 200, expectBodyContains: "forbidden" },
-      fetchImpl: async () => ({ status: 200, headers: {}, body: "{}" }),
+      fetchImpl: () => Promise.resolve({ status: 200, headers: {}, body: "{}" }),
     });
 
     expect(outcome.result).toBe("FAIL");
@@ -120,9 +121,7 @@ describe("executeHttpAssertion", () => {
   it("blocks when the transport throws", async () => {
     const outcome = await executeHttpAssertion({
       ...baseInput,
-      fetchImpl: async () => {
-        throw new Error("ECONNREFUSED");
-      },
+      fetchImpl: () => Promise.reject(new Error("ECONNREFUSED")),
     });
 
     expect(outcome.result).toBe("BLOCKED");
@@ -134,9 +133,7 @@ describe("executeHttpAssertion", () => {
     const outcome = await executeHttpAssertion({
       ...baseInput,
       redactor: new Redactor(["super-secret-value"]),
-      fetchImpl: async () => {
-        throw new Error("connection failed with token super-secret-value");
-      },
+      fetchImpl: () => Promise.reject(new Error("connection failed with token super-secret-value")),
     });
 
     expect(outcome.result).toBe("BLOCKED");
@@ -147,7 +144,7 @@ describe("executeHttpAssertion", () => {
     const longBody = "x".repeat(20000);
     const outcome = await executeHttpAssertion({
       ...baseInput,
-      fetchImpl: async () => ({ status: 403, headers: {}, body: longBody }),
+      fetchImpl: () => Promise.resolve({ status: 403, headers: {}, body: longBody }),
     });
 
     const metadata = outcome.artifacts[0]!.metadata as {
