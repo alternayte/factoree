@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ValidationEvidenceKind } from "~/domain/validation/validation-contract.js";
 
 /**
  * SDD section 39. Evidence is immutable. Each artifact records an identifier, the Run, the
@@ -6,9 +7,10 @@ import { createHash } from "node:crypto";
  * a storage reference, and metadata.
  *
  * A deterministic verification check answers no Validation assertion, so
- * `validationAssertionId` is null for it. Phase 6 introduces the assertions that fill it.
+ * `validationAssertionId` is null for it. SDD section 37 and section 38 name the artefact kinds a
+ * user validation assertion produces, and this type adds them.
  */
-export type EvidenceKind = "deterministic_check";
+export type EvidenceKind = "deterministic_check" | ValidationEvidenceKind;
 
 export interface EvidenceRecord {
   id: string;
