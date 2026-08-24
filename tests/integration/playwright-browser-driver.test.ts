@@ -1,6 +1,20 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type * as FsPromises from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+const traceReadControl = vi.hoisted(() => ({ failTraceRead: false }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  const readFile = async (target: string): Promise<Buffer> => {
+    if (traceReadControl.failTraceRead && target.endsWith("trace.zip")) {
+      throw new Error("simulated unreadable trace file");
+    }
+    return await actual.readFile(target);
+  };
+  return { ...actual, readFile };
+});
 import { PlaywrightBrowserDriver } from "../../src/adapters/browser/playwright/playwright-browser-driver.js";
 import type { BrowserScenario, BrowserStepResult, BrowserArtifact } from "../../src/domain/validation/browser-driver.js";
 
@@ -144,6 +158,20 @@ describe("PlaywrightBrowserDriver", () => {
   it("reports console output from the page", async () => {
     const result = await driver.run(scenario);
     expect(result.consoleLines.some((line: string) => line.includes("fixture page loaded"))).toBe(true);
+  }, 60_000);
+
+  it("returns a result, not a rejection, when the trace file cannot be read", async () => {
+    traceReadControl.failTraceRead = true;
+    try {
+      const result = await driver.run({ ...scenario, captureTrace: true });
+      expect(result.artifacts.some((a: BrowserArtifact) => a.kind === "trace")).toBe(false);
+      expect(
+        result.consoleLines.some((line: string) => line.includes("failed to read the trace file")),
+      ).toBe(true);
+      expect(result.passed).toBe(true);
+    } finally {
+      traceReadControl.failTraceRead = false;
+    }
   }, 60_000);
 
   it("rejects a goto path that does not start with a slash", async () => {

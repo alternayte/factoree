@@ -98,24 +98,35 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         }
       }
 
-      const finalScreenshotBytes = await page.screenshot();
-      artifacts.push({
-        kind: "screenshot",
-        name: "final",
-        contentType: "image/png",
-        bytes: finalScreenshotBytes,
-      });
+      // Rule 7: a failure while capturing the final screenshot must not mask
+      // the real failure reason. The scenario result still returns.
+      try {
+        const finalScreenshotBytes = await page.screenshot();
+        artifacts.push({
+          kind: "screenshot",
+          name: "final",
+          contentType: "image/png",
+          bytes: finalScreenshotBytes,
+        });
+      } catch (error) {
+        consoleLines.push(`driver: failed to capture the final screenshot: ${redact(error)}`);
+      }
 
       if (scenario.captureTrace) {
         const tracePath = path.join(tempDir, "trace.zip");
         await context.tracing.stop({ path: tracePath });
-        const traceBytes = await readFile(tracePath);
-        artifacts.push({
-          kind: "trace",
-          name: "trace",
-          contentType: "application/zip",
-          bytes: new Uint8Array(traceBytes),
-        });
+        // Rule 4: a read failure must not reject run(). Record the loss and continue.
+        try {
+          const traceBytes = await readFile(tracePath);
+          artifacts.push({
+            kind: "trace",
+            name: "trace",
+            contentType: "application/zip",
+            bytes: new Uint8Array(traceBytes),
+          });
+        } catch (error) {
+          consoleLines.push(`driver: failed to read the trace file: ${redact(error)}`);
+        }
       }
 
       if (scenario.captureVideo) {
@@ -123,14 +134,19 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         if (video) {
           await context.close();
           contextClosed = true;
-          const videoPath = await video.path();
-          const videoBytes = await readFile(videoPath);
-          artifacts.push({
-            kind: "video",
-            name: "video",
-            contentType: "video/webm",
-            bytes: new Uint8Array(videoBytes),
-          });
+          // Rule 4: a read failure must not reject run(). Record the loss and continue.
+          try {
+            const videoPath = await video.path();
+            const videoBytes = await readFile(videoPath);
+            artifacts.push({
+              kind: "video",
+              name: "video",
+              contentType: "video/webm",
+              bytes: new Uint8Array(videoBytes),
+            });
+          } catch (error) {
+            consoleLines.push(`driver: failed to read the video file: ${redact(error)}`);
+          }
         }
       }
 
