@@ -304,6 +304,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           ...(runtimeOverrides.get(activityInput.runId) ?? {}),
         },
         verifyCommands: DEFAULT_VERIFY_COMMANDS,
+        preview: null,
         repositoryInstructions: "Use the existing test idiom.",
       };
     },
