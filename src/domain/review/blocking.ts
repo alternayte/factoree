@@ -1,4 +1,9 @@
-import type { ReviewFinding, ReviewReport, ReviewSeverity } from "~/domain/review/review-report.js";
+import type {
+  ReviewCategory,
+  ReviewFinding,
+  ReviewReport,
+  ReviewSeverity,
+} from "~/domain/review/review-report.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 
 /** SDD section 41. Only these two severities can block. */
@@ -8,7 +13,7 @@ const BLOCKING_SEVERITIES = new Set<ReviewSeverity>(["blocker", "high"]);
  * SDD section 41. A style preference does not block, whatever severity the Reviewer gave it.
  * See controller decision 6.
  */
-const NON_BLOCKING_CATEGORIES = new Set<string>(["style"]);
+const NON_BLOCKING_CATEGORIES = new Set<ReviewCategory>(["style"]);
 
 /** One finding and the decision Factoree took about it. */
 export interface FindingDecision {
@@ -31,15 +36,33 @@ export interface ReviewDecision {
 }
 
 /**
- * Reads the file part of an evidence string. SDD section 41 shows the `path:line` form, and a
- * bare path is also specific enough to name a file. A leading `./` is removed, because a
- * Reviewer can write either form and both name one file.
+ * Reads the file part of an evidence string. SDD section 41 shows the `path:line` form. A
+ * Reviewer can also write a range, a column, or a short note after the location, so this
+ * function takes the first token and removes the location from it. The gate must not fail
+ * open: a finding that really names a changed file must block.
  */
 export const evidenceFileOf = (evidence: string): string => {
-  const text = evidence.trim();
-  // A trailing `:84` or `:84:12` is a location, not part of the file name.
-  const withoutLocation = text.replace(/(:\d+){1,2}$/, "");
+  // A note after the location is prose. Only the first token can name a file.
+  const head = evidence.trim().split(/[\s,]/)[0] ?? "";
+  // A trailing `:84`, `:80-90`, or `:84:12` is a location, not part of the file name.
+  const withoutLocation = head.replace(/(:\d+(?:-\d+)?){1,2}$/, "");
   return withoutLocation.replace(/^\.\//, "");
+};
+
+/**
+ * Reports whether the evidence names a file this Run changed. An absolute path, and a path
+ * that carries a repository prefix, still name the file, so a changed path that is a suffix of
+ * the evidence path counts as a match. This errs toward blocking. A gate that fails open would
+ * let a real defect reach a human as a passing review.
+ */
+const namesChangedFile = (evidence: string, changed: Set<string>): boolean => {
+  const file = evidenceFileOf(evidence);
+  if (file === "") return false;
+  if (changed.has(file)) return true;
+  for (const candidate of changed) {
+    if (file.endsWith(`/${candidate}`)) return true;
+  }
+  return false;
 };
 
 const requirementIsResolvable = (requirement: string, contract: ValidationContract): boolean => {
@@ -84,8 +107,7 @@ const decideFinding = (
     };
   }
 
-  const file = evidenceFileOf(finding.evidence);
-  if (!changed.has(file)) {
+  if (!namesChangedFile(finding.evidence, changed)) {
     return {
       finding,
       blocking: false,

@@ -142,4 +142,50 @@ describe("decideReview", () => {
     });
     expect(decision.passed).toBe(false);
   });
+
+  it("blocks a finding whose evidence carries trailing prose", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "src/auth.ts:84, see the catch block" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence names a line range", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "src/auth.ts:80-90" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence names a line and a column", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "src/auth.ts:84:12" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence names an absolute path", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "/workspace/primary/src/auth.ts:84" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("does not block a finding whose evidence names an unrelated file with trailing prose", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "src/other.ts:12, near the top" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(true);
+    expect(decision.nonBlocking[0]?.reason).toContain("changed");
+  });
 });
