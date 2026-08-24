@@ -25,7 +25,7 @@ export interface PreviewHandle {
   startupLog: string;
 }
 
-export type PreviewFailureReason = "not_ready" | "exited" | "no_port";
+export type PreviewFailureReason = "not_ready" | "exited" | "no_port" | "expose_failed";
 
 export class PreviewStartError extends Error {
   constructor(message: string, readonly reason: PreviewFailureReason, readonly log: string) {
@@ -104,8 +104,20 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
     const result = await input.probe(input.preview.readyUrl);
     if (isReady(result)) {
       // Rule 7. The exposed URL, not the readiness URL, is the URL a client outside the
-      // sandbox uses.
-      const service = await input.sandbox.exposeService(input.ref, port);
+      // sandbox uses. A sandbox adapter that cannot expose a service, for example the Fly
+      // adapter's recorded Phase 2 limitation, must fail this call the same honest way every
+      // other preview failure does, rather than an unwrapped rejection the caller cannot read.
+      let service;
+      try {
+        service = await input.sandbox.exposeService(input.ref, port);
+      } catch (error) {
+        throw new PreviewStartError(
+          `The sandbox could not expose the preview on port ${String(port)}: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+          "expose_failed",
+          buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
+        );
+      }
       return {
         process: processRef,
         baseUrl: service.url,

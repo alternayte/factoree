@@ -15,7 +15,6 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
-import { startPreview, stopPreview, PreviewStartError } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
@@ -306,36 +305,29 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         args: ["-p", validationDirectory],
       });
 
-      // Step 5. A preview serves the prompt only when the contract holds a browser or an http
-      // assertion and the repository configures one enabled preview. `runUserValidation`
-      // starts its own preview when it executes those assertions, because Task 7 fixed that
-      // interface and it accepts no externally started handle. Starting a second preview and
-      // holding both open at once would collide, so this handle is stopped as soon as its URL
-      // is read, before the validator session or `runUserValidation` runs. `runUserValidation`
-      // then starts the one preview that actually serves execution, at the same URL, because
-      // `startPreview` exposes the same configured port each time.
+      // Step 5. The prompt needs only the exposed base URL, and an address does not need a
+      // running server. `sandbox.exposeService` is the SDD section 37 step 3 call: it computes
+      // the URL a client outside the sandbox uses for an already configured port, without
+      // starting or touching the preview process. `runUserValidation` remains the one owner of
+      // the preview lifetime; it starts the actual process later and stops it in its own
+      // `finally`, at this same URL, because `exposeService` is a pure address computation over
+      // one fixed port.
       const needsPreview = storedContract.assertions.some(
         (assertion) => assertion.method === "browser" || assertion.method === "http",
       );
       let previewBaseUrl: string | null = null;
       if (needsPreview && input.preview !== null && input.preview.enabled) {
-        try {
-          const handle = await startPreview({
-            sandbox: uv.sandbox,
-            ref,
-            workingDirectory: input.primaryPath,
-            preview: input.preview,
-            environment: {},
-            probe: uv.probe,
-            redactor: uv.redactor,
-          });
-          previewBaseUrl = handle.baseUrl;
-          await stopPreview(uv.sandbox, ref, handle);
-        } catch (error) {
-          if (!(error instanceof PreviewStartError)) throw error;
-          // The prompt states that no preview exists. `runUserValidation` makes its own
-          // attempt below and blocks each affected assertion with the same failure.
-          previewBaseUrl = null;
+        const port = Number(new URL(input.preview.readyUrl).port);
+        if (Number.isFinite(port) && port !== 0 && !Number.isNaN(port)) {
+          try {
+            const service = await uv.sandbox.exposeService(ref, port);
+            previewBaseUrl = service.url;
+          } catch {
+            // The prompt states that no preview exists. `runUserValidation` makes its own
+            // attempt below and blocks each affected assertion with its own honest reason,
+            // for example the Fly sandbox adapter's recorded Phase 2 limitation.
+            previewBaseUrl = null;
+          }
         }
       }
 

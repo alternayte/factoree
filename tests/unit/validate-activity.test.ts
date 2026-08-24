@@ -93,6 +93,16 @@ class FakeEvidenceStorage implements EvidenceStorage {
   }
 }
 
+/**
+ * Rejects every `exposeService` call, the way `FlySpriteSandbox` does today (a recorded Phase 2
+ * limitation: Fly has no documented publish API). Every other method behaves like `FakeSandbox`.
+ */
+class NoExposeSandbox extends FakeSandbox {
+  override exposeService(): ReturnType<FakeSandbox["exposeService"]> {
+    return Promise.reject(new Error("this sandbox adapter cannot expose a service"));
+  }
+}
+
 const browserAssertion = {
   id: "VAL-UI-001",
   rowId: "row-ui-1",
@@ -162,8 +172,7 @@ const planText = JSON.stringify({
   ],
 });
 
-const build = (runner: FakeRunner) => {
-  const sandbox = new FakeSandbox();
+const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => {
   sandbox.scriptExec(/^cat /, { exitCode: 0, stdout: planText });
   const executed: RecordAgentExecutionInput[] = [];
   const executions = {
@@ -289,5 +298,36 @@ describe("the userValidate activity", () => {
     await environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input);
 
     expect(results.rows).toHaveLength(2);
+  });
+
+  it("asks the sandbox to expose the preview address without starting a second preview process", async () => {
+    const runner = new FakeRunner();
+    const { activities, sandbox } = build(runner);
+    const environment = new MockActivityEnvironment();
+
+    await environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input);
+
+    // The prompt's own step reads the address through `exposeService` alone, never through
+    // `startProcess`. `runUserValidation` is the only caller that starts the preview process,
+    // so exactly one `startProcess` call for the preview command exists.
+    expect(sandbox.calls.filter((call) => call.startsWith("exposeService")).length).toBeGreaterThan(0);
+    expect(sandbox.commands.filter((command) => command.args.includes("npm run dev -- --port 8080"))).toHaveLength(1);
+  });
+
+  it("still produces results when the sandbox cannot expose the preview address", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner, new NoExposeSandbox());
+    const environment = new MockActivityEnvironment();
+
+    const output: UserValidateActivityOutput = await environment.run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      input,
+    );
+
+    // No preview URL could be read, so the browser and http assertions cannot run. The activity
+    // still returns a plain result instead of throwing, and `runUserValidation` reports the
+    // honest outcome for each affected assertion.
+    expect(output.hasBlocked).toBe(true);
+    expect(output.passed).toBe(false);
   });
 });
