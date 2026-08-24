@@ -30,6 +30,7 @@ import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js"
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
 import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
+import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -152,6 +153,7 @@ beforeAll(async () => {
       previewProbe: () => Promise.resolve(null),
       evidenceStorage: { name: "unused", put: () => Promise.reject(new Error("unused")) },
       validationResults: new PrismaValidationResultStore(prisma),
+      reviewFindings: new PrismaReviewFindingStore(prisma),
       logger,
     }),
   });

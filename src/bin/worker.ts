@@ -9,6 +9,7 @@ import { PrismaSecretStore, PrismaTenantRegistry } from "~/persistence/prisma/pr
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
+import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
 import { PlaywrightBrowserDriver } from "~/adapters/browser/playwright/playwright-browser-driver.js";
 import { createEvidenceStorage } from "~/adapters/evidence/evidence-storage-factory.js";
 import { createLinearFileUploadApi } from "~/adapters/linear/linear-evidence-storage.js";
@@ -220,6 +221,7 @@ const worker = await Worker.create({
     previewProbe,
     evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
+    reviewFindings: new PrismaReviewFindingStore(prisma),
     logger,
   }),
 });
