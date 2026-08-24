@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { describe, expect, it } from "vitest";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { Redactor } from "~/telemetry/redaction.js";
-import { startPreview, stopPreview, PreviewStartError } from "~/domain/runs/preview.js";
+import { startPreview, stopPreview } from "~/domain/runs/preview.js";
+import type { PreviewStartError } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 
 const ref = { id: "sandbox-1", adapter: "fake", workspacePath: "/workspace" };
