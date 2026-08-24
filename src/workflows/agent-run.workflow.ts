@@ -674,6 +674,14 @@ export async function agentRunWorkflow(
         });
 
         if (validation.status === "ready") {
+          // The output type permits a `ready` result with a null `sha256`. The workflow must not
+          // start implementation on that combination, because no confirmed frozen contract exists.
+          if (validation.sha256 === null) {
+            return await failRun(
+              "VALIDATION_UNRESOLVED",
+              "Factoree could not confirm the Validation Contract froze, so it published nothing.",
+            );
+          }
           validationContractVersion = validation.sha256;
           break;
         }

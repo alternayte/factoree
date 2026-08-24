@@ -204,6 +204,32 @@ describe("the Validation Contract state of the Run workflow", () => {
     expect(implementsOf("run-ses-val-f")).toEqual([]);
   });
 
+  it("fails with VALIDATION_UNRESOLVED when a ready result carries a null sha256", async () => {
+    // The output type permits `status: "ready"` with a null `sha256`. The workflow must treat
+    // this combination as a fault, not as a frozen contract, and must not start implementation.
+    const readyWithNoHash: BuildValidationContractActivityOutput = {
+      status: "ready",
+      sha256: null,
+      document: VALIDATION_DOCUMENT,
+      assertionCount: 1,
+      frozenAt: "2026-01-01T00:00:00.000Z",
+      question: null,
+      summary: "Factoree froze the Validation Contract with 1 assertion.",
+    };
+    validationOutcomes.set("run-ses-val-h", () => readyWithNoHash);
+
+    const result = await runWorker(async () => {
+      const handle = await start("ses-val-h");
+      return handle.result();
+    });
+    validationOutcomes.delete("run-ses-val-h");
+
+    expect(result.status).toBe("FAILED");
+    expect(completionsOf("run-ses-val-h").at(-1)?.failureReason).toBe("VALIDATION_UNRESOLVED");
+    expect(preparedOf("run-ses-val-h")).toEqual([]);
+    expect(implementsOf("run-ses-val-h")).toEqual([]);
+  });
+
   it("prepares no sandbox when a stop arrives while the contract is built", async () => {
     const release = hold(heldValidations, "run-ses-val-g");
     const result = await runWorker(async () => {
