@@ -8,129 +8,127 @@
 
 ## Phases
 
-- Completed: Phase 1 — Control plane; Phase 2 — Sandbox and first runner; Phase 3 — Deterministic verification; Phase 4 — Refinement and Context Contract; Phase 5 — Backstage and MCP; Phase 6 — Validation Contract
+- Completed: Phase 1 — Control plane; Phase 2 — Sandbox and first runner; Phase 3 — Deterministic verification; Phase 4 — Refinement and Context Contract; Phase 5 — Backstage and MCP; Phase 6 — Validation Contract; Phase 7 — User validation and evidence
 - Current: none
-- Next: Phase 7 — User validation and evidence
+- Next: Phase 8 — Review and repair
 
 ## Git
 
 - Branch: `main`
-- Phase 6 range: `45bb82e..aed014f`, 20 commits. 19 on `phase-06-validation-contract`, then the no-fast-forward merge.
+- Phase 7 range: `bc649cb..c5494e5`, 23 commits. 22 on `phase-07-user-validation`, then the no-fast-forward merge.
 - The repository has no remote. Each phase merges into local `main` with a no-fast-forward commit.
 
-## Phase 6 verification
+## Phase 7 verification
 
 The controller ran every check below itself. Agent claims were not accepted as evidence.
 
 | Check | Result |
 | --- | --- |
-| `npm run verify` on the branch head `fe313ea` | exit 0, run in stages so no part could be cut short: lint 0, typecheck 0, unit 663 passed and 7 skipped, integration and acceptance 125, workflow 47, build 0 |
-| `npm run verify` on `main` after the merge | exit 0: 663 unit passed and 7 skipped, 125 integration and acceptance, 47 workflow, build succeeded |
-| Skip count | 7, the same as the Phase 2, 3, 4, and 5 baseline. Phase 6 skipped no test. |
-| Phase 6 exit condition | pass: every implementation starts after a frozen validation contract exists |
-| AT-10 validation created first | pass, in two halves. `tests/workflow/validation-contract.workflow.test.ts` proves the ordering from activity records the test does not sequence. `tests/acceptance/at-10-validation-created-first.test.ts` proves the creation time, the hash, and the Run row, with a negative case. |
-| AT-11 validation immutability | pass: a second save that weakens an assertion is discarded, and the first contract stands |
-| Every Phase 4 and Phase 5 acceptance test | still passes unchanged |
-| Task reviews | 6 dispatches for 8 tasks. 3 clean at once, 3 needed fix rounds. 4 fix rounds in total. |
-| Final whole-branch review | exit condition MET, no Critical, 1 Important and 5 Minor. It triaged all 11 deferred minors and judged that none blocks the merge. |
-| Controller verification finding | 1 blocking defect the reviews missed, found by the controller's own suite run. See below. |
-| External audit (OpenCode, DeepSeek reasoner) | 8 of 10 categories clean, 2 defects. The controller validated both against the code, fixed one, and ruled the other out of Phase 6 scope with a reason. |
+| `npm run verify` on the branch head `5f820c5` | exit 0, run in stages so no part could be cut short: lint 0, typecheck 0, unit 793 passed and 7 skipped, integration and acceptance 158, workflow 56, build 0 |
+| `npm run verify` on `main` after the merge | exit 0, the same counts |
+| Skip count | 7, the same as the Phase 2 through Phase 6 baseline. Phase 7 skipped no test. |
+| Phase 7 exit condition | pass: a UI fixture change produces independent acceptance evidence |
+| AT-17 fresh user validation | pass, proved three ways: the session identifiers differ, the `AgentExecution` rows carry both roles with two distinct session references, and the real validator prompt holds neither the Implementer summary nor its success sentence |
+| AT-18 UI evidence | pass: the screenshot bytes start with the PNG magic number, from real Chromium against a real preview. The negative half proves a driver that reports success with no artefact yields `FAIL`, never `PASS`. |
+| AT-19 HTTP evidence | pass: the artefact records the method, the path, the status, and the result, and neither a real `Authorization` value nor a registered Project secret appears in the bytes |
+| AT-25 evidence completeness | pass: `FAIL`, `MANUAL_REQUIRED`, `BLOCKED`, and all-`PASS`, plus a real database comparison so the gate and the record cannot disagree |
+| Every earlier acceptance test | still passes unchanged |
+| Task reviews | 10 tasks, 10 task reviews, 5 fix rounds. Task 8's review was split in two after the first reviewer stalled on a 68 kilobyte diff. |
+| Final whole-branch review | exit condition MET, no Critical. 4 Important and 4 Minor, plus a triage of all 18 deferred minors. One fix wave of eight items closed them. |
+| External audit (OpenCode, DeepSeek reasoner) | 6 of 10 categories clean, 4 defects. The controller validated all four against the code and fixed all four. |
+| Controller verification findings | 2 defects the task reviews missed, both found by the controller's own checks. See below. |
 
-Evidence: `docs/build/evidence/phase-06-verify.txt`, last line `exit=0`.
+Evidence: `docs/build/evidence/phase-07-verify.txt`, last line `exit=0`.
 
-**The blocking defect the task reviews missed.** `tests/workflow/at-35-worker-restart.test.ts` hand-builds its own activity map instead of using the shared harness, and Task 6 never added the `buildValidationContract` double to it. The restarted worker then failed the activity and failed the Run. `npm run typecheck` cannot catch it, because the map is a plain object literal and is not typed as `Activities`. It appeared intermittently, because the outcome depends on where the restart lands, and one controller run passed before another failed. Commit `9f2b22e` fixes it. **A later phase that adds an activity must check that file by hand.** It is the only workflow test file that does not use the harness.
+**The two defects the task reviews missed.**
 
-## Read this before Phase 7
+1. **`npm run lint` was red from Task 2 until Task 5.** `tests/unit/preview.test.ts` carried 8 eslint errors. Three task agents ran lint scoped to their own files and reported clean, and one classified the failures as pre-existing and unrelated without checking `git log` for the file. SDD section 65 requires `npm run verify` to pass, and verify runs lint first. Commit `ca0dcbb` fixes it. **Run the whole-repository lint yourself at every task gate, and never accept an agent's scoped lint result.**
+2. **A validation assertion could report `PASS` against a foreign host.** The external audit found it and the controller reproduced it directly: `"//example.com"` passes a `startsWith("/")` guard, and `new URL("//example.com", base)` replaces the origin. An agent-authored Validation Plan could therefore point an assertion at any host while the implementation under test never ran. Commit `cbd55d1` closes it with two independent controls, and `5f820c5` closes the residual parser gap.
 
-**The Validation Contract exists and is frozen before any sandbox.** `BUILDING_VALIDATION_CONTRACT` sits between `RESOLVING_CONTEXT` and `PREPARING`. There is exactly one `prepareSandbox` call site, and no path reaches it without a frozen contract.
+## Read this before Phase 8
 
-**The frozen hash is the contract version.** `Run.validationContractVersion` holds the SHA-256 of the canonical contract, as `contextContractVersion` holds the context hash. The contract is immutable: `ValidationContractStore` offers `save` and `findByRun` only, and no update and no delete.
+**A UI fixture change now produces independent acceptance evidence.** `tests/acceptance/phase-07-exit.test.ts` runs a real preview process, a real exposed URL, real Chromium, and a real HTTP client against a fixture repository, and writes real evidence rows. Its negative half runs the same contract against the unfixed page and reports `FAIL` with the screenshot retained.
 
-**The freeze activity is idempotent, and it repairs.** `buildValidationContract` reads the store first. A frozen contract always wins over a freshly built one, even when the input has since changed. The early-return path writes the Run hash again, so a retry after an interrupted attempt repairs a Run row that holds no hash. A divergent freeze attempt warns with the two hashes and writes nothing.
+**The User Validator is a fresh agent session that writes DATA, not code.** SDD section 24 states each assertion in prose, and no deterministic function can turn prose into browser steps. So a fresh validator session writes one declarative Validation Plan into `${workspacePath}/validation/plan.json`, and Factoree parses it, refuses any entry that weakens the frozen contract, executes it itself, and decides the result from the artefacts. No agent-authored program runs on the worker, and no agent claim decides a result.
 
-**The builder is deterministic and starts no agent.** It restates one acceptance criterion per assertion and records that criterion identifier. It invents no behavior. Because it starts no agent and creates no `AgentExecution`, it records no prompt version, so `prompts/validation-builder.md` of SDD section 56 does not exist yet. See the carried findings.
+**Every plan path is untrusted text.** `src/domain/validation/preview-url.ts` holds the one resolver. It rejects a path that is not a single-slash relative path, it rejects a tab, a line feed, and a carriage return anywhere in the path, because the WHATWG parser strips exactly those three, and it compares the resolved origin with the base origin. The plan parser and each point of use both call it. **Keep both controls.** The predicate alone was defeated by `"/\t/example.com"` during the audit.
 
-**The method rule has two confidence levels.** An explicit method and path, for example `PATCH /projects/{id}`, beats everything. The weak HTTP word list does not beat a plainly stated page interaction. An unrecognized statement becomes `manual`, which SDD section 36 turns into MANUAL_REQUIRED.
+**Playwright runs on the worker, not in the sandbox.** SDD section 37 orders `expose the service` before `execute Playwright`, so exposure exists for a client outside the sandbox. `src/adapters/browser/playwright/playwright-browser-driver.ts` is the only file that imports Playwright.
 
-**A Run whose assertions are all `manual` cannot complete autonomously.** SDD section 36 says L3 cannot complete unless every assertion is PASS. This is deliberate and safe. Phase 7 must expect it, and a Phase 7 fixture Work Item must state a criterion the classifier recognizes, or the Run stalls on a human.
+**`BrowserDriver.run` returns a result, never an exception.** A scenario that fails is a result. Only a fault that makes a result impossible may throw. Two Task 5 review findings were exactly this.
 
-**The readiness gate is live but is not reached by a real Run today.** `RefinementEngine` derives a criterion from any non-empty goal, and it blocks an empty goal with its own question, so the `needs_input` branch and its question loop stay unentered in production. The gate stays, because SDD section 9 item 5 states the rule as an invariant of the Run and the activity is the last enforcement point before a freeze.
+**The workflow has one shared helper for a long agent activity.** `runAgentActivity` in `src/workflows/agent-run.workflow.ts` holds the stop entry guard, the ordering `sleep(1)`, the cancellation watcher, and the cancellation handling. Both `runImplementer` and `runUserValidate` call it. The `sleep` is a durable timer that forces the schedule command onto its own workflow task, because a cancel issued in the same activation as the schedule can race it and, under `WAIT_CANCELLATION_COMPLETED`, wait forever for a report from an activity no worker started. **Do not remove it, and do not add a third long-activity stage that bypasses the helper.**
 
-**There is still no success terminal state.** A Run whose verification passes falls into the residual wait and ends `FAILED` with `RUN_TIMEOUT`. The next state of SDD section 49 is `USER_VALIDATING`, and Phase 7 builds it.
+**There is still no success terminal state.** A Run whose user validation passes falls into the residual wait and ends `FAILED` with `RUN_TIMEOUT`. SDD section 68 forbids `READY_FOR_HUMAN` without a PR and a Proof Pack. Phase 9 and Phase 10 build those.
 
-**`Evidence.validationAssertionId` still has no relation.** The column exists in `prisma/schema.prisma` with a comment saying Phase 6 fills it. Phase 6 did not, because Phase 6 stores no evidence. Phase 7 owns evidence and must close it.
+**A stock repository configuration still cannot user-validate.** SDD section 15's own example sets `validator: claude`, and `ClaudeCodeRunner` arrives in Phase 11. Phase 7 therefore makes an unknown validator runner a configuration fault that names the configured and the registered runners, and the workflow routes it to `FAILED_CONFIGURATION` rather than to `INTERNAL_ERROR`. The default value was deliberately not changed.
+
+**`Evidence.validationAssertionId` now has its relation,** and `ValidationAssertionResult` holds one immutable row per assertion per attempt. The foreign key is the assertion ROW identifier, exposed as `rowId`, never the contract-level identifier such as `VAL-UI-001`. Both are strings, so a mistake here would fail at run time and not at compile time.
 
 ## Human decisions
 
 None required so far. Every decision was taken by the controller and is recorded in the phase plans, the commit history, or the lists below.
 
-Phase 4 and Phase 5 decisions still stand. Decisions added in Phase 6:
+Phase 4, Phase 5, and Phase 6 decisions still stand. Decisions added in Phase 7 are the fourteen recorded in `docs/build/phase-07-plan.md`, plus these taken during execution:
 
-1. **The contract is built after the Context Contract freezes and before the sandbox exists,** which is the order SDD section 49 fixes. The builder therefore reads no repository and no sandbox.
-2. **The builder is deterministic, and every assertion restates one acceptance criterion,** recording that criterion identifier in `requirement`. SDD section 7 forbids Factoree to invent material product behavior.
-3. **A contract with no assertion is not valid and does not freeze.** The activity answers `needs_input`, the workflow asks one focused question, and the human answer becomes an assertion. An unanswered question ends the Run with `VALIDATION_UNRESOLVED`.
-4. **The default method is `manual`.** SDD section 36 gives it MANUAL_REQUIRED. Guessing `test` for an unrecognized statement would claim an automated proof Factoree cannot produce.
-5. **The frozen hash is the contract version,** because a content hash cannot drift from its content.
-6. **Phase 6 writes no `prompts/validation-builder.md`.** SDD section 56 requires each `AgentExecution` to record its prompt version, and the deterministic builder creates none. The file belongs to the phase that makes the builder model-driven.
-7. **The store offers `save` and `findByRun` only,** because SDD section 25 forbids a change to the active contract.
-8. **The Implementer receives the rendered document, not the store.** AT-11 tests that against the store, not against a prompt sentence.
-9. **Task 7 ran before Task 6,** so the tree kept compiling. Task 6 passes the frozen document into the implement call, and only Task 7 adds that field.
-10. **AT-10 spans two files.** The ordering half lives in the workflow test, where the workflow decides the order. The persistence half lives in the acceptance test. A test that performs both writes itself can never express a regression in the order. Each file names the other.
-11. **The SDD section 60 redaction gap is not fixed inside Phase 6.** See the carried findings.
-12. **The weak HTTP word signal must not beat a plainly stated page interaction,** because a browser assertion needs the SDD section 37 evidence and `request-response` alone loses the user-visible half.
+1. **The activity learns the preview address through `sandbox.exposeService` and never starts a preview.** An address needs no running server. `runUserValidation` is the single owner of the preview start and its `finally` stop. An earlier implementation started the preview twice.
+2. **The cancel-versus-schedule race fix was hoisted into one shared helper,** so the two long-activity stages cannot drift apart. The same race was live in `runImplementer` and is now closed there too.
+3. **The `settled` flag was deleted.** `node_modules/@temporalio/workflow/lib/workflow.js:168` guards the cancel with `if (!activator.completions.activity.has(seq)) return;`, so a cancel after an activity settles emits no command. The controller verified that source itself.
+4. **The Validation Plan authoring its own success criteria for `command` and `http` entries is accepted as designed.** It follows from the plan's decisions 2 and 3, and no deterministic function can derive an expected status from prose. The criteria reach persisted evidence metadata, so a human can audit them. This is the widest remaining path from a real defect to a `PASS`. See the carried findings.
+5. **The validator runner default stays `claude`,** because SDD section 15 states it. The unknown-runner case became a configuration fault instead.
+6. **Evidence storage is selectable** through `EVIDENCE_STORAGE`, a closed enum defaulting to `filesystem`. The Linear adapter is wired but has never run against a live Linear account.
 
 ## Carried findings for later phases
 
-Reviewed, judged not reachable or not in scope now, deliberately not fixed. Every Phase 4 and Phase 5 entry that Phase 6 did not close still stands.
+Reviewed, judged not reachable or not in scope now, deliberately not fixed. Every Phase 4, Phase 5, and Phase 6 entry that Phase 7 did not close still stands.
 
-**New in Phase 6, highest priority, for the phase that hardens persistence:**
+**New in Phase 7, highest priority:**
 
-- **Human-authored text reaches PostgreSQL and the Implementer prompt with no `Redactor`.** The rendered Validation Contract carries the Work Item goal, the derived criteria, and human answers. SDD section 60 requires Factoree to redact exact configured secret values, known GitHub token patterns, and known model-provider key patterns before external persistence. The external audit found this. The controller validated it and confirmed the Phase 4 Context Contract persists the same goal text by the same route, equally unredacted, so the gap is pre-existing and cross-cutting, not a Phase 6 regression. It is deliberately not fixed here, because redacting the Validation Contract alone would give false assurance while the Context Contract, the Linear progress posts, and the Implementer prompt leak the same text. Fix it in one pass over every persistence boundary that carries human-authored text.
+- **The Validation Plan supplies both the check and its success criterion, and nothing ties either to the frozen assertion text.** A `command` entry of `{ run: "true", expectExitCode: 0 }` passes a `command` assertion. An `http` entry may state `expectStatus: 500` and pass a broken endpoint. Only a browser entry has a floor: at least one `goto` and at least one `expect` step. This is the branch's widest path from a real defect to a `PASS`. It follows from ratified design, and the criteria are persisted so a human can audit them, but the Phase 8 Reviewer and the Phase 10 Proof Pack should surface them prominently.
+- **The Action Policy is never enforced.** No call to `assertAllowed` or `decide` exists anywhere in `src/`. The policy reaches an agent session only through `describe()` in the prompt, so controller decision 14's `writePrimaryWorktree: deny` for the validator is a prompt sentence today, not a boundary. The gap is inherited from the Implementer path and predates Phase 7. **Phase 9 owns it,** because Phase 9 is the first phase that captures a patch a rogue write could reach.
 
-**New in Phase 6, for the phase that revisits the builder:**
+**New in Phase 7, for the phase that revisits storage:**
 
-- `methodFor` matches `click` and `clicks` and not `clicked` or `clicking`, so a browser criterion in the past tense becomes `manual`. The external audit found this. The direction is safe, because `manual` needs a human and claims nothing, so it was deliberately not fixed. The word lists are hand-tuned and a review already flagged that as a smell; a principled classifier would close this and the entry below together.
-- `COMMAND_WORDS` and `REVIEW_WORDS` hold generic entries such as `build` and `reviewed`. The rule order protects the observed cases only.
-- `validateValidationContract` throws inside the activity, so an invalid contract would consume all five Temporal retries and fail as `INTERNAL_ERROR` rather than fail fast. It is unreachable today, because the builder cannot produce an invalid contract that also holds an assertion.
-- The duplicate-identifier check runs last in the per-assertion loop, so a duplicate that also carries an unknown method reports the method fault first. The contract is rejected either way.
+- `LinearEvidenceStorage` is wired and unit tested but has never run against a live Linear account. SDD section 39 says Version 1 SHOULD use Linear private file storage where practical. Phase 12's live acceptance test is the first real exercise.
+- `storageNameOf` now includes the artefact source, so two same-kind artefacts differ. Whether Linear keys an upload by filename is still unverified from this repository.
 
-**New in Phase 6, for the phase that owns the workflow:**
+**New in Phase 7, small:**
 
-- The `question === null` branch of the build loop is unreachable, because the activity always returns a question with `needs_input`. It is a defensive guard, and removing it would trade a dead branch for a silent fall-through.
-- `tests/workflow/support/harness.ts` records no `implement` marker in `activityOrder`, so the AT-10 ordering test states its claim by read time rather than directly. Add the marker when Phase 7 next touches that file.
-- The `indexOf` pair in the AT-10 workflow test duplicates the neighbouring ordering test.
-- `validation-contract.workflow.test.ts` deletes its outcome entry after `runWorker`, so a failed assertion leaks the entry into a later test, and its `activityOrder` slice is correct only while the tests run one at a time.
-- `validation-contract.workflow.test.ts` imports one module twice.
+- `http-validation.ts` records `bodyLength` after redaction, not the raw original length.
+- `BrowserNetworkEntry.status` is typed `number | null`, but only the response event is wired, so `null` never occurs. A `requestfailed` listener would make it meaningful.
+- The video read failure path has no test. The trace read failure path does.
+- The filesystem storage tenant test proves separate paths, not a refused cross-tenant read. `EvidenceStorage` exposes no read, so there is no cross-tenant read to refuse.
+- `PrismaValidationResultStore.record` catches any create error and reads the winner, not only a unique-constraint violation. It mirrors `PrismaEvidenceStore`, so a change belongs to a sweep of both.
+- The reason for a wholly absent plan is a fixed sentence, not a parse message.
+- `at-25` persists only the all-`PASS` shape. A store that mapped every result to `PASS` would still pass that one case. `tests/integration/validation-results.test.ts` covers non-`PASS` persistence.
+- `at-25` writes a `FilesystemEvidenceStorage` root under `/tmp` and never removes it.
+- `runUserValidate` hands the whole remaining Run budget to one validation pass, so a hung browser step can consume the rest of the Run. The browser stage has no ceiling of its own.
+- `preview.timeoutSeconds` comes from repository configuration with no upper bound.
+- The `hash()` helper in `user-validator.ts` is a 32-bit digest and is not collision resistant. Do not read it later as an integrity check.
+- The trace-read console line now also covers a tracing-stop failure, so it slightly overstates the cause.
 
-**New in Phase 6, for the phase that owns evidence:**
-
-- `Evidence.validationAssertionId` has no relation to the new `ValidationAssertion` model, despite the comment in `prisma/schema.prisma` saying Phase 6 fills it.
-
-**New in Phase 6, small:**
-
-- `PrismaValidationContractStore.findByRun` filters the SQL on `runId` only and applies the tenant check in application code afterwards. It never returns a foreign-tenant row. It matches `PrismaContextContractStore` exactly, so a change belongs to a sweep of both stores.
-- The `["browser","http"]` expectation in `phase-06-exit.test.ts` couples the acceptance test to the classifier word lists.
-- One test in `implementer-input.test.ts` asserts a static prompt sentence a pre-existing test already covers.
-
-**Everything else carried from Phase 5 and earlier still stands,** including: the Phase 5 discovery findings on the guarded second pass, `readRepositoryContextConfiguration`, `BackstageContextSource.discover`, `onHost`, the duplicate survivor, `findByRepositorySlug`, `getByRef`, and `hostOf`; the Phase 5 administration-API findings; the Phase 5 MCP findings; the conflict-model wording and `supersedes`; `isDeterministicRemoteFailure`, the streamed `listTree` error, `checkoutHosts`, and an unknown `sizeBytes`; `WorkItem.constraints` reaching no consumer; the `Redactor` four-character floor and the evidence tenant guard; the Phase 2 adapter map, `baselineCheckpointId`, the `injectIntoImplementer` reset, `AgentRunInput` lacking `projectId`, and the unused `reapExpiredSandboxes`; the evidence-activity split and the `Evidence.kind` cast; the stop-during-verification and `CLEAN_SHELL_ENV` items; the Phase 11 model-provider credential; and every Phase 12 live-proof item.
+**Everything else carried from Phase 6 and earlier still stands,** including the Phase 6 redaction gap for human-authored goal text at every persistence boundary, which is the cross-cutting item that Phase 12 hardening owns; the Phase 6 builder word-list findings; the Phase 5 discovery, administration-API, and MCP findings; and every Phase 12 live-proof item.
 
 ## Blockers
 
 None.
 
-Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for the Phase 12 live acceptance test. They are not needed for Phase 7.
+Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for the Phase 12 live acceptance test. They are not needed for Phase 8.
 
 ## Environment notes
 
 - Node 24 LTS is at `/opt/homebrew/opt/node@24/bin`. The Homebrew `node` 25 binary on this machine is broken, so prefix PATH with the Node 24 path.
 - The shell alias `cat` points at a broken `bat`. Use `/bin/cat`. **Never write a file through a `cat` heredoc, and never build a commit message with `git commit -m "$(cat <<EOF ...)"`.** Use `git commit -F` with a file.
-- `node` and `npx` print a `dyld: Library not loaded: libllhttp.9.3.dylib` warning from `libgit2`. It is noise, but it can kill a command silently.
 - `timeout` and `gtimeout` are not installed.
 - Docker is required for the integration and workflow suites.
-- **`npm run verify` takes longer than a two-minute foreground tool call.** Run it in stages, or in the background and poll it. A background run that a harness timeout kills reports nothing, so read the real output before you believe a result.
+- **`npm run verify` takes longer than a two-minute foreground tool call.** Run it in stages in the background and poll the output file. A background run that a harness timeout kills reports nothing, so read the real output before you believe a result.
+- **Run the whole-repository `npm run lint` yourself at every task gate.** Phase 7 shipped a red lint across three tasks, because agents ran lint scoped to their own files. See the verification note above.
 - The acceptance tests run under `vitest.integration.config.ts`, not under a config of their own.
+- **Playwright 1.62.1 is a dependency now,** and the matching Chromium build is in the machine cache at `~/Library/Caches/ms-playwright`. If `chromium.executablePath()` names a path that does not exist, run `npx playwright install chromium`.
+- **Other applications on this machine hold some common ports.** Every fixture server must bind an ephemeral port and read back its assigned port. Port 8099 was already taken during Phase 7.
 - The Prisma CLI resolves `DATABASE_URL` eagerly, so every CLI call needs a value. Every migration so far was written by hand and applied through the Testcontainers database.
-- **The Phase 6 migration is safe against a populated database.** `20260825120000_add_validation_contract` creates two new tables. The external audit verified it against `prisma migrate diff --from-empty --to-schema` and found no drift.
-- **Run the whole integration suite before calling a task complete, not one file.** Run the whole workflow suite as well when a task adds an activity.
-- The Temporal and Testcontainers suites produce occasional timing flakes. **Do not accept "it is a known flake" from an agent.** Rerun the suite yourself. One reported flake in Phase 6 was a real defect.
-- `opencode` version 1.18.18 is installed and authenticated for DeepSeek, and was used for the external audit of Phase 4, Phase 5, and Phase 6.
+- **The Phase 7 migration is safe against a populated database.** `20260826120000_add_validation_results` creates one table and adds one foreign key to a column that already exists and holds `NULL` everywhere. It was verified against a real shadow database with `prisma migrate diff`, output "No difference detected". That check caught a Postgres 63-byte index-name truncation the hand-written SQL had wrong. The brief's `migrate diff` flags do not exist in Prisma 7.9.1; read the Phase 7 task 6 report for the command that works.
+- **Run the whole integration suite before calling a task complete, not one file.** Run the whole workflow suite as well when a task adds an activity, and run it twice.
+- The Temporal and Testcontainers suites produce occasional timing flakes. **Do not accept "it is a known flake" from an agent.** Rerun the suite yourself.
+- **`tests/workflow/at-35-worker-restart.test.ts` still hand-builds its own activity map** and is the only workflow test file that does not use the shared harness. Its map is a plain object literal and is not typed as `Activities`, so `npm run typecheck` cannot catch a missing entry. **A later phase that adds an activity must update that file by hand.** Phase 7 added `userValidate` and `preview: null` to it.
+- `opencode` version 1.18.18 is installed and authenticated for DeepSeek, and was used for the external audit of Phase 4, Phase 5, Phase 6, and Phase 7. The Phase 7 audit prompt named ten categories and excluded the known deliberate designs; that shape produced four real defects and no noise.
