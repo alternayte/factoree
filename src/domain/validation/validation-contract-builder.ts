@@ -55,15 +55,18 @@ const COMMAND_WORDS = ["command", "cli", "exit code", "exits with", "build", "li
 const REVIEW_WORDS = ["code review", "reviewed", "review confirms"] as const;
 
 /**
- * The rule order is the confidence order. An explicit HTTP call beats every other signal, because
- * it names the observable exactly. Controller decision 4 makes `manual` the default: an
- * unrecognized statement is still observable by a human, and Factoree must not claim an automated
- * proof it cannot produce.
+ * The rule order is the confidence order. Two HTTP signals exist, and they do not carry the same
+ * confidence. `HTTP_CALL` names an explicit method and a path. This signal is the strongest a
+ * statement carries, and it beats every other signal. `HTTP_WORDS` is weak word evidence, such as
+ * "endpoint" or "returns 200". This weak signal must not beat a plainly stated page interaction:
+ * when the statement carries a browser word too, the method is `browser`. Controller decision 4
+ * makes `manual` the default: an unrecognized statement is still observable by a human, and
+ * Factoree must not claim an automated proof it cannot produce.
  */
 export const methodFor = (statement: string): ValidationMethod => {
   if (HTTP_CALL.test(statement)) return "http";
   if (containsWord(statement, REVIEW_WORDS)) return "code_review";
-  if (containsWord(statement, HTTP_WORDS)) return "http";
+  if (containsWord(statement, HTTP_WORDS) && !containsWord(statement, BROWSER_WORDS)) return "http";
   if (containsWord(statement, BROWSER_WORDS)) return "browser";
   if (containsWord(statement, TEST_WORDS)) return "test";
   if (containsWord(statement, COMMAND_WORDS)) return "command";

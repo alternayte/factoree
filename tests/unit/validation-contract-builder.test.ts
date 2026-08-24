@@ -46,6 +46,20 @@ describe("methodFor", () => {
   it("prefers http over browser when the statement names both", () => {
     expect(methodFor("The page calls POST /projects and shows the result.")).toBe("http");
   });
+
+  it("chooses browser when a weak HTTP word and a browser word appear together", () => {
+    expect(
+      methodFor("The user clicks Save, the page reloads, and the server returns 200."),
+    ).toBe("browser");
+  });
+
+  it("chooses http for weak HTTP words alone, with no browser word", () => {
+    expect(methodFor("The health endpoint returns 200.")).toBe("http");
+  });
+
+  it("chooses http when an explicit HTTP call and a browser word appear together", () => {
+    expect(methodFor("The page calls POST /projects and shows the result.")).toBe("http");
+  });
 });
 
 describe("buildValidationContract", () => {
