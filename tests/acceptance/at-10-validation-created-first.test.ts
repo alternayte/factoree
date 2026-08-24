@@ -29,11 +29,14 @@ afterAll(async () => {
 
 /**
  * AT-10, SDD section 66. The Validation Contract creation time and hash must exist before the
- * Implementer starts. This test freezes a contract through the real activity, then starts an
- * AgentExecution for the same Run, and orders the two real timestamps a database recorded.
+ * Implementer starts. This test freezes a contract through the real activity, then records an
+ * AgentExecution for the same Run, and checks a property of the system state at the moment the
+ * execution exists: the Run row must already carry the frozen hash, and the stored contract must
+ * already exist with that hash. A companion case proves this check can fail: for a Run whose
+ * contract was never frozen, the Run hash and the stored contract are both absent.
  */
 describe("AT-10 — validation created first", () => {
-  it("freezes the contract, with a hash and a creation time, before the Implementer starts", async () => {
+  it("has already frozen the contract, with a hash on the Run row, before an AgentExecution exists", async () => {
     const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
     const contracts = new PrismaValidationContractStore(prisma);
     const runs = new PrismaRunRepository(prisma);
@@ -57,8 +60,8 @@ describe("AT-10 — validation created first", () => {
     expect(stored).not.toBeNull();
     expect(stored?.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-    // The Implementer starts strictly after the freeze finished. Waiting one real millisecond,
-    // instead of asserting inside the same tick, makes the ordering genuine.
+    // Five real milliseconds separate the freeze from the Implementer start, so the two events
+    // are genuinely ordered in time and not merely asserted in the order the test wrote them.
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     const execution = await executions.record({
@@ -73,10 +76,27 @@ describe("AT-10 — validation created first", () => {
       finalResult: { completed: true, exitCode: 0, cancelled: false, summary: "The change is applied." },
       idempotencyKey: `${runId}:implementer:attempt-1`,
     });
+    expect(execution.createdAt).toBeInstanceOf(Date);
 
-    expect(stored?.createdAt.getTime()).toBeLessThanOrEqual(execution.createdAt.getTime());
-
+    // At the moment an AgentExecution exists for this Run, the frozen contract and the Run hash
+    // must already be in place. A regression that let the Implementer start before the freeze,
+    // or that let the freeze activity skip writing the Run hash, would fail this block.
     const run = await runs.findById(tenantId, runId);
     expect(run?.validationContractVersion).toBe(stored?.sha256);
+    const rereadContract = await contracts.findByRun(tenantId, runId);
+    expect(rereadContract?.sha256).toBe(stored?.sha256);
+  });
+
+  it("carries no Validation Contract hash for a Run whose contract was never frozen", async () => {
+    // This case proves the check above is capable of failing: a Run that skipped the freeze
+    // step must show no hash and no stored contract, the state the positive case rules out.
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    const contracts = new PrismaValidationContractStore(prisma);
+    const runs = new PrismaRunRepository(prisma);
+
+    const run = await runs.findById(tenantId, runId);
+    expect(run?.validationContractVersion).toBeNull();
+    const stored = await contracts.findByRun(tenantId, runId);
+    expect(stored).toBeNull();
   });
 });

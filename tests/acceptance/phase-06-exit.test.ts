@@ -36,8 +36,9 @@ afterAll(async () => {
 /**
  * SDD section 69, Phase 6 exit: every implementation starts after a frozen Validation Contract
  * exists. The first test drives a Work Item through Refinement to the real freeze activity, and
- * on to the Implementer prompt. The second test proves that a Work Item with no observable
- * assertion freezes nothing, and leaves the Run hash null.
+ * on to the Implementer prompt. The second test drives the activity's own last-line enforcement
+ * of SDD section 9 item 5 directly. The third test proves the ordering itself: the Run row
+ * carries the frozen hash before the Implementer input is built.
  */
 describe("Phase 6 exit — every implementation starts after a frozen Validation Contract", () => {
   it("runs the whole path from a Work Item to a frozen contract the Implementer receives", async () => {
@@ -120,10 +121,17 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     expect(implementerInput.prompt).toContain("You must not change the Validation Contract.");
   });
 
-  it("starts no implementation when the Work Item states no observable assertion", async () => {
+  it("freezes nothing when the activity receives no acceptance criterion and no human assertion", async () => {
     const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
     const activities = createValidationActivities({ contracts, runs, logger });
 
+    // Refinement normally satisfies SDD section 9 item 5 upstream of this activity: it derives
+    // at least one criterion from any non-empty goal (`deriveAcceptanceCriteria` in
+    // `refinement-engine.ts`), so a real Run practically never reaches the activity with an
+    // empty criteria list. This test calls the activity directly, with the criteria and human
+    // assertions both empty, to drive its own last-line enforcement of that same rule — the
+    // gate `buildValidationContract` applies whatever called it. It does not claim this is the
+    // path a real Run takes; `refined.goal` is used only to keep the goal field realistic.
     const refined = new RefinementEngine().refine({
       source: {
         issueId: "ENG-301",
@@ -140,25 +148,13 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
       decisions: [],
     });
 
-    // Refinement proposes criteria only, it never confirms one. Every criterion here carries the
-    // source `derived:goal`, because the Work Item stated no explicit acceptance criterion. A
-    // proposal Factoree wrote from the goal text is not itself an observable assertion a human
-    // confirmed, so none of these reach the Validation Contract.
-    expect(refined.proposedAcceptanceCriteria.every((criterion) => criterion.source === "derived:goal")).toBe(
-      true,
-    );
-    const confirmedCriteria = refined.proposedAcceptanceCriteria.filter(
-      (criterion) => criterion.source !== "derived:goal",
-    );
-    expect(confirmedCriteria).toHaveLength(0);
-
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
       projectId,
       workItem: "ENG-301",
       goal: refined.goal,
-      acceptanceCriteria: confirmedCriteria,
+      acceptanceCriteria: [],
       humanAssertions: [],
     });
 
@@ -172,5 +168,54 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
 
     const run = await runs.findById(tenantId, runId);
     expect(run?.validationContractVersion).toBeNull();
+  });
+
+  it("carries the frozen hash on the Run row before the Implementer input is built", async () => {
+    // `tests/workflow/validation-contract.workflow.test.ts` proves this same ordering end to
+    // end at the workflow level, driving the real Temporal workflow. This test proves it with
+    // the pieces available to this suite: the real freeze activity, then a real read of the Run
+    // row, then a real Implementer input built from what that row and the frozen document hold.
+    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const activities = createValidationActivities({ contracts, runs, logger });
+
+    const built = await activities.buildValidationContract({
+      runId,
+      tenantId,
+      projectId,
+      workItem: "ENG-302",
+      goal: "A signed-in editor can archive a report.",
+      acceptanceCriteria: [
+        { id: "AC-1", statement: "POST /reports/{id}/archive returns 200.", source: "stated" },
+      ],
+      humanAssertions: [],
+    });
+    expect(built.status).toBe("ready");
+
+    // The hash is already on the Run row before the Implementer input is built below.
+    const runBeforeBuild = await runs.findById(tenantId, runId);
+    expect(runBeforeBuild?.validationContractVersion).toBe(built.sha256);
+
+    const stored = await contracts.findByRun(tenantId, runId);
+    expect(stored).not.toBeNull();
+
+    const implementerInput = buildImplementerInput({
+      goal: "A signed-in editor can archive a report.",
+      humanDecisions: [],
+      validationContract: stored?.document ?? null,
+      contextContract: null,
+      requiredContext: [],
+      primaryRepositoryPath: "/workspace/primary",
+      referenceRepositoryPaths: [],
+      repositoryInstructions: "",
+      skills: [],
+      actionPolicy: buildActionPolicy(),
+      repairFindings: [],
+      projectTestSecrets: {},
+    });
+
+    for (const assertion of stored?.assertions ?? []) {
+      expect(implementerInput.prompt).toContain(assertion.id);
+    }
+    expect(implementerInput.prompt).toContain("POST /reports/{id}/archive returns 200.");
   });
 });

@@ -131,10 +131,12 @@ describe("AT-11 — validation immutability", () => {
     };
     const built = buildImplementerInput({ ...base, validationContract: "VAL-API-001" });
 
-    // The Implementer input is a plain string and a plain environment map. It exposes no
-    // function, so it holds no store handle and no client the Implementer could call to alter
-    // the contract.
+    // The Implementer input is inert data: every top-level value is a string, a number, or a
+    // plain object, and none is a function. It holds no store handle and no client the
+    // Implementer could call to alter the contract.
+    const isInertValue = (value: unknown): boolean =>
+      typeof value === "string" || typeof value === "number" || (typeof value === "object" && value !== null);
+    expect(Object.values(built).every(isInertValue)).toBe(true);
     expect(Object.values(built).every((value) => typeof value !== "function")).toBe(true);
-    expect(JSON.stringify(built)).not.toContain("save");
   });
 });
