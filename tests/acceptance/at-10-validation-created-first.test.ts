@@ -28,15 +28,17 @@ afterAll(async () => {
 });
 
 /**
- * AT-10, SDD section 66. The Validation Contract creation time and hash must exist before the
- * Implementer starts. This test freezes a contract through the real activity, then records an
- * AgentExecution for the same Run, and checks a property of the system state at the moment the
- * execution exists: the Run row must already carry the frozen hash, and the stored contract must
- * already exist with that hash. A companion case proves this check can fail: for a Run whose
- * contract was never frozen, the Run hash and the stored contract are both absent.
+ * AT-10, SDD section 66. This file holds the PERSISTENCE half of AT-10: a frozen Validation
+ * Contract carries a creation time and a SHA-256 hash, and the Run row carries that same hash.
+ * It does not, and cannot, prove the ORDER in which a real Run freezes the contract relative to
+ * starting the Implementer, because a test that writes both rows itself decides that order by
+ * construction. `tests/workflow/validation-contract.workflow.test.ts`, the test named
+ * "AT-10 — the Validation Contract is frozen and its hash reaches the Run before the
+ * Implementer starts", holds the ordering half: it drives the real workflow and reads the order
+ * from activity recordings the test itself never sequences.
  */
 describe("AT-10 — validation created first", () => {
-  it("has already frozen the contract, with a hash on the Run row, before an AgentExecution exists", async () => {
+  it("freezes a contract with a creation time and a hash, and the Run row carries that hash", async () => {
     const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
     const contracts = new PrismaValidationContractStore(prisma);
     const runs = new PrismaRunRepository(prisma);
@@ -58,12 +60,16 @@ describe("AT-10 — validation created first", () => {
 
     const stored = await contracts.findByRun(tenantId, runId);
     expect(stored).not.toBeNull();
+    expect(stored?.createdAt).toBeInstanceOf(Date);
     expect(stored?.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-    // Five real milliseconds separate the freeze from the Implementer start, so the two events
-    // are genuinely ordered in time and not merely asserted in the order the test wrote them.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    const run = await runs.findById(tenantId, runId);
+    expect(run?.validationContractVersion).toBe(stored?.sha256);
 
+    // This records an AgentExecution for the same Run and re-reads the same state. It shows the
+    // hash still holds at that later point, which is real, but it is not an ordering proof: this
+    // test wrote the freeze and then wrote the execution itself, in the order it chose, so
+    // nothing here decides that order the way the real workflow does.
     const execution = await executions.record({
       tenantId,
       runId,
@@ -78,18 +84,13 @@ describe("AT-10 — validation created first", () => {
     });
     expect(execution.createdAt).toBeInstanceOf(Date);
 
-    // At the moment an AgentExecution exists for this Run, the frozen contract and the Run hash
-    // must already be in place. A regression that let the Implementer start before the freeze,
-    // or that let the freeze activity skip writing the Run hash, would fail this block.
-    const run = await runs.findById(tenantId, runId);
-    expect(run?.validationContractVersion).toBe(stored?.sha256);
-    const rereadContract = await contracts.findByRun(tenantId, runId);
-    expect(rereadContract?.sha256).toBe(stored?.sha256);
+    const runAfterExecution = await runs.findById(tenantId, runId);
+    expect(runAfterExecution?.validationContractVersion).toBe(stored?.sha256);
   });
 
   it("carries no Validation Contract hash for a Run whose contract was never frozen", async () => {
-    // This case proves the check above is capable of failing: a Run that skipped the freeze
-    // step must show no hash and no stored contract, the state the positive case rules out.
+    // The companion case: a Run that skipped the freeze step shows no hash and no stored
+    // contract, the state the positive case above rules out.
     const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
     const contracts = new PrismaValidationContractStore(prisma);
     const runs = new PrismaRunRepository(prisma);

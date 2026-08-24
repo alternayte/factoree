@@ -66,6 +66,40 @@ const READY: BuildValidationContractActivityOutput = {
 };
 
 describe("the Validation Contract state of the Run workflow", () => {
+  it("AT-10 — the Validation Contract is frozen and its hash reaches the Run before the Implementer starts", async () => {
+    // AT-10, SDD section 66. This is the ordering half: it drives the real workflow and proves,
+    // from activity order the test does not sequence itself, that buildValidationContract has
+    // already run and the frozen document has already reached the Implementer input by the
+    // moment the implement activity is invoked. tests/acceptance/at-10-validation-created-first.test.ts
+    // holds the persistence half: the frozen contract carries a creation time and a SHA-256
+    // hash, and the Run row carries that hash.
+    const before = activityOrder.length;
+    await runWorker(async () => {
+      const handle = await start("ses-val-at10");
+      await waitFor(() => implementsOf("run-ses-val-at10").length === 1, "the Implementer of at10");
+
+      // Nothing here writes to activityOrder itself; the workflow does. If a regression let the
+      // implement activity start before buildValidationContract ran, this slice, read at the
+      // instant implementCalls first holds an entry, would not yet contain
+      // "buildValidationContract", and the assertion below would fail.
+      const order = activityOrder.slice(before);
+      expect(order).toContain("buildValidationContract");
+      expect(order).toContain("prepareSandbox");
+      expect(order.indexOf("buildValidationContract")).toBeLessThan(order.indexOf("prepareSandbox"));
+
+      // SDD section 34. The Implementer never received a placeholder: the input already carries
+      // the document buildValidationContract froze.
+      expect(implementsOf("run-ses-val-at10")[0]?.validationContract).toBe(VALIDATION_DOCUMENT);
+
+      // SDD section 53. The Run reports the frozen hash, already set before the Implementer runs.
+      const snapshot = await handle.query(runStatusQuery);
+      expect(snapshot.validationContractVersion).toBe(VALIDATION_SHA);
+
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+  });
+
   it("freezes the Validation Contract after context resolution and before sandbox preparation", async () => {
     const before = activityOrder.length;
     await runWorker(async () => {
