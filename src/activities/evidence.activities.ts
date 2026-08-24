@@ -48,13 +48,14 @@ const safeSegment = (value: string): string =>
 
 /**
  * Builds the storage file name of one artefact. `artifact.source` holds a colon and carries no
- * extension, so it is not a file name. The assertion key and the artefact kind give a readable
- * name, and the content type gives the extension.
+ * extension, so it is not a file name directly. `source` is also the part of the evidence
+ * idempotency key that tells two artefacts of one assertion and one kind apart, for example a
+ * named screenshot against the driver's own `final` screenshot. The storage name must agree, so
+ * it derives from the full `source`, not from the assertion key and the kind alone. Every colon
+ * becomes a dash, and the content type gives the extension.
  */
 export const storageNameOf = (assertionKey: string, artifact: EvidenceArtifact): string => {
-  const base = [safeSegment(assertionKey), safeSegment(artifact.kind)]
-    .filter((segment) => segment.length > 0)
-    .join("-");
+  const base = safeSegment(`${assertionKey}-${artifact.source}`);
   return `${base.length > 0 ? base : "artifact"}.${extensionOf(artifact.contentType)}`;
 };
 

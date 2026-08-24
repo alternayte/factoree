@@ -316,6 +316,52 @@ describe("parseValidationPlan", () => {
     },
   );
 
+  it.each(["/\t/example.com", "/\n/example.com", "/\r/example.com"])(
+    // The WHATWG URL parser strips an ASCII tab, a line feed, and a carriage return from
+    // anywhere in the input before it parses the input, so %j resolves to a foreign origin at
+    // execution even though neither character sits at path[1]. The parser must reject the plan
+    // at freeze time, before a whole Run is spent to reach the same refusal at execution.
+    "rejects an http entry whose path %j can leave the preview origin",
+    (path) => {
+      expect(() =>
+        parseValidationPlan(
+          JSON.stringify({
+            version: 1,
+            entries: [
+              {
+                assertionId: "VAL-API-001",
+                kind: "http",
+                request: { ...validHttpRequest, path },
+              },
+            ],
+          }),
+          contract,
+        ),
+      ).toThrow(ValidationPlanInvalidError);
+    },
+  );
+
+  it.each(["/\t/example.com", "/\n/example.com", "/\r/example.com"])(
+    "rejects a browser goto path %j that can leave the preview origin",
+    (path) => {
+      expect(() =>
+        parseValidationPlan(
+          JSON.stringify({
+            version: 1,
+            entries: [
+              {
+                assertionId: "VAL-UI-001",
+                kind: "browser",
+                steps: [{ action: "goto", path }, ...validBrowserSteps.slice(1)],
+              },
+            ],
+          }),
+          contract,
+        ),
+      ).toThrow(ValidationPlanInvalidError);
+    },
+  );
+
   it("accepts a bare slash as an http path and as a goto path", () => {
     const plan = parseValidationPlan(
       JSON.stringify({

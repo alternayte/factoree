@@ -15,13 +15,24 @@ export class PreviewUrlError extends Error {
   }
 }
 
+/** An ASCII tab, a line feed, or a carriage return, found anywhere in the path. */
+const STRIPPED_BY_URL_PARSER = /[\t\n\r]/;
+
 /**
  * True when the path is a single-slash relative path. A bare `/` is legal. A second `/` or a
  * second `\` is not, because the WHATWG URL parser treats both as the start of an authority for
  * an HTTP base URL.
+ *
+ * The WHATWG URL parser also removes every ASCII tab, line feed, and carriage return from the
+ * input before it parses the input. A path such as `"/\t/example.com"` holds neither a second
+ * slash nor a second backslash at position 1, so it would pass the checks above. The parser
+ * then reads it as `"//example.com"` and resolves it against a foreign origin. This predicate
+ * must agree with the parser, so it rejects a path that carries any of those three characters,
+ * at any position, not only at position 1.
  */
 export const isPreviewRelativePath = (path: string): boolean => {
   if (!path.startsWith("/")) return false;
+  if (STRIPPED_BY_URL_PARSER.test(path)) return false;
   if (path.length === 1) return true;
   const second = path[1];
   return second !== "/" && second !== "\\";

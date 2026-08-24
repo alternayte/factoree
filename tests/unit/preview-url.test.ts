@@ -10,6 +10,14 @@ const BASE = "http://127.0.0.1:8080";
 /** The paths a WHATWG URL parser can read as the start of an authority. */
 const ORIGIN_ESCAPES = ["//example.com", "///example.com", "/\\example.com", "/\\\\example.com"];
 
+/**
+ * Paths that hold an ASCII tab, a line feed, or a carriage return. The WHATWG URL parser strips
+ * these three characters from anywhere in the input before it parses the input, so each of
+ * these paths resolves to the foreign origin `http://example.com`, even though `path[1]` is
+ * neither a slash nor a backslash.
+ */
+const STRIPPED_CHARACTER_ESCAPES = ["/\t/example.com", "/\n/example.com", "/\r/example.com"];
+
 describe("isPreviewRelativePath", () => {
   it("accepts a bare slash", () => {
     expect(isPreviewRelativePath("/")).toBe(true);
@@ -27,6 +35,10 @@ describe("isPreviewRelativePath", () => {
   it.each(ORIGIN_ESCAPES)("rejects %s", (path) => {
     expect(isPreviewRelativePath(path)).toBe(false);
   });
+
+  it.each(STRIPPED_CHARACTER_ESCAPES)("rejects %j, which the URL parser strips down to an origin escape", (path) => {
+    expect(isPreviewRelativePath(path)).toBe(false);
+  });
 });
 
 describe("resolvePreviewUrl", () => {
@@ -42,6 +54,12 @@ describe("resolvePreviewUrl", () => {
     expect(() => resolvePreviewUrl(BASE, path)).toThrow(PreviewUrlError);
   });
 
+  it.each(STRIPPED_CHARACTER_ESCAPES)("refuses %j, which resolves to a foreign origin", (path) => {
+    const naive = new URL(path, BASE);
+    expect(naive.origin).not.toBe(new URL(BASE).origin);
+    expect(() => resolvePreviewUrl(BASE, path)).toThrow(PreviewUrlError);
+  });
+
   it("refuses an absolute URL that names another host", () => {
     expect(() => resolvePreviewUrl(BASE, "http://example.com/")).toThrow(PreviewUrlError);
   });
@@ -51,7 +69,7 @@ describe("resolvePreviewUrl", () => {
   });
 
   it("never returns a URL whose origin differs from the preview origin", () => {
-    for (const path of ["/", "/projects/1", ...ORIGIN_ESCAPES]) {
+    for (const path of ["/", "/projects/1", ...ORIGIN_ESCAPES, ...STRIPPED_CHARACTER_ESCAPES]) {
       let resolved: string | null = null;
       try {
         resolved = resolvePreviewUrl(BASE, path);
