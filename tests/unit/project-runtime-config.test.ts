@@ -47,4 +47,38 @@ describe("toProjectRuntimeConfig", () => {
       "registry.npmjs.org",
     ]);
   });
+
+  it("carries the preview block of the repository configuration", () => {
+    const config = parseFactoreeConfig(
+      [
+        "version: 1",
+        "verify:",
+        "  commands:",
+        "    - name: unit",
+        "      run: npm test",
+        "preview:",
+        "  enabled: true",
+        "  command: npm run dev -- --port 8080",
+        "  readyUrl: http://127.0.0.1:8080/health",
+        "  timeoutSeconds: 60",
+      ].join("\n"),
+    );
+
+    const resolved = toProjectRuntimeConfig(config, DEFAULT_PROJECT_DEFAULTS);
+
+    expect(resolved.preview).toEqual({
+      enabled: true,
+      command: "npm run dev -- --port 8080",
+      readyUrl: "http://127.0.0.1:8080/health",
+      timeoutSeconds: 60,
+    });
+  });
+
+  it("reports no preview when the repository configures none", () => {
+    const config = parseFactoreeConfig(
+      ["version: 1", "verify:", "  commands:", "    - name: unit", "      run: npm test"].join("\n"),
+    );
+
+    expect(toProjectRuntimeConfig(config, DEFAULT_PROJECT_DEFAULTS).preview).toBeNull();
+  });
 });

@@ -173,3 +173,32 @@ describe("the prepareSandbox activity and SDD section 60", () => {
   });
 });
 
+describe("the prepareSandbox activity and the preview configuration", () => {
+  const PREVIEW_CONFIG_YAML =
+    "version: 1\n" +
+    "verify:\n  commands:\n    - name: test\n      run: npm test\n" +
+    "preview:\n" +
+    "  enabled: true\n" +
+    "  command: npm run dev -- --port 8080\n" +
+    "  readyUrl: http://127.0.0.1:8080/health\n" +
+    "  timeoutSeconds: 60\n";
+
+  it("returns the preview configuration of the repository", async () => {
+    const sandbox = sandboxWithConfig(PREVIEW_CONFIG_YAML);
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
+    const output = await activities.prepareSandbox(input);
+    expect(output.preview).toEqual({
+      enabled: true,
+      command: "npm run dev -- --port 8080",
+      readyUrl: "http://127.0.0.1:8080/health",
+      timeoutSeconds: 60,
+    });
+  });
+
+  it("reports no preview when the repository configures none", async () => {
+    const { activities } = build({ spriteId: null, adapter: null });
+    const output = await activities.prepareSandbox(input);
+    expect(output.preview).toBeNull();
+  });
+});
+

@@ -49,6 +49,13 @@ export const RUN_FAILURE_REASONS = [
   // SDD section 9 item 5. The Work Item states no observable success assertion, and the bounded
   // question rounds ended with no human answer. Implementation must not start.
   "VALIDATION_UNRESOLVED",
+  // SDD section 36. At least one assertion is FAIL and the repair budget of SDD section 42 is
+  // spent.
+  "VALIDATION_FAILED",
+  // SDD section 36. Factoree could not run a check, so it proved nothing. A repair cannot help.
+  "VALIDATION_BLOCKED",
+  // SDD section 36. An assertion needs a human, so an L3 Run cannot complete on its own.
+  "VALIDATION_MANUAL_REQUIRED",
   "INTERNAL_ERROR",
 ] as const;
 

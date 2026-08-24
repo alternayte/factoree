@@ -1,5 +1,16 @@
 import type { ValidationAssertion, ValidationContract } from "./validation-contract.js";
 
+/**
+ * `Evidence.validationAssertionId` and `ValidationAssertionResult.validationAssertionId` are
+ * foreign keys onto the `ValidationAssertion` row identifier, not onto the contract-level
+ * identifier such as `VAL-UI-001`. `rowId` carries the row identifier beside the existing `id`,
+ * which stays the contract-level identifier.
+ */
+export interface StoredValidationAssertion extends ValidationAssertion {
+  /** The database identifier of this assertion row. */
+  rowId: string;
+}
+
 export interface StoredValidationContract {
   id: string;
   tenantId: string;
@@ -9,7 +20,7 @@ export interface StoredValidationContract {
   workItem: string;
   goal: string;
   document: string;
-  assertions: ValidationAssertion[];
+  assertions: StoredValidationAssertion[];
   createdAt: Date;
 }
 

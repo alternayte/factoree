@@ -1,7 +1,7 @@
 import type { CheckoutResult, RepositorySpec } from "./checkout.js";
 import { checkoutPrimary, checkoutReferences, withoutUrlCredentials } from "./checkout.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
-import type { ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "./project-runtime-config.js";
+import type { PreviewConfig, ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "./project-runtime-config.js";
 import { toProjectRuntimeConfig } from "./project-runtime-config.js";
 import { readRepositoryConfig, readRepositoryInstructions } from "./repository-config-source.js";
 import type { CheckpointRef, Sandbox, SandboxRef } from "./sandbox.js";
@@ -26,6 +26,8 @@ export interface PreparedSandbox {
   runtime: ProjectRuntimeConfig;
   /** SDD section 35. The deterministic verification commands of this Run. */
   verifyCommands: VerificationCommand[];
+  /** SDD sections 15 and 37. The preview the User Validator starts. */
+  preview: PreviewConfig | null;
   /** SDD section 34. The repository instructions found in the primary checkout. */
   repositoryInstructions: string;
 }
@@ -105,7 +107,7 @@ export class SandboxManager {
 
       // SDD section 15. The primary repository owns the configuration of the Run.
       const file = await readRepositoryConfig(sandbox, ref, primary.path);
-      const { runtime, verifyCommands } = toProjectRuntimeConfig(file, input.defaults);
+      const { runtime, verifyCommands, preview } = toProjectRuntimeConfig(file, input.defaults);
 
       // Policy two. The configured allow list joined with the repository hosts, so the reference
       // checkouts and the bootstrap command both work.
@@ -143,7 +145,7 @@ export class SandboxManager {
         ? await sandbox.checkpoint(ref, "baseline")
         : null;
 
-      return { ref, checkout, baselineCheckpoint, runtime, verifyCommands, repositoryInstructions };
+      return { ref, checkout, baselineCheckpoint, runtime, verifyCommands, preview, repositoryInstructions };
     } catch (error) {
       // A half-prepared sandbox must not leak. Destruction is idempotent, and a destroy failure
       // must not mask the original error.

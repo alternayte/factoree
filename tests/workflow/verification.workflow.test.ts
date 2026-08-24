@@ -19,6 +19,7 @@ const {
   statusesOf,
   implementCalls,
   verifyCalls,
+  userValidateCalls,
   heldVerifications,
   configurationFaults,
   runtimeOverrides,
@@ -37,6 +38,7 @@ afterAll(async () => {
 
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const verifiesOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
+const userValidatesOf = (runId: string) => userValidateCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 
 /** Starts one Run of the default fixture Work Item and Project, and returns its handle. */
@@ -94,17 +96,26 @@ describe("deterministic verification in the workflow", () => {
     const result = await runWorker(async () => {
       const handle = await startRun("ses-v3");
       await waitFor(() => verifiesOf("run-ses-v3").length === 2, "the second verification of ses-v3");
+      // The second verification passes, so the Run enters USER_VALIDATING next. The stop must
+      // wait for that call, or the stop signal races the transition and this test flakes.
+      await waitFor(
+        () => userValidatesOf("run-ses-v3").length === 1,
+        "the user validation of ses-v3",
+      );
       await handle.signal(stopSignal);
       return handle.result();
     });
 
     // The first six states are RECEIVED, REFINING, RESOLVING_CONTEXT,
     // BUILDING_VALIDATION_CONTRACT, PREPARING, and IMPLEMENTING. The repair loop follows them.
+    // The second verification passes, so the Run enters USER_VALIDATING next, and the stop
+    // signal cancels the Run once the default passing user validation double returns.
     expect(statusesOf("run-ses-v3").slice(6)).toEqual([
       "VERIFYING",
       "REPAIRING",
       "IMPLEMENTING",
       "VERIFYING",
+      "USER_VALIDATING",
     ]);
     const attempts = implementsOf("run-ses-v3");
     expect(attempts).toHaveLength(2);

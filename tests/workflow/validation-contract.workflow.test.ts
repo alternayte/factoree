@@ -20,7 +20,9 @@ const {
   completions,
   elicitations,
   heldValidations,
+  heldVerifications,
   implementCalls,
+  verifyCalls,
   prepared,
   runStatusQuery,
   start,
@@ -39,6 +41,7 @@ afterAll(async () => {
 });
 
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
+const verifyCallsOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 const preparedOf = (runId: string) => prepared.filter((entry) => entry.runId === runId);
 const validationsOf = (runId: string) => validationCalls.filter((entry) => entry.runId === runId);
@@ -74,6 +77,10 @@ describe("the Validation Contract state of the Run workflow", () => {
     // holds the persistence half: the frozen contract carries a creation time and a SHA-256
     // hash, and the Run row carries that hash.
     const before = activityOrder.length;
+    // Deterministic verification, and then user validation, both follow the Implementer in the
+    // same bounded loop. Holding verification open keeps the stop signal away from that later
+    // race, because this test asserts the freeze order only and needs no later stage.
+    const release = hold(heldVerifications, "run-ses-val-at10");
     await runWorker(async () => {
       const handle = await start("ses-val-at10");
       await waitFor(() => implementsOf("run-ses-val-at10").length === 1, "the Implementer of at10");
@@ -95,23 +102,47 @@ describe("the Validation Contract state of the Run workflow", () => {
       const snapshot = await handle.query(runStatusQuery);
       expect(snapshot.validationContractVersion).toBe(VALIDATION_SHA);
 
+      await waitFor(
+        () => verifyCallsOf("run-ses-val-at10").length === 1,
+        "the held verification of at10",
+      );
       await handle.signal(stopSignal);
+      release();
       await handle.result();
     });
+    heldVerifications.delete("run-ses-val-at10");
   });
 
   it("freezes the Validation Contract after context resolution and before sandbox preparation", async () => {
     const before = activityOrder.length;
+    // Deterministic verification, and then user validation, both follow the Implementer in the
+    // same bounded loop. Holding verification open keeps the stop signal away from that later
+    // race, because this test asserts the freeze order only and needs no later stage.
+    const release = hold(heldVerifications, "run-ses-val-a");
     await runWorker(async () => {
       const handle = await start("ses-val-a");
       await waitFor(() => implementsOf("run-ses-val-a").length === 1, "the Implementer of val-a");
+      await waitFor(
+        () => verifyCallsOf("run-ses-val-a").length === 1,
+        "the held verification of val-a",
+      );
       await handle.signal(stopSignal);
+      release();
       await handle.result();
     });
+    heldVerifications.delete("run-ses-val-a");
 
     const order = activityOrder.slice(before);
-    // SDD section 49 fixes this order. The contract must freeze before any sandbox exists.
-    expect(order).toEqual(["resolveContext", "buildValidationContract", "prepareSandbox"]);
+    // SDD section 49 fixes this order. The contract must freeze before any sandbox exists. The
+    // stop signal lands while deterministic verification is held open, so the slice also
+    // carries the Implementer and that verification call, and it stops before user validation.
+    expect(order).toEqual([
+      "resolveContext",
+      "buildValidationContract",
+      "prepareSandbox",
+      "implement",
+      "verify",
+    ]);
   });
 
   it("reports BUILDING_VALIDATION_CONTRACT to setRunStatus", async () => {

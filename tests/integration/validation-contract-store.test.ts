@@ -64,7 +64,10 @@ describe("PrismaValidationContractStore", () => {
     expect(stored.assertions).toHaveLength(1);
 
     const found = await store.findByRun(tenantId, runId);
-    expect(found?.assertions[0]).toEqual(value.assertions[0]);
+    const expectedAssertion = value.assertions[0];
+    if (expectedAssertion === undefined) throw new Error("test fixture holds no assertion");
+    expect(found?.assertions[0]).toMatchObject(expectedAssertion);
+    expect(found?.assertions[0]?.rowId).toMatch(/[0-9a-f-]{36}/);
     expect(found?.document).toBe("# Validation Contract\n");
     expect(found?.tenantId).toBe(tenantId);
     expect(found?.runId).toBe(runId);

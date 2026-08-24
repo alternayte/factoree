@@ -21,7 +21,10 @@ const storeStub = (): ValidationContractStore & { saved: unknown[] } => {
         workItem: input.contract.workItem,
         goal: input.contract.goal,
         document: input.document,
-        assertions: input.contract.assertions,
+        assertions: input.contract.assertions.map((assertion, index) => ({
+          ...assertion,
+          rowId: `assertion-row-${index}`,
+        })),
         createdAt: new Date("2026-08-25T10:00:00.000Z"),
       };
       return Promise.resolve(stored);

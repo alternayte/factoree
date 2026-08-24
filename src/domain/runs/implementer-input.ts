@@ -147,11 +147,20 @@ const isForbiddenName = (key: string): boolean => {
 const isForbiddenValue = (value: string): boolean => looksLikeCredentialValue(value);
 
 /** SDD section 34 assembles the Implementer input and rejects forbidden material with a thrown error. */
-export const buildImplementerInput = (input: BuildImplementerInput): ImplementerInput => {
-  for (const [key, value] of Object.entries(input.projectTestSecrets)) {
+/**
+ * The one shared credential guard. It rejects a forbidden Project test secret before it reaches
+ * either fresh agent session, the Implementer or the User Validator. A caller that skips this
+ * guard reopens SDD section 30 for its own session.
+ */
+export const guardAgainstForbiddenMaterial = (projectTestSecrets: Record<string, string>): void => {
+  for (const [key, value] of Object.entries(projectTestSecrets)) {
     if (isForbiddenValue(value)) throw new ForbiddenImplementerMaterialError(key);
     if (isForbiddenName(key)) throw new ForbiddenImplementerMaterialError(key);
   }
+};
+
+export const buildImplementerInput = (input: BuildImplementerInput): ImplementerInput => {
+  guardAgainstForbiddenMaterial(input.projectTestSecrets);
 
   return {
     prompt: renderImplementerPrompt({

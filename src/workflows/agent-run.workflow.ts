@@ -8,12 +8,14 @@ import {
   isCancellation,
   proxyActivities,
   setHandler,
+  sleep,
 } from "@temporalio/workflow";
 import type { RunStatus } from "~/domain/runs/run-status.js";
 import type { Activities } from "~/activities/index.js";
 import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
+import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
@@ -210,6 +212,22 @@ const buildImplementActivities = (budgetMs: number) =>
     retry: { maximumAttempts: 1 },
   });
 
+/**
+ * The User Validator activity runs a fresh agent session against a live preview, the same way
+ * the Implementer runs one against the sandbox. SDD section 36 puts it inside the same bounded
+ * loop, so it takes the same long-activity options as `buildImplementActivities`: the remaining
+ * Run budget bounds it, one attempt is allowed, and a heartbeat lets Temporal deliver a
+ * cancellation to the live session.
+ */
+const buildUserValidateActivities = (budgetMs: number) =>
+  proxyActivities<Activities>({
+    startToCloseTimeout: `${budgetMs + IMPLEMENT_MARGIN_MS} milliseconds`,
+    scheduleToCloseTimeout: `${budgetMs + IMPLEMENT_MARGIN_MS} milliseconds`,
+    heartbeatTimeout: `${IMPLEMENT_HEARTBEAT_TIMEOUT_MS} milliseconds`,
+    cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+    retry: { maximumAttempts: 1 },
+  });
+
 /** The longest one verification pass can take. A retry gets its own attempt of this length. */
 const VERIFY_ATTEMPT_TIMEOUT_MS = 60 * 60_000;
 
@@ -299,7 +317,10 @@ export async function agentRunWorkflow(
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
       | "CONTEXT_UNRESOLVED"
-      | "VALIDATION_UNRESOLVED",
+      | "VALIDATION_UNRESOLVED"
+      | "VALIDATION_FAILED"
+      | "VALIDATION_BLOCKED"
+      | "VALIDATION_MANUAL_REQUIRED",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = failureReason === "CONFIGURATION_INVALID" ? "FAILED_CONFIGURATION" : "FAILED";
@@ -367,8 +388,53 @@ export async function agentRunWorkflow(
   };
 
   /**
-   * One Implementer attempt. The cancellation scope, the stop watcher, and the session
-   * bookkeeping are unchanged from Phase 2. It returns null when the activity was cancelled.
+   * Run one long agent activity under a stop signal. SDD section 50 requires a stop to reach
+   * the live agent process, so the activity runs inside a cancellable scope, and a watcher
+   * coroutine cancels that scope when the stop arrives. The result is null when the activity
+   * was cancelled. Every long agent stage uses this helper, so the ordering rules below stay
+   * the same for all of them.
+   */
+  const runAgentActivity = async <T>(start: () => Promise<T>): Promise<T | null> => {
+    // A stop that arrived before this stage started must not schedule the activity at all.
+    // The scope would then be cancelled in the same workflow activation that created it, and
+    // the cancel command can race the schedule command at the server. The activity options use
+    // `WAIT_CANCELLATION_COMPLETED`, so the workflow would then wait forever for a
+    // cancellation report from an activity that no worker ever started.
+    if (stopRequested) return null;
+
+    const scope = new CancellationScope({ cancellable: true });
+    const running = scope.run(start);
+    // The schedule command above must reach the server in its own workflow activation, before
+    // any cancel command can follow it. This durable timer blocks the main coroutine, so the
+    // schedule command flushes first, and the two commands can never share one activation.
+    await sleep(1);
+    const watching = scope
+      .run(() => condition(() => stopRequested))
+      .then(() => {
+        scope.cancel();
+      })
+      .catch(() => undefined);
+
+    let result: T | null = null;
+    try {
+      result = await running;
+    } catch (error) {
+      // A cancelled agent activity is the stop path, not a fault. Every other error is a fault.
+      if (!isCancellation(error)) throw error;
+    } finally {
+      // The activity has settled by now. This cancel unblocks the watcher's own pending
+      // `condition`, which never settles on its own when no stop arrives. The cancel reaches
+      // no live activity. The SDK sends a cancel command only while the activity is still
+      // pending, so a cancel after the activity settled produces no command.
+      scope.cancel();
+      await watching;
+    }
+    return result;
+  };
+
+  /**
+   * One Implementer attempt. The session bookkeeping is unchanged from Phase 2. It returns
+   * null when the activity was cancelled.
    */
   const runImplementer = async (attemptInput: {
     prepared: PrepareSandboxActivityOutput;
@@ -389,8 +455,7 @@ export async function agentRunWorkflow(
   }): Promise<ImplementActivityOutput | null> => {
     const budgetMs = remainingMs();
     const implementActivities = buildImplementActivities(budgetMs);
-    const scope = new CancellationScope({ cancellable: true });
-    const running = scope.run(() =>
+    const implementation = await runAgentActivity(() =>
       implementActivities.implement({
         runId: id,
         tenantId: input.tenantId,
@@ -413,25 +478,6 @@ export async function agentRunWorkflow(
         attempt: attemptInput.attempt,
       }),
     );
-    // SDD section 50: a stop must reach the running agent process. The scope cancellation
-    // travels to the activity, and the activity stops the live session.
-    const watching = scope
-      .run(() => condition(() => stopRequested))
-      .then(() => {
-        scope.cancel();
-      })
-      .catch(() => undefined);
-
-    let implementation: ImplementActivityOutput | null = null;
-    try {
-      implementation = await running;
-    } catch (error) {
-      // A cancelled Implementer is the stop path, not a fault. Every other error stays a fault.
-      if (!isCancellation(error)) throw error;
-    } finally {
-      scope.cancel();
-      await watching;
-    }
 
     if (implementation !== null) {
       // The fallback below runs unless the activity itself really cancelled the session. A
@@ -444,6 +490,37 @@ export async function agentRunWorkflow(
       };
     }
     return implementation;
+  };
+
+  /**
+   * One User Validator pass. SDD section 36 places it inside the same bounded loop the
+   * Implementer and deterministic verification use. It shares `runAgentActivity` with
+   * `runImplementer`, because the same long-activity options apply. The activity cancels its
+   * own live validator session when the scope cancellation reaches it.
+   */
+  const runUserValidate = async (attemptInput: {
+    prepared: PrepareSandboxActivityOutput;
+    goal: string;
+    attempt: number;
+  }): Promise<UserValidateActivityOutput | null> => {
+    const budgetMs = remainingMs();
+    const userValidateActivities = buildUserValidateActivities(budgetMs);
+    return await runAgentActivity(() =>
+      userValidateActivities.userValidate({
+        runId: id,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        runnerName: attemptInput.prepared.runtime.validatorRunner,
+        spriteId: attemptInput.prepared.spriteId,
+        adapter: attemptInput.prepared.adapter,
+        workspacePath: attemptInput.prepared.workspacePath,
+        primaryPath: attemptInput.prepared.primaryPath,
+        goal: attemptInput.goal,
+        preview: attemptInput.prepared.preview,
+        timeoutMs: budgetMs,
+        attempt: attemptInput.attempt,
+      }),
+    );
   };
 
   // SDD section 50: a stop must terminate the active agent process, and no change is published.
@@ -864,31 +941,130 @@ export async function agentRunWorkflow(
         );
 
         if (stopRequested) return await cancelRun();
-        if (verification.passed) break;
 
-        // SDD section 42. A failing check enters repair while budget remains. No third repair
-        // occurs when the limit is two.
-        if (repairCount >= maxRepairs) {
-          return await failRun(
-            "VERIFICATION_FAILED",
-            "Deterministic verification did not pass, and the repair budget is spent. " +
-              `${verification.summary} Factoree published nothing.`,
-          );
+        if (!verification.passed) {
+          // SDD section 42. A failing check enters repair while budget remains. No third repair
+          // occurs when the limit is two.
+          if (repairCount >= maxRepairs) {
+            return await failRun(
+              "VERIFICATION_FAILED",
+              "Deterministic verification did not pass, and the repair budget is spent. " +
+                `${verification.summary} Factoree published nothing.`,
+            );
+          }
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+          repairCount += 1;
+          attempt += 1;
+          repairFindings = verification.failures;
+          status = "REPAIRING";
+          await activities.setRunStatus({ runId: id, status, repairCount });
+          continue;
         }
+
+        // SDD section 48 and SDD section 49. Deterministic verification passed, so the Run
+        // enters USER_VALIDATING. A fresh validator session checks the frozen Validation
+        // Contract, inside the same bounded loop, with the current implementation attempt.
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
-        repairCount += 1;
-        attempt += 1;
-        repairFindings = verification.failures;
-        status = "REPAIRING";
-        await activities.setRunStatus({ runId: id, status, repairCount });
+        status = "USER_VALIDATING";
+        await activities.setRunStatus({ runId: id, status });
+
+        let userValidation: UserValidateActivityOutput;
+        try {
+          const result = await runUserValidate({
+            prepared: preparedSandbox,
+            goal: sandbox.goal,
+            attempt,
+          });
+          // A stop that arrived while the validator ran must end the Run here.
+          if (stopRequested) return await cancelRun();
+          if (result === null) {
+            // The pass ended with no result and no stop signal. The budget decides why.
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            throw new Error("the userValidate activity returned no result");
+          }
+          userValidation = result;
+        } catch (error) {
+          // User validation is bounded by the remaining budget, the same way verification is. A
+          // budget that ran out during the pass is a Run timeout, not an internal fault.
+          if (isCancellation(error)) throw error;
+          // A validator runner the Project names but no worker registers is a configuration
+          // fault. The Run ends in `FAILED_CONFIGURATION`, not in an internal error.
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not start the User Validator, because the Run configuration is " +
+                "invalid. Repair `validator_runner` in `.factoree/config.yaml`.",
+            );
+          }
+          if (remainingMs() > 0) throw error;
+          return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+
+        await notify(() =>
+          activities.postProgress({
+            sessionId: input.agentSessionId,
+            message: userValidation.summary,
+          }),
+        );
+
+        if (stopRequested) return await cancelRun();
+        if (userValidation.passed) break;
+
+        // SDD section 36. Only a failing assertion can be repaired. A blocked check, or a check
+        // that needs a human, cannot be fixed by another Implementer attempt.
+        if (userValidation.hasFailure) {
+          // SDD section 42 bounds repairs per Run, and the repair shares the budget
+          // deterministic verification already counts.
+          if (repairCount >= maxRepairs) {
+            return await failRun(
+              "VALIDATION_FAILED",
+              "User validation did not pass, and the repair budget is spent. " +
+                `${userValidation.summary} Factoree published nothing.`,
+            );
+          }
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+          repairCount += 1;
+          attempt += 1;
+          repairFindings = userValidation.failures;
+          status = "REPAIRING";
+          await activities.setRunStatus({ runId: id, status, repairCount });
+          continue;
+        }
+
+        if (userValidation.hasBlocked) {
+          return await failRun(
+            "VALIDATION_BLOCKED",
+            "Factoree could not run at least one user validation check, so it proved nothing. " +
+              `${userValidation.summary} A repair cannot help. Factoree published nothing.`,
+          );
+        }
+
+        // SDD section 36 forbids completion of an L3 Run without a human. The Run must say so
+        // now, rather than wait for the residual wait to end it with a timeout.
+        if (userValidation.hasManual) {
+          return await failRun(
+            "VALIDATION_MANUAL_REQUIRED",
+            "At least one user validation assertion needs a human, so Factoree cannot complete " +
+              `this Run on its own. ${userValidation.summary} Factoree published nothing.`,
+          );
+        }
+
+        // A pass that did not pass must report at least one failed, blocked, or manual
+        // assertion. Any other output is an internal fault, not a validation outcome.
+        throw ApplicationFailure.nonRetryable(
+          "User validation did not pass, and reported no failed, blocked, or manual assertion.",
+          "USER_VALIDATION_INCONSISTENT",
+        );
       }
     }
 
-    // Deterministic verification passed. The next state of SDD section 49 is USER_VALIDATING,
-    // and Phase 7 builds it. Until then the Run stays open for a stop signal, for human input,
-    // or until the Run budget ends it. SDD section 68 forbids READY_FOR_HUMAN without a
-    // Validation Contract, a PR, and a Proof Pack, so Phase 3 invents no success terminal state.
+    // User validation passed. SDD section 68 forbids READY_FOR_HUMAN without a Validation
+    // Contract, a PR, and a Proof Pack, and Phase 9 and Phase 10 build those. Until then the Run
+    // stays open for a stop signal, for human input, or until the Run budget ends it, so this
+    // step invents no success terminal state.
     const stopped = await condition(() => stopRequested, remainingMs());
 
     if (!stopped) return await failRun("RUN_TIMEOUT", timeoutMessage);

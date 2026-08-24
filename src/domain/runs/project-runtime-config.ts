@@ -52,9 +52,20 @@ export const DEFAULT_PROJECT_DEFAULTS: ProjectDefaults = {
   spriteRetentionHours: 24,
 };
 
+/** SDD section 15 and SDD section 37. The preview the User Validator starts. */
+export interface PreviewConfig {
+  enabled: boolean;
+  /** The exact shell command. It runs through `sh -c` from the primary worktree. */
+  command: string;
+  /** The URL the readiness poll requests. Its port is the port Factoree exposes. */
+  readyUrl: string;
+  timeoutSeconds: number;
+}
+
 export interface ResolvedProjectConfig {
   runtime: ProjectRuntimeConfig;
   verifyCommands: VerificationCommand[];
+  preview: PreviewConfig | null;
 }
 
 /**
@@ -80,4 +91,13 @@ export const toProjectRuntimeConfig = (
     spriteRetentionHours: defaults.spriteRetentionHours,
   },
   verifyCommands: config.verify.commands.map((command) => ({ name: command.name, run: command.run })),
+  preview:
+    config.preview === null
+      ? null
+      : {
+          enabled: config.preview.enabled,
+          command: config.preview.command,
+          readyUrl: config.preview.readyUrl,
+          timeoutSeconds: config.preview.timeoutSeconds,
+        },
 });

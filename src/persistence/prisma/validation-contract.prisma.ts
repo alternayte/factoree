@@ -2,11 +2,11 @@ import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "~/telemetry/logger.js";
 import type {
   SaveValidationContractInput,
+  StoredValidationAssertion,
   StoredValidationContract,
   ValidationContractStore,
 } from "~/domain/validation/validation-contract-store.js";
 import type {
-  ValidationAssertion,
   ValidationEvidenceKind,
   ValidationMethod,
 } from "~/domain/validation/validation-contract.js";
@@ -43,6 +43,7 @@ const toEvidence = (values: string[], key: string): ValidationEvidenceKind[] =>
   });
 
 interface AssertionRow {
+  id: string;
   assertionKey: string;
   requirement: string;
   statement: string;
@@ -64,7 +65,8 @@ interface ContractRow {
   assertions: AssertionRow[];
 }
 
-const toAssertion = (row: AssertionRow): ValidationAssertion => ({
+const toAssertion = (row: AssertionRow): StoredValidationAssertion => ({
+  rowId: row.id,
   id: row.assertionKey,
   requirement: row.requirement,
   statement: row.statement,

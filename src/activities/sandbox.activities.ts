@@ -3,7 +3,12 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
+import type {
+  PreviewConfig,
+  ProjectDefaults,
+  ProjectRuntimeConfig,
+  VerificationCommand,
+} from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -42,6 +47,8 @@ export interface PrepareSandboxActivityOutput {
   baselineCheckpointId: string | null;
   runtime: ProjectRuntimeConfig;
   verifyCommands: VerificationCommand[];
+  /** SDD sections 15 and 37. The preview the User Validator starts. */
+  preview: PreviewConfig | null;
   repositoryInstructions: string;
 }
 
@@ -161,6 +168,7 @@ const prepare = async (
     baselineCheckpointId: prepared.baselineCheckpoint?.id ?? null,
     runtime: prepared.runtime,
     verifyCommands: prepared.verifyCommands,
+    preview: prepared.preview,
     repositoryInstructions: prepared.repositoryInstructions,
   };
 };

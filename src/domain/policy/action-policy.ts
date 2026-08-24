@@ -1,3 +1,5 @@
+import type { AgentRole } from "~/domain/runs/agent-runner.js";
+
 /** SDD section 29. The complete set of actions the policy governs. */
 export const AGENT_ACTIONS = [
   "readPrimaryRepository",
@@ -61,6 +63,12 @@ const LABELS: Record<AgentAction, string> = {
 export interface ActionPolicyOverrides {
   stagingRead?: boolean;
   mcpAllowedTools?: string[];
+  /**
+   * The session role. This is not a Project override; it is the role of the session, so it does
+   * not count against the one Project override SDD section 29 permits. `implementer` writes the
+   * primary worktree; no other role does. See controller decision 14.
+   */
+  role?: AgentRole;
 }
 
 export class ActionDeniedError extends Error {
@@ -97,9 +105,13 @@ export interface ActionPolicy {
 }
 
 export const buildActionPolicy = (overrides: ActionPolicyOverrides = {}): ActionPolicy => {
+  const role: AgentRole = overrides.role ?? "implementer";
   const table: Record<AgentAction, ActionDecision> = {
     ...DEFAULTS,
     stagingRead: overrides.stagingRead === true ? "allow" : "deny",
+    // SDD section 36. Only the Implementer writes the primary worktree. A validator or a
+    // reviewer session must not change a production source file.
+    writePrimaryWorktree: role === "implementer" ? "allow" : "deny",
   };
   const mcpAllowedTools = overrides.mcpAllowedTools ?? [];
 

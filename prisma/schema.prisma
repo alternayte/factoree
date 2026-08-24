@@ -122,6 +122,7 @@ model Run {
   evidence                 Evidence[]
   contextContract          ContextContract?
   validationContract       ValidationContract?
+  validationResults        ValidationAssertionResult[]
 
   @@index([tenantId])
   @@index([projectId])
@@ -158,8 +159,9 @@ model Evidence {
   runId                 String
   run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   // Null for a deterministic check. SDD section 35 records a check that answers no assertion.
-  // Phase 6 fills this column for Validation Contract evidence.
+  // Otherwise the validation assertion this artifact answers.
   validationAssertionId String?
+  validationAssertion   ValidationAssertion? @relation(fields: [validationAssertionId], references: [id], onDelete: SetNull)
   kind                  String
   source                String
   sha256                String
@@ -272,9 +274,29 @@ model ValidationAssertion {
   method               String
   evidence             String[]
   preconditions        String[]
+  evidenceRows         Evidence[]
+  results              ValidationAssertionResult[]
 
   @@unique([validationContractId, assertionKey])
   @@index([tenantId])
+}
+
+model ValidationAssertionResult {
+  id                    String              @id @default(uuid())
+  tenantId              String
+  runId                 String
+  run                   Run                 @relation(fields: [runId], references: [id], onDelete: Cascade)
+  validationAssertionId String
+  assertion             ValidationAssertion @relation(fields: [validationAssertionId], references: [id], onDelete: Cascade)
+  assertionKey          String
+  // PASS, FAIL, BLOCKED, or MANUAL_REQUIRED. SDD section 36.
+  result                String
+  reason                String
+  attempt               Int
+  createdAt             DateTime            @default(now())
+
+  @@unique([runId, validationAssertionId, attempt])
+  @@index([tenantId, runId])
 }
 
 model ProcessedWebhook {
