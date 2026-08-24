@@ -188,4 +188,32 @@ describe("decideReview", () => {
     expect(decision.passed).toBe(true);
     expect(decision.nonBlocking[0]?.reason).toContain("changed");
   });
+
+  it("blocks a finding whose evidence carries leading prose", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "see src/auth.ts:84" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence names the file in a sentence", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "The defect is in src/auth.ts, near line 84." })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("does not block a finding whose evidence names only unchanged files across tokens", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "see src/other.ts:12 and also src/missing.ts" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(true);
+    expect(decision.nonBlocking[0]?.reason).toContain("changed");
+  });
 });

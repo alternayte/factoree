@@ -35,32 +35,34 @@ export interface ReviewDecision {
   failures: string[];
 }
 
+/** Removes a trailing `:84`, `:80-90`, or `:84:12` location, and a leading `./`. */
+const stripLocation = (token: string): string =>
+  token.replace(/(:\d+(?:-\d+)?){1,2}$/, "").replace(/^\.\//, "");
+
 /**
  * Reads the file part of an evidence string. SDD section 41 shows the `path:line` form. A
  * Reviewer can also write a range, a column, or a short note after the location, so this
  * function takes the first token and removes the location from it. The gate must not fail
  * open: a finding that really names a changed file must block.
  */
-export const evidenceFileOf = (evidence: string): string => {
-  // A note after the location is prose. Only the first token can name a file.
-  const head = evidence.trim().split(/[\s,]/)[0] ?? "";
-  // A trailing `:84`, `:80-90`, or `:84:12` is a location, not part of the file name.
-  const withoutLocation = head.replace(/(:\d+(?:-\d+)?){1,2}$/, "");
-  return withoutLocation.replace(/^\.\//, "");
-};
+export const evidenceFileOf = (evidence: string): string =>
+  stripLocation(evidence.trim().split(/[\s,]/)[0] ?? "");
 
 /**
- * Reports whether the evidence names a file this Run changed. An absolute path, and a path
+ * Reports whether the evidence names a file this Run changed. A Reviewer can write a note
+ * before or after the location, so every token is a candidate. An absolute path, and a path
  * that carries a repository prefix, still name the file, so a changed path that is a suffix of
- * the evidence path counts as a match. This errs toward blocking. A gate that fails open would
- * let a real defect reach a human as a passing review.
+ * a candidate counts as a match. This errs toward blocking. A gate that fails open would let a
+ * real defect reach a human as a passing review.
  */
 const namesChangedFile = (evidence: string, changed: Set<string>): boolean => {
-  const file = evidenceFileOf(evidence);
-  if (file === "") return false;
-  if (changed.has(file)) return true;
-  for (const candidate of changed) {
-    if (file.endsWith(`/${candidate}`)) return true;
+  for (const token of evidence.trim().split(/[\s,]+/)) {
+    const file = stripLocation(token);
+    if (file === "") continue;
+    if (changed.has(file)) return true;
+    for (const candidate of changed) {
+      if (file.endsWith(`/${candidate}`)) return true;
+    }
   }
   return false;
 };
