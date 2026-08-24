@@ -29,6 +29,7 @@ import { ContextSourceRegistry } from "~/domain/context/context-source-registry.
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
 import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
+import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -50,6 +51,7 @@ const env = {
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
   GITHUB_BASE_URL: "https://github.com",
+  EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
 } satisfies Env;
 
 const redactor = new Redactor();
@@ -143,6 +145,12 @@ beforeAll(async () => {
       // This test drives the Phase 1 path, which never reaches context resolution.
       contextSources: { sourcesFor: () => Promise.resolve(new ContextSourceRegistry([])) },
       repositoryReader: new GitRepositoryReader(),
+      // This test drives the Phase 1 path, which never reaches user validation.
+      browser: { name: "unused", run: () => Promise.reject(new Error("unused")) },
+      httpValidationFetch: () => Promise.reject(new Error("unused")),
+      previewProbe: () => Promise.resolve(null),
+      evidenceStorage: { name: "unused", put: () => Promise.reject(new Error("unused")) },
+      validationResults: new PrismaValidationResultStore(prisma),
       logger,
     }),
   });

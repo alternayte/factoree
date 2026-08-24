@@ -8,6 +8,11 @@ import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.
 import { PrismaSecretStore, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
+import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
+import { PlaywrightBrowserDriver } from "~/adapters/browser/playwright/playwright-browser-driver.js";
+import { FilesystemEvidenceStorage } from "~/adapters/evidence/filesystem-evidence-storage.js";
+import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
+import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
 import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
@@ -141,6 +146,31 @@ const contextSources = new ConfiguredContextSourceProvider({
   },
 });
 
+// SDD section 39. A readiness probe and a validation fetch, both built on the platform `fetch`.
+// A caught network error reports no answer rather than throwing, so the caller can keep polling
+// or record it as a failed request instead of crashing the activity.
+const previewProbe: ReadinessProbe = async (url) => {
+  try {
+    const response = await fetch(url);
+    return { status: response.status };
+  } catch {
+    return null;
+  }
+};
+
+const httpValidationFetch: HttpValidationFetch = async (url, init) => {
+  const response = await fetch(url, {
+    method: init.method,
+    headers: init.headers,
+    body: init.body,
+  });
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  return { status: response.status, headers, body: await response.text() };
+};
+
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.TEMPORAL_NAMESPACE,
@@ -164,6 +194,11 @@ const worker = await Worker.create({
     contextSources,
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
+    browser: new PlaywrightBrowserDriver(),
+    httpValidationFetch,
+    previewProbe,
+    evidenceStorage: new FilesystemEvidenceStorage({ rootDirectory: env.EVIDENCE_LOCAL_ROOT }),
+    validationResults: new PrismaValidationResultStore(prisma),
     logger,
   }),
 });

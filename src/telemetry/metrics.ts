@@ -103,6 +103,13 @@ export const metrics = {
     labelNames: [...labelNames, "resolution"],
     registers: [registry],
   }),
+  validationDuration: new Histogram({
+    name: "factoree_validation_duration_seconds",
+    help: "User validation duration in seconds",
+    labelNames,
+    buckets: [0.1, 1, 5, 30, 120, 600],
+    registers: [registry],
+  }),
   repairs: new Counter({
     name: "factoree_repairs_total",
     help: "Repair attempts started",

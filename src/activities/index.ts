@@ -15,6 +15,11 @@ import type { ContextContractStore } from "~/domain/context/context-contract-sto
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
+import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
+import type { ReadinessProbe } from "~/domain/runs/preview.js";
+import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
+import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
@@ -23,6 +28,7 @@ import { createVerificationActivities } from "./verification.activities.js";
 import { createRefinementActivities } from "./refinement.activities.js";
 import { createContextActivities } from "./context.activities.js";
 import { createValidationActivities } from "./validation.activities.js";
+import { createEvidencePersistence } from "./evidence.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -42,6 +48,11 @@ export interface ActivityDependencies {
   contextSources: ContextSourceProvider;
   validationContracts: ValidationContractStore;
   repositoryReader: RepositoryReader;
+  browser: BrowserDriver;
+  httpValidationFetch: HttpValidationFetch;
+  previewProbe: ReadinessProbe;
+  evidenceStorage: EvidenceStorage;
+  validationResults: ValidationResultStore;
   logger: Logger;
 }
 
@@ -81,6 +92,22 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     contracts: dependencies.validationContracts,
     runs: dependencies.runs,
     logger: dependencies.logger,
+    userValidation: {
+      sandbox: dependencies.sandbox,
+      runners: dependencies.runners,
+      executions: dependencies.executions,
+      secrets: dependencies.secrets,
+      redactor: dependencies.redactor,
+      browser: dependencies.browser,
+      fetchImpl: dependencies.httpValidationFetch,
+      probe: dependencies.previewProbe,
+      evidencePersistence: createEvidencePersistence({
+        evidence: dependencies.evidence,
+        results: dependencies.validationResults,
+        storage: dependencies.evidenceStorage,
+        logger: dependencies.logger,
+      }),
+    },
   }),
   ...createVerificationActivities({
     sandbox: dependencies.sandbox,
