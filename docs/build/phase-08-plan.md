@@ -1861,6 +1861,12 @@ MSG
 
 **Rule:** Prove each claim three ways where a claim can be faked, the way the Phase 7 tests do. A test that only reads a double's own return value proves nothing.
 
+**Controller ruling A.** The workflow suite runs activity doubles and holds no database, so a workflow test cannot assert a persisted row. AT-22 and AT-23 therefore assert the workflow decision: the status order, the repair count, and the `repairFindings` of the next Implementer call. The persisted `blocking` column is proved by the Task 6 unit test and by the Phase 8 exit test, which both run the real activity and a real store.
+
+**Controller ruling B.** A workflow test drives the real `decideReview` through the harness `review` double. The double takes a report text and a changed-file list from the test, parses the text with the real `parseReviewReport`, calls the real `decideReview` with the real frozen contract of the harness, and returns the real `ReviewActivityOutput`. The agent session and the sandbox stay doubles. So the rule under test is the real rule.
+
+**Controller ruling C.** No Phase 8 test may need a live model. Every test drives the real components against a real fixture repository, with a scripted runner double that writes a real report file, exactly as the Phase 7 exit test drives a real preview and a real browser with no live model.
+
 - [ ] **Step 1: Write AT-21, the fresh review**
 
 `tests/acceptance/at-21-fresh-review.test.ts`. Model it on `tests/acceptance/at-17-fresh-user-validation.test.ts`. Prove three things:
@@ -1883,17 +1889,17 @@ Point 5 is the "fully reverified" half of AT-20. Read the rows from the database
 
 - [ ] **Step 3: Write AT-22, the blocking finding**
 
-`tests/workflow/at-22-blocking-finding.test.ts`. Drive the real `decideReview` through the real activity, with a Reviewer double that writes this report:
+`tests/workflow/at-22-blocking-finding.test.ts`. Follow controller ruling B. The harness `review` double parses this report with the real `parseReviewReport` and decides it with the real `decideReview`:
 
 ```json
 { "version": 1, "verdict": "fail", "findings": [ { "id": "RV-1", "severity": "high", "category": "correctness", "requirement": "VAL-API-001", "evidence": "src/auth.ts:84", "description": "The handler returns 200 for an expired token." } ] }
 ```
 
-Assert: the Run enters `REPAIRING`; the repair count is 1; the next implement call carries `RV-1` in `repairFindings`; the persisted finding row holds `blocking = true`.
+Assert: the Run enters `REPAIRING`; the repair count is 1; the next implement call carries `RV-1` in `repairFindings`; the decision the double returned marks the finding blocking.
 
 - [ ] **Step 4: Write AT-23, the scope control**
 
-`tests/workflow/at-23-scope-control.test.ts`. The same shape, with `"severity": "medium"` and `"category": "style"`. Assert: the Run does not enter `REPAIRING` after the review; the repair count stays 0; the persisted finding row exists and holds `blocking = false`, with a reason that names SDD section 41.
+`tests/workflow/at-23-scope-control.test.ts`. The same shape, with `"severity": "medium"` and `"category": "style"`. Assert: the Run does not enter `REPAIRING` after the review; the repair count stays 0; the decision reports the finding as non-blocking, with a reason that names SDD section 41.
 
 Add a second case in the same file with `"severity": "blocker"` and `"category": "style"`, and assert the same outcome. Controller decision 6 owns it, and a plain medium case alone would not prove it.
 
@@ -1938,9 +1944,13 @@ MSG
 
 **Rule:** Model this test on `tests/acceptance/phase-07-exit.test.ts`. It must run the real parser, the real blocking rules, the real diff capture against a real fixture repository, the real activity, and the real persistence. It must not assert on a double's own return value.
 
+**Rule (controller ruling C):** The test must not need a live model. The only double is the agent runner, and it is scripted: it writes a real report file into the review directory, exactly as a real Reviewer session must. Everything the test asserts comes from a real artefact, a real parse, a real decision, or a real database row.
+
 - [ ] **Step 1: Build the fixture**
 
 Create a fixture repository under `tests/fixtures/` that holds one known defect, and a second revision that repairs it. Use a real `git init` and a real commit, so the base SHA is real and `git diff --cached <base_sha>` produces a real diff. Read the Phase 7 fixture helper in `tests/acceptance/support/` first and reuse it where it fits.
+
+The repair step of the test writes the fixed revision into the primary worktree itself. Controller ruling C forbids a live model, and the Implementer is not the subject of this exit condition. The subject is that Factoree finds the defect, that a repair reaches the next attempt, that revalidation runs, and that the re-review passes.
 
 - [ ] **Step 2: Write the positive half**
 
