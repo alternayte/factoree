@@ -364,6 +364,11 @@ export async function agentRunWorkflow(
      */
     contextContract: string;
     requiredContext: string[];
+    /**
+     * SDD section 34. The frozen Validation Contract. Task 6 replaces the placeholder value at
+     * the call site with the frozen document.
+     */
+    validationContract: string;
   }): Promise<ImplementActivityOutput | null> => {
     const budgetMs = remainingMs();
     const implementActivities = buildImplementActivities(budgetMs);
@@ -381,6 +386,7 @@ export async function agentRunWorkflow(
         referencePaths: attemptInput.prepared.referencePaths,
         goal: attemptInput.goal,
         contextContract: attemptInput.contextContract,
+        validationContract: attemptInput.validationContract,
         requiredContext: attemptInput.requiredContext,
         humanDecisions: humanInputs,
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
@@ -713,6 +719,8 @@ export async function agentRunWorkflow(
           repairFindings,
           contextContract: resolvedContext.document,
           requiredContext: resolvedContext.requiredContext,
+          // Task 6 replaces this placeholder with the frozen Validation Contract document.
+          validationContract: "No Validation Contract exists yet.",
         });
 
         // A stop that arrived while the Implementer ran must end the Run here.

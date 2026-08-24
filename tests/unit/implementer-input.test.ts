@@ -183,4 +183,17 @@ describe("buildImplementerInput", () => {
     const input = buildImplementerInput(base);
     expect(input.prompt).toContain("You must not change the Validation Contract.");
   });
+
+  it("carries the frozen Validation Contract into the prompt", () => {
+    const input = buildImplementerInput({
+      ...base,
+      validationContract: "# Validation Contract\n\nVAL-API-001 returns 403.",
+    });
+    expect(input.prompt).toContain("VAL-API-001");
+  });
+
+  it("states that the Implementer must not change the Validation Contract", () => {
+    const input = buildImplementerInput({ ...base, validationContract: "VAL-API-001" });
+    expect(input.prompt).toContain("must not change the Validation Contract");
+  });
 });

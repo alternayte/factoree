@@ -32,6 +32,11 @@ export interface ImplementActivityInput {
   goal: string;
   /** SDD section 21. The rendered Context Contract of this Run. */
   contextContract: string | null;
+  /**
+   * SDD section 34. The frozen Validation Contract. The Implementer receives it and receives no
+   * authority to change it. By the time the Implementer runs, a frozen contract always exists.
+   */
+  validationContract: string;
   /** SDD section 21 and AT-09. The required-context lines. No file body travels with them. */
   requiredContext: string[];
   humanDecisions: string[];
@@ -120,7 +125,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     const implementerInput = buildImplementerInput({
       goal: input.goal,
       humanDecisions: input.humanDecisions,
-      validationContract: null,
+      validationContract: input.validationContract,
       contextContract: input.contextContract,
       requiredContext: input.requiredContext,
       primaryRepositoryPath: input.primaryPath,

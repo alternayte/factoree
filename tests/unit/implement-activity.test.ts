@@ -53,6 +53,7 @@ const input = {
   referencePaths: [],
   goal: "Add the health endpoint.",
   contextContract: null,
+  validationContract: "# Validation Contract\n\n### VAL-CMD-001\n\n- method: command\n",
   requiredContext: [],
   humanDecisions: [],
   repositoryInstructions: "Use the existing test idiom.",
