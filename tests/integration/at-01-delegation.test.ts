@@ -28,6 +28,7 @@ import { ContextResolver } from "~/domain/context/context-resolver.js";
 import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
+import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -138,6 +139,7 @@ beforeAll(async () => {
       refinement: new RefinementEngine(),
       contextResolver: new ContextResolver(),
       contextContracts: new PrismaContextContractStore(prisma),
+      validationContracts: new PrismaValidationContractStore(prisma),
       // This test drives the Phase 1 path, which never reaches context resolution.
       contextSources: { sourcesFor: () => Promise.resolve(new ContextSourceRegistry([])) },
       repositoryReader: new GitRepositoryReader(),

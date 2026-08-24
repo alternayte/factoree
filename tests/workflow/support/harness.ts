@@ -182,6 +182,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         primaryRepository: output.primaryRepository,
         referenceRepositories: output.referenceRepositories,
         acceptanceCriteria: output.proposedAcceptanceCriteria.map((entry) => entry.statement),
+        criteria: output.proposedAcceptanceCriteria.map((entry) => ({
+          id: entry.id,
+          statement: entry.statement,
+          source: entry.source,
+        })),
         workItemReferences: output.workItem.references.map((entry) => entry.value),
         risks: output.risks,
         unresolvedQuestions: output.unresolvedQuestions,

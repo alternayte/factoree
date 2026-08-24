@@ -88,6 +88,7 @@ describe("AT-03 — a material uncertainty stops the Run before any implementati
       primaryRepository: input.project.primaryRepository,
       referenceRepositories: input.project.referenceRepositories,
       acceptanceCriteria: [],
+      criteria: [],
       workItemReferences: [],
       risks: [],
       unresolvedQuestions: [

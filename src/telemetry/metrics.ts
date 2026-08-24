@@ -90,6 +90,13 @@ export const metrics = {
     buckets: [1, 5, 15, 60, 300, 900],
     registers: [registry],
   }),
+  validationContractDuration: new Histogram({
+    name: "factoree_validation_contract_duration_seconds",
+    help: "Validation Contract build and freeze duration in seconds",
+    labelNames,
+    buckets: [0.01, 0.1, 1, 5, 30],
+    registers: [registry],
+  }),
   contextConflicts: new Counter({
     name: "factoree_context_conflicts_total",
     help: "Context conflicts recorded on a Context Contract",
