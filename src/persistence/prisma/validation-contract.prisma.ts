@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import type { Logger } from "~/telemetry/logger.js";
 import type {
   SaveValidationContractInput,
   StoredValidationContract,
@@ -86,7 +87,10 @@ const toStored = (row: ContractRow): StoredValidationContract => ({
 });
 
 export class PrismaValidationContractStore implements ValidationContractStore {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly logger?: Logger,
+  ) {}
 
   /**
    * SDD section 25. The contract is immutable, so an existing contract wins and the store writes
@@ -95,7 +99,22 @@ export class PrismaValidationContractStore implements ValidationContractStore {
    */
   async save(input: SaveValidationContractInput): Promise<StoredValidationContract> {
     const existing = await this.findByRun(input.tenantId, input.runId);
-    if (existing !== null) return existing;
+    if (existing !== null) {
+      if (existing.sha256 !== input.sha256) {
+        // SDD section 25 forbids a change to the active contract, so the stored contract stands.
+        // The message names only the hashes and the Run, never the contract document, because SDD
+        // section 60 forbids logging contract text.
+        this.logger?.warn(
+          "a divergent freeze attempt did not change the active Validation Contract",
+          {
+            run_id: input.runId,
+            stored_sha256: existing.sha256,
+            rejected_sha256: input.sha256,
+          },
+        );
+      }
+      return existing;
+    }
 
     try {
       const row = await this.prisma.validationContract.create({

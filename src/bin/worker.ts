@@ -162,7 +162,7 @@ const worker = await Worker.create({
     contextResolver: new ContextResolver(),
     contextContracts: new PrismaContextContractStore(prisma),
     contextSources,
-    validationContracts: new PrismaValidationContractStore(prisma),
+    validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     logger,
   }),

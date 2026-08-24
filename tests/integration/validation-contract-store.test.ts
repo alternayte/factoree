@@ -88,6 +88,38 @@ describe("PrismaValidationContractStore", () => {
     await expect(store.findByRun(otherTenantId, runId)).resolves.toBeNull();
   });
 
+  it("warns on a divergent freeze attempt and does not log the contract document", async () => {
+    const warnings: Array<{ message: string; fields: Record<string, unknown> }> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (message: string, fields?: Record<string, unknown>) =>
+        warnings.push({ message, fields: fields ?? {} }),
+      error: () => undefined,
+      child: () => logger,
+    };
+    const watchedStore = new PrismaValidationContractStore(prisma, logger);
+
+    const result = await watchedStore.save({
+      tenantId,
+      runId,
+      contract: { ...contractOf(runId), goal: "A divergent goal." },
+      sha256: "f".repeat(64),
+      document: "# Divergent document that must never reach the log\n",
+    });
+
+    expect(result.sha256).toBe(FIRST_SHA256);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/active Validation Contract/);
+    expect(warnings[0]?.fields).toMatchObject({
+      run_id: runId,
+      stored_sha256: FIRST_SHA256,
+      rejected_sha256: "f".repeat(64),
+    });
+    const serialized = JSON.stringify(warnings);
+    expect(serialized).not.toMatch(/Divergent document/);
+  });
+
   it("rejects a row whose method column holds a value the SDD does not allow", async () => {
     await prisma.validationAssertion.updateMany({
       where: { assertionKey: "VAL-API-001" },
