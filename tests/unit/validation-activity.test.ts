@@ -74,6 +74,37 @@ describe("buildValidationContract activity", () => {
 
     expect(second.sha256).toBe(first.sha256);
     expect(contracts.saved).toHaveLength(1);
+    expect(runs.setValidationContractVersion).toHaveBeenLastCalledWith(
+      "tenant-1",
+      "run-1",
+      first.sha256,
+    );
+  });
+
+  it("repairs a Run row an interrupted attempt left without the hash", async () => {
+    // This reproduces the bug directly: the first call freezes the contract but the Run write
+    // fails, so `Run.validationContractVersion` stays null. A retry must still repair the Run row,
+    // through the early-return path, and it must not write a second contract.
+    const contracts = storeStub();
+    const runs = runsStub();
+    runs.setValidationContractVersion.mockImplementationOnce(() =>
+      Promise.reject(new Error("transient write failure")),
+    );
+    const activities = createValidationActivities({ contracts, runs: runs as never, logger: logger as never });
+
+    await expect(activities.buildValidationContract(input())).rejects.toThrow(
+      "transient write failure",
+    );
+    expect(contracts.saved).toHaveLength(1);
+
+    const second = await activities.buildValidationContract(input());
+
+    expect(contracts.saved).toHaveLength(1);
+    expect(runs.setValidationContractVersion).toHaveBeenLastCalledWith(
+      "tenant-1",
+      "run-1",
+      second.sha256,
+    );
   });
 
   it("returns the frozen contract, not a freshly built one, when the two would differ", async () => {
