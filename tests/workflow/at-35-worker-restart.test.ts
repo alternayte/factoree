@@ -72,6 +72,9 @@ const activities = {
     runtime: DEFAULT_PROJECT_RUNTIME_CONFIG,
     verifyCommands: [],
     repositoryInstructions: "",
+    // `UserValidateActivityInput.preview` is `PreviewConfig | null`. This map is a plain object
+    // literal, so `npm run typecheck` cannot catch a missing field here.
+    preview: null,
   }),
   implement: async (input: { runnerName: string }) => ({
     sessionId: "ses_fake",

@@ -388,8 +388,53 @@ export async function agentRunWorkflow(
   };
 
   /**
-   * One Implementer attempt. The cancellation scope, the stop watcher, and the session
-   * bookkeeping are unchanged from Phase 2. It returns null when the activity was cancelled.
+   * Run one long agent activity under a stop signal. SDD section 50 requires a stop to reach
+   * the live agent process, so the activity runs inside a cancellable scope, and a watcher
+   * coroutine cancels that scope when the stop arrives. The result is null when the activity
+   * was cancelled. Every long agent stage uses this helper, so the ordering rules below stay
+   * the same for all of them.
+   */
+  const runAgentActivity = async <T>(start: () => Promise<T>): Promise<T | null> => {
+    // A stop that arrived before this stage started must not schedule the activity at all.
+    // The scope would then be cancelled in the same workflow activation that created it, and
+    // the cancel command can race the schedule command at the server. The activity options use
+    // `WAIT_CANCELLATION_COMPLETED`, so the workflow would then wait forever for a
+    // cancellation report from an activity that no worker ever started.
+    if (stopRequested) return null;
+
+    const scope = new CancellationScope({ cancellable: true });
+    const running = scope.run(start);
+    // The schedule command above must reach the server in its own workflow activation, before
+    // any cancel command can follow it. This durable timer blocks the main coroutine, so the
+    // schedule command flushes first, and the two commands can never share one activation.
+    await sleep(1);
+    const watching = scope
+      .run(() => condition(() => stopRequested))
+      .then(() => {
+        scope.cancel();
+      })
+      .catch(() => undefined);
+
+    let result: T | null = null;
+    try {
+      result = await running;
+    } catch (error) {
+      // A cancelled agent activity is the stop path, not a fault. Every other error is a fault.
+      if (!isCancellation(error)) throw error;
+    } finally {
+      // The activity has settled by now. This cancel unblocks the watcher's own pending
+      // `condition`, which never settles on its own when no stop arrives. The cancel reaches
+      // no live activity: the SDK sends a cancel command only while the activity is still
+      // pending, so a cancel after the activity settled produces no command at all.
+      scope.cancel();
+      await watching;
+    }
+    return result;
+  };
+
+  /**
+   * One Implementer attempt. The session bookkeeping is unchanged from Phase 2. It returns
+   * null when the activity was cancelled.
    */
   const runImplementer = async (attemptInput: {
     prepared: PrepareSandboxActivityOutput;
@@ -410,8 +455,7 @@ export async function agentRunWorkflow(
   }): Promise<ImplementActivityOutput | null> => {
     const budgetMs = remainingMs();
     const implementActivities = buildImplementActivities(budgetMs);
-    const scope = new CancellationScope({ cancellable: true });
-    const running = scope.run(() =>
+    const implementation = await runAgentActivity(() =>
       implementActivities.implement({
         runId: id,
         tenantId: input.tenantId,
@@ -434,25 +478,6 @@ export async function agentRunWorkflow(
         attempt: attemptInput.attempt,
       }),
     );
-    // SDD section 50: a stop must reach the running agent process. The scope cancellation
-    // travels to the activity, and the activity stops the live session.
-    const watching = scope
-      .run(() => condition(() => stopRequested))
-      .then(() => {
-        scope.cancel();
-      })
-      .catch(() => undefined);
-
-    let implementation: ImplementActivityOutput | null = null;
-    try {
-      implementation = await running;
-    } catch (error) {
-      // A cancelled Implementer is the stop path, not a fault. Every other error stays a fault.
-      if (!isCancellation(error)) throw error;
-    } finally {
-      scope.cancel();
-      await watching;
-    }
 
     if (implementation !== null) {
       // The fallback below runs unless the activity itself really cancelled the session. A
@@ -469,78 +494,33 @@ export async function agentRunWorkflow(
 
   /**
    * One User Validator pass. SDD section 36 places it inside the same bounded loop the
-   * Implementer and deterministic verification use. The cancellation scope and the stop watcher
-   * copy the pattern `runImplementer` uses, because the same long-activity options apply. The
-   * activity cancels its own live validator session when the scope cancellation reaches it.
+   * Implementer and deterministic verification use. It shares `runAgentActivity` with
+   * `runImplementer`, because the same long-activity options apply. The activity cancels its
+   * own live validator session when the scope cancellation reaches it.
    */
   const runUserValidate = async (attemptInput: {
     prepared: PrepareSandboxActivityOutput;
     goal: string;
     attempt: number;
   }): Promise<UserValidateActivityOutput | null> => {
-    // A stop that arrived before this pass started must not schedule the activity at all. A
-    // scope cancelled in the same workflow task it is created in races the schedule command.
-    if (stopRequested) return null;
-
     const budgetMs = remainingMs();
     const userValidateActivities = buildUserValidateActivities(budgetMs);
-    const scope = new CancellationScope({ cancellable: true });
-    // True once the activity call itself has settled, by success or by failure. The stop
-    // watcher below reads it, so a pass that already finished is never cancelled after the
-    // fact. Cancelling an activity the workflow already recorded as complete left a Run open
-    // forever, and this flag closes that race.
-    let settled = false;
-    const running = scope
-      .run(() =>
-        userValidateActivities.userValidate({
-          runId: id,
-          tenantId: input.tenantId,
-          projectId: input.projectId,
-          runnerName: attemptInput.prepared.runtime.validatorRunner,
-          spriteId: attemptInput.prepared.spriteId,
-          adapter: attemptInput.prepared.adapter,
-          workspacePath: attemptInput.prepared.workspacePath,
-          primaryPath: attemptInput.prepared.primaryPath,
-          goal: attemptInput.goal,
-          preview: attemptInput.prepared.preview,
-          timeoutMs: budgetMs,
-          attempt: attemptInput.attempt,
-        }),
-      )
-      .finally(() => {
-        settled = true;
-      });
-    // The schedule command above must reach the server on its own workflow task before a
-    // cancel command can safely follow it. A cancel issued in the very same task as the
-    // schedule can race it there and lose the activity forever, so this real timer tick
-    // forces the two onto separate tasks before the stop watcher below is armed.
-    await sleep(1);
-    // SDD section 50: a stop must reach the running validator process. The scope cancellation
-    // travels to the activity, and the activity stops the live session.
-    const watching = scope
-      .run(() => condition(() => stopRequested))
-      .then(() => {
-        if (!settled) scope.cancel();
-      })
-      .catch(() => undefined);
-
-    let validation: UserValidateActivityOutput | null = null;
-    try {
-      validation = await running;
-    } catch (error) {
-      // A cancelled User Validator is the stop path, not a fault. Every other error stays a fault.
-      if (!isCancellation(error)) throw error;
-    } finally {
-      // This cancel is unconditional, unlike the one in the stop watcher above. Its job here is
-      // only to unblock the watcher's own pending `condition`, which never settles on its own
-      // when no stop ever arrives, not to cancel a live activity: `running` above already
-      // settled by this point. The workflow does not await `watching`: it exists only to
-      // deliver a cancellation to an activity that is still live, and by this point `running`
-      // has already settled either way, so nothing later depends on its outcome.
-      scope.cancel();
-      void watching;
-    }
-    return validation;
+    return await runAgentActivity(() =>
+      userValidateActivities.userValidate({
+        runId: id,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        runnerName: attemptInput.prepared.runtime.validatorRunner,
+        spriteId: attemptInput.prepared.spriteId,
+        adapter: attemptInput.prepared.adapter,
+        workspacePath: attemptInput.prepared.workspacePath,
+        primaryPath: attemptInput.prepared.primaryPath,
+        goal: attemptInput.goal,
+        preview: attemptInput.prepared.preview,
+        timeoutMs: budgetMs,
+        attempt: attemptInput.attempt,
+      }),
+    );
   };
 
   // SDD section 50: a stop must terminate the active agent process, and no change is published.
@@ -1055,10 +1035,19 @@ export async function agentRunWorkflow(
 
         // SDD section 36 forbids completion of an L3 Run without a human. The Run must say so
         // now, rather than wait for the residual wait to end it with a timeout.
-        return await failRun(
-          "VALIDATION_MANUAL_REQUIRED",
-          "At least one user validation assertion needs a human, so Factoree cannot complete " +
-            `this Run on its own. ${userValidation.summary} Factoree published nothing.`,
+        if (userValidation.hasManual) {
+          return await failRun(
+            "VALIDATION_MANUAL_REQUIRED",
+            "At least one user validation assertion needs a human, so Factoree cannot complete " +
+              `this Run on its own. ${userValidation.summary} Factoree published nothing.`,
+          );
+        }
+
+        // A pass that did not pass must report at least one failed, blocked, or manual
+        // assertion. Any other output is an internal fault, not a validation outcome.
+        throw ApplicationFailure.nonRetryable(
+          "User validation did not pass, and reported no failed, blocked, or manual assertion.",
+          "USER_VALIDATION_INCONSISTENT",
         );
       }
     }

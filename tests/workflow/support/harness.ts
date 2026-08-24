@@ -90,6 +90,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const heldImplementations = new Map<string, Promise<void>>();
   /** A run id in this map holds verification open, the same way a real build does. */
   const heldVerifications = new Map<string, Promise<void>>();
+  /**
+   * A `runId:status` key in this map holds that one `setRunStatus` call open until the test
+   * resolves the promise. The call is recorded first, so a test can wait for it, act, and then
+   * release the workflow while it is still inside that call.
+   */
+  const heldStatuses = new Map<string, Promise<void>>();
   /** The run ids whose Implementer double reports a failed attempt. */
   const failingImplementations = new Set<string>();
   /** The run ids whose live Implementer session the activity cancelled. */
@@ -189,6 +195,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     setRunStatus: async (input: { runId: string; status: string; repairCount?: number }) => {
       statuses.push(input.status);
       statusCalls.push(input);
+      await heldStatuses.get(`${input.runId}:${input.status}`);
     },
     setRunAutonomyLevel: async (input: { autonomyLevel: string }) => {
       autonomyLevels.push(input.autonomyLevel);
@@ -498,6 +505,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldPreparations,
     heldImplementations,
     heldVerifications,
+    heldStatuses,
     failingImplementations,
     cancelledLiveSessions,
     postedErrors,

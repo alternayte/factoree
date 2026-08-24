@@ -15,6 +15,7 @@ const {
   userValidateCalls,
   userValidationOutcomes,
   heldUserValidations,
+  heldStatuses,
   cancelledLiveValidations,
   postedProgress,
   activityOrder,
@@ -201,6 +202,35 @@ describe("USER_VALIDATING", () => {
     });
     expect(implementsOf(runId)).toHaveLength(1);
     expect(statusesOf(runId)).not.toContain("REPAIRING");
+  });
+
+  it("cancels the Run and starts no pass when the stop is already known", async () => {
+    // The stop lands while the `USER_VALIDATING` status write is held open, so the workflow
+    // already knows about the stop when `runUserValidate` runs. This drives the entry guard,
+    // which must schedule no activity at all. A scheduled activity that is cancelled in the
+    // same workflow activation waits forever for a cancellation report.
+    const runId = "run-ses-uv8";
+    const key = `${runId}:USER_VALIDATING`;
+    const release = hold(heldStatuses, key);
+
+    const result = await runWorker(async () => {
+      const handle = await startRun("ses-uv8");
+      await waitFor(
+        () => statusesOf(runId).includes("USER_VALIDATING"),
+        "the USER_VALIDATING status of ses-uv8",
+      );
+      await handle.signal(stopSignal);
+      release();
+      return handle.result();
+    });
+    heldStatuses.delete(key);
+
+    expect(result.status).toBe("CANCELLED");
+    expect(completionsOf(runId).at(-1)).toMatchObject({
+      status: "CANCELLED",
+      failureReason: "STOPPED_BY_HUMAN",
+    });
+    expect(userValidatesOf(runId)).toHaveLength(0);
   });
 
   it("posts the validation summary to Linear", async () => {
