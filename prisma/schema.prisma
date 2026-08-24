@@ -123,6 +123,7 @@ model Run {
   contextContract          ContextContract?
   validationContract       ValidationContract?
   validationResults        ValidationAssertionResult[]
+  reviewFindings           ReviewFinding[]
 
   @@index([tenantId])
   @@index([projectId])
@@ -296,6 +297,32 @@ model ValidationAssertionResult {
   createdAt             DateTime            @default(now())
 
   @@unique([runId, validationAssertionId, attempt])
+  @@index([tenantId, runId])
+}
+
+model ReviewFinding {
+  id             String   @id @default(uuid())
+  tenantId       String
+  runId          String
+  run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // The review pass this finding belongs to. The first pass is 1. SDD section 42.
+  attempt        Int
+  // The agent claim of SDD section 41. It is recorded and it decides nothing.
+  verdict        String
+  // The identifier the Reviewer gave the finding, for example RV-1.
+  findingKey     String
+  // blocker, high, medium, or low. SDD section 41.
+  severity       String
+  category       String
+  requirement    String
+  evidence       String
+  description    String
+  // Factoree's own decision. SDD section 41 and controller decision 2.
+  blocking       Boolean
+  decisionReason String
+  createdAt      DateTime @default(now())
+
+  @@unique([runId, attempt, findingKey])
   @@index([tenantId, runId])
 }
 

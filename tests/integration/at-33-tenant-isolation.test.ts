@@ -95,6 +95,9 @@ describe("AT-33 tenant isolation", () => {
         "ProcessedWebhook",
         "Project",
         "ProjectSecret",
+        // SDD section 53 and SDD section 52. Phase 8 added the ReviewFinding table, and it is
+        // tenant-owned as well.
+        "ReviewFinding",
         "Run",
         // SDD section 24 and SDD section 52. Phase 6 added the Validation Contract tables, and
         // each one is tenant-owned.
