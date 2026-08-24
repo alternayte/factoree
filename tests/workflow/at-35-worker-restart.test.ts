@@ -86,6 +86,20 @@ const activities = {
   }),
   verify: async () => ({ passed: true, checks: [], summary: "Every check passed.", failures: [] }),
   cancelImplementer: async () => undefined,
+  // Phase 7 adds the userValidate activity to the bounded loop. This file builds its own
+  // activity map instead of using the shared harness, so `npm run typecheck` cannot catch a
+  // missing entry here. See the Phase 6 carried finding: the same omission failed a Run
+  // intermittently after a restart.
+  userValidate: async () => ({
+    passed: true,
+    results: [],
+    hasFailure: false,
+    hasManual: false,
+    hasBlocked: false,
+    summary: "Every user validation assertion passed.",
+    failures: [],
+    sessionId: "ses_fake_validator",
+  }),
 };
 
 const newWorker = async (): Promise<Worker> =>

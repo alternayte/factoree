@@ -22,6 +22,8 @@ import type { VerifyActivityInput } from "~/activities/verification.activities.j
 import type {
   BuildValidationContractActivityInput,
   BuildValidationContractActivityOutput,
+  UserValidateActivityInput,
+  UserValidateActivityOutput,
 } from "~/activities/validation.activities.js";
 import type { ProjectRuntimeConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import {
@@ -114,6 +116,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   >();
   /** A run id in this map holds the contract build open until the test resolves the promise. */
   const heldValidations = new Map<string, Promise<void>>();
+  /** Every recorded `userValidate` call, in order. */
+  const userValidateCalls: UserValidateActivityInput[] = [];
+  /**
+   * A run id in this map replaces the `userValidate` result. The function reads the attempt
+   * number of the call, so a test can answer `FAIL` first and `PASS` next.
+   */
+  const userValidationOutcomes = new Map<
+    string,
+    (attempt: number) => UserValidateActivityOutput
+  >();
+  /** A run id in this map holds the user validation pass open until the test resolves the promise. */
+  const heldUserValidations = new Map<string, Promise<void>>();
+  /** The run ids whose live User Validator session the activity observed a cancellation for. */
+  const cancelledLiveValidations: string[] = [];
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
@@ -313,6 +329,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     },
     reapExpiredSandboxes: async () => 0,
     implement: async (activityInput: ImplementActivityInput) => {
+      activityOrder.push("implement");
       implementCalls.push(activityInput);
       const held = heldImplementations.get(activityInput.runId);
       if (held !== undefined) {
@@ -343,6 +360,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       };
     },
     verify: async (activityInput: VerifyActivityInput) => {
+      activityOrder.push("verify");
       verifyCalls.push(activityInput);
       await heldVerifications.get(activityInput.runId);
       const outcome = verifyOutcomes.get(activityInput.runId);
@@ -372,6 +390,41 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     },
     cancelImplementer: async (activityInput: { runnerName: string; session: { sessionId: string } }) => {
       cancelledSessions.push(activityInput);
+    },
+    userValidate: async (
+      activityInput: UserValidateActivityInput,
+    ): Promise<UserValidateActivityOutput> => {
+      activityOrder.push("userValidate");
+      userValidateCalls.push(activityInput);
+      const held = heldUserValidations.get(activityInput.runId);
+      if (held !== undefined) {
+        // The real activity heartbeats while the live validator session runs, and it observes
+        // the cancellation signal. This double copies both, the same way the `implement` double
+        // does, so a scope cancellation reaches it before the test releases the held pass.
+        Context.current().cancellationSignal.addEventListener(
+          "abort",
+          () => cancelledLiveValidations.push(activityInput.runId),
+          { once: true },
+        );
+        const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
+        try {
+          await held;
+        } finally {
+          clearInterval(heartbeat);
+        }
+      }
+      const outcome = userValidationOutcomes.get(activityInput.runId);
+      if (outcome !== undefined) return outcome(activityInput.attempt);
+      return {
+        passed: true,
+        results: [{ assertionId: "VAL-UI-001", result: "PASS", reason: "The page renders." }],
+        hasFailure: false,
+        hasManual: false,
+        hasBlocked: false,
+        summary: "Every user validation assertion passed.",
+        failures: [],
+        sessionId: "ses_fake_validator",
+      };
     },
   };
 
@@ -457,6 +510,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     validationCalls,
     validationOutcomes,
     heldValidations,
+    userValidateCalls,
+    userValidationOutcomes,
+    heldUserValidations,
+    cancelledLiveValidations,
     activityOrder,
     workItemLabels,
     failingLabelReads,

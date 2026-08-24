@@ -7,8 +7,17 @@ import { VERIFY_FAILURE_TEXT, createWorkflowHarness, waitFor } from "./support/h
 let environment: TestWorkflowEnvironment;
 
 const harness = createWorkflowHarness(() => environment);
-const { completions, statusesOf, implementCalls, verifyCalls, runtimeOverrides, verifyOutcomes, input, runWorker } =
-  harness;
+const {
+  completions,
+  statusesOf,
+  implementCalls,
+  verifyCalls,
+  userValidateCalls,
+  runtimeOverrides,
+  verifyOutcomes,
+  input,
+  runWorker,
+} = harness;
 
 /** One recorded activity call. The run id is absent on the two session-scoped activities. */
 interface ActivityCall {
@@ -57,6 +66,7 @@ const namesFor = (runId: string): string[] =>
 
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const verifiesOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
+const userValidatesOf = (runId: string) => userValidateCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 
 beforeAll(async () => {
@@ -85,6 +95,12 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at16a");
       await waitFor(() => verifiesOf("run-ses-at16a").length === 2, "the second verification");
+      // The second verification passes, so the Run enters USER_VALIDATING next. The stop must
+      // wait for that call, or the stop signal races the transition and this test flakes.
+      await waitFor(
+        () => userValidatesOf("run-ses-at16a").length === 1,
+        "the user validation of ses-at16a",
+      );
       await handle.signal(stopSignal);
       return handle.result();
     });
@@ -121,6 +137,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "implement",
       "setRunStatus",
       "verify",
+      "setRunStatus",
+      "userValidate",
       "completeRun",
     ]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);
