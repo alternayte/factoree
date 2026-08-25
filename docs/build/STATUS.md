@@ -15,7 +15,7 @@
 ## Git
 
 - Branch: `main`
-- Phase 11 range: `84a0e9b..8bc12f7`, 14 commits on `phase-11-runner-and-skills`, then the no-fast-forward merge.
+- Phase 11 range: `84a0e9b..8bc12f7`, 14 commits on `phase-11-runner-and-skills`, then the no-fast-forward merge `0db087f`. The merged result on `main` verified exit 0.
 - The repository has no remote. Each phase merges into local `main` with a no-fast-forward commit.
 
 ## Phase 11 verification
