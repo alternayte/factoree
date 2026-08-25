@@ -54,6 +54,17 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...base, GITHUB_BASE_URL: "not-a-url" })).toThrow();
   });
 
+  it("defaults the GitHub API base URL, the git author name, and the git author email", () => {
+    const env = loadEnv(base);
+    expect(env.GITHUB_API_BASE_URL).toBe("https://api.github.com");
+    expect(env.FACTOREE_GIT_AUTHOR_NAME).toBe("Factoree");
+    expect(env.FACTOREE_GIT_AUTHOR_EMAIL).toBe("factoree@users.noreply.github.com");
+  });
+
+  it("rejects a GitHub API base URL that is not a URL", () => {
+    expect(() => loadEnv({ ...base, GITHUB_API_BASE_URL: "not-a-url" })).toThrow();
+  });
+
   it("defaults the evidence storage to the filesystem adapter", () => {
     const env = loadEnv(base);
     expect(env.EVIDENCE_STORAGE).toBe("filesystem");
