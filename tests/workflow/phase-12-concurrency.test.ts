@@ -65,6 +65,18 @@ describe("Phase 12 — three concurrent Runs complete independently", () => {
     const packs = harness.proofPackCalls.map((entry) => entry.runId).sort();
     expect(packs).toEqual(sessions.map((session) => `run-${session}`).sort());
 
+    // SDD section 52. Every Run must use its own sandbox, not only reach its own preparation
+    // call. The workflow forwards `preparedSandbox.spriteId` into the `publish` activity input,
+    // so the sprite id there is the OUTPUT the Run kept and later used, not the input it sent.
+    // The harness computes the sprite id as `sprite-${runId}` (harness.ts:421), so a cross-wired
+    // sandbox reference would show up here as a mismatched pair.
+    for (const session of sessions) {
+      const runId = `run-${session}`;
+      const publishCall = harness.publishCalls.find((entry) => entry.runId === runId);
+      expect(publishCall?.spriteId).toBe(`sprite-${runId}`);
+    }
+    expect(new Set(harness.publishCalls.map((entry) => entry.spriteId)).size).toBe(3);
+
     // No Run failed, and no Run leaked another Run's identifier into its own status trail.
     for (const session of sessions) {
       const runId = `run-${session}`;
