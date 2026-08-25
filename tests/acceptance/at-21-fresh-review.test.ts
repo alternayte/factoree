@@ -28,9 +28,10 @@ import { createFixtureRepository, commitAll, git } from "./support/fixture-repos
 /** The exact sentence the real Implementer session leaves behind, and never gives the Reviewer. */
 const IMPLEMENTER_SUMMARY = "The change is applied. Every test passes.";
 
-/** A scripted Reviewer runner. It writes a real `report.json`, exactly as a live agent session
- * would leave one, then returns a fixed session identity. `LocalProcessSandbox` uses real host
- * paths, so writing the file with `fs` is exactly what a live process leaves on disk. */
+/** A scripted Reviewer runner. It writes a real `report-1.json`, exactly as a live agent session
+ * would leave one for the first review attempt, then returns a fixed session identity.
+ * `LocalProcessSandbox` uses real host paths, so writing the file with `fs` is exactly what a
+ * live process leaves on disk. AT-21 always runs attempt 1. */
 class ScriptedReviewerRunner implements AgentRunner {
   readonly runs: AgentRunInput[] = [];
   constructor(
@@ -42,7 +43,7 @@ class ScriptedReviewerRunner implements AgentRunner {
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     this.runs.push(input);
     await mkdir(input.workingDirectory, { recursive: true });
-    await writeFile(join(input.workingDirectory, "report.json"), this.reportText, "utf8");
+    await writeFile(join(input.workingDirectory, "report-1.json"), this.reportText, "utf8");
     return {
       session: { sessionId: this.sessionId, processId: `process-${this.sessionId}`, runner: this.name },
       completed: true,

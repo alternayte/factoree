@@ -179,7 +179,10 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
 
-      const reportPath = `${reviewDirectory}/report.json`;
+      // Defect 3 fix. The report path carries the attempt number, so a stale report from an
+      // earlier attempt can never be read as this attempt's report. The prompt below and the
+      // `cat` call at step 11 both read this one value.
+      const reportPath = `${reviewDirectory}/report-${input.attempt}.json`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -299,6 +302,30 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         },
         idempotencyKey: `run:${input.runId}:reviewer:${input.attempt}`,
       });
+
+      // Defect 4 fix. A session that did not complete, or that was cancelled, proves nothing.
+      // A cancel here is the underlying runner reporting that the live Reviewer session stopped
+      // early. `OpenCodeRunner` returns `completed: false` on a timeout. Either way, a report
+      // file can still exist on disk from a partial write, and it must never decide the Run. A
+      // human stop reaches this same code path, because the activity here handles cancellation
+      // itself and returns a normal result rather than throwing, but the workflow already checks
+      // `stopRequested` before it reads `reportUsable`, and it takes the stop path first, so this
+      // unusable-report result never surfaces as `REVIEW_UNAVAILABLE` on an ordinary human stop.
+      if (!sessionResult.completed || sessionResult.cancelled) {
+        return {
+          passed: false,
+          verdict: "fail",
+          findingCount: 0,
+          blockingCount: 0,
+          summary: "",
+          failures: [],
+          sessionId: sessionResult.session.sessionId,
+          reportUsable: false,
+          reportProblem: sessionResult.cancelled
+            ? "The Reviewer session was cancelled."
+            : "The Reviewer session did not complete.",
+        };
+      }
 
       // Step 11. A missing or unreadable report gives `reportText = null`.
       const reportResult = await dependencies.sandbox.exec(ref, {

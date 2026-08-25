@@ -201,7 +201,9 @@ class ScriptedReviewerRunner implements AgentRunner {
     const call = this.calls;
     await mkdir(input.workingDirectory, { recursive: true });
     const text = this.reportFor(call);
-    if (text !== null) await writeFile(join(input.workingDirectory, "report.json"), text, "utf8");
+    // Defect 3. The activity reads a per-attempt report path, `report-${attempt}.json`, so the
+    // double must write there too. This double's `call` count tracks the review attempt.
+    if (text !== null) await writeFile(join(input.workingDirectory, `report-${call}.json`), text, "utf8");
     return {
       session: { sessionId: `ses_reviewer_p8_${call}`, processId: `p${call}`, runner: this.name },
       completed: true,

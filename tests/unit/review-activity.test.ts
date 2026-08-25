@@ -388,4 +388,63 @@ describe("the review activity", () => {
     expect(findings.rows.find((row) => row.findingKey === "RV-1")?.blocking).toBe(true);
     expect(findings.rows.find((row) => row.findingKey === "RV-2")?.blocking).toBe(false);
   });
+
+  // Defect 4 regression tests. A session that did not complete, or that was cancelled, must not
+  // decide the Run, even when a report file happens to exist on disk.
+
+  it("reports reportUsable false when the session did not complete, and persists no finding", async () => {
+    const runner = new FakeRunner("opencode", { completed: false });
+    const { activities, sandbox, findings } = build({ runner });
+    scriptGitAndReport(sandbox, passReport);
+
+    const result: ReviewActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.review(activityInput),
+      input,
+    );
+
+    expect(result.reportUsable).toBe(false);
+    expect(result.passed).toBe(false);
+    expect(result.reportProblem).toBe("The Reviewer session did not complete.");
+    expect(findings.rows).toHaveLength(0);
+  });
+
+  it("reports reportUsable false when the session was cancelled, and persists no finding", async () => {
+    const runner = new FakeRunner("opencode", { cancelled: true });
+    const { activities, sandbox, findings } = build({ runner });
+    scriptGitAndReport(sandbox, passReport);
+
+    const result: ReviewActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.review(activityInput),
+      input,
+    );
+
+    expect(result.reportUsable).toBe(false);
+    expect(result.passed).toBe(false);
+    expect(result.reportProblem).toBe("The Reviewer session was cancelled.");
+    expect(findings.rows).toHaveLength(0);
+  });
+
+  // Defect 3 regression test. The report path carries the attempt number, so attempt 2 must
+  // never read the report attempt 1 left behind.
+
+  it("does not read attempt 1's report on attempt 2", async () => {
+    const { activities, sandbox } = build();
+    sandbox.scriptExec(/--name-only/, { exitCode: 0, stdout: "src/foo.ts" });
+    sandbox.scriptExec(/diff --cached [0-9a-f]{40}$/, {
+      exitCode: 0,
+      stdout: "diff --git a/src/foo.ts b/src/foo.ts\n+changed\n",
+    });
+    // Attempt 1's report is present on disk, exactly as an earlier attempt would leave it.
+    sandbox.scriptExec(/^cat .*report-1\.json/, { exitCode: 0, stdout: passReport });
+    // Attempt 2's fresh Reviewer session wrote nothing.
+    sandbox.scriptExec(/^cat .*report-2\.json/, { exitCode: 1, stdout: "", stderr: "no such file" });
+
+    const result: ReviewActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.review(activityInput),
+      { ...input, attempt: 2 },
+    );
+
+    expect(result.reportUsable).toBe(false);
+    expect(result.reportProblem).toBe("The Reviewer wrote no report.");
+  });
 });

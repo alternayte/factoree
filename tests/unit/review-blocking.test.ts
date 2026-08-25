@@ -219,7 +219,6 @@ describe("decideReview", () => {
 
   it("blocks a finding whose evidence wraps the path in backticks", () => {
     const evidence = "`src/auth.ts:84`";
-    expect(evidence).toBe("`src/auth.ts:84`");
     const decision = decideReview({
       report: report([finding({ evidence })]),
       contract,
@@ -230,7 +229,6 @@ describe("decideReview", () => {
 
   it("blocks a finding whose evidence wraps the path in quotation marks", () => {
     const evidence = '"src/auth.ts:84"';
-    expect(evidence).toBe('"src/auth.ts:84"');
     const decision = decideReview({
       report: report([finding({ evidence })]),
       contract,
@@ -259,7 +257,6 @@ describe("decideReview", () => {
 
   it("does not block a finding whose evidence wraps an unrelated path in backticks", () => {
     const evidence = "`src/other.ts:12`";
-    expect(evidence).toBe("`src/other.ts:12`");
     const decision = decideReview({
       report: report([finding({ evidence })]),
       contract,
@@ -267,5 +264,71 @@ describe("decideReview", () => {
     });
     expect(decision.passed).toBe(true);
     expect(decision.nonBlocking[0]?.reason).toContain("changed");
+  });
+
+  // Defect 1 regression tests. A trailing full stop after a `path:line` location, and a
+  // trailing exclamation mark, must not stop the gate from finding the changed file.
+
+  it("blocks a finding whose evidence sentence ends right after a path:line location", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "The handler returns 200 at src/auth.ts:84." })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose evidence ends a path:line location with an exclamation mark", () => {
+    const decision = decideReview({
+      report: report([finding({ evidence: "src/auth.ts:84!" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  // Defect 2 regression tests. A requirement can carry a trailing full stop, or an explanation
+  // after the identifier, and it must still resolve to the assertion it names.
+
+  it("blocks a finding whose requirement carries a trailing full stop", () => {
+    const decision = decideReview({
+      report: report([finding({ requirement: "VAL-API-001." })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("blocks a finding whose requirement carries the identifier and an explanation", () => {
+    const decision = decideReview({
+      report: report([
+        finding({
+          requirement: "VAL-API-001: the endpoint saves the name for every caller",
+        }),
+      ]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(false);
+  });
+
+  it("does not block a finding whose requirement is a longer identifier that shares a prefix", () => {
+    const decision = decideReview({
+      report: report([finding({ requirement: "VAL-API-0011" })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(true);
+    expect(decision.nonBlocking[0]?.reason).toContain("names no assertion");
+  });
+
+  it("does not block a finding whose requirement carries a trailing full stop but names no assertion", () => {
+    const decision = decideReview({
+      report: report([finding({ requirement: "VAL-NOPE-001." })]),
+      contract,
+      changedFiles,
+    });
+    expect(decision.passed).toBe(true);
+    expect(decision.nonBlocking[0]?.reason).toContain("names no assertion");
   });
 });

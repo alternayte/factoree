@@ -39,15 +39,22 @@ export interface ReviewDecision {
  * Reads the file part of one token. A Reviewer can wrap a path in backticks, in quotation
  * marks, or in brackets, and can end a sentence directly after it. This function removes that
  * punctuation, then removes a trailing `:84`, `:80-90`, or `:84:12` location, then removes a
- * trailing full stop and a leading `./`. The gate must not fail open: a finding that really
- * names a changed file must block.
+ * trailing full stop, exclamation mark, or question mark, and a leading `./`. The gate must not
+ * fail open: a finding that really names a changed file must block.
+ *
+ * A trailing sentence mark is removed twice, once before the location strip and once after.
+ * A sentence can end right after the file name, as in `src/auth.ts.`, in which case the mark
+ * sits after the location and only the second removal reaches it. A sentence can also end right
+ * after the location, as in `src/auth.ts:84.`, in which case the mark sits after the digits and
+ * blocks the location pattern from matching unless the first removal runs before it.
  */
 const stripLocation = (token: string): string =>
   token
     .replace(/^[`'"([{<*]+/, "")
+    .replace(/[.!?]+$/, "")
     .replace(/[`'")\];}>*,;:]+$/, "")
     .replace(/(:\d+(?:-\d+)?){1,2}$/, "")
-    .replace(/\.+$/, "")
+    .replace(/[.!?]+$/, "")
     .replace(/^\.\//, "");
 
 /**
@@ -78,13 +85,25 @@ const namesChangedFile = (evidence: string, changed: Set<string>): boolean => {
   return false;
 };
 
+/**
+ * Reads the assertion identifier a requirement names. A Reviewer can follow the identifier with
+ * a trailing full stop, or with a colon and an explanation, so this function takes the first
+ * whitespace token and removes trailing punctuation from it. It never removes a character from
+ * inside the identifier, so `VAL-API-0011` stays `VAL-API-0011` and cannot match `VAL-API-001`:
+ * the comparison in `requirementIsResolvable` is against the whole normalized identifier, never
+ * a prefix of it.
+ */
+const requirementIdentifierOf = (requirement: string): string =>
+  (requirement.trim().split(/\s/)[0] ?? "").replace(/[.,;:!?'")\]}>`]+$/, "");
+
 const requirementIsResolvable = (requirement: string, contract: ValidationContract): boolean => {
   const text = requirement.trim();
   // Controller decision 4. A Reviewer that invents an assertion identifier names no mandatory
   // requirement. Any other text names a repository rule or a constraint, and Factoree cannot
   // enumerate those deterministically.
   if (!text.startsWith("VAL-")) return true;
-  return contract.assertions.some((assertion) => assertion.id === text);
+  const identifier = requirementIdentifierOf(text);
+  return contract.assertions.some((assertion) => assertion.id === identifier);
 };
 
 const decideFinding = (
