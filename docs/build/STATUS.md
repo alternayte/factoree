@@ -15,7 +15,7 @@
 ## Git
 
 - Branch: `main`
-- Phase 10 range: `d65b8a2..4c4b965`, 10 commits on `phase-10-proof-pack`, then the no-fast-forward merge.
+- Phase 10 range: `d65b8a2..ac0fd7f`, 11 commits on `phase-10-proof-pack`, then the no-fast-forward merge `432eac3`.
 - The repository has no remote. Each phase merges into local `main` with a no-fast-forward commit.
 
 ## Phase 10 verification
