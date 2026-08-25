@@ -104,6 +104,11 @@ export interface UserValidateActivityOutput {
   failures: string[];
   /** AT-17. The runner session identifier of this validator pass. */
   sessionId: string;
+  /**
+   * SDD section 47. The exposed preview base URL of this pass, or null when the pass started no
+   * preview. The Proof Pack names it. It is reachable only while the sandbox lives.
+   */
+  previewUrl: string | null;
 }
 
 /** The interval between two heartbeats. See `agent.activities.ts` for the same rule. */
@@ -543,6 +548,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         summary: outcome.summary,
         failures: outcome.failures,
         sessionId: sessionResult.session.sessionId,
+        previewUrl: previewBaseUrl,
       };
     } finally {
       metrics.validationDuration.observe(labels, (Date.now() - started) / 1000);

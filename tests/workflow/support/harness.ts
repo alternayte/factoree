@@ -530,6 +530,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         summary: "Every user validation assertion passed.",
         failures: [],
         sessionId: "ses_fake_validator",
+        previewUrl: null,
       };
     },
     review: async (activityInput: ReviewActivityInput): Promise<ReviewActivityOutput> => {
