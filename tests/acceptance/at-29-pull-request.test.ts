@@ -17,13 +17,13 @@ import {
   publishToBranch as realPublishToBranch,
   type TrustedCheckoutInput,
 } from "~/domain/publishing/trusted-checkout.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxRef } from "~/domain/runs/sandbox.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { createBareRemote, type BareRemote } from "./support/bare-remote.js";
-import { installCoreutilsBase64, type Base64Shim } from "./support/coreutils-base64.js";
 import { startGitHubFixtureApi, type GitHubFixtureApi } from "./support/github-fixture-api.js";
 
 const TOKEN = "ghp_at29tokenvalue0123456789abcdef";
@@ -89,13 +89,11 @@ let input: PublishActivityInput;
 let first: PublishActivityOutput;
 let second: PublishActivityOutput;
 let branch: string;
-
-let shim: Base64Shim;
+let logLines: string[];
 
 const environment = new MockActivityEnvironment();
 
 beforeAll(async () => {
-  shim = installCoreutilsBase64();
   remote = await createBareRemote({
     files: { "README.md": "base\n", "target.txt": "original\n" },
   });
@@ -123,7 +121,7 @@ beforeAll(async () => {
   expect(clone.stdout).toBe("OK");
 
   const redactor = new Redactor([]);
-  const lines: string[] = [];
+  logLines = [];
   seam = localCloneUrl(remote);
   runs = memoryRuns();
   const activities = createPublishingActivities({
@@ -134,7 +132,7 @@ beforeAll(async () => {
     repositoryReader: forbiddenRepositoryReader(),
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
     gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
-    logger: createLogger({ level: "debug", redactor, sink: (line) => lines.push(line) }),
+    logger: createLogger({ level: "debug", redactor, sink: (line) => logLines.push(line) }),
     publishToBranch: seam,
   });
 
@@ -174,7 +172,6 @@ afterAll(async () => {
   await sandbox.destroy(ref);
   await rm(sandboxRoot, { recursive: true, force: true });
   await remote.destroy();
-  shim.remove();
 });
 
 describe("AT-29: the publication opens exactly one evidence-bearing pull request", () => {
@@ -229,5 +226,50 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
     });
     expect(sandboxTarget.stdout).toBe(CHANGED_CONTENT);
     expect(runs.publications[0]?.commitSha).toBe(first.commitSha);
+  });
+
+  it("keeps the GitHub write credential out of every log line (SDD section 60)", () => {
+    expect(logLines.length).toBeGreaterThan(0);
+    expect(logLines.some((line) => line.includes(TOKEN))).toBe(false);
+  });
+
+  it("refuses a repository base URL whose scheme is not https and reaches no remote", async () => {
+    // A `git clone` of an `ext::` URL runs a command on the control plane. The scheme gate of
+    // the publish activity is the only defence, so a hostile scheme must stop the whole Run.
+    const hostileApi = await startGitHubFixtureApi();
+    const attempted: string[] = [];
+    const redactor = new Redactor([]);
+    const runId = "at29-hostile-scheme";
+    const activities = createPublishingActivities({
+      sandbox,
+      secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+      redactor,
+      runs: memoryRuns(),
+      repositoryReader: forbiddenRepositoryReader(),
+      pullRequests: (token: string) =>
+        new GitHubPullRequests({ apiBaseUrl: hostileApi.baseUrl, token }),
+      gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
+      logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
+      publishToBranch: (value: TrustedCheckoutInput) => {
+        attempted.push(value.cloneUrl);
+        return realPublishToBranch({ ...value, cloneUrl: remote.cloneUrl });
+      },
+    });
+
+    try {
+      await expect(
+        environment.run(
+          (value: PublishActivityInput) => activities.publish(value),
+          { ...input, runId, repositoryBaseUrl: "ext::sh -c touch% /tmp/pwned" },
+        ),
+      ).rejects.toBeInstanceOf(RunConfigurationError);
+
+      expect(attempted).toEqual([]);
+      expect(hostileApi.created).toEqual([]);
+      expect(hostileApi.lookups).toEqual([]);
+      expect(remote.refSha(publishBranchName(runId))).toBeNull();
+    } finally {
+      await hostileApi.stop();
+    }
   });
 });

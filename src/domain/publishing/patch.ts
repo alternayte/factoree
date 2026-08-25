@@ -156,7 +156,12 @@ export const capturePatch = async (
     );
   }
 
-  const encoded = await dependencies.sandbox.exec(input.ref, { file: "base64", args: [patchPath] });
+  // The command reads the file through standard input. The GNU form and the BSD form both accept
+  // that, so a host with either coreutils runs the same capture.
+  const encoded = await dependencies.sandbox.exec(input.ref, {
+    file: "sh",
+    args: ["-c", 'base64 < "$0"', patchPath],
+  });
   if (encoded.exitCode !== 0) {
     throw new PatchError(
       `the patch could not be read with exit code ${encoded.exitCode}: ` +

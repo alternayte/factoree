@@ -37,7 +37,7 @@ describe("capturePatch", () => {
     const patch = "diff --git a/src/a.ts b/src/a.ts\n";
     const { sandbox, calls } = stubSandbox((command) => {
       if (command.args.includes("--name-only")) return { stdout: "src/a.ts\n" };
-      if (command.file === "base64") return { stdout: Buffer.from(patch).toString("base64") };
+      if (command.args.includes('base64 < "$0"')) return { stdout: Buffer.from(patch).toString("base64") };
       if (command.args.includes("write-tree")) return { stdout: `${"b".repeat(40)}\n` };
       return { stdout: "" };
     });

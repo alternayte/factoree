@@ -26,7 +26,6 @@ import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { createBareRemote, type BareRemote } from "./support/bare-remote.js";
-import { installCoreutilsBase64, type Base64Shim } from "./support/coreutils-base64.js";
 import { startGitHubFixtureApi, type GitHubFixtureApi } from "./support/github-fixture-api.js";
 
 /**
@@ -54,8 +53,6 @@ let treeSha: string;
 
 const redactor = new Redactor([]);
 
-let shim: Base64Shim;
-
 /** Every Factoree branch the bare remote holds. The exit condition needs it. */
 const factoreeBranches = (): string[] =>
   remote.listRefs().filter((name) => name.startsWith("refs/heads/factoree/"));
@@ -78,7 +75,6 @@ const trustedInput = (
 });
 
 beforeAll(async () => {
-  shim = installCoreutilsBase64();
   remote = await createBareRemote({
     files: { "README.md": "base\n", "target.txt": "original\n" },
   });
@@ -115,7 +111,56 @@ afterAll(async () => {
   await sandbox.destroy(ref);
   await rm(sandboxRoot, { recursive: true, force: true });
   await remote.destroy();
-  shim.remove();
+});
+
+/**
+ * Builds the real publishing activities against one fixture API and the real bare remote. The
+ * `publish` activity refuses a clone URL that is not `https:`, so the seam swaps the URL only and
+ * then calls the real `publishToBranch`. It records every attempt, so a test proves that no
+ * trusted checkout started.
+ */
+const buildActivities = (api: GitHubFixtureApi) => {
+  const attempted: string[] = [];
+  const activities = createPublishingActivities({
+    sandbox,
+    secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+    redactor,
+    runs: { setPublication: () => Promise.resolve() } as unknown as RunRepository,
+    repositoryReader: {
+      resolveRef: (): Promise<string> =>
+        Promise.reject(new Error("the publish activity must not read the repository")),
+      listTree: () => Promise.resolve({ entries: [], truncated: false }),
+      readBlob: () => Promise.resolve(null),
+    },
+    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
+    gitAuthor: AUTHOR,
+    logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
+    publishToBranch: (value: TrustedCheckoutInput) => {
+      attempted.push(value.branch);
+      return publishToBranch({ ...value, cloneUrl: remote.cloneUrl });
+    },
+  });
+  return { activities, attempted };
+};
+
+/** The `publish` activity input of one Run of the fixture Project. */
+const publishInputFor = (runId: string, reviewedChangedFiles: string[]): PublishActivityInput => ({
+  runId,
+  tenantId: "tenant-1",
+  projectId: "project-1",
+  spriteId: ref.id,
+  adapter: ref.adapter,
+  workspacePath: ref.workspacePath,
+  primaryPath,
+  repositorySlug: "acme/app",
+  repositoryBaseUrl: "https://github.test",
+  baseBranch: "main",
+  baseSha: remote.baseSha,
+  reviewedChangedFiles,
+  workItemTitle: "Change the target file",
+  workItemUrl: null,
+  verificationSummary: "every deterministic check passed",
+  repairCount: 0,
 });
 
 describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {
@@ -138,6 +183,7 @@ describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {
   it("case 2: a patch tampered after the hash was taken reaches no remote", async () => {
     const branch = "factoree/run-tampered-patch";
     const before = publishDirectories().length;
+    const branchesBefore = factoreeBranches();
 
     // One byte of an added line changes. The patch still applies, so the refusal comes from the
     // hash gate and from nothing else.
@@ -155,50 +201,70 @@ describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {
     ).rejects.toBeInstanceOf(PatchHashMismatchError);
 
     expect(remote.refSha(branch)).toBeNull();
-    expect(factoreeBranches()).toEqual(["refs/heads/factoree/run-honest"]);
+    expect(factoreeBranches()).toEqual(branchesBefore);
     expect(publishDirectories().length).toBe(before);
   });
 
   it("case 3: a verified hash that no patch produces reaches no remote", async () => {
     const branch = "factoree/run-tampered-hash";
     const before = publishDirectories().length;
+    const branchesBefore = factoreeBranches();
 
     await expect(
       publishToBranch(trustedInput({ branch, verifiedPatchSha256: "f".repeat(64) })),
     ).rejects.toBeInstanceOf(PatchHashMismatchError);
 
     expect(remote.refSha(branch)).toBeNull();
-    expect(factoreeBranches()).toEqual(["refs/heads/factoree/run-honest"]);
+    expect(factoreeBranches()).toEqual(branchesBefore);
     expect(publishDirectories().length).toBe(before);
   });
 
   it("case 4: a base that moved after the Run started publishes nothing", async () => {
+    const branchesBefore = factoreeBranches();
+    const api = await startGitHubFixtureApi();
+    const { activities, attempted } = buildActivities(api);
     const reader = new GitRepositoryReader();
+    const runId = "phase09-stale";
+
     try {
-      const fresh = await checkBase(reader, {
+      const before = await checkBase(reader, {
         url: remote.cloneUrl,
         branch: "main",
         runBaseSha: remote.baseSha,
       });
-      expect(fresh.fresh).toBe(true);
+      expect(before.fresh).toBe(true);
 
       const moved = remote.advanceHead("another author changed the branch\n");
       expect(moved).not.toBe(remote.baseSha);
 
-      const stale = await checkBase(reader, {
+      const after = await checkBase(reader, {
         url: remote.cloneUrl,
         branch: "main",
         runBaseSha: remote.baseSha,
       });
-      expect(stale.fresh).toBe(false);
-      expect(stale.currentTargetSha).toBe(moved);
+      expect(after.currentTargetSha).toBe(moved);
+
+      // The publication rule of `agent-run.workflow.ts`. SDD section 45 forbids a rebase, so the
+      // Run publishes only while the base is fresh. The real activity runs when the rule allows
+      // it, so a `checkBase` that wrongly reports freshness pushes a branch and fails this case.
+      if (after.fresh) {
+        await new MockActivityEnvironment().run(
+          (value: PublishActivityInput) => activities.publish(value),
+          publishInputFor(runId, ["added.txt", "target.txt"]),
+        );
+      }
+
+      // The remote assertions come first. A `checkBase` that wrongly reports freshness lets the
+      // real publication run, so these three fail before the freshness assertion below.
+      expect(attempted).toEqual([]);
+      expect(api.created).toEqual([]);
+      expect(remote.refSha(publishBranchName(runId))).toBeNull();
+      expect(factoreeBranches()).toEqual(branchesBefore);
+      expect(after.fresh).toBe(false);
     } finally {
       reader.close();
+      await api.stop();
     }
-
-    // SDD section 45. Version 1 never rebases, so the workflow publishes nothing. The remote
-    // still holds the one branch case 1 pushed.
-    expect(factoreeBranches()).toEqual(["refs/heads/factoree/run-honest"]);
   });
 
   it("case 5: a patch that names a file the review never saw is refused before any remote call", async () => {
@@ -206,63 +272,25 @@ describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {
     expect(() => assertSameChangedFiles(["target.txt"], changedFiles)).toThrow(PatchError);
 
     // The real `publish` activity refuses it too, and it makes no remote call.
-    const api: GitHubFixtureApi = await startGitHubFixtureApi();
-    const attempted: string[] = [];
-    const runs = {
-      setPublication: (): Promise<void> => Promise.resolve(),
-    } as unknown as RunRepository;
-    const activities = createPublishingActivities({
-      sandbox,
-      secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
-      redactor,
-      runs,
-      repositoryReader: {
-        resolveRef: (): Promise<string> =>
-          Promise.reject(new Error("the publish activity must not read the repository")),
-        listTree: () => Promise.resolve({ entries: [], truncated: false }),
-        readBlob: () => Promise.resolve(null),
-      },
-      pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
-      gitAuthor: AUTHOR,
-      logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
-      publishToBranch: (value: TrustedCheckoutInput) => {
-        attempted.push(value.branch);
-        return publishToBranch({ ...value, cloneUrl: remote.cloneUrl });
-      },
-    });
-
+    const branchesBefore = factoreeBranches();
+    const api = await startGitHubFixtureApi();
+    const { activities, attempted } = buildActivities(api);
     const runId = "phase09-disagreement";
-    const input: PublishActivityInput = {
-      runId,
-      tenantId: "tenant-1",
-      projectId: "project-1",
-      spriteId: ref.id,
-      adapter: ref.adapter,
-      workspacePath: ref.workspacePath,
-      primaryPath,
-      repositorySlug: "acme/app",
-      repositoryBaseUrl: "https://github.test",
-      baseBranch: "main",
-      baseSha: remote.baseSha,
-      // The review examined one file only. The patch names two.
-      reviewedChangedFiles: ["target.txt"],
-      workItemTitle: "Change the target file",
-      workItemUrl: null,
-      verificationSummary: "every deterministic check passed",
-      repairCount: 0,
-    };
 
     try {
-      const environment = new MockActivityEnvironment();
       await expect(
-        environment.run((value: PublishActivityInput) => activities.publish(value), input),
+        new MockActivityEnvironment().run(
+          (value: PublishActivityInput) => activities.publish(value),
+          // The review examined one file only. The patch names two.
+          publishInputFor(runId, ["target.txt"]),
+        ),
       ).rejects.toThrow(/does not name the files the independent review examined/);
 
       expect(attempted).toEqual([]);
       expect(api.created).toEqual([]);
       expect(api.lookups).toEqual([]);
       expect(remote.refSha(publishBranchName(runId))).toBeNull();
-      expect(factoreeBranches()).toEqual(["refs/heads/factoree/run-honest"]);
+      expect(factoreeBranches()).toEqual(branchesBefore);
     } finally {
       await api.stop();
     }

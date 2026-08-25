@@ -34,7 +34,7 @@ const stubSandbox = (options: { changedFiles: string[]; patchText: string }): Sa
     let stdout = "";
     if (line.includes("--name-only")) stdout = options.changedFiles.join("\n");
     else if (line.includes("write-tree")) stdout = `${"b".repeat(40)}\n`;
-    else if (command.file === "base64") stdout = Buffer.from(options.patchText).toString("base64");
+    else if (command.args.includes('base64 < "$0"')) stdout = Buffer.from(options.patchText).toString("base64");
     return Promise.resolve({ exitCode: 0, stdout, stderr: "", timedOut: false, durationMs: 1 });
   };
   return {
