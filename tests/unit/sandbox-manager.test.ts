@@ -4,6 +4,7 @@ import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
+import type { Logger, LogFields } from "~/telemetry/logger.js";
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
@@ -45,6 +46,30 @@ const sandboxWithConfig = (
       return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: "", stderr: "" };
+  };
+  return sandbox;
+};
+
+/**
+ * Wraps the `onExec` of a fake sandbox, so `ls` answers a directory listing and `cat` answers a
+ * `SKILL.md`. Every other command falls through to the wrapped hook.
+ */
+const withSkillFiles = (
+  sandbox: FakeSandbox,
+  listings: Record<string, string[]>,
+  files: Record<string, string>,
+): FakeSandbox => {
+  const base = sandbox.onExec;
+  sandbox.onExec = (command) => {
+    const last = command.args[command.args.length - 1] ?? "";
+    if (command.file === "ls") {
+      const entries = listings[last];
+      if (entries === undefined) return { exitCode: 1, stdout: "", stderr: "no such directory" };
+      return { exitCode: 0, stdout: `${entries.join("\n")}\n`, stderr: "" };
+    }
+    const body = files[last];
+    if (command.file === "head" && body !== undefined) return { exitCode: 0, stdout: body, stderr: "" };
+    return base === null ? { exitCode: 0, stdout: "", stderr: "" } : base(command);
   };
   return sandbox;
 };
@@ -330,5 +355,59 @@ describe("repository configuration and staged network policy", () => {
       { allowedDomains: ["git.test", "other.test", "registry.npmjs.org"] },
       { allowedDomains: ["registry.npmjs.org"] },
     ]);
+  });
+});
+
+describe("SandboxManager.prepare skills", () => {
+  it("returns the discovered skill lines of the primary checkout", async () => {
+    const sandbox = withSkillFiles(
+      sandboxWithConfig(DEFAULT_CONFIG_YAML),
+      { "/workspace/primary/.agents/skills": ["routes"] },
+      {
+        "/workspace/primary/.agents/skills/routes/SKILL.md":
+          "---\nname: routes\ndescription: Add a route.\n---\n",
+      },
+    );
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
+    const prepared = await manager.prepare(input);
+    expect(prepared.skills.some((line) => line.startsWith("routes — Add a route."))).toBe(true);
+  });
+
+  it("returns no skill line for a repository that defines none", async () => {
+    const sandbox = withSkillFiles(sandboxWithConfig(DEFAULT_CONFIG_YAML), {}, {});
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
+    const prepared = await manager.prepare(input);
+    expect(prepared.skills).toEqual([]);
+  });
+
+  it("checks out the organization skills repository when the Project names one", async () => {
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML);
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
+    await manager.prepare({
+      ...input,
+      organizationSkills: { url: "https://git.acme.example/acme/skills.git", ref: "main" },
+    });
+    expect(sandbox.commands.some((command) => command.args.includes("/workspace/organization-skills"))).toBe(
+      true,
+    );
+    // The first policy must already allow the skills host, because the checkout runs under it.
+    expect(sandbox.networkPolicies[0]?.allowedDomains).toContain("git.acme.example");
+  });
+
+  it("reports a failed skill directory read at debug level, through the logger given to SandboxManager", async () => {
+    const events: { level: string; message: string; fields: LogFields | undefined }[] = [];
+    const recordingLogger: Logger = {
+      debug: (message, fields) => events.push({ level: "debug", message, fields }),
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      child: () => recordingLogger,
+    };
+    // No listing is scripted for the skill directory, so `ls` answers a non-zero exit code and
+    // the read counts as an unexpected failure worth one debug line.
+    const sandbox = withSkillFiles(sandboxWithConfig(DEFAULT_CONFIG_YAML), {}, {});
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true, logger: recordingLogger });
+    await manager.prepare(input);
+    expect(events.some((entry) => entry.message === "skill directory listing failed")).toBe(true);
   });
 });

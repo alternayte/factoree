@@ -215,6 +215,41 @@ describe("administration API", () => {
     });
     expect(stolen.statusCode).toBe(404);
   });
+
+  it("accepts and returns the organization skills repository", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: "ws-skills",
+        key: "skills",
+        name: "Skills",
+        primaryRepository: "acme/app",
+        organizationSkillsRepository: "acme/skills",
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<{ organizationSkillsRepository: string }>().organizationSkillsRepository).toBe(
+      "acme/skills",
+    );
+  });
+
+  it("refuses an organization skills repository that is not an owner and repository slug", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: "ws-bad-skills",
+        key: "bad-skills",
+        name: "Bad skills",
+        primaryRepository: "acme/app",
+        organizationSkillsRepository: "not-a-slug",
+      },
+    });
+    expect(created.statusCode).toBe(400);
+  });
 });
 
 describe("the context source endpoints of SDD section 59", () => {

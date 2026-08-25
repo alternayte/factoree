@@ -166,6 +166,23 @@ export const checkoutReferences = async (
   return references;
 };
 
+/**
+ * SDD section 16 and section 32. Checks out the organization skills repository and makes it
+ * read-only. It lives in its own directory, not under `reference/`, so it can never collide with
+ * a reference repository name, and it never appears in the reference path list of the prompt.
+ */
+export const checkoutOrganizationSkills = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec,
+): Promise<CheckedOutRepository> => {
+  const path = `${ref.workspacePath}/organization-skills`;
+  const baseSha = await clone(sandbox, ref, spec, path);
+  // SDD section 29 denies writing a repository the agent must only read. This is a file mode.
+  await run(sandbox, ref, { file: "chmod", args: ["-R", "a-w", path] });
+  return { url: spec.url, path, baseSha, readOnly: true };
+};
+
 /** The whole SDD section 32 checkout, for a caller that needs no step between the two halves. */
 export const checkoutRepositories = async (
   sandbox: Sandbox,

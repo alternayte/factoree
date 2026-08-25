@@ -1,11 +1,15 @@
 import type { CheckoutResult, RepositorySpec } from "./checkout.js";
-import { checkoutPrimary, checkoutReferences, withoutUrlCredentials } from "./checkout.js";
+import { checkoutOrganizationSkills, checkoutPrimary, checkoutReferences, withoutUrlCredentials } from "./checkout.js";
+import { renderSkillLines } from "./skill-discovery.js";
+import type { SkillRoot } from "./skill-source.js";
+import { discoverSkills } from "./skill-source.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
 import type { PreviewConfig, ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "./project-runtime-config.js";
 import { toProjectRuntimeConfig } from "./project-runtime-config.js";
 import { readRepositoryConfig, readRepositoryInstructions } from "./repository-config-source.js";
 import type { CheckpointRef, Sandbox, SandboxRef } from "./sandbox.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
+import type { Logger } from "~/telemetry/logger.js";
 
 export interface PrepareSandboxInput {
   runId: string;
@@ -16,6 +20,8 @@ export interface PrepareSandboxInput {
   defaults: ProjectDefaults;
   /** Project test secrets only. SDD section 30 forbids every other credential here. */
   environment?: Record<string, string>;
+  /** SDD section 16. The organization-wide skills repository of the Project, when it has one. */
+  organizationSkills?: RepositorySpec;
 }
 
 export interface PreparedSandbox {
@@ -30,6 +36,12 @@ export interface PreparedSandbox {
   preview: PreviewConfig | null;
   /** SDD section 34. The repository instructions found in the primary checkout. */
   repositoryInstructions: string;
+  /**
+   * SDD section 16 and section 34. The applicable skills of this Run, already rendered as prompt
+   * lines. Each line names the skill, its description, its scope, and its path. A name conflict
+   * carries its own line, so no skill is ever overwritten silently.
+   */
+  skills: string[];
 }
 
 export interface SandboxManagerOptions {
@@ -40,6 +52,11 @@ export interface SandboxManagerOptions {
    * arbitrary outbound network access, and a prompt is not a boundary.
    */
   allowUnenforcedNetwork?: boolean;
+  /**
+   * Reports an unexpected skill read failure at debug level. SDD section 16. Optional so every
+   * existing `new SandboxManager({ sandbox })` call still compiles.
+   */
+  logger?: Logger;
 }
 
 /**
@@ -87,7 +104,11 @@ export class SandboxManager {
     });
 
     try {
-      const repositoryHosts = checkoutHosts([input.primary, ...input.references]);
+      // The organization skills repository is checked out under the first policy, so its host
+      // must be allowed there.
+      const specs = [input.primary, ...input.references];
+      if (input.organizationSkills !== undefined) specs.push(input.organizationSkills);
+      const repositoryHosts = checkoutHosts(specs);
 
       // Policy one. Only the repository hosts. The file that names the real allow list does not
       // exist yet, so nothing wider may be permitted here.
@@ -136,16 +157,39 @@ export class SandboxManager {
 
       const repositoryInstructions = await readRepositoryInstructions(sandbox, ref, primary.path);
 
+      // SDD section 16. The organization skills repository is read-only, and it lives outside
+      // the `reference/` tree. It is checked out while the checkout hosts are still allowed.
+      const organizationSkills =
+        input.organizationSkills === undefined
+          ? null
+          : await checkoutOrganizationSkills(sandbox, ref, input.organizationSkills);
+
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.
       // SDD section 29.
       await sandbox.applyNetworkPolicy(ref, { allowedDomains: runtime.allowedDomains });
 
+      // SDD section 16. Discovery runs on the checkouts, in precedence order. A repository skill
+      // always precedes an organization skill of the same name. Discovery needs no egress, so it
+      // runs after the policy is narrowed.
+      const roots: SkillRoot[] = [{ scope: "repository", path: primary.path }];
+      if (organizationSkills !== null) roots.push({ scope: "organization", path: organizationSkills.path });
+      const skills = renderSkillLines(await discoverSkills(sandbox, ref, roots, this.options.logger));
+
       const baselineCheckpoint = sandbox.capabilities.supportsCheckpoints
         ? await sandbox.checkpoint(ref, "baseline")
         : null;
 
-      return { ref, checkout, baselineCheckpoint, runtime, verifyCommands, preview, repositoryInstructions };
+      return {
+        ref,
+        checkout,
+        baselineCheckpoint,
+        runtime,
+        verifyCommands,
+        preview,
+        repositoryInstructions,
+        skills,
+      };
     } catch (error) {
       // A half-prepared sandbox must not leak. Destruction is idempotent, and a destroy failure
       // must not mask the original error.

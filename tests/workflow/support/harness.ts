@@ -724,6 +724,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
     spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
     defaultAutonomy: "L2",
+    organizationSkillsRepository: null,
   };
 
   const input = (sessionId: string, maxRunMinutes = 90): AgentRunWorkflowInput => ({

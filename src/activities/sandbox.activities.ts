@@ -14,6 +14,8 @@ import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
+import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
 
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
@@ -22,6 +24,7 @@ export interface SandboxActivityDependencies {
   reaper: SpriteReaper;
   secrets: SecretStore;
   redactor: Redactor;
+  runners: AgentRunnerRegistry;
   logger: Logger;
 }
 
@@ -33,6 +36,8 @@ export interface PrepareSandboxActivityInput {
   references: RepositorySpec[];
   defaults: ProjectDefaults;
   environment: Record<string, string>;
+  /** SDD section 16. The organization skills repository of the Project, or null. */
+  organizationSkills: RepositorySpec | null;
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -50,6 +55,8 @@ export interface PrepareSandboxActivityOutput {
   /** SDD sections 15 and 37. The preview the User Validator starts. */
   preview: PreviewConfig | null;
   repositoryInstructions: string;
+  /** SDD sections 16 and 34. The applicable skills, as prompt lines. */
+  skills: string[];
 }
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
@@ -94,7 +101,21 @@ const prepare = async (
     references: input.references,
     defaults: input.defaults,
     environment: input.environment,
+    ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
   });
+
+  // SDD section 14. A runner name the repository configured must resolve to a registered
+  // adapter. This fault is a configuration fault, so the Run ends `CONFIGURATION_INVALID`.
+  try {
+    assertKnownRunners(dependencies.runners, prepared.runtime);
+  } catch (error) {
+    // The Run holds no reference to this sandbox, and a Temporal retry creates a new one. The
+    // unreferenced sandbox must go now.
+    await release(dependencies, prepared.ref.id, prepared.ref.adapter, () =>
+      dependencies.sandboxManager.release(prepared),
+    );
+    throw error;
+  }
 
   // SDD section 51. The Run keeps the sandbox reference and the retention deadline, so
   // `SpriteReaper` can delete the sandbox after the window ends. The workflow never deletes
@@ -170,6 +191,7 @@ const prepare = async (
     verifyCommands: prepared.verifyCommands,
     preview: prepared.preview,
     repositoryInstructions: prepared.repositoryInstructions,
+    skills: prepared.skills,
   };
 };
 

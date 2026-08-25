@@ -38,7 +38,7 @@ import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/pri
 import { Redactor } from "~/telemetry/redaction.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { startDatabase, seedTenantProjectAndRun } from "../integration/support/database.js";
-import { createWorkflowHarness, waitFor } from "../workflow/support/harness.js";
+import { createWorkflowHarness, hold, waitFor } from "../workflow/support/harness.js";
 import { commitAll, initRepository } from "./support/fixture-repository.js";
 import { pickPort, realHttpFetch, realProbe } from "./support/preview-fixture-helpers.js";
 import {
@@ -571,10 +571,28 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
   it("blocks the defective revision, repairs it, revalidates it, and passes the second review", async () => {
     const rig = await buildRig("exit", (call) => (call === 1 ? BLOCKING_REPORT : CLEAN_REPORT));
 
+    // The publication is held, so the stop lands while the Run sits inside the `publish`
+    // activity. This rig runs the real `review` activity, so the reviewed worktree SHA it
+    // reports is a real content hash, never the fixed value the double `publish` activity of the
+    // harness compares it with. Left to run to completion, `publish` therefore always raises
+    // PUBLICATION_FAILED, and the workflow only reads that as a human stop, not a failure, when
+    // `stopRequested` is already set at the moment `publish` returns control. Without the hold,
+    // the stop signal races the workflow to a terminal state, and whichever one lands first
+    // decides whether the Run ends CANCELLED or FAILED. The hold removes the race: the workflow
+    // is proven to be inside `publish` before the stop is signalled, so the stop always lands in
+    // time and the Run always ends CANCELLED.
+    const release = hold(rig.harness.heldPublishes, rig.runId);
+
     try {
       await runRig(rig, async (handle) => {
         await waitFor(() => rig.reviewOutputs.length === 2, "the second review of the exit Run", 120_000);
+        await waitFor(
+          () => rig.harness.publishCalls.filter((entry) => entry.runId === rig.runId).length === 1,
+          "the publication of the exit Run",
+          120_000,
+        );
         await handle.signal(stopSignal);
+        release();
         await handle.result();
       });
 

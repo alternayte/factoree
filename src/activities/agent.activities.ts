@@ -41,6 +41,8 @@ export interface ImplementActivityInput {
   requiredContext: string[];
   humanDecisions: string[];
   repositoryInstructions: string;
+  /** SDD sections 16 and 34. The applicable skills, as prompt lines. */
+  skills: string[];
   repairFindings: string[];
   stagingRead: boolean;
   timeoutMs: number;
@@ -131,7 +133,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       primaryRepositoryPath: input.primaryPath,
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,
-      skills: [],
+      skills: input.skills,
       actionPolicy,
       repairFindings: input.repairFindings,
       projectTestSecrets,

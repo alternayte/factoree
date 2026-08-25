@@ -22,6 +22,7 @@ type ProjectRow = {
   name: string;
   primaryRepository: string;
   referenceRepositories: string[];
+  organizationSkillsRepository: string | null;
   linearTeamId: string | null;
   defaultAutonomy: string;
   maxRunMinutes: number;
@@ -43,6 +44,9 @@ export class PrismaProjectRegistry implements ProjectRegistry {
         name: input.name,
         primaryRepository: input.primaryRepository,
         referenceRepositories: input.referenceRepositories ?? [],
+        ...(input.organizationSkillsRepository === undefined
+          ? {}
+          : { organizationSkillsRepository: input.organizationSkillsRepository }),
         ...(input.linearTeamId === undefined ? {} : { linearTeamId: input.linearTeamId }),
         ...(input.defaultAutonomy === undefined ? {} : { defaultAutonomy: input.defaultAutonomy }),
         ...(input.maxRunMinutes === undefined ? {} : { maxRunMinutes: input.maxRunMinutes }),
@@ -81,6 +85,9 @@ export class PrismaProjectRegistry implements ProjectRegistry {
         ...(input.name === undefined ? {} : { name: input.name }),
         ...(input.primaryRepository === undefined ? {} : { primaryRepository: input.primaryRepository }),
         ...(input.referenceRepositories === undefined ? {} : { referenceRepositories: input.referenceRepositories }),
+        ...(input.organizationSkillsRepository === undefined
+          ? {}
+          : { organizationSkillsRepository: input.organizationSkillsRepository }),
         ...(input.linearTeamId === undefined ? {} : { linearTeamId: input.linearTeamId }),
         ...(input.defaultAutonomy === undefined ? {} : { defaultAutonomy: input.defaultAutonomy }),
         ...(input.maxRunMinutes === undefined ? {} : { maxRunMinutes: input.maxRunMinutes }),

@@ -5,6 +5,8 @@ export interface ProjectRecord {
   name: string;
   primaryRepository: string;
   referenceRepositories: string[];
+  /** SDD section 16. An owner and repository slug, or null. */
+  organizationSkillsRepository: string | null;
   linearTeamId: string | null;
   defaultAutonomy: string;
   maxRunMinutes: number;
@@ -19,6 +21,7 @@ export interface CreateProjectInput {
   name: string;
   primaryRepository: string;
   referenceRepositories?: string[];
+  organizationSkillsRepository?: string | null;
   linearTeamId?: string;
   defaultAutonomy?: string;
   maxRunMinutes?: number;

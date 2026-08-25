@@ -18,6 +18,7 @@ const project = {
   name: "Demo",
   primaryRepository: "acme/demo",
   referenceRepositories: [],
+  organizationSkillsRepository: null,
   linearTeamId: "team-1",
   defaultAutonomy: "L2",
   maxRunMinutes: 90,
@@ -174,6 +175,7 @@ describe("DelegationService", () => {
       stagingRead: false,
       spriteRetentionHours: 24,
       defaultAutonomy: "L2",
+      organizationSkillsRepository: null,
     });
     expect(started.args[0]?.workItem).toMatchObject({
       title: "Fix the header",
@@ -216,5 +218,26 @@ describe("DelegationService", () => {
     // The marker was released, so a Linear redelivery of the same identifier is not a duplicate.
     const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-10");
     expect(redelivery.kind).not.toBe("duplicate");
+  });
+});
+
+describe("the delegation service and the organization skills repository", () => {
+  it("carries the organization skills repository slug into the workflow input", async () => {
+    const { service, starter } = build({
+      project: { ...project, organizationSkillsRepository: "acme/skills" },
+    });
+    await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-11");
+    const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
+    const workflowProject = started.args[0]?.project as Record<string, unknown>;
+    expect(workflowProject["organizationSkillsRepository"]).toBe("acme/skills");
+  });
+
+  it("does not start a workflow when the organization skills slug is unusable", async () => {
+    const { service, starter } = build({
+      project: { ...project, organizationSkillsRepository: "not-a-slug" },
+    });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-12");
+    expect(outcome.kind).toBe("unconfigured");
+    expect(starter.start).not.toHaveBeenCalled();
   });
 });

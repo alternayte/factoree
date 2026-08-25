@@ -10,6 +10,15 @@ import { createLogger } from "~/telemetry/logger.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import type { AgentRunner } from "~/domain/runs/agent-runner.js";
+
+const stubRunner = (name: string): AgentRunner => ({
+  name,
+  run: () => Promise.reject(new Error("not used")),
+  resume: () => Promise.reject(new Error("not used")),
+  cancel: () => Promise.resolve(),
+});
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
@@ -59,6 +68,7 @@ const build = (
   superseded: SupersededSandbox,
   secretValues: Record<string, string> = {},
   sandbox: FakeSandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML),
+  runners: AgentRunnerRegistry = new AgentRunnerRegistry([stubRunner("opencode"), stubRunner("claude")]),
 ) => {
   const runs = {
     setSandbox: vi.fn().mockResolvedValue(superseded),
@@ -96,6 +106,7 @@ const build = (
     reaper: new SpriteReaper({ sandboxes: { fake: sandbox }, runs }),
     secrets: new MemorySecretStore(secretValues),
     redactor,
+    runners,
     logger: createLogger({ level: "error", redactor, sink: () => undefined }),
   });
   return { activities, sandbox, runs, redactor };
@@ -109,6 +120,7 @@ const input = {
   references: [],
   defaults: DEFAULT_PROJECT_DEFAULTS,
   environment: {},
+  organizationSkills: null,
 };
 
 describe("the prepareSandbox activity", () => {
@@ -136,6 +148,17 @@ describe("the prepareSandbox activity", () => {
     await activities.prepareSandbox(input);
     expect(sandbox.destroyed).toEqual([]);
     expect(await supersededCount()).toBe(before);
+  });
+
+  it("fails a Run whose configuration names an unknown runner, and releases the sandbox", async () => {
+    const { activities, sandbox } = build(
+      { spriteId: null, adapter: null },
+      {},
+      undefined,
+      new AgentRunnerRegistry([]),
+    );
+    await expect(activities.prepareSandbox(input)).rejects.toBeInstanceOf(RunConfigurationError);
+    expect(sandbox.destroyed.length).toBe(1);
   });
 });
 
@@ -209,3 +232,31 @@ describe("the prepareSandbox activity and the preview configuration", () => {
   });
 });
 
+describe("the prepareSandbox activity and skills", () => {
+  it("returns the skill lines the manager discovered", async () => {
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML);
+    const base = sandbox.onExec;
+    sandbox.onExec = (command) => {
+      const last = command.args[command.args.length - 1] ?? "";
+      if (command.file === "ls") {
+        if (last === "/workspace/primary/.agents/skills") {
+          return { exitCode: 0, stdout: "routes\n", stderr: "" };
+        }
+        return { exitCode: 1, stdout: "", stderr: "no such directory" };
+      }
+      if (command.file === "head" && last === "/workspace/primary/.agents/skills/routes/SKILL.md") {
+        return { exitCode: 0, stdout: "---\nname: routes\ndescription: Add a route.\n---\n", stderr: "" };
+      }
+      return base === null ? { exitCode: 0, stdout: "", stderr: "" } : base(command);
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
+    const output = await activities.prepareSandbox(input);
+    expect(output.skills.some((line) => line.startsWith("routes — Add a route."))).toBe(true);
+  });
+
+  it("returns no skill line when the checkout defines none", async () => {
+    const { activities } = build({ spriteId: null, adapter: null });
+    const output = await activities.prepareSandbox(input);
+    expect(output.skills).toEqual([]);
+  });
+});

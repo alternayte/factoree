@@ -120,6 +120,7 @@ export class DelegationService {
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
       spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
       defaultAutonomy: project.defaultAutonomy,
+      organizationSkillsRepository: project.organizationSkillsRepository,
     };
 
     // An unusable slug must stop the Run here, and not inside the workflow, where the operator
@@ -128,6 +129,9 @@ export class DelegationService {
       assertRepositorySlug(project.primaryRepository);
       for (const slug of project.referenceRepositories) {
         assertRepositorySlug(slug);
+      }
+      if (project.organizationSkillsRepository !== null) {
+        assertRepositorySlug(project.organizationSkillsRepository);
       }
     } catch (error) {
       await this.dependencies.webhookLog.remove(deliveryId);
