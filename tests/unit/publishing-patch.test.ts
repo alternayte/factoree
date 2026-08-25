@@ -86,6 +86,22 @@ describe("capturePatch", () => {
     expect(result.changedFiles).toEqual([]);
     expect(result.byteLength).toBe(0);
   });
+
+  it("records the git version of the sandbox that captured the patch (SDD section 46)", async () => {
+    // The hash assertion of SDD section 46 compares two diff texts. Two git binaries can
+    // produce two texts from one tree. The recorded version turns a silent mismatch into a
+    // readable cause.
+    const { sandbox } = stubSandbox((command) => {
+      if (command.args.includes("write-tree")) return { stdout: `${"d".repeat(40)}\n` };
+      if (command.args.includes("--version")) return { stdout: "git version 2.51.0\n" };
+      return { stdout: "" };
+    });
+    const patch = await capturePatch(
+      { sandbox, redactor: new Redactor([]) },
+      { ref: REF, primaryPath: "/w/primary", baseSha: BASE },
+    );
+    expect(patch.gitVersion).toMatch(/^git version /);
+  });
 });
 
 describe("assertSameChangedFiles", () => {

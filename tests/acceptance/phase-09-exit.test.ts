@@ -68,6 +68,7 @@ const trustedInput = (
   baseSha: remote.baseSha,
   patchBase64,
   verifiedPatchSha256: patchSha256,
+  verifiedGitVersion: "git version 0.0.0-test",
   commitMessage: "Factoree change\n",
   commitTimestamp: "1970-01-01T00:00:00Z",
   authorName: AUTHOR.name,

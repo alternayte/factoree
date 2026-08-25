@@ -67,6 +67,12 @@ export interface VerifiedPatch {
   /** The git tree object of the staged worktree. Controller decision 12. */
   treeSha: string;
   byteLength: number;
+  /**
+   * The git version of the sandbox that captured this patch. SDD section 46 compares the
+   * captured diff text with the diff text of the trusted checkout. Two git versions can
+   * produce two texts from one tree, and the mismatch message must be able to say so.
+   */
+  gitVersion: string;
 }
 
 export const sha256OfBase64 = (base64: string): string =>
@@ -134,6 +140,10 @@ export const capturePatch = async (
   // patch hash, and it never replaces the SDD section 46 assertion.
   const treeSha = (await git(dependencies, input, [...at, "write-tree"])).trim();
 
+  // Records the git version of the sandbox, beside the tree object. SDD section 46 compares two
+  // diff texts, and a mismatch message needs the version of each git binary that produced one.
+  const gitVersion = (await git(dependencies, input, [...at, "--version"])).trim();
+
   // Controller decision 4. `Sandbox.exec` decodes stdout as UTF-8, so a binary hunk cannot
   // travel through stdout. The patch goes to a file, and `base64` carries it back intact.
   const patchPath = `${input.ref.workspacePath}/patch.diff`;
@@ -176,6 +186,7 @@ export const capturePatch = async (
     changedFiles,
     treeSha,
     byteLength: Buffer.from(patchBase64, "base64").byteLength,
+    gitVersion,
   };
 };
 

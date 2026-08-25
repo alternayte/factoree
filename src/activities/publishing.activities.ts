@@ -369,6 +369,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         branch,
         patchBase64: patch.patchBase64,
         verifiedPatchSha256: patch.patchSha256,
+        verifiedGitVersion: patch.gitVersion,
         commitMessage,
         // AT-35. The commit must be deterministic. A retry that repeats the push must produce
         // the identical commit SHA, so the second push is a fast-forward no-op. A wall clock

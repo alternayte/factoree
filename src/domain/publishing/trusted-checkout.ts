@@ -21,10 +21,16 @@ export class PatchHashMismatchError extends Error {
   constructor(
     readonly verified: string,
     readonly published: string,
+    /** The git version of the sandbox that captured the verified patch. SDD section 46. */
+    readonly verifiedGitVersion: string,
+    /** The git version of the trusted checkout that recomputed the hash. SDD section 46. */
+    readonly appliedGitVersion: string,
   ) {
     super(
       "the patch hash of the trusted checkout does not equal the verified patch hash. " +
-        `Verified: ${verified}. Published: ${published}. Factoree published nothing.`,
+        `Verified: ${verified}. Published: ${published}. ` +
+        `Verified git: ${verifiedGitVersion}. Publishing git: ${appliedGitVersion}. ` +
+        "Factoree published nothing.",
     );
     this.name = "PatchHashMismatchError";
   }
@@ -98,6 +104,8 @@ export interface TrustedPublication {
   publishedPatchSha256: string;
   treeSha: string;
   branch: string;
+  /** The git version of the trusted checkout. SDD section 46 names it beside the patch hash. */
+  gitVersion: string;
 }
 
 export interface TrustedCheckoutInput {
@@ -116,6 +124,11 @@ export interface TrustedCheckoutInput {
   branch: string;
   patchBase64: string;
   verifiedPatchSha256: string;
+  /**
+   * The git version of the sandbox that captured the verified patch. SDD section 46 compares
+   * two diff texts. This value lets a hash mismatch name the version that produced each text.
+   */
+  verifiedGitVersion: string;
   commitMessage: string;
   /**
    * The author date and the committer date of the commit, in the git ISO form such as
@@ -235,9 +248,19 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
     const recomputed = await gitBuffer(checkout, [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, input.baseSha]);
     const publishedPatchSha256 = sha256OfBase64(recomputed.toString("base64"));
 
+    // The git version of the trusted checkout. SDD section 46 compares two diff texts, and two
+    // git versions can produce two texts from one tree. This value turns a silent mismatch into
+    // a readable cause.
+    const gitVersion = (await git(checkout, ["--version"])).trim();
+
     // Step 5. The gate. Nothing below runs when the two hashes differ.
     if (publishedPatchSha256 !== input.verifiedPatchSha256) {
-      throw new PatchHashMismatchError(input.verifiedPatchSha256, publishedPatchSha256);
+      throw new PatchHashMismatchError(
+        input.verifiedPatchSha256,
+        publishedPatchSha256,
+        input.verifiedGitVersion,
+        gitVersion,
+      );
     }
 
     const treeSha = (await git(checkout, ["write-tree"])).trim();
@@ -276,7 +299,7 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
       remoteEnv,
     );
 
-    return { commitSha, publishedPatchSha256, treeSha, branch: input.branch };
+    return { commitSha, publishedPatchSha256, treeSha, branch: input.branch, gitVersion };
   } finally {
     // Step 10. The temporary files hold a clone and a credentialed remote. Factoree removes them
     // on every path. The failure paths above are included.
