@@ -18,9 +18,7 @@ import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
 import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
-import { OpenCodeRunner } from "~/adapters/runners/opencode/opencode-runner.js";
-import { ClaudeCodeRunner } from "~/adapters/runners/claude-code/claude-code-runner.js";
-import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { buildAgentRunnerRegistry } from "~/adapters/runners/registry.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
@@ -77,7 +75,7 @@ const sandboxManager = new SandboxManager({
 // SDD section 33 names two required adapters. A stock `.factoree/config.yaml` selects
 // `opencode` for the Implementer and `claude` for the User Validator and the Reviewer, so both
 // must be registered before a stock repository can run.
-const runners = new AgentRunnerRegistry([new OpenCodeRunner({ redactor }), new ClaudeCodeRunner({ redactor })]);
+const runners = buildAgentRunnerRegistry(redactor);
 const reaper = new SpriteReaper({
   sandboxes: { [sandbox.name]: sandbox },
   runs,

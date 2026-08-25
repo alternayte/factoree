@@ -124,8 +124,10 @@ export const resolveSkills = (candidates: DiscoveredSkill[]): SkillSet => {
   const precedenceOrdered = [...applied.values()];
   const kept = precedenceOrdered.slice(0, MAX_SKILLS).sort((left, right) => left.name.localeCompare(right.name));
 
+  // Every conflicted name is reported, whether or not the cap kept it. A name the cap dropped
+  // still shadowed another skill, and SDD section 16 forbids a silent overwrite for that name too.
   const conflicts: SkillConflict[] = [];
-  for (const entry of kept) {
+  for (const entry of precedenceOrdered) {
     const others = shadowed.get(entry.name);
     if (others === undefined || others.length === 0) continue;
     conflicts.push({ name: entry.name, applied: entry.origin, shadowed: others });
@@ -152,11 +154,15 @@ export const renderSkillLines = (set: SkillSet): string[] => {
     return `${entry.name} — ${detail} (${scopeWord(entry.origin.scope)}, ${entry.origin.path})`;
   });
 
+  const keptNames = new Set(set.skills.map((entry) => entry.name));
   for (const conflict of set.conflicts) {
     const ignored = conflict.shadowed.map((origin) => origin.path).join(", ");
+    const outcome = keptNames.has(conflict.name)
+      ? `Factoree applies ${conflict.applied.path}. It ignores ${ignored}.`
+      : `The limit of ${MAX_SKILLS} skills dropped every one of them, including ${conflict.applied.path}. ` +
+        `Factoree does not apply any of them.`;
     lines.push(
-      `Name conflict: "${conflict.name}" exists in ${conflict.shadowed.length + 1} places. ` +
-        `Factoree applies ${conflict.applied.path}. It ignores ${ignored}.`,
+      `Name conflict: "${conflict.name}" exists in ${conflict.shadowed.length + 1} places. ${outcome}`,
     );
   }
 

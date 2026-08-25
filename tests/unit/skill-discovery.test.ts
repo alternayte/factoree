@@ -123,6 +123,26 @@ describe("resolveSkills", () => {
     expect(set.droppedForLimit).toBe(5);
   });
 
+  it("reports a conflict even when the cap drops the conflicted name", () => {
+    // Fifty distinct names fill the cap. The fifty-first name is new, so it is the one the cap
+    // drops. A second candidate of that same name still arrives, so the dropped name also
+    // conflicts. SDD section 16 requires the report to name it anyway.
+    const filling = Array.from({ length: MAX_SKILLS }, (_value, index) =>
+      skill(`skill-${String(index).padStart(3, "0")}`),
+    );
+    const droppedName = "skill-050";
+    const set = resolveSkills([
+      ...filling,
+      skill(droppedName),
+      skill(droppedName, { directory: ".claude/skills", path: `/w/primary/.claude/skills/${droppedName}/SKILL.md` }),
+    ]);
+    expect(set.skills.some((entry) => entry.name === droppedName)).toBe(false);
+    expect(set.droppedForLimit).toBe(1);
+    const conflict = set.conflicts.find((entry) => entry.name === droppedName);
+    expect(conflict).toBeDefined();
+    expect(conflict?.shadowed).toHaveLength(1);
+  });
+
   it("applies the cap in precedence order, so a repository skill never loses its place to an organization skill", () => {
     // Repository names sort late. Organization names sort early. The candidate order below is
     // already precedence order: every repository candidate precedes every organization candidate.
@@ -168,6 +188,22 @@ describe("renderSkillLines", () => {
     const lines = renderSkillLines(set);
     expect(lines.some((line) => line.startsWith("Name conflict: \"routes\""))).toBe(true);
     expect(lines.some((line) => line.includes("/w/organization-skills/.agents/skills/routes/SKILL.md"))).toBe(true);
+  });
+
+  it("states a name conflict truthfully when the cap drops the conflicted name", () => {
+    const filling = Array.from({ length: MAX_SKILLS }, (_value, index) =>
+      skill(`skill-${String(index).padStart(3, "0")}`),
+    );
+    const droppedName = "skill-050";
+    const set = resolveSkills([
+      ...filling,
+      skill(droppedName),
+      skill(droppedName, { directory: ".claude/skills", path: `/w/primary/.claude/skills/${droppedName}/SKILL.md` }),
+    ]);
+    const lines = renderSkillLines(set);
+    const conflictLine = lines.find((line) => line.startsWith(`Name conflict: "${droppedName}"`));
+    expect(conflictLine).toBeDefined();
+    expect(conflictLine).not.toContain("Factoree applies");
   });
 
   it("states the number of skills it dropped for the limit", () => {

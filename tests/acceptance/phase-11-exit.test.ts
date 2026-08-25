@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { driveFixtureToVerification } from "./support/runner-fixture.js";
+import { buildAgentRunnerRegistry } from "~/adapters/runners/registry.js";
+import { Redactor } from "~/telemetry/redaction.js";
 
 /**
  * SDD section 69, Phase 11 exit: the same fixture workflow works with either required runner.
@@ -29,10 +31,11 @@ describe("Phase 11 exit condition", () => {
     expect(claude.verificationPassed).toBe(false);
   }, 120_000);
 
-  it("names both required adapters of SDD section 33 in the worker registry", async () => {
-    const worker = await readFile("src/bin/worker.ts", "utf8");
-    expect(worker).toContain("new OpenCodeRunner(");
-    expect(worker).toContain("new ClaudeCodeRunner(");
+  it("names both required adapters of SDD section 33 in the worker registry", () => {
+    const registry = buildAgentRunnerRegistry(new Redactor([]));
+    expect(registry.names().sort()).toEqual(["claude", "opencode"]);
+    expect(registry.get("opencode").name).toBe("opencode");
+    expect(registry.get("claude").name).toBe("claude");
   });
 
   it("keeps the two runner acceptance tests identical apart from the runner name", async () => {

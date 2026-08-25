@@ -53,9 +53,10 @@ export abstract class CliAgentRunner implements AgentRunner {
   // An entry lives for the lifetime of this runner instance. Factoree runs run and resume
   // as Temporal activities, and Temporal retries an activity with its original arguments
   // unchanged, so a caller can present an old AgentSessionRef on a retry. An entry must not
-  // be removed while any caller can still hold a reference to it. Disposal of run-scoped
-  // state belongs to a later phase that knows when a Run has ended. A worker restart clears
-  // this map, and each entry is small, so the bounded growth is acceptable for now.
+  // be removed while any caller can still hold a reference to it. This map therefore grows
+  // without a bound on the number of Runs, for the life of the worker process. Only a worker
+  // restart clears it. Disposal of run-scoped state belongs to a later phase that knows when
+  // a Run has ended.
   private readonly sessions = new Map<string, LiveSession>();
   private readonly activeByRun = new Map<string, string>();
 
