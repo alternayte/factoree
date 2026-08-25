@@ -42,6 +42,11 @@ export interface PreparedSandbox {
    * carries its own line, so no skill is ever overwritten silently.
    */
   skills: string[];
+  /**
+   * SDD section 55. The commit the organization skills checkout resolved to. It is absent when
+   * the Project configures no organization skills repository.
+   */
+  organizationSkillsSha?: string;
 }
 
 export interface SandboxManagerOptions {
@@ -189,6 +194,7 @@ export class SandboxManager {
         preview,
         repositoryInstructions,
         skills,
+        ...(organizationSkills === null ? {} : { organizationSkillsSha: organizationSkills.baseSha }),
       };
     } catch (error) {
       // A half-prepared sandbox must not leak. Destruction is idempotent, and a destroy failure

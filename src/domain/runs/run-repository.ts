@@ -24,6 +24,11 @@ export interface RunRecord {
   pullRequestUrl: string | null;
   contextContractVersion: string | null;
   validationContractVersion: string | null;
+  /**
+   * SDD section 55. The commit the organization skills checkout resolved to. It is null when the
+   * Project configures no organization skills repository, or the Run recorded no sandbox yet.
+   */
+  organizationSkillsSha: string | null;
   /** SDD section 47. The SHA-256 of the Proof Pack this Run posted, or null while none exists. */
   proofPackSha256: string | null;
   proofPackPostedAt: Date | null;
@@ -60,6 +65,11 @@ export interface RunSandboxPatch {
   retainUntil: Date;
   baseSha: string;
   implementerRunner: string;
+  /**
+   * SDD section 55. The commit the organization skills checkout resolved to. Absent when the
+   * Project configures no organization skills repository.
+   */
+  organizationSkillsSha?: string;
 }
 
 /**

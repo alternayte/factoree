@@ -37,6 +37,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   pullRequestUrl: row.pullRequestUrl,
   contextContractVersion: row.contextContractVersion,
   validationContractVersion: row.validationContractVersion,
+  organizationSkillsSha: row.organizationSkillsSha ?? null,
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   repairCount: row.repairCount,
@@ -122,6 +123,9 @@ export class PrismaRunRepository implements RunRepository {
           spriteRetainUntil: sandbox.retainUntil,
           baseSha: sandbox.baseSha,
           implementerRunner: sandbox.implementerRunner,
+          ...(sandbox.organizationSkillsSha === undefined
+            ? {}
+            : { organizationSkillsSha: sandbox.organizationSkillsSha }),
         },
       });
       // A write that reaches no row must not report success. The Run would then hold no

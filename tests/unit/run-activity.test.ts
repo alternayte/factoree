@@ -30,6 +30,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   pullRequestUrl: null,
   contextContractVersion: null,
   validationContractVersion: null,
+  organizationSkillsSha: null,
   proofPackSha256: null,
   proofPackPostedAt: null,
   repairCount,

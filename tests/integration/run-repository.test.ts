@@ -109,6 +109,21 @@ describe("PrismaRunRepository", () => {
     expect(await repository.listExpiredSandboxes(new Date(), 10)).toHaveLength(0);
   });
 
+  it("stores the organization skills SHA beside the base SHA (SDD section 55)", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const created = await repository.createIfAbsent(input("session-organization-skills-sha"));
+    await repository.setSandbox(tenantA, created.run.id, {
+      spriteId: "sprite-organization-skills",
+      adapter: "fake",
+      retainUntil: new Date(),
+      baseSha: "d".repeat(40),
+      implementerRunner: "opencode",
+      organizationSkillsSha: "e".repeat(40),
+    });
+    const stored = await repository.findById(tenantA, created.run.id);
+    expect(stored?.organizationSkillsSha).toBe("e".repeat(40));
+  });
+
   it("refuses to record a sandbox for a Run of another tenant, and reports the refusal", async () => {
     const repository = new PrismaRunRepository(prisma);
     const created = await repository.createIfAbsent(input("session-6"));
