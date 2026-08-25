@@ -18,6 +18,8 @@ const {
   heldStatuses,
   cancelledLiveValidations,
   reviewCalls,
+  heldReviews,
+  cancelledLiveReviews,
   postedProgress,
   activityOrder,
   runtimeOverrides,
@@ -110,15 +112,24 @@ describe("USER_VALIDATING", () => {
     runtimeOverrides.set(runId, { repairMaxAttempts: 2 });
     userValidationOutcomes.set(runId, (attempt) => (attempt === 1 ? failing : passing));
 
+    // The second pass passes, so the Run enters REVIEWING and then the publication path. The
+    // held review keeps the Run inside the review until the stop reaches the live session, so
+    // this Run never enters PUBLISHING and this test does not flake.
+    const releaseReview = hold(heldReviews, runId);
+
     await runWorker(async () => {
       const handle = await startRun("ses-uv2");
       await waitFor(() => userValidatesOf(runId).length === 2, "the second user validation of ses-uv2");
-      // The second pass passes, so the Run enters REVIEWING next. The stop must wait for the
-      // review call, or the stop signal races the transition and this test flakes.
       await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-uv2");
       await handle.signal(stopSignal);
+      await waitFor(
+        () => cancelledLiveReviews.includes(runId),
+        "the live cancellation of ses-uv2",
+      );
+      releaseReview();
       await handle.result();
     });
+    heldReviews.delete(runId);
 
     expect(statusesOf(runId)).toEqual([
       "RECEIVED",

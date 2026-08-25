@@ -29,6 +29,14 @@ import type {
   ReviewActivityInput,
   ReviewActivityOutput,
 } from "~/activities/review.activities.js";
+import type {
+  CapturePatchActivityInput,
+  CapturePatchActivityOutput,
+  CheckBaseActivityInput,
+  CheckBaseActivityOutput,
+  PublishActivityInput,
+  PublishActivityOutput,
+} from "~/activities/publishing.activities.js";
 import { parseReviewReport, ReviewReportInvalidError } from "~/domain/review/review-report.js";
 import { decideReview } from "~/domain/review/blocking.js";
 import type { ReviewDecision } from "~/domain/review/blocking.js";
@@ -201,6 +209,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const reviewDecisions = new Map<string, ReviewDecision[]>();
   /** The run ids whose live Reviewer session the activity observed a cancellation for. */
   const cancelledLiveReviews: string[] = [];
+  /**
+   * A run id in this map replaces the `checkBase` result. SDD section 45 ends a Run on a moved
+   * target branch, so a test states a stale answer here.
+   */
+  const baseChecks = new Map<string, () => CheckBaseActivityOutput>();
+  /**
+   * A run id in this map replaces the `publish` result. The function can also throw, so a test
+   * can drive the three semantic publication failures of SDD section 46.
+   */
+  const publishOutcomes = new Map<string, () => PublishActivityOutput>();
+  /** Every recorded `publish` call, in order. */
+  const publishCalls: PublishActivityInput[] = [];
+  /** Every recorded `capturePatch` call, in order. The workflow calls `publish` alone. */
+  const capturePatchCalls: CapturePatchActivityInput[] = [];
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
@@ -591,6 +613,43 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       if (outcome === undefined) return passing;
       return { ...passing, ...outcome(activityInput.attempt) };
     },
+    checkBase: async (
+      activityInput: CheckBaseActivityInput,
+    ): Promise<CheckBaseActivityOutput> => {
+      activityOrder.push("checkBase");
+      const override = baseChecks.get(activityInput.runId);
+      return override === undefined
+        ? { fresh: true, currentTargetSha: activityInput.baseSha }
+        : override();
+    },
+    // The workflow calls `publish` alone, because `publish` captures the patch itself. The
+    // double stays registered, so the activity map of the harness holds every activity.
+    capturePatch: async (
+      activityInput: CapturePatchActivityInput,
+    ): Promise<CapturePatchActivityOutput> => {
+      activityOrder.push("capturePatch");
+      capturePatchCalls.push(activityInput);
+      return {
+        patchSha256: "d".repeat(64),
+        changedFiles: activityInput.reviewedChangedFiles,
+        byteLength: 120,
+        treeSha: "f".repeat(40),
+      };
+    },
+    publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
+      activityOrder.push("publish");
+      publishCalls.push(activityInput);
+      const override = publishOutcomes.get(activityInput.runId);
+      if (override !== undefined) return override();
+      return {
+        patchSha256: "d".repeat(64),
+        commitSha: "e".repeat(40),
+        pullRequestUrl: "https://github.com/acme/fixture/pull/1",
+        pullRequestNumber: 1,
+        branch: `factoree/${activityInput.runId}`,
+        created: true,
+      };
+    },
   };
 
   /**
@@ -688,6 +747,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldReviews,
     reviewerConfigurationFaults,
     cancelledLiveReviews,
+    baseChecks,
+    publishOutcomes,
+    publishCalls,
+    capturePatchCalls,
     activityOrder,
     workItemLabels,
     failingLabelReads,

@@ -9,6 +9,10 @@ import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-co
 let environment: TestWorkflowEnvironment;
 const createCalls: string[] = [];
 const completions: string[] = [];
+/** Every `publish` call of the test, by Run. AT-35 allows one pull request per Run only. */
+const publishCalls: string[] = [];
+/** Every publication result the workflow received, in order. */
+const publishResults: Array<{ runId: string; created: boolean }> = [];
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
@@ -117,7 +121,39 @@ const activities = {
     sessionId: "ses_fake_reviewer",
     reportUsable: true,
     reportProblem: null,
+    changedFiles: ["src/app.ts"],
   }),
+  // Phase 9 adds the publication path. This map is a plain object literal and is not typed as
+  // `Activities`, so `npm run typecheck` cannot catch a missing entry here either.
+  checkBase: async (input: { baseSha: string }) => ({
+    fresh: true,
+    currentTargetSha: input.baseSha,
+  }),
+  // The workflow calls `publish` alone, because `publish` captures the patch itself. This double
+  // stays registered, so the activity map holds every activity of the Run.
+  capturePatch: async (input: { reviewedChangedFiles: string[] }) => ({
+    patchSha256: "d".repeat(64),
+    changedFiles: input.reviewedChangedFiles,
+    byteLength: 120,
+    treeSha: "f".repeat(40),
+  }),
+  // Controller decision 8. The branch name and the pull request lookup are deterministic, so a
+  // second call after a worker restart finds the pull request the first call opened. The double
+  // returns the same pull request record every time. Only the first call reports a creation.
+  publish: async (input: { runId: string }) => {
+    publishCalls.push(input.runId);
+    const created = publishCalls.filter((entry) => entry === input.runId).length === 1;
+    const result = {
+      patchSha256: "d".repeat(64),
+      commitSha: "e".repeat(40),
+      pullRequestUrl: "https://github.com/acme/primary/pull/1",
+      pullRequestNumber: 1,
+      branch: `factoree/run-${input.runId}`,
+      created,
+    };
+    publishResults.push({ runId: input.runId, created });
+    return result;
+  },
 };
 
 const newWorker = async (): Promise<Worker> =>
@@ -184,14 +220,34 @@ describe("AT-35 worker restart", () => {
 
     const second = await newWorker();
     const secondRun = second.run();
-    await handle.signal(stopSignal);
-    const result = await handle.result();
+
+    // Wait until the Run published, then restart the worker a second time. A publication whose
+    // result did not reach the history repeats on the third worker, so this restart exercises
+    // the idempotency of SDD section 46 and of controller decision 8.
+    // The first shutdown left a workflow task open, and that task times out after ten seconds,
+    // so the second worker resumes the Run only after that timeout. The window covers it.
+    for (let attempt = 0; attempt < 400 && publishCalls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(publishCalls).toHaveLength(1);
     second.shutdown();
     await secondRun;
+
+    const third = await newWorker();
+    const thirdRun = third.run();
+    await handle.signal(stopSignal);
+    const result = await handle.result();
+    third.shutdown();
+    await thirdRun;
 
     expect(result.runId).toBe("run-session-at35");
     expect(createCalls).toHaveLength(1);
     expect(completions).toEqual(["run-session-at35"]);
+
+    // AT-35. A worker restart creates no second pull request. Every repeated publication finds
+    // the pull request the first one opened, so exactly one creation reached the workflow.
+    expect(publishResults.filter((entry) => entry.created)).toHaveLength(1);
+
     const description = await handle.describe();
     expect(description.status.name).toBe("COMPLETED");
   });

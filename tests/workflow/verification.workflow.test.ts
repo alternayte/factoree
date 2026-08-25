@@ -22,6 +22,8 @@ const {
   userValidateCalls,
   reviewCalls,
   heldVerifications,
+  heldReviews,
+  cancelledLiveReviews,
   configurationFaults,
   runtimeOverrides,
   verifyOutcomes,
@@ -95,20 +97,28 @@ describe("deterministic verification in the workflow", () => {
     runtimeOverrides.set("run-ses-v3", { repairMaxAttempts: 2 });
     verifyOutcomes.set("run-ses-v3", (attempt) => attempt >= 2);
 
+    // The second verification passes, so the Run enters USER_VALIDATING, then REVIEWING, and
+    // then the publication path. The held review keeps the Run inside the review until the stop
+    // reaches the live session, so this Run never enters PUBLISHING and this test does not flake.
+    const releaseReview = hold(heldReviews, "run-ses-v3");
+
     const result = await runWorker(async () => {
       const handle = await startRun("ses-v3");
       await waitFor(() => verifiesOf("run-ses-v3").length === 2, "the second verification of ses-v3");
-      // The second verification passes, so the Run enters USER_VALIDATING and then REVIEWING.
-      // The stop must wait for the review call, or the stop signal races the transition and this
-      // test flakes.
       await waitFor(
         () => userValidatesOf("run-ses-v3").length === 1,
         "the user validation of ses-v3",
       );
       await waitFor(() => reviewsOf("run-ses-v3").length === 1, "the review of ses-v3");
       await handle.signal(stopSignal);
+      await waitFor(
+        () => cancelledLiveReviews.includes("run-ses-v3"),
+        "the live cancellation of ses-v3",
+      );
+      releaseReview();
       return handle.result();
     });
+    heldReviews.delete("run-ses-v3");
 
     // The first six states are RECEIVED, REFINING, RESOLVING_CONTEXT,
     // BUILDING_VALIDATION_CONTRACT, PREPARING, and IMPLEMENTING. The repair loop follows them.
