@@ -86,6 +86,17 @@ const BLOCKING_REPORT = JSON.stringify({
       evidence: "CONTRIBUTING.md:3",
       description: "The contributing guide states no review baseline.",
     },
+    {
+      // SDD section 41. Every other gate passes for this finding: the severity blocks, the
+      // requirement names no assertion of the frozen contract, and the evidence names the one
+      // changed file. Only the style rule can stop it.
+      id: "RV-4",
+      severity: "high",
+      category: "style",
+      requirement: "Repository rule: keep every helper name short.",
+      evidence: `${DEFECTIVE_FILE}:31`,
+      description: "The name `savePatch` reads better as `patchProject`.",
+    },
   ],
 });
 
@@ -579,8 +590,9 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       // blocking against the real changed-file list. Both values come out of the real activity.
       const firstReview = rig.reviewOutputs[0]!;
       expect(firstReview.reportUsable).toBe(true);
-      // Two high findings reached `decideReview`. Only the one inside the change blocks.
-      expect(firstReview.findingCount).toBe(2);
+      // Three high findings reached `decideReview`. Only the one inside the change, and outside
+      // the style category, blocks the Run.
+      expect(firstReview.findingCount).toBe(3);
       expect(firstReview.blockingCount).toBe(1);
       expect(firstReview.passed).toBe(false);
       expect(firstReview.failures).toEqual([expect.stringContaining("RV-1")]);
@@ -650,7 +662,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       const findingRows = await rig.findings.listForRun(rig.tenantId, rig.runId);
       const attempt1Findings = findingRows.filter((row) => row.attempt === 1);
       const attempt2Findings = findingRows.filter((row) => row.attempt === 2);
-      expect(attempt1Findings).toHaveLength(2);
+      expect(attempt1Findings).toHaveLength(3);
       const blockingRow = attempt1Findings.find((row) => row.findingKey === "RV-1");
       expect(blockingRow?.blocking).toBe(true);
       expect(blockingRow?.severity).toBe("high");
@@ -661,6 +673,13 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       expect(outsideRow?.severity).toBe("high");
       expect(outsideRow?.blocking).toBe(false);
       expect(outsideRow?.decisionReason).toContain("names no file this Run changed");
+      // SDD section 41. The third finding carries the same severity and the same evidence as the
+      // blocking finding, and it names a repository rule. Only its category separates it, so
+      // this proves the style rule is real. The reason text is the real text of `decideReview`.
+      const styleRow = attempt1Findings.find((row) => row.findingKey === "RV-4");
+      expect(styleRow?.severity).toBe("high");
+      expect(styleRow?.blocking).toBe(false);
+      expect(styleRow?.decisionReason).toContain("a style preference does not block");
       expect(attempt2Findings).toHaveLength(1);
       expect(attempt2Findings[0]?.findingKey).toBe("RV-2");
       expect(attempt2Findings.some((row) => row.blocking)).toBe(false);
