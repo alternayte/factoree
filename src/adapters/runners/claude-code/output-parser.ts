@@ -23,8 +23,8 @@ const assistantText = (message: unknown): string | null => {
 
 /**
  * Reads the newline-delimited JSON event stream of `claude -p --output-format stream-json`. The
- * CLI also writes plain progress lines. The parser skips a line that is not a JSON object
- * instead of failing the Run. A line that parses to a JSON value that is not an object, for
+ * CLI also writes plain progress lines. The parser skips a line that is not a JSON object, and
+ * it does not fail the Run. A line that parses to a JSON value that is not an object, for
  * example `null`, a number, a string, or an array, is treated the same way, because none of
  * those shapes carries an event.
  *

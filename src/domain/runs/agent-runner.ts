@@ -1,5 +1,6 @@
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
 import type { Sandbox, SandboxRef } from "./sandbox.js";
+import { RunConfigurationError } from "./run-configuration-error.js";
 
 export type AgentRole = "implementer" | "validator" | "reviewer";
 
@@ -85,3 +86,25 @@ export class AgentRunnerRegistry {
     return [...this.runners.keys()].sort();
   }
 }
+
+/**
+ * SDD section 14 requires configuration-driven runner selection. A name that no adapter
+ * implements is an operator fault, so it must fail where the operator sees it, at preparation,
+ * and not deep inside the Implementer activity. Every unknown name reaches the message, so one
+ * repair round fixes the whole file.
+ */
+export const assertKnownRunners = (
+  registry: AgentRunnerRegistry,
+  runtime: { implementerRunner: string; validatorRunner: string; reviewerRunner: string },
+): void => {
+  const known = new Set(registry.names());
+  const unknown = [...new Set([runtime.implementerRunner, runtime.validatorRunner, runtime.reviewerRunner])]
+    .filter((name) => !known.has(name))
+    .sort();
+  if (unknown.length === 0) return;
+  throw new RunConfigurationError(
+    `.factoree/config.yaml names an agent runner Factoree does not implement: ` +
+      `${unknown.map((name) => `"${name}"`).join(", ")}. ` +
+      `The registered runners are: ${registry.names().join(", ")}.`,
+  );
+};

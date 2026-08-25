@@ -15,7 +15,7 @@ export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
 const START_SCRIPT =
   'printf %s "$FACTOREE_PROMPT" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose';
 
-/** The same script, continuing the session the environment names. */
+/** The same script. It continues the session the environment names. */
 const RESUME_SCRIPT =
   'printf %s "$FACTOREE_PROMPT" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose ' +
   '--resume "$FACTOREE_CLAUDE_SESSION"';

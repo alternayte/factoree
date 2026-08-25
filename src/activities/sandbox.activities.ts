@@ -14,6 +14,8 @@ import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
+import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
 
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
@@ -22,6 +24,7 @@ export interface SandboxActivityDependencies {
   reaper: SpriteReaper;
   secrets: SecretStore;
   redactor: Redactor;
+  runners: AgentRunnerRegistry;
   logger: Logger;
 }
 
@@ -100,6 +103,19 @@ const prepare = async (
     environment: input.environment,
     ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
   });
+
+  // SDD section 14. A runner name the repository configured must resolve to a registered
+  // adapter. This fault is a configuration fault, so the Run ends `CONFIGURATION_INVALID`.
+  try {
+    assertKnownRunners(dependencies.runners, prepared.runtime);
+  } catch (error) {
+    // The Run holds no reference to this sandbox, and a Temporal retry creates a new one. The
+    // unreferenced sandbox must go now.
+    await release(dependencies, prepared.ref.id, prepared.ref.adapter, () =>
+      dependencies.sandboxManager.release(prepared),
+    );
+    throw error;
+  }
 
   // SDD section 51. The Run keeps the sandbox reference and the retention deadline, so
   // `SpriteReaper` can delete the sandbox after the window ends. The workflow never deletes

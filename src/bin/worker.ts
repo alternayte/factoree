@@ -19,6 +19,7 @@ import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sand
 import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
 import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
 import { OpenCodeRunner } from "~/adapters/runners/opencode/opencode-runner.js";
+import { ClaudeCodeRunner } from "~/adapters/runners/claude-code/claude-code-runner.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
@@ -73,7 +74,10 @@ const sandboxManager = new SandboxManager({
   ...(env.SANDBOX_ADAPTER === "local" ? { allowUnenforcedNetwork: true } : {}),
 });
 
-const runners = new AgentRunnerRegistry([new OpenCodeRunner({ redactor })]);
+// SDD section 33 names two required adapters. A stock `.factoree/config.yaml` selects
+// `opencode` for the Implementer and `claude` for the User Validator and the Reviewer, so both
+// must be registered before a stock repository can run.
+const runners = new AgentRunnerRegistry([new OpenCodeRunner({ redactor }), new ClaudeCodeRunner({ redactor })]);
 const reaper = new SpriteReaper({
   sandboxes: { [sandbox.name]: sandbox },
   runs,
