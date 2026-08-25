@@ -18,19 +18,17 @@ export const MAX_SKILL_ENTRIES_PER_DIRECTORY = 200;
  */
 export const SKILL_FILE_READ_CAP_BYTES = 65536;
 
-/** A line the reader emits when a directory listing fails for a reason other than "missing". */
+/**
+ * A line the reader emits for every failed directory listing or file read. A debug line is
+ * silent at the default log level, so an ordinary missing directory costs nothing. An operator
+ * who investigates a skill problem gets the whole picture, and Factoree never has to guess which
+ * failures of `ls` or `head` are normal across platforms.
+ */
 export interface SkillSourceLogger {
-  warn: (message: string, detail: { path: string; exitCode: number; stderr: string }) => void;
+  debug: (message: string, detail: { path: string; exitCode: number; stderr: string }) => void;
 }
 
-const NO_LOGGER: SkillSourceLogger = { warn: () => {} };
-
-/**
- * True when `stderr` names an ordinary missing path. `ls` and `head` both write this message for
- * a path that simply does not exist, on every platform this project targets. Any other failure,
- * for example a permission error, is unexpected and is worth one log line.
- */
-const namesAMissingPath = (stderr: string): boolean => /no such file or directory/i.test(stderr);
+const NO_LOGGER: SkillSourceLogger = { debug: () => {} };
 
 export interface SkillRoot {
   scope: SkillScope;
@@ -55,9 +53,7 @@ const listDirectory = async (
 ): Promise<string[]> => {
   const result = await sandbox.exec(ref, { file: "ls", args: ["-1", "--", path] });
   if (result.exitCode !== 0) {
-    if (!namesAMissingPath(result.stderr)) {
-      logger.warn("skill directory listing failed", { path, exitCode: result.exitCode, stderr: result.stderr });
-    }
+    logger.debug("skill directory listing failed", { path, exitCode: result.exitCode, stderr: result.stderr });
     return [];
   }
   return result.stdout
@@ -79,9 +75,7 @@ const readFile = async (
     args: ["-c", String(SKILL_FILE_READ_CAP_BYTES), "--", path],
   });
   if (result.exitCode !== 0) {
-    if (!namesAMissingPath(result.stderr)) {
-      logger.warn("skill file read failed", { path, exitCode: result.exitCode, stderr: result.stderr });
-    }
+    logger.debug("skill file read failed", { path, exitCode: result.exitCode, stderr: result.stderr });
     return null;
   }
   return result.stdout;

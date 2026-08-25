@@ -9,6 +9,7 @@ import { toProjectRuntimeConfig } from "./project-runtime-config.js";
 import { readRepositoryConfig, readRepositoryInstructions } from "./repository-config-source.js";
 import type { CheckpointRef, Sandbox, SandboxRef } from "./sandbox.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
+import type { Logger } from "~/telemetry/logger.js";
 
 export interface PrepareSandboxInput {
   runId: string;
@@ -51,6 +52,11 @@ export interface SandboxManagerOptions {
    * arbitrary outbound network access, and a prompt is not a boundary.
    */
   allowUnenforcedNetwork?: boolean;
+  /**
+   * Reports an unexpected skill read failure at debug level. SDD section 16. Optional so every
+   * existing `new SandboxManager({ sandbox })` call still compiles.
+   */
+  logger?: Logger;
 }
 
 /**
@@ -168,7 +174,7 @@ export class SandboxManager {
       // runs after the policy is narrowed.
       const roots: SkillRoot[] = [{ scope: "repository", path: primary.path }];
       if (organizationSkills !== null) roots.push({ scope: "organization", path: organizationSkills.path });
-      const skills = renderSkillLines(await discoverSkills(sandbox, ref, roots));
+      const skills = renderSkillLines(await discoverSkills(sandbox, ref, roots, this.options.logger));
 
       const baselineCheckpoint = sandbox.capabilities.supportsCheckpoints
         ? await sandbox.checkpoint(ref, "baseline")

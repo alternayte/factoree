@@ -69,6 +69,7 @@ const sandbox: Sandbox =
 
 const sandboxManager = new SandboxManager({
   sandbox,
+  logger,
   ...(env.SANDBOX_ADAPTER === "local" ? { allowUnenforcedNetwork: true } : {}),
 });
 

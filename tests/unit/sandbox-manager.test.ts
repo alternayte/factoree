@@ -4,6 +4,7 @@ import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
+import type { Logger, LogFields } from "~/telemetry/logger.js";
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
@@ -391,5 +392,22 @@ describe("SandboxManager.prepare skills", () => {
     );
     // The first policy must already allow the skills host, because the checkout runs under it.
     expect(sandbox.networkPolicies[0]?.allowedDomains).toContain("git.acme.example");
+  });
+
+  it("reports a failed skill directory read at debug level, through the logger given to SandboxManager", async () => {
+    const events: { level: string; message: string; fields: LogFields | undefined }[] = [];
+    const recordingLogger: Logger = {
+      debug: (message, fields) => events.push({ level: "debug", message, fields }),
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      child: () => recordingLogger,
+    };
+    // No listing is scripted for the skill directory, so `ls` answers a non-zero exit code and
+    // the read counts as an unexpected failure worth one debug line.
+    const sandbox = withSkillFiles(sandboxWithConfig(DEFAULT_CONFIG_YAML), {}, {});
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true, logger: recordingLogger });
+    await manager.prepare(input);
+    expect(events.some((entry) => entry.message === "skill directory listing failed")).toBe(true);
   });
 });
