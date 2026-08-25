@@ -1,3 +1,4 @@
+import { PATCH_GIT_OPTIONS } from "~/domain/publishing/patch.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
@@ -82,9 +83,15 @@ export const captureSourceDiff = async (
   // covers a new file as well as a changed file.
   await git(dependencies, input, ["add", "-A"]);
 
+  // The name query uses the same rename pinning as the publication capture. Git defaults
+  // `diff.renames` to true, so an unpinned query names only the destination of a rename. The
+  // publication names both paths. The two lists must agree, or the publication refuses the
+  // change for a defect that does not exist.
   const names = await git(dependencies, input, [
+    ...PATCH_GIT_OPTIONS,
     "diff",
     "--cached",
+    "--no-renames",
     "--name-only",
     input.baseSha,
   ]);

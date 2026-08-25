@@ -64,6 +64,12 @@ export interface ReviewActivityOutput {
   reportProblem: string | null;
   /** Every path the change touched, relative to the primary worktree. */
   changedFiles: string[];
+  /**
+   * The git tree object of the primary worktree, taken after the Reviewer session returned. It
+   * is the identity of the content the independent review examined. The publication compares it
+   * with the tree it captures. An empty value means this review produced no fingerprint.
+   */
+  worktreeSha: string;
 }
 
 export interface ReviewActivityDependencies {
@@ -336,6 +342,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
             ? "The Reviewer session was cancelled."
             : "The Reviewer session did not complete.",
           changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
 
@@ -363,6 +370,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
             "denies that action to the reviewer role, so Factoree refused this review and published " +
             "nothing.",
           changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
 
@@ -387,6 +395,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           reportUsable: false,
           reportProblem: NO_REPORT,
           changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
       try {
@@ -406,6 +415,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           // fragment or an unrecognised value, so it must pass through the redactor too.
           reportProblem: dependencies.redactor.redactText(error.message),
           changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
 
@@ -478,6 +488,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         reportUsable: true,
         reportProblem: null,
         changedFiles: diff.changedFiles,
+        // The identity of the reviewed content. The publication refuses a tree that differs.
+        worktreeSha: afterFingerprint,
       };
     } finally {
       metrics.reviewDuration.observe(labels, (Date.now() - started) / 1000);

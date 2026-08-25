@@ -25,6 +25,8 @@ import { MemorySecretStore } from "../support/memory-secret-store.js";
 const TOKEN = "ghp_supersecrettokenvalue0123456789";
 const BASE = "a".repeat(40);
 const COMMIT = "c".repeat(40);
+/** The staged tree the sandbox double reports. The review carried the same value. */
+const TREE = "b".repeat(40);
 const PATCH_TEXT = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n+changed\n";
 
 /** A `Sandbox` double that answers the five commands of `capturePatch`. */
@@ -141,6 +143,7 @@ const input: PublishActivityInput = {
   baseBranch: "main",
   baseSha: BASE,
   reviewedChangedFiles: ["src/a.ts"],
+  reviewedWorktreeSha: TREE,
   workItemTitle: "Rename a project",
   workItemUrl: "https://linear.app/acme/issue/ENG-1",
   verificationSummary: "every check passed",
@@ -291,26 +294,41 @@ describe("the publish activity", () => {
     expect(String(error)).not.toContain(TOKEN);
   });
 
-  it("converts a semantic failure of the capture activity into a non-retryable failure", async () => {
-    const { activities } = build({ changedFiles: [], patchText: PATCH_TEXT });
-    const captureInput = {
-      runId: input.runId,
-      tenantId: input.tenantId,
-      projectId: input.projectId,
-      spriteId: input.spriteId,
-      adapter: input.adapter,
-      workspacePath: input.workspacePath,
-      primaryPath: input.primaryPath,
-      baseSha: input.baseSha,
-      reviewedChangedFiles: [],
-    };
+  it("converts a semantic publication failure into a non-retryable failure", async () => {
+    const { activities } = build({ changedFiles: [], patchText: "" });
     const error = await activities
-      .capturePatch(captureInput)
+      .publish({ ...input, reviewedChangedFiles: [], reviewedWorktreeSha: TREE })
       .then(() => null)
       .catch((thrown: unknown) => thrown);
     expect(error).toBeInstanceOf(ApplicationFailure);
     expect((error as ApplicationFailure).type).toBe("EMPTY_PATCH");
     expect((error as ApplicationFailure).nonRetryable).toBe(true);
+  });
+
+  it("refuses a captured tree that differs from the reviewed tree, before any pull request call", async () => {
+    const { activities, pullRequests, publishToBranch } = build();
+    const moved: PublishActivityInput = { ...input, reviewedWorktreeSha: "9".repeat(40) };
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), moved),
+    ).rejects.toThrow(/changed after the independent review/);
+
+    expect(pullRequests.lookups).toEqual([]);
+    expect(pullRequests.created).toEqual([]);
+    expect(publishToBranch.inputs).toEqual([]);
+  });
+
+  it("refuses an empty reviewed tree, because the review produced no fingerprint", async () => {
+    const { activities, pullRequests, publishToBranch } = build();
+    const none: PublishActivityInput = { ...input, reviewedWorktreeSha: "" };
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), none),
+    ).rejects.toThrow(/changed after the independent review/);
+
+    expect(pullRequests.lookups).toEqual([]);
+    expect(pullRequests.created).toEqual([]);
+    expect(publishToBranch.inputs).toEqual([]);
   });
 
   it("refuses a repository base URL that is not https", async () => {

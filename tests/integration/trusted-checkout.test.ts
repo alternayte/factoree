@@ -8,13 +8,19 @@ import {
   PatchHashMismatchError,
   TrustedCheckoutError,
 } from "~/domain/publishing/trusted-checkout.js";
-import { PATCH_DIFF_ARGS, PATCH_GIT_OPTIONS, sha256OfBase64 } from "~/domain/publishing/patch.js";
+import { PATCH_DIFF_ARGS, PATCH_GIT_OPTIONS, capturePatch, sha256OfBase64 } from "~/domain/publishing/patch.js";
+import { captureSourceDiff } from "~/domain/review/source-diff.js";
+import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
+import { Redactor } from "~/telemetry/redaction.js";
 
 let root: string;
 let bare: string;
 let work: string;
 let baseSha: string;
 let patchBase64: string;
+
+/** The fixed commit date every case uses. It makes the commit object deterministic. */
+const COMMIT_TIMESTAMP = "1970-01-01T00:00:00Z";
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -57,6 +63,7 @@ describe("publishToBranch", () => {
       patchBase64,
       verifiedPatchSha256: sha256OfBase64(patchBase64),
       commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
       authorName: "Factoree",
       authorEmail: "factoree@example.test",
     });
@@ -76,6 +83,7 @@ describe("publishToBranch", () => {
         patchBase64,
         verifiedPatchSha256: "f".repeat(64),
         commitMessage: "Factoree change\n",
+        commitTimestamp: COMMIT_TIMESTAMP,
         authorName: "Factoree",
         authorEmail: "factoree@example.test",
       }),
@@ -94,6 +102,7 @@ describe("publishToBranch", () => {
         patchBase64,
         verifiedPatchSha256: sha256OfBase64(patchBase64),
         commitMessage: "Factoree change\n",
+        commitTimestamp: COMMIT_TIMESTAMP,
         authorName: "Factoree",
         authorEmail: "factoree@example.test",
       }),
@@ -114,6 +123,7 @@ describe("publishToBranch", () => {
       patchBase64,
       verifiedPatchSha256: sha256OfBase64(patchBase64),
       commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
       authorName: "Factoree",
       authorEmail: "factoree@example.test",
     });
@@ -133,6 +143,7 @@ describe("publishToBranch", () => {
         patchBase64,
         verifiedPatchSha256: "f".repeat(64),
         commitMessage: "Factoree change\n",
+        commitTimestamp: COMMIT_TIMESTAMP,
         authorName: "Factoree",
         authorEmail: "factoree@example.test",
       }),
@@ -140,5 +151,60 @@ describe("publishToBranch", () => {
 
     const after = readdirSync(tmpdir()).filter((name) => name.startsWith("factoree-publish-"));
     expect(after.length).toBe(before.length);
+  });
+
+  it("produces the identical commit SHA on a repeated call, so a retry pushes a no-op (AT-35)", async () => {
+    const branch = "factoree/run-retry";
+    const identical = {
+      cloneUrl: bare,
+      baseSha,
+      branch,
+      patchBase64,
+      verifiedPatchSha256: sha256OfBase64(patchBase64),
+      commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
+      authorName: "Factoree",
+      authorEmail: "factoree@example.test",
+    };
+
+    const first = await publishToBranch(identical);
+    // The second call is the retry after a failed pull request creation. It must not fail.
+    const second = await publishToBranch(identical);
+
+    expect(second.commitSha).toBe(first.commitSha);
+    const remoteHead = execFileSync("git", ["rev-parse", branch], {
+      cwd: bare,
+      encoding: "utf8",
+    }).trim();
+    expect(remoteHead).toBe(first.commitSha);
+  });
+});
+
+describe("the review name query and the publication name query", () => {
+  it("name the same files for a rename", async () => {
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "factoree-rename-"));
+    const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
+    const ref = await sandbox.create({
+      runId: "run-rename",
+      tenantId: "tenant-1",
+      projectId: "project-1",
+    });
+    const primaryPath = `${ref.workspacePath}/primary`;
+    try {
+      execFileSync("git", ["clone", bare, primaryPath]);
+      // The Implementer moves one file. Git detects a rename, so an unpinned name query names
+      // the destination path alone.
+      execFileSync("git", ["mv", "README.md", "MOVED.md"], { cwd: primaryPath });
+
+      const redactor = new Redactor([]);
+      const review = await captureSourceDiff({ sandbox, redactor }, { ref, primaryPath, baseSha });
+      const patch = await capturePatch({ sandbox, redactor }, { ref, primaryPath, baseSha });
+
+      expect([...review.changedFiles].sort()).toEqual(["MOVED.md", "README.md"]);
+      expect([...review.changedFiles].sort()).toEqual([...patch.changedFiles].sort());
+    } finally {
+      await sandbox.destroy(ref);
+      rmSync(sandboxRoot, { recursive: true, force: true });
+    }
   });
 });

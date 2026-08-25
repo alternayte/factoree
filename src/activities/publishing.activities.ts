@@ -29,28 +29,15 @@ import type { Redactor } from "~/telemetry/redaction.js";
 /** The Project secret that carries the GitHub write credential. SDD section 30. */
 export const GITHUB_TOKEN_SECRET = "GITHUB_TOKEN";
 
+/**
+ * The author date and the committer date of every Factoree publication commit. The value is a
+ * fixed constant, so two attempts of one Run build the identical commit object. The real
+ * publication time stays visible in the pull request and in the Run row.
+ */
+export const PUBLICATION_COMMIT_TIMESTAMP = "1970-01-01T00:00:00Z";
+
 /** The head branch of one Run. AT-35 requires a stable name, so a retry finds the same branch. */
 export const publishBranchName = (runId: string): string => `factoree/run-${runId}`;
-
-export interface CapturePatchActivityInput {
-  runId: string;
-  tenantId: string;
-  projectId: string;
-  spriteId: string;
-  adapter: string;
-  workspacePath: string;
-  primaryPath: string;
-  baseSha: string;
-  /** The changed-file list the independent review examined. Controller decision 2. */
-  reviewedChangedFiles: string[];
-}
-
-export interface CapturePatchActivityOutput {
-  patchSha256: string;
-  changedFiles: string[];
-  byteLength: number;
-  treeSha: string;
-}
 
 export interface CheckBaseActivityInput {
   runId: string;
@@ -80,6 +67,11 @@ export interface PublishActivityInput {
   baseBranch: string;
   baseSha: string;
   reviewedChangedFiles: string[];
+  /**
+   * The git tree object the independent review examined. The publication compares it with the
+   * tree it captures itself. An empty value is a mismatch, so this check fails closed.
+   */
+  reviewedWorktreeSha: string;
   workItemTitle: string;
   workItemUrl: string | null;
   verificationSummary: string;
@@ -195,68 +187,6 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
 /** SDD section 44, section 45, and section 46. */
 export const createPublishingActivities = (dependencies: PublishingActivityDependencies) => ({
   /**
-   * SDD section 44. Captures the verified implementation artifact of the Run and proves that it
-   * names the files the independent review examined. The patch bytes never leave this activity,
-   * because a Temporal payload must not carry a whole patch.
-   */
-  async capturePatch(input: CapturePatchActivityInput): Promise<CapturePatchActivityOutput> {
-    const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
-
-    try {
-      // Step 1. SDD section 60. Every Project secret reaches the redactor before any output is
-      // captured.
-      await registerProjectSecrets(
-        dependencies.redactor,
-        dependencies.secrets,
-        input.tenantId,
-        input.projectId,
-        dependencies.logger,
-      );
-
-      // Step 2. The staged diff of the primary worktree against the base SHA.
-      const patch = await captureVerifiedPatch(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        {
-          ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
-          primaryPath: input.primaryPath,
-          baseSha: input.baseSha,
-        },
-      );
-
-      // Step 3. Controller decision 2. The reviewed change and the captured change must name the
-      // same files.
-      assertSameChangedFiles(input.reviewedChangedFiles, patch.changedFiles);
-
-      // Step 4. An empty patch means every check passed over no change, so there is nothing to
-      // publish.
-      if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
-
-      dependencies.logger.info("patch captured", {
-        tenant_id: input.tenantId,
-        project_id: input.projectId,
-        run_id: input.runId,
-        step: "publish",
-        changed_files: patch.changedFiles.length,
-        patch_bytes: patch.byteLength,
-      });
-
-      return {
-        patchSha256: patch.patchSha256,
-        changedFiles: patch.changedFiles,
-        byteLength: patch.byteLength,
-        treeSha: patch.treeSha,
-      };
-    } catch (error) {
-      // SDD section 49. A retry of a mismatched file list or of an empty patch repeats the same
-      // fault, so it must not consume the Temporal retry policy.
-      throw asNonRetryable(dependencies.redactor, error);
-    } finally {
-      metrics.publishDuration.observe(labels, (Date.now() - started) / 1000);
-    }
-  },
-
-  /**
    * SDD section 45. Version 1 never rebases. A target branch that moved after the Run started
    * ends the Run in `STALE_BASE`, so this activity reports the fact and publishes nothing.
    */
@@ -329,6 +259,18 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // costs no remote work.
       assertSameChangedFiles(input.reviewedChangedFiles, patch.changedFiles);
 
+      // Step 6b. The file names alone prove too little. A background process of the Implementer
+      // can rewrite the body of a file the review already saw. The tree object is the identity
+      // of the content. An empty reviewed tree means the review produced no fingerprint, so it
+      // is a mismatch too. This check fails closed.
+      if (patch.treeSha !== input.reviewedWorktreeSha) {
+        throw new PatchError(
+          "the primary worktree changed after the independent review examined it. Reviewed " +
+            `tree: ${input.reviewedWorktreeSha || "none"}. Captured tree: ${patch.treeSha}. ` +
+            "Factoree published nothing.",
+        );
+      }
+
       // Step 7. An empty patch publishes nothing.
       if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
 
@@ -341,7 +283,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       if (existing !== null) {
         // GitHub already answered the tip commit of the head branch. Factoree therefore runs no
         // second git read here. A `git ls-remote` puts its URL on the process argument list, so
-        // an authenticated URL there would expose the credential to any local process. SDD
+        // an authenticated URL there exposes the credential to any local process. SDD
         // section 30 forbids that.
         const commitSha = existing.headSha;
         await dependencies.runs.setPublication(input.tenantId, input.runId, {
@@ -385,6 +327,10 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         patchBase64: patch.patchBase64,
         verifiedPatchSha256: patch.patchSha256,
         commitMessage,
+        // AT-35. The commit must be deterministic. A retry that repeats the push must produce
+        // the identical commit SHA, so the second push is a fast-forward no-op. A wall clock
+        // value produces a new commit SHA on every attempt, and git then refuses the push.
+        commitTimestamp: PUBLICATION_COMMIT_TIMESTAMP,
         authorName: dependencies.gitAuthor.name,
         authorEmail: dependencies.gitAuthor.email,
         // The temporary directory holds a clone and a credentialed remote. A removal failure

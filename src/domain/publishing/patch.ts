@@ -4,8 +4,8 @@ import type { Redactor } from "~/telemetry/redaction.js";
 
 /**
  * Every git configuration value that can change the bytes of a diff. Controller decision 3. The
- * sandbox capture and the control-plane recomputation both use this list, so a git configuration
- * on either machine cannot break the SDD section 46 hash assertion for the wrong reason.
+ * sandbox capture and the control-plane recomputation both use this list. A git configuration on
+ * either machine therefore cannot break the SDD section 46 hash assertion for the wrong reason.
  */
 export const PATCH_GIT_OPTIONS = [
   "-c", "core.abbrev=40",
@@ -181,7 +181,8 @@ export const capturePatch = async (
 
 /**
  * Controller decision 2. The change under review and the change under publication must name the
- * same files. This check fails closed, so an extra file or a missing file stops the publication.
+ * same files. This check fails closed. An extra file stops the publication, and a missing file
+ * stops it too.
  */
 export const assertSameChangedFiles = (reviewed: string[], published: string[]): void => {
   const left = [...new Set(reviewed)].sort();

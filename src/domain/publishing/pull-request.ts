@@ -52,7 +52,7 @@ export interface PullRequestBodyInput {
 /**
  * AT-29. One pull request must name the Work Item, the Run identifier, the base SHA, the patch
  * hash, and the verification summary. The body carries no raw log, because SDD section 47 forbids
- * a log dump in the human-facing record, and the same restraint applies here.
+ * a log dump in the human-facing record. The same restraint applies here.
  */
 export const buildPullRequestBody = (input: PullRequestBodyInput): string =>
   [

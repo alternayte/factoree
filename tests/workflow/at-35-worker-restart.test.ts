@@ -122,20 +122,13 @@ const activities = {
     reportUsable: true,
     reportProblem: null,
     changedFiles: ["src/app.ts"],
+    worktreeSha: "b".repeat(40),
   }),
   // Phase 9 adds the publication path. This map is a plain object literal and is not typed as
   // `Activities`, so `npm run typecheck` cannot catch a missing entry here either.
   checkBase: async (input: { baseSha: string }) => ({
     fresh: true,
     currentTargetSha: input.baseSha,
-  }),
-  // The workflow calls `publish` alone, because `publish` captures the patch itself. This double
-  // stays registered, so the activity map holds every activity of the Run.
-  capturePatch: async (input: { reviewedChangedFiles: string[] }) => ({
-    patchSha256: "d".repeat(64),
-    changedFiles: input.reviewedChangedFiles,
-    byteLength: 120,
-    treeSha: "f".repeat(40),
   }),
   // Controller decision 8. The branch name and the pull request lookup are deterministic, so a
   // second call after a worker restart finds the pull request the first call opened. The double

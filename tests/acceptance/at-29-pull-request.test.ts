@@ -136,6 +136,15 @@ beforeAll(async () => {
     publishToBranch: seam,
   });
 
+  // The tree the independent review examined. The publication refuses a tree that differs, so
+  // this fixture must stage the worktree and read the same value.
+  const staged = await sandbox.exec(ref, {
+    file: "sh",
+    args: ["-c", 'git -C "$1" add -A && git -C "$1" write-tree', "sh", primaryPath],
+  });
+  expect(staged.exitCode).toBe(0);
+  const stagedTreeSha = staged.stdout.trim();
+
   branch = publishBranchName(RUN_ID);
   input = {
     runId: RUN_ID,
@@ -150,6 +159,7 @@ beforeAll(async () => {
     baseBranch: "main",
     baseSha: remote.baseSha,
     reviewedChangedFiles: ["added.txt", "target.txt"],
+    reviewedWorktreeSha: stagedTreeSha,
     workItemTitle: "Rename the target file content",
     workItemUrl: "https://linear.app/acme/issue/ENG-29",
     verificationSummary: VERIFICATION_SUMMARY,

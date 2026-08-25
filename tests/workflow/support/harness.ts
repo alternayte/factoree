@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { createHash } from "node:crypto";
 import { Context } from "@temporalio/activity";
+import { ApplicationFailure } from "@temporalio/common";
 import { Worker } from "@temporalio/worker";
 import type { TestWorkflowEnvironment } from "@temporalio/testing";
 import type { WorkflowHandle } from "@temporalio/client";
@@ -30,8 +31,6 @@ import type {
   ReviewActivityOutput,
 } from "~/activities/review.activities.js";
 import type {
-  CapturePatchActivityInput,
-  CapturePatchActivityOutput,
   CheckBaseActivityInput,
   CheckBaseActivityOutput,
   PublishActivityInput,
@@ -82,6 +81,9 @@ export const VALIDATION_SHA = "c".repeat(64);
 
 /** The frozen Validation Contract document the double reports. */
 export const VALIDATION_DOCUMENT = "# Validation Contract\n\nThe health endpoint answers 200.\n";
+
+/** The git tree the review double reports. The publish double accepts exactly this value. */
+export const REVIEWED_WORKTREE_SHA = "b".repeat(40);
 
 /** The failure text the review double reports when it blocks a change. */
 export const REVIEW_FAILURE_TEXT =
@@ -149,6 +151,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const postedErrors: string[] = [];
   /** Every message the workflow posted to the human on the progress path. */
   const postedProgress: string[] = [];
+  /** Every final response body the workflow posted, in order. */
+  const postedFinalResponses: string[] = [];
   /** The run ids whose preparation double raises a configuration fault. */
   const configurationFaults = new Set<string>();
   /** The run ids whose `userValidate` double raises a configuration fault. */
@@ -221,8 +225,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const publishOutcomes = new Map<string, () => PublishActivityOutput>();
   /** Every recorded `publish` call, in order. */
   const publishCalls: PublishActivityInput[] = [];
-  /** Every recorded `capturePatch` call, in order. The workflow calls `publish` alone. */
-  const capturePatchCalls: CapturePatchActivityInput[] = [];
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
@@ -386,7 +388,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         summary: "Factoree froze the Validation Contract with 1 assertion.",
       };
     },
-    postFinalResponse: async () => undefined,
+    postFinalResponse: async (activityInput: { body: string }) => {
+      postedFinalResponses.push(activityInput.body);
+    },
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
     },
@@ -573,6 +577,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
             reportUsable: false,
             reportProblem: error.message,
             changedFiles,
+            worktreeSha: "",
           };
         }
         const decision = decideReview({
@@ -594,6 +599,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           reportUsable: true,
           reportProblem: null,
           changedFiles,
+          worktreeSha: REVIEWED_WORKTREE_SHA,
         };
       }
 
@@ -608,6 +614,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         reportUsable: true,
         reportProblem: null,
         changedFiles: ["src/app.ts"],
+        worktreeSha: REVIEWED_WORKTREE_SHA,
       };
       const outcome = reviewOutcomes.get(activityInput.runId);
       if (outcome === undefined) return passing;
@@ -622,23 +629,17 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         ? { fresh: true, currentTargetSha: activityInput.baseSha }
         : override();
     },
-    // The workflow calls `publish` alone, because `publish` captures the patch itself. The
-    // double stays registered, so the activity map of the harness holds every activity.
-    capturePatch: async (
-      activityInput: CapturePatchActivityInput,
-    ): Promise<CapturePatchActivityOutput> => {
-      activityOrder.push("capturePatch");
-      capturePatchCalls.push(activityInput);
-      return {
-        patchSha256: "d".repeat(64),
-        changedFiles: activityInput.reviewedChangedFiles,
-        byteLength: 120,
-        treeSha: "f".repeat(40),
-      };
-    },
     publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
       activityOrder.push("publish");
       publishCalls.push(activityInput);
+      // The real activity refuses a reviewed tree that does not equal the captured tree. The
+      // double keeps that coupling, so the workflow must carry the value the review returned.
+      if (activityInput.reviewedWorktreeSha !== REVIEWED_WORKTREE_SHA) {
+        throw ApplicationFailure.nonRetryable(
+          "the primary worktree changed after the independent review examined it",
+          "PUBLICATION_FAILED",
+        );
+      }
       const override = publishOutcomes.get(activityInput.runId);
       if (override !== undefined) return override();
       return {
@@ -727,6 +728,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     cancelledLiveSessions,
     postedErrors,
     postedProgress,
+    postedFinalResponses,
     configurationFaults,
     validatorConfigurationFaults,
     runtimeOverrides,
@@ -750,7 +752,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     baseChecks,
     publishOutcomes,
     publishCalls,
-    capturePatchCalls,
     activityOrder,
     workItemLabels,
     failingLabelReads,

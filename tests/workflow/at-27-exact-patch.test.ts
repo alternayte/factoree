@@ -12,6 +12,7 @@ const {
   completions,
   statusesOf,
   postedProgress,
+  postedFinalResponses,
   publishOutcomes,
   publishCalls,
   activityOrder,
@@ -111,5 +112,28 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
       "checkBase",
       "publish",
     ]);
+  });
+
+  it("does not claim that nothing was published when a stop follows a successful publication", async () => {
+    const runId = "run-ses-at27c";
+    const finalBefore = postedFinalResponses.length;
+
+    const result = await runWorker(async () => {
+      const handle = await startRun("ses-at27c");
+      await waitFor(
+        () => publishCalls.filter((entry) => entry.runId === runId).length === 1,
+        "the publication of ses-at27c",
+      );
+      await handle.signal(stopSignal);
+      return handle.result();
+    });
+
+    // SDD section 68 forbids a success terminal state before Phase 10, so the status stands.
+    expect(result.status).toBe("CANCELLED");
+
+    const body = postedFinalResponses.slice(finalBefore).at(-1) ?? "";
+    expect(body).not.toContain("No change was published");
+    expect(body).toContain("https://github.com/acme/fixture/pull/1");
+    expect(body).toContain("published");
   });
 });

@@ -436,6 +436,14 @@ export async function agentRunWorkflow(
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
 
   /**
+   * The pull request URL of a successful publication, or null while nothing is published. A stop
+   * message and a timeout message must not claim that nothing was published once it exists. The
+   * Run status does not change, because SDD section 68 forbids a success terminal state before
+   * Phase 10 builds the Proof Pack.
+   */
+  let publishedPullRequestUrl: string | null = null;
+
+  /**
    * SDD section 23 requires one focused question. The workflow asks that question. It waits for
    * exactly one human input. It records the answer against that question. The result is false
    * when the Run must end instead, so every caller must check the result. The remaining Run
@@ -679,7 +687,11 @@ export async function agentRunWorkflow(
     await notify(() =>
       activities.postFinalResponse({
         sessionId: input.agentSessionId,
-        body: "Factoree stopped this Run at your request. No change was published.",
+        body:
+          publishedPullRequestUrl === null
+            ? "Factoree stopped this Run at your request. No change was published."
+            : "Factoree stopped this Run at your request. The verified change is already " +
+              `published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
       }),
     );
     return { runId: id, status };
@@ -1011,6 +1023,9 @@ export async function agentRunWorkflow(
       // survive the `break`. The successful pass writes them just before it breaks.
       let publishedChangedFiles: string[] = [];
       let publishedVerificationSummary = "";
+      // The git tree the independent review examined. The publication refuses a tree that
+      // differs, so a write after the review can never reach GitHub.
+      let publishedWorktreeSha = "";
 
       for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -1270,6 +1285,7 @@ export async function agentRunWorkflow(
         if (review.passed) {
           publishedChangedFiles = review.changedFiles;
           publishedVerificationSummary = verification.summary;
+          publishedWorktreeSha = review.worktreeSha;
           break;
         }
 
@@ -1314,6 +1330,7 @@ export async function agentRunWorkflow(
         baseBranch: input.project.defaultBranch,
         baseSha: preparedSandbox.baseSha,
         reviewedChangedFiles: publishedChangedFiles,
+        reviewedWorktreeSha: publishedWorktreeSha,
         workItemTitle: input.workItem.title,
         workItemUrl: input.workItem.url,
         verificationSummary: publishedVerificationSummary,
@@ -1371,6 +1388,10 @@ export async function agentRunWorkflow(
         }),
       );
 
+      // The publication succeeded. A later stop message and a later timeout message read this
+      // value, so neither one claims that Factoree published nothing.
+      publishedPullRequestUrl = publication.pullRequestUrl;
+
       // SDD section 68 forbids `READY_FOR_HUMAN` without a Proof Pack, and Phase 10 builds it. The
       // Run therefore keeps the residual wait rather than invent a success terminal state.
     }
@@ -1381,7 +1402,15 @@ export async function agentRunWorkflow(
     // until the Run budget ends it, so this step invents no success terminal state.
     const stopped = await condition(() => stopRequested, remainingMs());
 
-    if (!stopped) return await failRun("RUN_TIMEOUT", timeoutMessage);
+    if (!stopped) {
+      return await failRun(
+        "RUN_TIMEOUT",
+        publishedPullRequestUrl === null
+          ? timeoutMessage
+          : "Factoree stopped the Run because it reached the maximum Run duration. The verified " +
+            `change is already published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
+      );
+    }
 
     return await cancelRun();
   } catch (error) {

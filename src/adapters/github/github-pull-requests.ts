@@ -6,7 +6,7 @@ import type {
 } from "~/domain/publishing/pull-request.js";
 
 /** One GitHub call must not hang a Run. */
-export const GITHUB_API_TIMEOUT_MS = 30_000;
+const GITHUB_API_TIMEOUT_MS = 30_000;
 
 interface GitHubPullRequestBody {
   number?: unknown;
@@ -63,7 +63,7 @@ export class GitHubPullRequests implements PullRequestPort {
   private toRecord(body: GitHubPullRequestBody, headBranch: string): PullRequestRecord {
     const number = body.number;
     const url = body.html_url;
-    // The tip commit of the head branch. The publication record needs it, and GitHub already
+    // The tip commit of the head branch. The publication record needs it. GitHub already
     // answers it here, so Factoree never runs a second git read to learn it.
     const head = body.head as { sha?: unknown } | undefined;
     const headSha = head?.sha;

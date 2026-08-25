@@ -9,7 +9,7 @@ import { PATCH_DIFF_ARGS, PATCH_GIT_OPTIONS, sha256OfBase64 } from "./patch.js";
 const run = promisify(execFile);
 
 /** One publication must not hang a Run. */
-export const PUBLISH_GIT_TIMEOUT_MS = 300_000;
+const PUBLISH_GIT_TIMEOUT_MS = 300_000;
 
 /** The largest output one git command of the publication can produce. */
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -51,6 +51,12 @@ export interface TrustedCheckoutInput {
   patchBase64: string;
   verifiedPatchSha256: string;
   commitMessage: string;
+  /**
+   * The author date and the committer date of the commit, in the git ISO form such as
+   * `1970-01-01T00:00:00Z`. The caller supplies a stable value. Two calls with the same input
+   * then build the identical commit object, so a retry pushes the same commit SHA.
+   */
+  commitTimestamp: string;
   authorName: string;
   authorEmail: string;
   /**
@@ -98,6 +104,29 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
         timeout: PUBLISH_GIT_TIMEOUT_MS,
         maxBuffer: MAX_OUTPUT_BYTES,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      return result.stdout;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new TrustedCheckoutError(
+        `a git command of the trusted checkout failed: ${withoutUrlCredentials(detail)}`,
+      );
+    }
+  };
+
+  // The counterpart of `git` above for the one command that needs extra environment values. It
+  // keeps the uniform error type and the credential redaction.
+  const gitWithEnv = async (
+    cwd: string,
+    args: string[],
+    extraEnv: Record<string, string>,
+  ): Promise<string> => {
+    try {
+      const result = await run("git", args, {
+        cwd,
+        timeout: PUBLISH_GIT_TIMEOUT_MS,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
       });
       return result.stdout;
     } catch (error) {
@@ -157,14 +186,24 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
     await git(checkout, ["checkout", "-b", input.branch]);
     const messageFile = join(directory, "commit-message.txt");
     await writeFile(messageFile, input.commitMessage, "utf8");
-    await git(checkout, [
-      "-c", `user.name=${input.authorName}`,
-      "-c", `user.email=${input.authorEmail}`,
-      "commit",
-      "--no-verify",
-      "--no-gpg-sign",
-      "-F", messageFile,
-    ]);
+    // The author date and the committer date come from the caller. A retry of the same Run
+    // therefore builds the identical commit object. The second push is then a no-op
+    // fast-forward instead of a rejected non-fast-forward.
+    await gitWithEnv(
+      checkout,
+      [
+        "-c", `user.name=${input.authorName}`,
+        "-c", `user.email=${input.authorEmail}`,
+        "commit",
+        "--no-verify",
+        "--no-gpg-sign",
+        "-F", messageFile,
+      ],
+      {
+        GIT_AUTHOR_DATE: input.commitTimestamp,
+        GIT_COMMITTER_DATE: input.commitTimestamp,
+      },
+    );
     const commitSha = (await git(checkout, ["rev-parse", "HEAD"])).trim();
     if (!SHA.test(commitSha)) {
       throw new TrustedCheckoutError("the trusted commit produced no commit SHA");
