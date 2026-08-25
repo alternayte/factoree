@@ -125,6 +125,10 @@ export const captureSourceDiff = async (
  * SDD section 29 denies `writePrimaryWorktree` to every role except the Implementer. The review
  * activity takes this value before and after the Reviewer session, so a Reviewer write is a fact
  * on disk that Factoree can see, and not a promise in a prompt.
+ *
+ * The value covers the tracked content only. A path that `.gitignore` matches stays outside it.
+ * Anything under `.git/` stays outside it as well. A Reviewer write to such a path is invisible
+ * here. The published patch is not affected, because the patch capture skips the same paths.
  */
 export const worktreeFingerprint = async (
   dependencies: SourceDiffDependencies,

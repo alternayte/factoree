@@ -62,7 +62,7 @@ export interface ReviewActivityOutput {
   /** False when the report is absent or fails to parse. Controller decision 7 owns this path. */
   reportUsable: boolean;
   reportProblem: string | null;
-  /** Every path the change touched, relative to the primary worktree. Empty on an unusable-report path that returns before the diff exists. */
+  /** Every path the change touched, relative to the primary worktree. */
   changedFiles: string[];
 }
 
@@ -173,7 +173,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
       // Step 6. The staged tree object of the primary worktree, before the Reviewer session
       // runs. The activity compares this to the same fingerprint taken after the session
-      // returns, so a Reviewer write to the primary worktree is a fact Factoree can detect.
+      // returns. A Reviewer write to the tracked content of the primary worktree is a fact
+      // Factoree can detect.
       const beforeFingerprint = await worktreeFingerprint(
         { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
         { ref, primaryPath: input.primaryPath },
@@ -340,7 +341,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
       // Step 12. The staged tree object of the primary worktree, after the Reviewer session
       // returns and before the report is read. The reviewer role denies `writePrimaryWorktree`.
-      // A changed fingerprint proves the Reviewer session wrote into the primary worktree, so
+      // A changed fingerprint proves the tracked content of the primary worktree changed, so
       // Factoree refuses this review and publishes nothing. This check must run before the
       // report is read, so a Reviewer write can never decide the Run.
       const afterFingerprint = await worktreeFingerprint(
@@ -449,8 +450,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         });
       }
 
-      // Step 17. This log line carries no Reviewer-controlled free text; only counts and the
-      // verdict.
+      // Step 17.
       dependencies.logger.info("review finished", {
         tenant_id: input.tenantId,
         project_id: input.projectId,
