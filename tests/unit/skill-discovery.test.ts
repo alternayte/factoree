@@ -122,6 +122,25 @@ describe("resolveSkills", () => {
     expect(set.skills).toHaveLength(MAX_SKILLS);
     expect(set.droppedForLimit).toBe(5);
   });
+
+  it("applies the cap in precedence order, so a repository skill never loses its place to an organization skill", () => {
+    // Repository names sort late. Organization names sort early. The candidate order below is
+    // already precedence order: every repository candidate precedes every organization candidate.
+    const repositorySkills = Array.from({ length: MAX_SKILLS }, (_value, index) =>
+      skill(`zzz-repo-${String(index).padStart(3, "0")}`, { scope: "repository" }),
+    );
+    const organizationSkills = Array.from({ length: 5 }, (_value, index) =>
+      skill(`aaa-org-${String(index).padStart(3, "0")}`, {
+        scope: "organization",
+        root: "/w/organization-skills",
+        path: `/w/organization-skills/.agents/skills/aaa-org-${String(index).padStart(3, "0")}/SKILL.md`,
+      }),
+    );
+    const set = resolveSkills([...repositorySkills, ...organizationSkills]);
+    expect(set.skills).toHaveLength(MAX_SKILLS);
+    expect(set.skills.every((entry) => entry.origin.scope === "repository")).toBe(true);
+    expect(set.droppedForLimit).toBe(5);
+  });
 });
 
 describe("renderSkillLines", () => {

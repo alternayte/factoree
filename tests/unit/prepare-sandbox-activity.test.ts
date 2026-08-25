@@ -244,7 +244,7 @@ describe("the prepareSandbox activity and skills", () => {
         }
         return { exitCode: 1, stdout: "", stderr: "no such directory" };
       }
-      if (command.file === "cat" && last === "/workspace/primary/.agents/skills/routes/SKILL.md") {
+      if (command.file === "head" && last === "/workspace/primary/.agents/skills/routes/SKILL.md") {
         return { exitCode: 0, stdout: "---\nname: routes\ndescription: Add a route.\n---\n", stderr: "" };
       }
       return base === null ? { exitCode: 0, stdout: "", stderr: "" } : base(command);

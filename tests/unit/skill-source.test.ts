@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discoverSkills, MAX_SKILL_ENTRIES_PER_DIRECTORY } from "~/domain/runs/skill-source.js";
+import { discoverSkills, MAX_SKILL_ENTRIES_PER_DIRECTORY, SKILL_FILE_READ_CAP_BYTES } from "~/domain/runs/skill-source.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import type { SandboxRef } from "~/domain/runs/sandbox.js";
 
@@ -16,7 +16,7 @@ const sandboxOf = (files: Record<string, string>, directories: Record<string, st
         ? { exitCode: 2, stdout: "", stderr: "no such directory" }
         : { exitCode: 0, stdout: `${entries.join("\n")}\n`, stderr: "" };
     }
-    if (command.file === "cat") {
+    if (command.file === "head") {
       const body = files[target];
       return body === undefined
         ? { exitCode: 1, stdout: "", stderr: "no such file" }
@@ -81,7 +81,7 @@ describe("discoverSkills", () => {
 
     // The filter must stop the unusable entry BEFORE it reaches a command. A test that
     // checks only the result passes even when the filter is gone, because the read misses.
-    const read = sandbox.commands.filter((command) => command.file === "cat").map((command) => command.args.at(-1));
+    const read = sandbox.commands.filter((command) => command.file === "head").map((command) => command.args.at(-1));
     expect(read).toEqual(["/w/primary/.agents/skills/ok/SKILL.md"]);
   });
 
@@ -134,5 +134,20 @@ describe("discoverSkills", () => {
     const set = await discoverSkills(sandbox, ref, [{ scope: "repository", path: "/w/primary" }]);
     expect(set.skills.length).toBeLessThanOrEqual(50);
     expect(set.droppedForLimit).toBeGreaterThan(0);
+  });
+
+  it("reads a SKILL.md with a bounded command, never the whole file", async () => {
+    const sandbox = sandboxOf(
+      { "/w/primary/.agents/skills/routes/SKILL.md": "---\nname: routes\n---\n" },
+      { "/w/primary/.agents/skills": ["routes"] },
+    );
+    await discoverSkills(sandbox, ref, [{ scope: "repository", path: "/w/primary" }]);
+
+    // The read command must reach the sandbox already bounded. A test that checks only the
+    // parsed result cannot tell a bounded read from an unbounded `cat`.
+    const reads = sandbox.commands.filter((command) => command.args.at(-1) === "/w/primary/.agents/skills/routes/SKILL.md");
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.file).toBe("head");
+    expect(reads[0]?.args).toEqual(["-c", String(SKILL_FILE_READ_CAP_BYTES), "--", "/w/primary/.agents/skills/routes/SKILL.md"]);
   });
 });

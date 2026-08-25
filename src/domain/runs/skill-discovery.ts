@@ -117,9 +117,12 @@ export const resolveSkills = (candidates: DiscoveredSkill[]): SkillSet => {
     shadowed.set(candidate.name, [...(shadowed.get(candidate.name) ?? []), candidate.origin]);
   }
 
-  const sorted = [...applied.values()].sort((left, right) => left.name.localeCompare(right.name));
-  const kept = sorted.slice(0, MAX_SKILLS);
-  const keptNames = new Set(kept.map((entry) => entry.name));
+  // The cap must apply in precedence order, not alphabetical order. `applied` still holds its
+  // entries in insertion order, which is precedence order, so slicing it here keeps a repository
+  // skill over an organization skill even when the organization name sorts first. The alphabetical
+  // sort applies only after the cap, for the rendered output.
+  const precedenceOrdered = [...applied.values()];
+  const kept = precedenceOrdered.slice(0, MAX_SKILLS).sort((left, right) => left.name.localeCompare(right.name));
 
   const conflicts: SkillConflict[] = [];
   for (const entry of kept) {
@@ -131,7 +134,7 @@ export const resolveSkills = (candidates: DiscoveredSkill[]): SkillSet => {
   return {
     skills: kept,
     conflicts,
-    droppedForLimit: sorted.length - keptNames.size,
+    droppedForLimit: precedenceOrdered.length - kept.length,
   };
 };
 

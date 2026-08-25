@@ -67,7 +67,7 @@ const withSkillFiles = (
       return { exitCode: 0, stdout: `${entries.join("\n")}\n`, stderr: "" };
     }
     const body = files[last];
-    if (command.file === "cat" && body !== undefined) return { exitCode: 0, stdout: body, stderr: "" };
+    if (command.file === "head" && body !== undefined) return { exitCode: 0, stdout: body, stderr: "" };
     return base === null ? { exitCode: 0, stdout: "", stderr: "" } : base(command);
   };
   return sandbox;
