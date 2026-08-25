@@ -70,6 +70,9 @@ export const RUN_FAILURE_REASONS = [
   "EMPTY_PATCH",
   // SDD section 46. The trusted checkout, the push, or the pull request creation failed.
   "PUBLICATION_FAILED",
+  // SDD section 68. A clause of the completion invariant did not hold at the moment the Run was
+  // ready to complete. Factoree must never report success it cannot prove, so the Run fails.
+  "COMPLETION_INVARIANT_UNMET",
   "INTERNAL_ERROR",
 ] as const;
 
