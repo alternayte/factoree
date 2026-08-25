@@ -17,8 +17,8 @@ afterAll(async () => {
  * SDD section 49 and the Definition of Done: "Infrastructure retries do not consume semantic
  * repair budget."
  *
- * A transport fault is not a decision. It must retry, and it must leave the repair count
- * unchanged. A failing check is a decision. It must not retry, and it must spend the budget.
+ * A transport fault is not a decision. It must retry. It must leave the repair count
+ * unchanged. A failing check is a decision. It must not retry. It must spend the budget.
  */
 describe("Phase 12 — an injected transport fault does not consume the repair budget", () => {
   it("retries a failing verification activity and leaves the repair count at zero", async () => {
@@ -51,7 +51,7 @@ describe("Phase 12 — an injected transport fault does not consume the repair b
     expect(completion?.status).toBe("READY_FOR_HUMAN");
 
     // No status write reported a repair. SDD section 42 spends the budget on a semantic
-    // failure only, and no check ever failed here.
+    // failure only. No check ever failed here.
     const repairs = harness.statusCalls.filter(
       (entry) => entry.runId === runId && (entry.repairCount ?? 0) > 0,
     );

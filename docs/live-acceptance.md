@@ -72,6 +72,6 @@ prove, and it prints one line for each.
 ## What the command cannot prove alone
 
 The scenario reads facts from the Proof Pack comment Factoree posts in Linear. It does
-not itself drive the coding-agent runner, and it does not itself create the Fly Sprite.
+not itself drive the coding-agent runner. It does not itself create the Fly Sprite.
 An operator must confirm the worker process is running against every credential above
 before the command starts, or the scenario times out and reports every fact absent.

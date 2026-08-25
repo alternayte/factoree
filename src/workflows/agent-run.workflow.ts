@@ -409,7 +409,7 @@ export async function agentRunWorkflow(
   ): Promise<AgentRunWorkflowResult> => {
     // SDD section 50 obligation 1. A Run that ends on its deadline must cancel the active agent
     // process. The implement activity cancels its own live session when a scope cancellation
-    // reaches it. A second cancellation is needed only for a session the activity left running.
+    // reaches it. The workflow must cancel again only when the activity did not already cancel the session.
     const live = implementerSession;
     if (live !== null && !implementerCancelled) {
       await notify(() =>

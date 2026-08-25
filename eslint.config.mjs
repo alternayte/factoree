@@ -1,7 +1,9 @@
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**", "**/*.mjs"] },
+  // `tests/live/*.mjs` holds the two acceptance-live module loaders. They are not TypeScript
+  // files, and no tsconfig project contains them, so the typed config cannot parse them.
+  { ignores: ["dist/**", "node_modules/**", "*.mjs", "tests/live/*.mjs"] },
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {

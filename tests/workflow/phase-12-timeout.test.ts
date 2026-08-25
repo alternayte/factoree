@@ -19,8 +19,8 @@ afterAll(async () => {
  * The Run budget check runs between stages, not while an activity is in flight, so the workflow
  * cannot interrupt the Implementer mid-call. It cancels the session through the separate
  * `cancelImplementer` activity, after the Implementer call returns. The test lets real time pass
- * the one-second budget floor while the Implementer still holds, then releases it, so the Run
- * reaches its deadline check and the fix has a real session to cancel.
+ * the one-second budget floor while the Implementer still holds. The test then releases the
+ * Implementer. The Run reaches its deadline check. The fix has a real session to cancel.
  */
 describe("Phase 12 — a Run that exhausts its budget", () => {
   it("cancels the live session, publishes nothing, and records RUN_TIMEOUT", async () => {
