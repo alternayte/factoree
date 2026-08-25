@@ -1890,7 +1890,9 @@ describe("Phase 12 exit condition", () => {
       sdd.indexOf("## 68. Completion invariant"),
     );
     const items = [...section.matchAll(/^- \[ \] (.+)$/gm)].map((match) => match[1]!.trim());
-    expect(items.length).toBeGreaterThan(80);
+    // SDD section 67 holds exactly 99 required items. The SDD is immutable, so the count is
+    // fixed. A different count means the slice above broke, not that the SDD changed.
+    expect(items.length).toBe(99);
     const missing = items.filter((item) => !audit.includes(item));
     expect(missing).toEqual([]);
   });
@@ -1905,7 +1907,7 @@ describe("Phase 12 exit condition", () => {
 
 `node:fs/promises` exposes `glob` from Node 22. If the installed Node rejects it, use the directory read the other acceptance tests already use. Read one of them first.
 
-The `expect(items.length).toBeGreaterThan(80)` assertion guards against a broken slice. Count the real items first and use the real count minus a small margin.
+The controller counted the real items before this plan was written. SDD section 67 holds exactly 99 checkbox items. The `toBe(99)` assertion guards against a broken slice.
 
 - [ ] **Step 2: Run the test and confirm it fails**
 
