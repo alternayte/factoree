@@ -3,7 +3,7 @@ import { ApplicationFailure } from "@temporalio/activity";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { agentRunWorkflow, stopSignal } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
-import { createWorkflowHarness, waitFor } from "./support/harness.js";
+import { createWorkflowHarness, hold, waitFor } from "./support/harness.js";
 
 let environment: TestWorkflowEnvironment;
 
@@ -15,6 +15,7 @@ const {
   postedFinalResponses,
   publishOutcomes,
   publishCalls,
+  heldPublishes,
   activityOrder,
   input,
   runWorker,
@@ -135,5 +136,42 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
     expect(body).not.toContain("No change was published");
     expect(body).toContain("https://github.com/acme/fixture/pull/1");
     expect(body).toContain("published");
+  });
+
+  // SDD section 50. A stop must cancel the Run and must prevent publication. A stop that arrives
+  // while the publication runs must end the Run CANCELLED, not FAILED.
+  it("ends the Run CANCELLED when a stop arrives while the publication runs", async () => {
+    const runId = "run-ses-at27d";
+    const release = hold(heldPublishes, runId);
+    publishOutcomes.set(runId, () => {
+      throw ApplicationFailure.nonRetryable(
+        "the publication failed because the Project holds no token",
+        "PUBLICATION_FAILED",
+      );
+    });
+
+    const completionsBefore = completions.length;
+
+    const result = await runWorker(async () => {
+      const handle = await startRun("ses-at27d");
+      await waitFor(
+        () => publishCalls.filter((entry) => entry.runId === runId).length === 1,
+        "the publication of ses-at27d",
+      );
+      await handle.signal(stopSignal);
+      release();
+      return handle.result();
+    });
+
+    expect(result.status).toBe("CANCELLED");
+    const completion = completions.filter((entry) => entry.runId === runId).at(-1);
+    expect(completion?.status).toBe("CANCELLED");
+    expect(completion?.failureReason).toBe("STOPPED_BY_HUMAN");
+    // Factoree published nothing, so it must record no publication failure for this Run.
+    expect(
+      completions
+        .slice(completionsBefore)
+        .filter((entry) => entry.runId === runId && entry.failureReason === "PUBLICATION_FAILED"),
+    ).toEqual([]);
   });
 });

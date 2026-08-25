@@ -18,7 +18,10 @@ import type { VerifyActivityOutput } from "~/activities/verification.activities.
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
-import type { PublishActivityOutput } from "~/activities/publishing.activities.js";
+import type {
+  CheckBaseActivityOutput,
+  PublishActivityOutput,
+} from "~/activities/publishing.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
@@ -1339,15 +1342,31 @@ export async function agentRunWorkflow(
 
       // SDD section 45. The stale-base check runs before any write, so a moved branch reaches no
       // remote.
-      const baseCheck = await publishingActivities.checkBase({
-        runId: id,
-        tenantId: input.tenantId,
-        projectId: input.projectId,
-        repositorySlug: publishInput.repositorySlug,
-        repositoryBaseUrl: publishInput.repositoryBaseUrl,
-        branch: publishInput.baseBranch,
-        baseSha: publishInput.baseSha,
-      });
+      // SDD section 50. A stop that arrives during the base read must end the Run CANCELLED,
+      // because Factoree published nothing.
+      let baseCheck: CheckBaseActivityOutput;
+      try {
+        baseCheck = await publishingActivities.checkBase({
+          runId: id,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          repositorySlug: publishInput.repositorySlug,
+          repositoryBaseUrl: publishInput.repositoryBaseUrl,
+          branch: publishInput.baseBranch,
+          baseSha: publishInput.baseSha,
+        });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (stopRequested) return await cancelRun();
+        return await failRun(
+          "PUBLICATION_FAILED",
+          "Factoree could not read the target branch, so it published nothing.",
+        );
+      }
+
+      // A stop that arrives during the base read must not end the Run STALE_BASE.
+      if (stopRequested) return await cancelRun();
+
       if (!baseCheck.fresh) return await endStale(publishInput.baseSha, baseCheck.currentTargetSha);
 
       if (stopRequested) return await cancelRun();
@@ -1357,6 +1376,9 @@ export async function agentRunWorkflow(
         publication = await publishingActivities.publish(publishInput);
       } catch (error) {
         if (isCancellation(error)) throw error;
+        // SDD section 50. A human stop is never a configuration fault. It is never a publication
+        // failure either, because this path published nothing.
+        if (stopRequested) return await cancelRun();
         if (isConfigurationFault(error)) {
           return await failRun(
             "CONFIGURATION_INVALID",

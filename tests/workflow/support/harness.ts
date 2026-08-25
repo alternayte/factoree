@@ -225,6 +225,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const publishOutcomes = new Map<string, () => PublishActivityOutput>();
   /** Every recorded `publish` call, in order. */
   const publishCalls: PublishActivityInput[] = [];
+  /** A run id in this map holds the publication open until the test resolves the promise. */
+  const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
@@ -632,6 +634,17 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
       activityOrder.push("publish");
       publishCalls.push(activityInput);
+      const held = heldPublishes.get(activityInput.runId);
+      if (held !== undefined) {
+        // The real activity takes time on the network, so a stop can arrive while it runs. The
+        // double heartbeats and awaits, the same way the `review` double does.
+        const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
+        try {
+          await held;
+        } finally {
+          clearInterval(heartbeat);
+        }
+      }
       // The real activity refuses a reviewed tree that does not equal the captured tree. The
       // double keeps that coupling, so the workflow must carry the value the review returned.
       if (activityInput.reviewedWorktreeSha !== REVIEWED_WORKTREE_SHA) {
@@ -752,6 +765,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     baseChecks,
     publishOutcomes,
     publishCalls,
+    heldPublishes,
     activityOrder,
     workItemLabels,
     failingLabelReads,
