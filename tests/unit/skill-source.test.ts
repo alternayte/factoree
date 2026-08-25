@@ -78,6 +78,11 @@ describe("discoverSkills", () => {
     );
     const set = await discoverSkills(sandbox, ref, [{ scope: "repository", path: "/w/primary" }]);
     expect(set.skills.map((entry) => entry.name)).toEqual(["ok"]);
+
+    // The filter must stop the unusable entry BEFORE it reaches a command. A test that
+    // checks only the result passes even when the filter is gone, because the read misses.
+    const read = sandbox.commands.filter((command) => command.file === "cat").map((command) => command.args.at(-1));
+    expect(read).toEqual(["/w/primary/.agents/skills/ok/SKILL.md"]);
   });
 
   it("applies the repository skill and shadows the organization skill of the same name", async () => {
