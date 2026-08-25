@@ -253,7 +253,7 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
       acknowledge: () => Promise.resolve(),
       progress: () => Promise.resolve(),
       elicit: () => Promise.resolve(),
-      respond: (unusedSession: string, body: string) => {
+      respond: (_sessionId: string, body: string) => {
         posted.push(body);
         return Promise.resolve();
       },
