@@ -22,6 +22,9 @@ export interface RunRecord {
   pullRequestUrl: string | null;
   contextContractVersion: string | null;
   validationContractVersion: string | null;
+  /** SDD section 47. The SHA-256 of the Proof Pack this Run posted, or null while none exists. */
+  proofPackSha256: string | null;
+  proofPackPostedAt: Date | null;
   repairCount: number;
   createdAt: Date;
   startedAt: Date | null;
@@ -103,6 +106,15 @@ export interface RunRepository {
     tenantId: string,
     runId: string,
     publication: { patchSha256: string; commitSha: string; pullRequestUrl: string },
+  ): Promise<void>;
+  /**
+   * SDD section 47 and section 68. Records the Proof Pack of one Run. The method throws when it
+   * reaches no Run of that tenant, because a silent success hides a caller defect.
+   */
+  setProofPack(
+    tenantId: string,
+    runId: string,
+    proofPack: { sha256: string; postedAt: Date },
   ): Promise<void>;
   /**
    * SDD section 28. Refinement caps the autonomy level of the Run. `createRun` happens before

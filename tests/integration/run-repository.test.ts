@@ -222,6 +222,37 @@ describe("PrismaRunRepository.setPublication", () => {
   });
 });
 
+describe("PrismaRunRepository.setProofPack", () => {
+  it("writes the Proof Pack facts to the Run", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    const postedAt = new Date("2026-02-01T10:00:00.000Z");
+    await runs.setProofPack(tenantId, runId, { sha256: "a".repeat(64), postedAt });
+    const reloaded = await runs.findById(tenantId, runId);
+    expect(reloaded?.proofPackSha256).toBe("a".repeat(64));
+    expect(reloaded?.proofPackPostedAt?.toISOString()).toBe(postedAt.toISOString());
+  });
+
+  it("reports no Proof Pack before one is posted", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    const reloaded = await runs.findById(tenantId, runId);
+    expect(reloaded?.proofPackSha256).toBeNull();
+    expect(reloaded?.proofPackPostedAt).toBeNull();
+  });
+
+  it("throws when it reaches no Run of that tenant, because a silent success hides a caller defect", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { runId } = await seedTenantProjectAndRun(prisma);
+    await expect(
+      runs.setProofPack("other-tenant", runId, {
+        sha256: "b".repeat(64),
+        postedAt: new Date("2026-02-01T10:00:00.000Z"),
+      }),
+    ).rejects.toThrow();
+  });
+});
+
 describe("PrismaWebhookLog", () => {
   it("accepts a delivery once", async () => {
     const log = new PrismaWebhookLog(prisma);

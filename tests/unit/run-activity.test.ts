@@ -28,6 +28,8 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   pullRequestUrl: null,
   contextContractVersion: null,
   validationContractVersion: null,
+  proofPackSha256: null,
+  proofPackPostedAt: null,
   repairCount,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   startedAt: null,
