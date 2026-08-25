@@ -39,6 +39,18 @@ export const commitAll = async (path: string, message: string): Promise<string> 
 };
 
 /**
+ * Creates an empty git repository at `path`, with the file transport allowed for itself. Every
+ * fixture builder starts from this call, so the suite holds one initialization rule only. A
+ * host with a stricter `protocol.file.allow` value must not break a fixture, and production
+ * code must not carry a test setting.
+ */
+export const initRepository = async (path: string): Promise<void> => {
+  await mkdir(path, { recursive: true });
+  await run("git", ["init", "--initial-branch=main", path]);
+  await run("git", ["-C", path, "config", "protocol.file.allow", "always"]);
+};
+
+/**
  * Creates a git repository on disk that a clone can reach through a plain path. The Phase 2
  * acceptance tests never reach the network, so the fixture is local.
  *
@@ -52,9 +64,7 @@ export const createFixtureRepository = async (
   configYaml: string = FIXTURE_CONFIG,
 ): Promise<string> => {
   const path = join(root, name);
-  await mkdir(path, { recursive: true });
-  await run("git", ["init", "--initial-branch=main", path]);
-  await run("git", ["-C", path, "config", "protocol.file.allow", "always"]);
+  await initRepository(path);
   await writeFile(join(path, "target.txt"), "original\n", "utf8");
   await writeFile(join(path, "CONTRIBUTING.md"), "Keep the change small.\n", "utf8");
   await mkdir(join(path, ".factoree"), { recursive: true });

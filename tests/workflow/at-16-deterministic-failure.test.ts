@@ -13,6 +13,7 @@ const {
   implementCalls,
   verifyCalls,
   userValidateCalls,
+  reviewCalls,
   runtimeOverrides,
   verifyOutcomes,
   input,
@@ -67,6 +68,7 @@ const namesFor = (runId: string): string[] =>
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const verifiesOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
 const userValidatesOf = (runId: string) => userValidateCalls.filter((entry) => entry.runId === runId);
+const reviewsOf = (runId: string) => reviewCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 
 beforeAll(async () => {
@@ -95,12 +97,14 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at16a");
       await waitFor(() => verifiesOf("run-ses-at16a").length === 2, "the second verification");
-      // The second verification passes, so the Run enters USER_VALIDATING next. The stop must
-      // wait for that call, or the stop signal races the transition and this test flakes.
+      // The second verification passes, so the Run enters USER_VALIDATING and then REVIEWING.
+      // The stop must wait for the review call, or the stop signal races the transition and this
+      // test flakes.
       await waitFor(
         () => userValidatesOf("run-ses-at16a").length === 1,
         "the user validation of ses-at16a",
       );
+      await waitFor(() => reviewsOf("run-ses-at16a").length === 1, "the review of ses-at16a");
       await handle.signal(stopSignal);
       return handle.result();
     });
@@ -139,6 +143,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "verify",
       "setRunStatus",
       "userValidate",
+      "setRunStatus",
+      "review",
       "completeRun",
     ]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);

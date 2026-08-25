@@ -48,14 +48,14 @@ const build = () => {
   return { activities, calls };
 };
 
-/** The current value of `factoree_repairs_total` for the labels of the test Run. */
-const repairCount = async (): Promise<number> => {
+/** The current value of `factoree_repairs_total` for the labels of the test Run and one reason. */
+const repairCount = async (reason = "VERIFICATION"): Promise<number> => {
   const metric = await metrics.repairs.get();
   const sample = metric.values.find(
     (value) =>
       value.labels.tenant_id === "tenant-1" &&
       value.labels.project_id === "project-1" &&
-      value.labels.reason === "VERIFICATION",
+      value.labels.reason === reason,
   );
   return sample?.value ?? 0;
 };
@@ -76,6 +76,27 @@ describe("setRunStatus", () => {
   });
 
   it("counts one repair of SDD section 62 when the Run enters REPAIRING", async () => {
+    const { activities } = build();
+    const before = await repairCount();
+    await activities.setRunStatus({ runId: "run-1", status: "REPAIRING", repairCount: 1 });
+    expect(await repairCount()).toBe(before + 1);
+  });
+
+  it("counts the repair against the stage the caller named", async () => {
+    // SDD section 42 and section 62. Three stages can ask for a repair, so the metric must name
+    // the stage that asked for this one.
+    const { activities } = build();
+    const before = await repairCount("REVIEW");
+    await activities.setRunStatus({
+      runId: "run-1",
+      status: "REPAIRING",
+      repairCount: 1,
+      repairReason: "REVIEW",
+    });
+    expect(await repairCount("REVIEW")).toBe(before + 1);
+  });
+
+  it("counts the repair against verification when the caller named no stage", async () => {
     const { activities } = build();
     const before = await repairCount();
     await activities.setRunStatus({ runId: "run-1", status: "REPAIRING", repairCount: 1 });

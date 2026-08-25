@@ -32,6 +32,12 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     startedAt?: string;
     /** SDD section 42. The number of repairs the Run has started. */
     repairCount?: number;
+    /**
+     * SDD section 42 and section 62. The stage that asked for this repair. Three stages can ask
+     * for one, so the metric must name the right stage. The default keeps an older caller
+     * correct.
+     */
+    repairReason?: "VERIFICATION" | "VALIDATION" | "REVIEW";
   }): Promise<void> {
     const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.startedAt === undefined ? {} : { startedAt: new Date(input.startedAt) }),
@@ -43,7 +49,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       metrics.repairs.inc({
         tenant_id: run.tenantId,
         project_id: run.projectId,
-        reason: "VERIFICATION",
+        reason: input.repairReason ?? "VERIFICATION",
       });
     }
   },

@@ -16,6 +16,7 @@ import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activiti
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
+import type { ReviewActivityOutput } from "~/activities/review.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
@@ -228,6 +229,20 @@ const buildUserValidateActivities = (budgetMs: number) =>
     retry: { maximumAttempts: 1 },
   });
 
+/**
+ * The Reviewer activity runs a fresh agent session against the source diff, the same way the
+ * User Validator runs one against the preview. SDD section 42 puts it inside the same bounded
+ * loop, so it takes the same long-activity options.
+ */
+const buildReviewActivities = (budgetMs: number) =>
+  proxyActivities<Activities>({
+    startToCloseTimeout: `${budgetMs + IMPLEMENT_MARGIN_MS} milliseconds`,
+    scheduleToCloseTimeout: `${budgetMs + IMPLEMENT_MARGIN_MS} milliseconds`,
+    heartbeatTimeout: `${IMPLEMENT_HEARTBEAT_TIMEOUT_MS} milliseconds`,
+    cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+    retry: { maximumAttempts: 1 },
+  });
+
 /** The longest one verification pass can take. A retry gets its own attempt of this length. */
 const VERIFY_ATTEMPT_TIMEOUT_MS = 60 * 60_000;
 
@@ -320,10 +335,19 @@ export async function agentRunWorkflow(
       | "VALIDATION_UNRESOLVED"
       | "VALIDATION_FAILED"
       | "VALIDATION_BLOCKED"
-      | "VALIDATION_MANUAL_REQUIRED",
+      | "VALIDATION_MANUAL_REQUIRED"
+      | "REVIEW_BLOCKING_FINDINGS"
+      | "REVIEW_UNAVAILABLE",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
-    status = failureReason === "CONFIGURATION_INVALID" ? "FAILED_CONFIGURATION" : "FAILED";
+    // SDD section 48. A blocking review finding has its own terminal state. Every other reason
+    // except a configuration fault ends the Run in `FAILED`.
+    status =
+      failureReason === "CONFIGURATION_INVALID"
+        ? "FAILED_CONFIGURATION"
+        : failureReason === "REVIEW_BLOCKING_FINDINGS"
+          ? "FAILED_REVIEW"
+          : "FAILED";
     // Write the durable terminal state first. A Linear outage must not leave the Run open.
     await activities.completeRun({
       tenantId: input.tenantId,
@@ -517,6 +541,44 @@ export async function agentRunWorkflow(
         primaryPath: attemptInput.prepared.primaryPath,
         goal: attemptInput.goal,
         preview: attemptInput.prepared.preview,
+        timeoutMs: budgetMs,
+        attempt: attemptInput.attempt,
+      }),
+    );
+  };
+
+  /**
+   * One Reviewer pass. SDD section 40 and section 42. Every pass starts a new session, so no
+   * session reference passes between attempts. See controller decision 11.
+   */
+  const runReview = async (attemptInput: {
+    prepared: PrepareSandboxActivityOutput;
+    goal: string;
+    attempt: number;
+    contextContract: string | null;
+    constraints: string[];
+    verificationSummary: string;
+    validationEvidence: string[];
+  }): Promise<ReviewActivityOutput | null> => {
+    const budgetMs = remainingMs();
+    const reviewActivities = buildReviewActivities(budgetMs);
+    return await runAgentActivity(() =>
+      reviewActivities.review({
+        runId: id,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        runnerName: attemptInput.prepared.runtime.reviewerRunner,
+        spriteId: attemptInput.prepared.spriteId,
+        adapter: attemptInput.prepared.adapter,
+        workspacePath: attemptInput.prepared.workspacePath,
+        primaryPath: attemptInput.prepared.primaryPath,
+        baseSha: attemptInput.prepared.baseSha,
+        goal: attemptInput.goal,
+        contextContract: attemptInput.contextContract,
+        constraints: attemptInput.constraints,
+        verificationSummary: attemptInput.verificationSummary,
+        validationEvidence: attemptInput.validationEvidence,
+        repositoryInstructions: attemptInput.prepared.repositoryInstructions,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
       }),
@@ -958,7 +1020,12 @@ export async function agentRunWorkflow(
           attempt += 1;
           repairFindings = verification.failures;
           status = "REPAIRING";
-          await activities.setRunStatus({ runId: id, status, repairCount });
+          await activities.setRunStatus({
+            runId: id,
+            status,
+            repairCount,
+            repairReason: "VERIFICATION",
+          });
           continue;
         }
 
@@ -1010,61 +1077,143 @@ export async function agentRunWorkflow(
         );
 
         if (stopRequested) return await cancelRun();
-        if (userValidation.passed) break;
 
-        // SDD section 36. Only a failing assertion can be repaired. A blocked check, or a check
-        // that needs a human, cannot be fixed by another Implementer attempt.
-        if (userValidation.hasFailure) {
-          // SDD section 42 bounds repairs per Run, and the repair shares the budget
-          // deterministic verification already counts.
-          if (repairCount >= maxRepairs) {
+        if (!userValidation.passed) {
+          // SDD section 36. Only a failing assertion can be repaired. A blocked check, or a check
+          // that needs a human, cannot be fixed by another Implementer attempt.
+          if (userValidation.hasFailure) {
+            // SDD section 42 bounds repairs per Run, and the repair shares the budget
+            // deterministic verification already counts.
+            if (repairCount >= maxRepairs) {
+              return await failRun(
+                "VALIDATION_FAILED",
+                "User validation did not pass, and the repair budget is spent. " +
+                  `${userValidation.summary} Factoree published nothing.`,
+              );
+            }
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+            repairCount += 1;
+            attempt += 1;
+            repairFindings = userValidation.failures;
+            status = "REPAIRING";
+            await activities.setRunStatus({
+              runId: id,
+              status,
+              repairCount,
+              repairReason: "VALIDATION",
+            });
+            continue;
+          }
+
+          if (userValidation.hasBlocked) {
             return await failRun(
-              "VALIDATION_FAILED",
-              "User validation did not pass, and the repair budget is spent. " +
-                `${userValidation.summary} Factoree published nothing.`,
+              "VALIDATION_BLOCKED",
+              "Factoree could not run at least one user validation check, so it proved nothing. " +
+                `${userValidation.summary} A repair cannot help. Factoree published nothing.`,
             );
           }
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
-          repairCount += 1;
-          attempt += 1;
-          repairFindings = userValidation.failures;
-          status = "REPAIRING";
-          await activities.setRunStatus({ runId: id, status, repairCount });
-          continue;
-        }
+          // SDD section 36 forbids completion of an L3 Run without a human. The Run must say so
+          // now, rather than wait for the residual wait to end it with a timeout.
+          if (userValidation.hasManual) {
+            return await failRun(
+              "VALIDATION_MANUAL_REQUIRED",
+              "At least one user validation assertion needs a human, so Factoree cannot complete " +
+                `this Run on its own. ${userValidation.summary} Factoree published nothing.`,
+            );
+          }
 
-        if (userValidation.hasBlocked) {
-          return await failRun(
-            "VALIDATION_BLOCKED",
-            "Factoree could not run at least one user validation check, so it proved nothing. " +
-              `${userValidation.summary} A repair cannot help. Factoree published nothing.`,
+          // A pass that did not pass must report at least one failed, blocked, or manual
+          // assertion. Any other output is an internal fault, not a validation outcome.
+          throw ApplicationFailure.nonRetryable(
+            "User validation did not pass, and reported no failed, blocked, or manual assertion.",
+            "USER_VALIDATION_INCONSISTENT",
           );
         }
 
-        // SDD section 36 forbids completion of an L3 Run without a human. The Run must say so
-        // now, rather than wait for the residual wait to end it with a timeout.
-        if (userValidation.hasManual) {
-          return await failRun(
-            "VALIDATION_MANUAL_REQUIRED",
-            "At least one user validation assertion needs a human, so Factoree cannot complete " +
-              `this Run on its own. ${userValidation.summary} Factoree published nothing.`,
-          );
+        // SDD section 40 and section 49. User validation passed, so a fresh Reviewer session
+        // examines the change against the fixed review baseline of SDD section 43.
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        status = "REVIEWING";
+        await activities.setRunStatus({ runId: id, status });
+
+        let review: ReviewActivityOutput;
+        try {
+          const result = await runReview({
+            prepared: preparedSandbox,
+            goal: sandbox.goal,
+            attempt,
+            contextContract: resolvedContext.document,
+            constraints: refined.constraints,
+            verificationSummary: verification.summary,
+            validationEvidence: userValidation.results.map(
+              (entry) => `${entry.assertionId}: ${entry.result}. ${entry.reason}`,
+            ),
+          });
+          if (stopRequested) return await cancelRun();
+          if (result === null) {
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            throw new Error("the review activity returned no result");
+          }
+          review = result;
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          // A reviewer runner the Project names but no worker registers is a configuration
+          // fault, exactly as the validator runner is.
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not start the Reviewer, because the Run configuration is " +
+                "invalid. Repair `reviewer_runner` in `.factoree/config.yaml`.",
+            );
+          }
+          if (remainingMs() > 0) throw error;
+          return await failRun("RUN_TIMEOUT", timeoutMessage);
         }
 
-        // A pass that did not pass must report at least one failed, blocked, or manual
-        // assertion. Any other output is an internal fault, not a validation outcome.
-        throw ApplicationFailure.nonRetryable(
-          "User validation did not pass, and reported no failed, blocked, or manual assertion.",
-          "USER_VALIDATION_INCONSISTENT",
+        await notify(() =>
+          activities.postProgress({ sessionId: input.agentSessionId, message: review.summary }),
         );
+
+        if (stopRequested) return await cancelRun();
+
+        // Controller decision 7. A report Factoree cannot read proves nothing, and a repair
+        // cannot fix it. SDD section 68 forbids completion without a review, so the Run ends.
+        if (!review.reportUsable) {
+          return await failRun(
+            "REVIEW_UNAVAILABLE",
+            "Factoree could not obtain a usable independent review, so it proved nothing about " +
+              `this change. ${review.reportProblem ?? ""} Factoree published nothing.`.trim(),
+          );
+        }
+
+        if (review.passed) break;
+
+        // SDD section 42. A blocking finding enters the same bounded repair loop.
+        if (repairCount >= maxRepairs) {
+          return await failRun(
+            "REVIEW_BLOCKING_FINDINGS",
+            "The independent review rejected this change, and the repair budget is spent. " +
+              `${review.summary} Factoree published nothing.`,
+          );
+        }
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        repairCount += 1;
+        attempt += 1;
+        repairFindings = review.failures;
+        status = "REPAIRING";
+        await activities.setRunStatus({ runId: id, status, repairCount, repairReason: "REVIEW" });
+        continue;
       }
     }
 
-    // User validation passed. SDD section 68 forbids READY_FOR_HUMAN without a Validation
-    // Contract, a PR, and a Proof Pack, and Phase 9 and Phase 10 build those. Until then the Run
-    // stays open for a stop signal, for human input, or until the Run budget ends it, so this
-    // step invents no success terminal state.
+    // User validation passed, and the independent review passed as well. SDD section 68 forbids
+    // READY_FOR_HUMAN without a Validation Contract, a PR, and a Proof Pack, and Phase 9 and
+    // Phase 10 build those. Until then the Run stays open for a stop signal, for human input, or
+    // until the Run budget ends it, so this step invents no success terminal state.
     const stopped = await condition(() => stopRequested, remainingMs());
 
     if (!stopped) return await failRun("RUN_TIMEOUT", timeoutMessage);

@@ -110,6 +110,13 @@ export const metrics = {
     buckets: [0.1, 1, 5, 30, 120, 600],
     registers: [registry],
   }),
+  reviewDuration: new Histogram({
+    name: "factoree_review_duration_seconds",
+    help: "Independent review duration in seconds",
+    labelNames,
+    buckets: [0.1, 1, 5, 30, 120, 600],
+    registers: [registry],
+  }),
   repairs: new Counter({
     name: "factoree_repairs_total",
     help: "Repair attempts started",

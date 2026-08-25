@@ -57,6 +57,19 @@ describe("refine activity", () => {
     ]);
   });
 
+  it("carries every Work Item constraint into the output", async () => {
+    // SDD section 40. The Reviewer receives the constraints, so Refinement must carry them.
+    const output = await activities.refine(
+      input({
+        source: {
+          ...input().source,
+          description: "## Goal\n\nRetry.\n\n## Constraints\n\n- Do not change the schema.\n",
+        },
+      }),
+    );
+    expect(output.constraints).toEqual(["Do not change the schema."]);
+  });
+
   it("reports a material question and needs input", async () => {
     const output = await activities.refine(
       input({

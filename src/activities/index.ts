@@ -20,6 +20,7 @@ import type { HttpValidationFetch } from "~/domain/validation/http-validation.js
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
+import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
@@ -29,6 +30,7 @@ import { createRefinementActivities } from "./refinement.activities.js";
 import { createContextActivities } from "./context.activities.js";
 import { createValidationActivities } from "./validation.activities.js";
 import { createEvidencePersistence } from "./evidence.activities.js";
+import { createReviewActivities } from "./review.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -53,6 +55,7 @@ export interface ActivityDependencies {
   previewProbe: ReadinessProbe;
   evidenceStorage: EvidenceStorage;
   validationResults: ValidationResultStore;
+  reviewFindings: ReviewFindingStore;
   logger: Logger;
 }
 
@@ -108,6 +111,16 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
         logger: dependencies.logger,
       }),
     },
+  }),
+  ...createReviewActivities({
+    sandbox: dependencies.sandbox,
+    runners: dependencies.runners,
+    executions: dependencies.executions,
+    secrets: dependencies.secrets,
+    redactor: dependencies.redactor,
+    contracts: dependencies.validationContracts,
+    reviewFindings: dependencies.reviewFindings,
+    logger: dependencies.logger,
   }),
   ...createVerificationActivities({
     sandbox: dependencies.sandbox,

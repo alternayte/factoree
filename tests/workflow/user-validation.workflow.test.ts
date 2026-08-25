@@ -17,6 +17,7 @@ const {
   heldUserValidations,
   heldStatuses,
   cancelledLiveValidations,
+  reviewCalls,
   postedProgress,
   activityOrder,
   runtimeOverrides,
@@ -36,6 +37,7 @@ afterAll(async () => {
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const userValidatesOf = (runId: string) => userValidateCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
+const reviewsOf = (runId: string) => reviewCalls.filter((entry) => entry.runId === runId);
 
 const startRun = async (sessionId: string, maxRunMinutes = 90) =>
   environment.client.workflow.start(agentRunWorkflow, {
@@ -111,6 +113,9 @@ describe("USER_VALIDATING", () => {
     await runWorker(async () => {
       const handle = await startRun("ses-uv2");
       await waitFor(() => userValidatesOf(runId).length === 2, "the second user validation of ses-uv2");
+      // The second pass passes, so the Run enters REVIEWING next. The stop must wait for the
+      // review call, or the stop signal races the transition and this test flakes.
+      await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-uv2");
       await handle.signal(stopSignal);
       await handle.result();
     });
@@ -128,6 +133,7 @@ describe("USER_VALIDATING", () => {
       "IMPLEMENTING",
       "VERIFYING",
       "USER_VALIDATING",
+      "REVIEWING",
     ]);
     expect(implementsOf(runId)[1]!.repairFindings[0]).toContain("VAL-UI-001");
   });
