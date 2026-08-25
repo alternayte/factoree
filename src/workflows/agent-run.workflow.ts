@@ -407,6 +407,16 @@ export async function agentRunWorkflow(
       | "COMPLETION_INVARIANT_UNMET",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
+    // SDD section 50 obligation 1. A Run that ends on its deadline must cancel the active agent
+    // process. The implement activity cancels its own live session when a scope cancellation
+    // reaches it. A second cancellation is needed only for a session the activity left running.
+    const live = implementerSession;
+    if (live !== null && !implementerCancelled) {
+      await notify(() =>
+        cancelActivities.cancelImplementer({ runnerName: live.runner, session: live }),
+      );
+    }
+
     // SDD section 48. A blocking review finding has its own terminal state. Every other reason
     // except a configuration fault ends the Run in `FAILED`.
     status =
