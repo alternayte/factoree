@@ -253,6 +253,7 @@ const input: PublishProofPackActivityInput = {
   repairLimit: 2,
   reviewVerdict: "pass",
   reviewPasses: 2,
+  reviewAttempt: 2,
 };
 
 describe("publishProofPack", () => {
@@ -333,6 +334,21 @@ describe("publishProofPack", () => {
     const a = await first.activities.publishProofPack(input);
     const b = await second.activities.publishProofPack(input);
     expect(a.sha256).toBe(b.sha256);
+  });
+
+  it("reports no blocking finding when the last review pass reported none", async () => {
+    // A passing review writes NO finding row, because it has no finding to write. The Proof
+    // Pack must therefore not infer the last review pass from the rows that exist. A Run whose
+    // attempt 1 review found a blocker and whose attempt 2 review passed holds only the
+    // attempt 1 rows, and reporting those tells a human that a proved Run still has a blocker.
+    const harness = build({
+      reviewFindings: { listForRun: async () => [findings[0]!] },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+
+    await harness.activities.publishProofPack({ ...input, reviewAttempt: 2 });
+
+    expect(harness.posted[0]).toContain("Blocking findings that remain: 0");
+    expect(harness.posted[0]).not.toContain("RV-1");
   });
 
   it("refuses to post when the Validation Contract is missing", async () => {

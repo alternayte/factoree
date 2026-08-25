@@ -11,6 +11,12 @@ export interface CompletionInvariantInput {
   validationContractVersion: string | null;
   /** SDD section 24. The contract must freeze before implementation starts. */
   validationContractFrozenAt: string | null;
+  /**
+   * SDD section 24 and section 68. The moment the first Implementer attempt started, or null
+   * when none started. The clause names an ORDER, so the check compares the two moments. A
+   * check that only proves a contract exists would pass a contract frozen afterwards.
+   */
+  implementationStartedAt: string | null;
   validationPassed: boolean;
   verificationPassed: boolean;
   blockingFindingCount: number;
@@ -37,6 +43,12 @@ export const completionInvariantFailures = (input: CompletionInvariantInput): st
   if (input.validationContractVersion === null) failures.push("No Validation Contract exists.");
   if (input.validationContractFrozenAt === null) {
     failures.push("The Validation Contract never froze before implementation.");
+  } else if (input.implementationStartedAt === null) {
+    failures.push("No implementation start was recorded, so the freeze order is unproved.");
+  } else if (
+    Date.parse(input.validationContractFrozenAt) > Date.parse(input.implementationStartedAt)
+  ) {
+    failures.push("The Validation Contract froze after implementation started.");
   }
   if (!input.validationPassed) failures.push("At least one Validation assertion did not pass.");
   if (!input.verificationPassed) failures.push("Deterministic verification did not pass.");

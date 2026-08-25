@@ -33,7 +33,9 @@ afterAll(async () => {
 const SECRET = "fixture-secret-value-12345";
 
 /** Builds one Run whose persisted state is the state a successful L3 Run leaves behind. */
-const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
+const seedProvedRun = async (
+  options: { changedFileCount?: number; silentPassingReview?: boolean } = {},
+) => {
   const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
   const contracts = new PrismaValidationContractStore(prisma);
   const contextContracts = new PrismaContextContractStore(prisma);
@@ -165,6 +167,19 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
     attempt: 2,
   });
 
+  // The failed attempt 1 of VAL-API-001 produced its own artefact. It stays in the database,
+  // because SDD section 39 makes evidence immutable.
+  await evidence.record({
+    tenantId,
+    runId,
+    validationAssertionId: api.rowId,
+    kind: "request-response",
+    source: "http:VAL-API-001:request-response",
+    sha256: "6".repeat(64),
+    storageRef: "file:VAL-API-001-FAILED-attempt-1.json",
+    metadata: { attempt: 1 },
+    idempotencyKey: `run:${runId}:validation:1:VAL-API-001:http`,
+  });
   await evidence.record({
     tenantId,
     runId,
@@ -173,7 +188,7 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
     source: "http:VAL-API-001:request-response",
     sha256: "d".repeat(64),
     storageRef: "file:VAL-API-001-http-request-response.json",
-    metadata: {},
+    metadata: { attempt: 2 },
     idempotencyKey: `run:${runId}:validation:2:VAL-API-001:http`,
   });
   await evidence.record({
@@ -184,7 +199,7 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
     source: "browser:VAL-UI-001:screenshot",
     sha256: "e".repeat(64),
     storageRef: "file:VAL-UI-001-browser-screenshot.png",
-    metadata: {},
+    metadata: { attempt: 2 },
     idempotencyKey: `run:${runId}:validation:2:VAL-UI-001:browser`,
   });
   // Attempt 1 failed its deterministic verification, and the repair of attempt 2 fixed it. Both
@@ -250,7 +265,7 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
     blocking: true,
     decisionReason: "a blocker finding blocks by default",
   });
-  await reviewFindings.record({
+  if (options.silentPassingReview !== true) await reviewFindings.record({
     tenantId,
     runId,
     attempt: 2,
@@ -310,6 +325,7 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
     repairLimit: 2,
     reviewVerdict: "pass",
     reviewPasses: 2,
+    reviewAttempt: 2,
   };
 
   return { tenantId, runId, activities, input, runs };
@@ -415,6 +431,31 @@ describe("AT-30 — the Proof Pack of a successful L3 Run", () => {
     expect(body).not.toContain("exit code 1");
     expect(body).not.toContain("Failed.");
     expect(body.match(/- unit:/g)).toHaveLength(1);
+  });
+
+  it("reports no open blocker when the last review passed and wrote no row", async () => {
+    const before = posted.length;
+    const seeded = await seedProvedRun({ silentPassingReview: true });
+    await seeded.activities.publishProofPack(seeded.input);
+    const body = posted.slice(before).at(-1) ?? "";
+
+    // A passing review reports no finding, so it writes no row. Only the attempt 1 blocker
+    // remains in the database. A Proof Pack that infers the last pass from the rows would tell
+    // the human that a proved Run still carries a blocker.
+    expect(body).toContain("Blocking findings that remain: 0");
+    expect(body).not.toContain("RV-1");
+    expect(body).toMatch(/### Known limitations\n\nNone\./);
+  });
+
+  it("shows the evidence of the last validation attempt only", async () => {
+    const before = posted.length;
+    const seeded = await seedProvedRun();
+    await seeded.activities.publishProofPack(seeded.input);
+    const body = posted.slice(before).at(-1) ?? "";
+
+    // A failure artefact beside a PASS misleads the human who opens it.
+    expect(body).toContain("file:VAL-API-001-http-request-response.json");
+    expect(body).not.toContain("file:VAL-API-001-FAILED-attempt-1.json");
   });
 
   it("produces the same hash twice, because it is a function of recorded state", async () => {

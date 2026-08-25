@@ -1055,6 +1055,13 @@ export async function agentRunWorkflow(
       let publishedBlockingCount = 0;
       let publishedReviewVerdict: "pass" | "fail" = "fail";
       let publishedReviewPasses = 0;
+      // The attempt number of the last Reviewer session. The Proof Pack needs it, because a
+      // passing review writes no finding row and the stored rows cannot name that pass.
+      let publishedReviewAttempt = 0;
+      // SDD section 24 and section 68. The moment the FIRST Implementer attempt started. The
+      // completion invariant compares it with the freeze moment, because the clause names an
+      // order. A later repair attempt must not move it.
+      let implementationStartedAt: string | null = null;
       // The number of Reviewer sessions this Run ran. The attempt counter is not the same value,
       // because a repair that verification or validation asked for raises the attempt without
       // reaching a review. The Proof Pack reports this count to a human, so it must be exact.
@@ -1065,6 +1072,9 @@ export async function agentRunWorkflow(
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
         status = "IMPLEMENTING";
+        if (implementationStartedAt === null) {
+          implementationStartedAt = new Date(Date.now()).toISOString();
+        }
         await activities.setRunStatus({ runId: id, status });
 
         const implementation = await runImplementer({
@@ -1326,6 +1336,7 @@ export async function agentRunWorkflow(
           publishedBlockingCount = review.blockingCount;
           publishedReviewVerdict = review.verdict;
           publishedReviewPasses = reviewPasses;
+          publishedReviewAttempt = attempt;
           publishedPreviewUrl = userValidation.previewUrl;
           break;
         }
@@ -1477,6 +1488,7 @@ export async function agentRunWorkflow(
           repairLimit: maxRepairs,
           reviewVerdict: publishedReviewVerdict,
           reviewPasses: publishedReviewPasses,
+          reviewAttempt: publishedReviewAttempt,
         });
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -1501,6 +1513,7 @@ export async function agentRunWorkflow(
         unresolvedConflict: resolvedContext.unresolvedConflict !== null,
         validationContractVersion,
         validationContractFrozenAt: validation.frozenAt,
+        implementationStartedAt,
         validationPassed: publishedValidationPassed,
         verificationPassed: publishedVerificationPassed,
         blockingFindingCount: publishedBlockingCount,

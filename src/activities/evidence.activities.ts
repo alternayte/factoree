@@ -106,7 +106,10 @@ export const createEvidencePersistence = (
         source: artifact.source,
         sha256: stored.sha256,
         storageRef: stored.storageRef,
-        metadata: artifact.metadata,
+        // SDD section 42. A repair produces a second artefact for the same assertion. The row
+        // must therefore name its attempt, exactly as a deterministic check row does. Without it
+        // the Proof Pack cannot tell a failed attempt's artefact from the passing one.
+        metadata: { ...artifact.metadata, attempt: input.attempt },
         idempotencyKey:
           `run:${input.runId}:validation:${input.attempt}:` +
           `${input.outcome.assertionId}:${artifact.source}`,
@@ -164,6 +167,12 @@ export interface PublishProofPackActivityInput {
   repairLimit: number;
   reviewVerdict: "pass" | "fail";
   reviewPasses: number;
+  /**
+   * SDD section 42. The attempt number of the LAST Reviewer session. A passing review reports no
+   * finding and therefore writes no row, so the stored rows cannot name this attempt. Only the
+   * caller knows it, and without it a repaired blocker of an earlier attempt is reported as open.
+   */
+  reviewAttempt: number;
 }
 
 export interface PublishProofPackActivityOutput {
@@ -224,9 +233,26 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       if (held === undefined || row.attempt >= held.attempt) latest.set(row.assertionKey, row);
     }
 
+    // SDD section 42. A repair leaves the artefacts of the failed attempt beside those of the
+    // passing one. Only the last attempt describes the change Factoree published, so a failure
+    // screenshot must never sit next to a PASS. A row that carries no attempt yields -1, and
+    // every row of that assertion then matches, so nothing is ever silently dropped.
+    const lastAttemptByAssertion = new Map<string, number>();
+    for (const row of evidenceRows) {
+      if (row.validationAssertionId === null) continue;
+      const attempt = metadataNumber(row.metadata, "attempt");
+      const held = lastAttemptByAssertion.get(row.validationAssertionId);
+      if (held === undefined || attempt > held) {
+        lastAttemptByAssertion.set(row.validationAssertionId, attempt);
+      }
+    }
+
     const evidenceByAssertion = new Map<string, ProofPackEvidenceRef[]>();
     for (const row of evidenceRows) {
       if (row.validationAssertionId === null) continue;
+      if (metadataNumber(row.metadata, "attempt") !== lastAttemptByAssertion.get(row.validationAssertionId)) {
+        continue;
+      }
       const list = evidenceByAssertion.get(row.validationAssertionId) ?? [];
       list.push({
         kind: row.kind,
@@ -278,10 +304,11 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       }));
 
     // SDD section 42. Only the last review pass describes the change Factoree published. An
-    // earlier pass reported a defect a repair already closed.
-    const lastAttempt = findingRows.reduce((held, row) => Math.max(held, row.attempt), 0);
+    // earlier pass reported a defect a repair already closed. The attempt comes from the caller,
+    // never from the rows: a passing review writes no row at all, so the highest stored attempt
+    // is the earlier FAILING pass, and using it would report a repaired blocker as open.
     const findings = findingRows
-      .filter((row) => row.attempt === lastAttempt)
+      .filter((row) => row.attempt === input.reviewAttempt)
       .map((row) => ({
         id: row.findingKey,
         severity: row.severity,

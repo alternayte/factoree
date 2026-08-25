@@ -101,6 +101,7 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
   unresolvedConflict: false,
   validationContractVersion: "b".repeat(64),
   validationContractFrozenAt: "2026-01-01T00:00:00.000Z",
+  implementationStartedAt: "2026-01-01T00:05:00.000Z",
   validationPassed: true,
   verificationPassed: true,
   blockingFindingCount: 0,

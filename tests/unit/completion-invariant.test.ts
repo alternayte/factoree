@@ -11,6 +11,7 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
   unresolvedConflict: false,
   validationContractVersion: "b".repeat(64),
   validationContractFrozenAt: "2026-01-01T00:00:00.000Z",
+  implementationStartedAt: "2026-01-01T00:05:00.000Z",
   validationPassed: true,
   verificationPassed: true,
   blockingFindingCount: 0,
@@ -55,6 +56,30 @@ describe("the SDD section 68 completion invariant", () => {
       expect(failures.join(" ")).toContain(fragment);
     });
   }
+
+  it("refuses a contract that froze after implementation started", () => {
+    // SDD section 24 names an ORDER. A check that only proves a contract exists would accept a
+    // contract frozen against an implementation that was already running.
+    const failures = completionInvariantFailures(
+      satisfied({
+        validationContractFrozenAt: "2026-01-01T00:10:00.000Z",
+        implementationStartedAt: "2026-01-01T00:05:00.000Z",
+      }),
+    );
+    expect(failures).toEqual(["The Validation Contract froze after implementation started."]);
+  });
+
+  it("refuses completion when no implementation start was recorded", () => {
+    expect(completionInvariantFailures(satisfied({ implementationStartedAt: null }))).toEqual([
+      "No implementation start was recorded, so the freeze order is unproved.",
+    ]);
+  });
+
+  it("accepts a contract that froze at the same moment implementation started", () => {
+    expect(
+      completionInvariantFailures(satisfied({ implementationStartedAt: "2026-01-01T00:00:00.000Z" })),
+    ).toEqual([]);
+  });
 
   it("refuses a patch hash that is not a SHA-256", () => {
     expect(completionInvariantFailures(satisfied({ patchSha256: "not-a-hash" }))).not.toEqual([]);
