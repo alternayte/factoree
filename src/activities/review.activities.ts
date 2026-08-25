@@ -14,8 +14,12 @@ import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildReviewerInput } from "~/domain/review/reviewer-input.js";
 import { captureSourceDiff } from "~/domain/review/source-diff.js";
-import { parseReviewReport, ReviewReportInvalidError } from "~/domain/review/review-report.js";
-import { decideReview } from "~/domain/review/blocking.js";
+import {
+  parseReviewReport,
+  ReviewReportInvalidError,
+  type ReviewFinding,
+} from "~/domain/review/review-report.js";
+import { decideReview, failureLine } from "~/domain/review/blocking.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 
 /**
@@ -94,6 +98,21 @@ const activeReviewerSessionOf = (runner: AgentRunner, runId: string): AgentSessi
 };
 
 const NO_REPORT = "The Reviewer wrote no report.";
+
+/**
+ * Redacts the free-text fields of one finding. The Reviewer session receives the Project test
+ * secrets in its environment, so a value it echoes into `requirement`, `evidence`, or
+ * `description` must never reach a persisted row, a returned failure line, or a log line. SDD
+ * section 60. This must run only after `decideReview` has already used the unredacted finding
+ * to decide blocking, because a redaction can change the text of `evidence` and must never
+ * change which finding blocks.
+ */
+const redactFinding = (redactor: Redactor, finding: ReviewFinding): ReviewFinding => ({
+  ...finding,
+  requirement: redactor.redactText(finding.requirement),
+  evidence: redactor.redactText(finding.evidence),
+  description: redactor.redactText(finding.description),
+});
 
 /** SDD section 63 names this file. */
 export const createReviewActivities = (dependencies: ReviewActivityDependencies) => ({
@@ -314,7 +333,9 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           failures: [],
           sessionId: sessionResult.session.sessionId,
           reportUsable: false,
-          reportProblem: error.message,
+          // A parse error can quote the offending input, for example an unparsable JSON
+          // fragment or an unrecognised value, so it must pass through the redactor too.
+          reportProblem: dependencies.redactor.redactText(error.message),
         };
       }
 
@@ -334,21 +355,28 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       });
 
       // Step 14. Every finding is persisted, blocking and non-blocking. Controller decision 17
-      // owns this.
+      // owns this. `decideReview` already decided `blocking` above, on the unredacted finding,
+      // so redacting here cannot change which finding blocks. Only the values that leave this
+      // activity are redacted: the persisted row, the returned failure lines below, and the log
+      // line at step 15.
       for (const item of decision.decisions) {
+        const redacted = redactFinding(dependencies.redactor, item.finding);
         await dependencies.reviewFindings.record({
           tenantId: input.tenantId,
           runId: input.runId,
           attempt: input.attempt,
           verdict: report.verdict,
-          findingKey: item.finding.id,
-          severity: item.finding.severity,
-          category: item.finding.category,
-          requirement: item.finding.requirement,
-          evidence: item.finding.evidence,
-          description: item.finding.description,
+          findingKey: redacted.id,
+          severity: redacted.severity,
+          category: redacted.category,
+          requirement: redacted.requirement,
+          evidence: redacted.evidence,
+          description: redacted.description,
           blocking: item.blocking,
-          decisionReason: item.reason,
+          // `item.reason` is plain text `decideReview` built from the unredacted finding, and a
+          // non-blocking reason can quote `requirement` or `evidence` verbatim, so it must pass
+          // through the redactor too.
+          decisionReason: dependencies.redactor.redactText(item.reason),
         });
       }
 
@@ -362,14 +390,19 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         blocking_count: decision.blocking.length,
       });
 
-      // Step 16. `passed` comes from `decideReview`, never from the agent verdict.
+      // Step 16. `passed` comes from `decideReview`, never from the agent verdict. `failures` is
+      // rebuilt from the redacted finding, because `decision.failures` was built from the
+      // unredacted finding and must never reach the next Implementer prompt.
+      const redactedFailures = decision.blocking.map((item) =>
+        failureLine({ ...item, finding: redactFinding(dependencies.redactor, item.finding) }),
+      );
       return {
         passed: decision.passed,
         verdict: report.verdict,
         findingCount: decision.decisions.length,
         blockingCount: decision.blocking.length,
         summary: decision.summary,
-        failures: decision.failures,
+        failures: redactedFailures,
         sessionId: sessionResult.session.sessionId,
         reportUsable: true,
         reportProblem: null,

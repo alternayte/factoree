@@ -232,6 +232,47 @@ describe("the review activity", () => {
     expect(findings.rows[0]?.blocking).toBe(false);
   });
 
+  it("redacts a secret the Reviewer echoes into a finding, and still blocks it", async () => {
+    const { activities, sandbox, findings, redactor } = build();
+    const secret = "sekrit-99887766-value";
+    redactor.addSecret(secret);
+    const report = JSON.stringify({
+      version: 1,
+      verdict: "fail",
+      findings: [
+        {
+          id: "RV-1",
+          severity: "high",
+          category: "correctness",
+          requirement: "VAL-1",
+          evidence: `src/foo.ts:1 ${secret}`,
+          description: `The rename command logs the value ${secret} in plain text.`,
+        },
+      ],
+    });
+    scriptGitAndReport(sandbox, report);
+
+    const result: ReviewActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.review(activityInput),
+      input,
+    );
+
+    // The finding still blocks. The evidence still names the changed file `src/foo.ts`, so
+    // redacting the secret out of the evidence text cannot change `decideReview`'s ruling.
+    expect(result.passed).toBe(false);
+    expect(result.blockingCount).toBe(1);
+
+    expect(findings.rows).toHaveLength(1);
+    const row = findings.rows[0];
+    expect(row?.blocking).toBe(true);
+    expect(row?.evidence).not.toContain(secret);
+    expect(row?.description).not.toContain(secret);
+    expect(row?.decisionReason).not.toContain(secret);
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).not.toContain(secret);
+  });
+
   it("records one AgentExecution row of role reviewer per attempt", async () => {
     const { activities, sandbox, executions } = build();
     scriptGitAndReport(sandbox, passReport);

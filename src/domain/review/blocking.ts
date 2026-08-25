@@ -139,7 +139,12 @@ const decideFinding = (
   };
 };
 
-const failureLine = (decision: FindingDecision): string =>
+/**
+ * Formats one blocking finding for `ImplementActivityInput.repairFindings`. Exported so the
+ * review activity can rebuild this line from a redacted finding, after `decideReview` has
+ * already used the unredacted finding to decide blocking. See SDD section 60.
+ */
+export const failureLine = (decision: FindingDecision): string =>
   `${decision.finding.id} (${decision.finding.severity}, ${decision.finding.category}) at ` +
   `${decision.finding.evidence}: ${decision.finding.description} It breaks: ` +
   `${decision.finding.requirement}`;
