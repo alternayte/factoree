@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { publishToBranch, PatchHashMismatchError } from "~/domain/publishing/trusted-checkout.js";
+import {
+  publishToBranch,
+  PatchHashMismatchError,
+  TrustedCheckoutError,
+} from "~/domain/publishing/trusted-checkout.js";
 import { PATCH_DIFF_ARGS, PATCH_GIT_OPTIONS, sha256OfBase64 } from "~/domain/publishing/patch.js";
 
 let root: string;
@@ -81,9 +85,29 @@ describe("publishToBranch", () => {
     expect(() => execFileSync("git", ["rev-parse", "factoree/run-2"], { cwd: bare })).toThrow();
   });
 
-  it("removes its temporary directory on both paths (SDD section 46 step 10)", async () => {
+  it("refuses a clone URL that starts with a hyphen and never runs a clone", async () => {
+    await expect(
+      publishToBranch({
+        cloneUrl: "--upload-pack=false",
+        baseSha,
+        branch: "factoree/run-injection",
+        patchBase64,
+        verifiedPatchSha256: sha256OfBase64(patchBase64),
+        commitMessage: "Factoree change\n",
+        authorName: "Factoree",
+        authorEmail: "factoree@example.test",
+      }),
+    ).rejects.toBeInstanceOf(TrustedCheckoutError);
+
+    // Nothing reached the remote, so the branch this attempt names does not exist.
+    expect(() =>
+      execFileSync("git", ["rev-parse", "factoree/run-injection"], { cwd: bare }),
+    ).toThrow();
+  });
+
+  it("removes its temporary directory after a successful publish (SDD section 46 step 10)", async () => {
     const before = readdirSync(tmpdir()).filter((name) => name.startsWith("factoree-publish-"));
-    await publishToBranch({
+    const result = await publishToBranch({
       cloneUrl: bare,
       baseSha,
       branch: "factoree/run-3",
@@ -92,7 +116,28 @@ describe("publishToBranch", () => {
       commitMessage: "Factoree change\n",
       authorName: "Factoree",
       authorEmail: "factoree@example.test",
-    }).catch(() => undefined);
+    });
+
+    expect(result.commitSha).toMatch(/^[0-9a-f]{40}$/);
+    const after = readdirSync(tmpdir()).filter((name) => name.startsWith("factoree-publish-"));
+    expect(after.length).toBe(before.length);
+  });
+
+  it("removes its temporary directory after a refused publish (SDD section 46 step 10)", async () => {
+    const before = readdirSync(tmpdir()).filter((name) => name.startsWith("factoree-publish-"));
+    await expect(
+      publishToBranch({
+        cloneUrl: bare,
+        baseSha,
+        branch: "factoree/run-4",
+        patchBase64,
+        verifiedPatchSha256: "f".repeat(64),
+        commitMessage: "Factoree change\n",
+        authorName: "Factoree",
+        authorEmail: "factoree@example.test",
+      }),
+    ).rejects.toBeInstanceOf(PatchHashMismatchError);
+
     const after = readdirSync(tmpdir()).filter((name) => name.startsWith("factoree-publish-"));
     expect(after.length).toBe(before.length);
   });

@@ -58,6 +58,7 @@ describe("capturePatch", () => {
     expect(patchCall).toBeDefined();
     expect(PATCH_DIFF_ARGS).toContain("--binary");
     expect(PATCH_DIFF_ARGS).toContain("--no-renames");
+    expect(PATCH_DIFF_ARGS).toContain("--no-textconv");
   });
 
   it("refuses a base SHA that is not forty hexadecimal characters", async () => {

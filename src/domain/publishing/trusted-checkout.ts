@@ -11,7 +11,7 @@ const run = promisify(execFile);
 /** One publication must not hang a Run. */
 export const PUBLISH_GIT_TIMEOUT_MS = 300_000;
 
-/** The largest output one git command of the publication may produce. */
+/** The largest output one git command of the publication can produce. */
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -53,6 +53,12 @@ export interface TrustedCheckoutInput {
   commitMessage: string;
   authorName: string;
   authorEmail: string;
+  /**
+   * Called when the temporary directory removal fails. The failure must never replace the
+   * original error, so this callback is the only way to observe it. It is optional, so every
+   * existing caller stays unchanged.
+   */
+  onCleanupFailure?: (error: unknown) => void;
 }
 
 /**
@@ -74,6 +80,11 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(input.branch) || input.branch.includes("..")) {
     throw new TrustedCheckoutError(`the branch name "${input.branch}" is not usable`);
+  }
+  if (input.cloneUrl.startsWith("-")) {
+    throw new TrustedCheckoutError(
+      "the clone URL starts with a hyphen, so git can read it as an option. Factoree refuses it.",
+    );
   }
 
   const directory = await mkdtemp(join(tmpdir(), "factoree-publish-"));
@@ -97,26 +108,43 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
     }
   };
 
+  // The buffer-encoding counterpart of `git` above. It keeps the uniform error type and the
+  // credential redaction for the one command that must read raw bytes instead of UTF-8 text.
+  const gitBuffer = async (cwd: string, args: string[]): Promise<Buffer> => {
+    try {
+      const result = await run("git", args, {
+        cwd,
+        timeout: PUBLISH_GIT_TIMEOUT_MS,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        encoding: "buffer",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      return Buffer.from(result.stdout);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new TrustedCheckoutError(
+        `a git command of the trusted checkout failed: ${withoutUrlCredentials(detail)}`,
+      );
+    }
+  };
+
   try {
     await writeFile(patchFile, Buffer.from(input.patchBase64, "base64"));
 
-    // Step 1 and step 2. A clean trusted checkout at the original base SHA.
-    await git(directory, ["clone", "--no-hardlinks", input.cloneUrl, checkout]);
+    // Step 1 and step 2. A clean trusted checkout at the original base SHA. The `--` separator
+    // stops a clone URL that starts with a hyphen from being read as a git option.
+    await git(directory, ["clone", "--no-hardlinks", "--", input.cloneUrl, checkout]);
     await git(checkout, ["checkout", "--detach", input.baseSha]);
 
     // Step 3. Apply the verified patch. `--index` stages exactly what the patch carries, so the
-    // recomputation below reads the same staged tree the sandbox produced.
-    await git(checkout, ["apply", "--binary", "--index", "--whitespace=nowarn", patchFile]);
+    // recomputation below reads the same staged tree the sandbox produced. The `--` separator
+    // stops the patch file path from being read as a git option.
+    await git(checkout, ["apply", "--binary", "--index", "--whitespace=nowarn", "--", patchFile]);
 
     // Step 4. Recalculate the patch hash from the applied tree. Controller decision 3 pins every
     // option, so a git configuration cannot change the bytes.
-    const recomputed = await run("git", [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, input.baseSha], {
-      cwd: checkout,
-      timeout: PUBLISH_GIT_TIMEOUT_MS,
-      maxBuffer: MAX_OUTPUT_BYTES,
-      encoding: "buffer",
-    });
-    const publishedPatchSha256 = sha256OfBase64(Buffer.from(recomputed.stdout).toString("base64"));
+    const recomputed = await gitBuffer(checkout, [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, input.baseSha]);
+    const publishedPatchSha256 = sha256OfBase64(recomputed.toString("base64"));
 
     // Step 5. The gate. Nothing below runs when the two hashes differ.
     if (publishedPatchSha256 !== input.verifiedPatchSha256) {
@@ -145,8 +173,14 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
 
     return { commitSha, publishedPatchSha256, treeSha, branch: input.branch };
   } finally {
-    // Step 10. The temporary files hold a clone and a credentialed remote, so they go on every
-    // path, including the failure paths above.
-    await rm(directory, { recursive: true, force: true });
+    // Step 10. The temporary files hold a clone and a credentialed remote. Factoree removes them
+    // on every path. The failure paths above are included.
+    try {
+      await rm(directory, { recursive: true, force: true });
+    } catch (cleanupError) {
+      // A cleanup failure must never replace an error already in flight, so it does not throw
+      // here. The caller learns about it only through this optional callback.
+      input.onCleanupFailure?.(cleanupError);
+    }
   }
 };

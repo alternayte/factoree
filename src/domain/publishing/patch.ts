@@ -11,11 +11,15 @@ export const PATCH_GIT_OPTIONS = [
   "-c", "core.abbrev=40",
   "-c", "core.quotePath=true",
   "-c", "core.autocrlf=false",
+  "-c", "core.fileMode=true",
+  "-c", "core.eol=lf",
+  "-c", "core.attributesFile=",
   "-c", "diff.algorithm=myers",
   "-c", "diff.mnemonicPrefix=false",
   "-c", "diff.noprefix=false",
   "-c", "diff.renames=false",
   "-c", "diff.external=",
+  "-c", "diff.orderFile=/dev/null",
 ];
 
 /** SDD section 44. The diff of the staged tree against the base SHA, in an applicable form. */
@@ -25,6 +29,7 @@ export const PATCH_DIFF_ARGS = [
   "--binary",
   "--no-renames",
   "--no-ext-diff",
+  "--no-textconv",
   "--no-color",
   "--unified=3",
 ];
