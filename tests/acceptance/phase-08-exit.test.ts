@@ -76,12 +76,24 @@ const BLOCKING_REPORT = JSON.stringify({
         "PATCH /projects/1 saves the new name for every caller, so a reader with no editor " +
         "rights can rename the project.",
     },
+    {
+      // SDD section 43. The evidence names a file the base commit holds and the change never
+      // touched, so `decideReview` must not let this finding block the Run.
+      id: "RV-3",
+      severity: "high",
+      category: "correctness",
+      requirement: "Repository rule: the contributing guide must state the review baseline.",
+      evidence: "CONTRIBUTING.md:3",
+      description: "The contributing guide states no review baseline.",
+    },
   ],
 });
 
 /**
- * The report the second Reviewer session writes. It carries one low style finding, so the
- * attempt 2 rows are real rows and the proof that none of them blocks is a real proof.
+ * The report the second Reviewer session writes. It carries one low correctness finding, so the
+ * attempt 2 rows are real rows and the proof that none of them blocks is a real proof. The
+ * category is not `style`, so the severity rule of SDD section 41 is the only rule that stops
+ * this finding from blocking.
  */
 const CLEAN_REPORT = JSON.stringify({
   version: 1,
@@ -90,10 +102,10 @@ const CLEAN_REPORT = JSON.stringify({
     {
       id: "RV-2",
       severity: "low",
-      category: "style",
-      requirement: "Repository rule: keep every helper name short.",
+      category: "correctness",
+      requirement: "Repository rule: a helper must answer a malformed body with a 400.",
       evidence: `${DEFECTIVE_FILE}:31`,
-      description: "The name `savePatch` reads better as `patchProject`.",
+      description: "A malformed body keeps the saved name instead of answering with a 400.",
     },
   ],
 });
@@ -567,6 +579,8 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       // blocking against the real changed-file list. Both values come out of the real activity.
       const firstReview = rig.reviewOutputs[0]!;
       expect(firstReview.reportUsable).toBe(true);
+      // Two high findings reached `decideReview`. Only the one inside the change blocks.
+      expect(firstReview.findingCount).toBe(2);
       expect(firstReview.blockingCount).toBe(1);
       expect(firstReview.passed).toBe(false);
       expect(firstReview.failures).toEqual([expect.stringContaining("RV-1")]);
@@ -628,6 +642,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       expect(reviewerRows).toHaveLength(2);
       expect(new Set(reviewerRows.map((row) => row.sessionRef)).size).toBe(2);
       // The second prompt really carries the repaired revision.
+      expect(rig.reviewerRunner.runs).toHaveLength(2);
       expect(rig.reviewerRunner.runs[1]?.prompt ?? "").toContain(EDITOR_HEADER_CHECK);
 
       // Point 7. The persisted ReviewFinding rows hold the attempt 1 blocking finding, and hold
@@ -635,12 +650,27 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       const findingRows = await rig.findings.listForRun(rig.tenantId, rig.runId);
       const attempt1Findings = findingRows.filter((row) => row.attempt === 1);
       const attempt2Findings = findingRows.filter((row) => row.attempt === 2);
-      expect(attempt1Findings).toHaveLength(1);
-      expect(attempt1Findings[0]?.findingKey).toBe("RV-1");
-      expect(attempt1Findings[0]?.blocking).toBe(true);
-      expect(attempt1Findings[0]?.severity).toBe("high");
+      expect(attempt1Findings).toHaveLength(2);
+      const blockingRow = attempt1Findings.find((row) => row.findingKey === "RV-1");
+      expect(blockingRow?.blocking).toBe(true);
+      expect(blockingRow?.severity).toBe("high");
+      // SDD section 43. The second finding carries the same severity and the same category, and
+      // its evidence names a file the change never touched. Factoree refused to let it block,
+      // and the persisted reason names that rule. This proves the changed-file gate is real.
+      const outsideRow = attempt1Findings.find((row) => row.findingKey === "RV-3");
+      expect(outsideRow?.severity).toBe("high");
+      expect(outsideRow?.blocking).toBe(false);
+      expect(outsideRow?.decisionReason).toContain("names no file this Run changed");
       expect(attempt2Findings).toHaveLength(1);
+      expect(attempt2Findings[0]?.findingKey).toBe("RV-2");
       expect(attempt2Findings.some((row) => row.blocking)).toBe(false);
+
+      // The Run left the attempt loop through the passing-review branch, and then stopped at the
+      // request of the test. It did not fail, and it did not leave through any other path.
+      const completion = rig.harness.completions.find((entry) => entry.runId === rig.runId);
+      expect(completion?.status).toBe("CANCELLED");
+      expect(completion?.failureReason).toBe("STOPPED_BY_HUMAN");
+      expect(completion?.status).not.toBe("FAILED");
     } finally {
       await rig.sandbox.destroy(rig.ref);
     }
