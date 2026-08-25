@@ -57,6 +57,7 @@ const input = {
   requiredContext: [],
   humanDecisions: [],
   repositoryInstructions: "Use the existing test idiom.",
+  skills: [],
   repairFindings: [],
   stagingRead: false,
   timeoutMs: 60_000,
@@ -170,3 +171,21 @@ describe("the implement activity and the Project secret store", () => {
   });
 });
 
+describe("the implement activity and skills", () => {
+  it("carries a skill line into the prompt the runner receives", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner);
+    const environment = new MockActivityEnvironment();
+    const withSkill = {
+      ...input,
+      skills: ["routes — Add a route. (repository skill, /workspace/primary/.agents/skills/routes/SKILL.md)"],
+    };
+    await environment.run(
+      (activityInput: typeof withSkill): Promise<ImplementActivityOutput> =>
+        activities.implement(activityInput),
+      withSkill,
+    );
+    expect(runner.runs[0]?.prompt).toContain("routes — Add a route.");
+    expect(runner.runs[0]?.prompt).toContain("SDD section 57 ranks a skill ninth");
+  });
+});

@@ -23,7 +23,7 @@ const SAMPLE: ImplementerPromptFields = {
  * rendered text, which changes this hash, which fails this test. The failure message tells a
  * developer to bump IMPLEMENTER_PROMPT_VERSION and to record the new hash here.
  */
-const EXPECTED_TEMPLATE_HASH = "1502cb7b39eb8163360c7f16ba1528c4f933b35f6db70e2034c5f8cd82074758";
+const EXPECTED_TEMPLATE_HASH = "ab3da01fcab557895b42e63654524d8e792609e7f56ad3a6b8dc83dbf285caa2";
 
 describe("renderImplementerPrompt version guard", () => {
   it("keeps IMPLEMENTER_PROMPT_VERSION synchronized with the template text", () => {
@@ -39,6 +39,21 @@ describe("renderImplementerPrompt version guard", () => {
   });
 
   it("stamps the prompt version as a value that changes only with the template", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/1");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/2");
+  });
+});
+
+describe("renderImplementerPrompt skills", () => {
+  it("states the SDD section 57 precedence of a skill", () => {
+    const prompt = renderImplementerPrompt({
+      ...SAMPLE,
+      skills: ["routes — Add a route. (repository skill, /workspace/primary/.agents/skills/routes/SKILL.md)"],
+    });
+    expect(prompt).toContain("routes — Add a route.");
+    expect(prompt).toContain("SDD section 57 ranks a skill ninth");
+  });
+
+  it("reports the prompt version 2", () => {
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/2");
   });
 });

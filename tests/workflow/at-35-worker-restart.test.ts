@@ -220,6 +220,7 @@ describe("AT-35 worker restart", () => {
             stagingRead: false,
             spriteRetentionHours: 24,
             defaultAutonomy: "L2",
+            organizationSkillsRepository: null,
           },
         },
       ],

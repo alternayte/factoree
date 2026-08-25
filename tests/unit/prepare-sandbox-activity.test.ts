@@ -109,6 +109,7 @@ const input = {
   references: [],
   defaults: DEFAULT_PROJECT_DEFAULTS,
   environment: {},
+  organizationSkills: null,
 };
 
 describe("the prepareSandbox activity", () => {
@@ -209,3 +210,31 @@ describe("the prepareSandbox activity and the preview configuration", () => {
   });
 });
 
+describe("the prepareSandbox activity and skills", () => {
+  it("returns the skill lines the manager discovered", async () => {
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML);
+    const base = sandbox.onExec;
+    sandbox.onExec = (command) => {
+      const last = command.args[command.args.length - 1] ?? "";
+      if (command.file === "ls") {
+        if (last === "/workspace/primary/.agents/skills") {
+          return { exitCode: 0, stdout: "routes\n", stderr: "" };
+        }
+        return { exitCode: 1, stdout: "", stderr: "no such directory" };
+      }
+      if (command.file === "cat" && last === "/workspace/primary/.agents/skills/routes/SKILL.md") {
+        return { exitCode: 0, stdout: "---\nname: routes\ndescription: Add a route.\n---\n", stderr: "" };
+      }
+      return base === null ? { exitCode: 0, stdout: "", stderr: "" } : base(command);
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
+    const output = await activities.prepareSandbox(input);
+    expect(output.skills.some((line) => line.startsWith("routes — Add a route."))).toBe(true);
+  });
+
+  it("returns no skill line when the checkout defines none", async () => {
+    const { activities } = build({ spriteId: null, adapter: null });
+    const output = await activities.prepareSandbox(input);
+    expect(output.skills).toEqual([]);
+  });
+});

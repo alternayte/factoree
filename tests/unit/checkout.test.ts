@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutRepositories } from "~/domain/runs/checkout.js";
+import { checkoutOrganizationSkills, checkoutRepositories } from "~/domain/runs/checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
@@ -204,5 +204,22 @@ describe("checkoutRepositories path safety", () => {
     expect(String(error)).toMatch(/both derive the directory name "design"/);
     const cloneCount = sandbox.commands.filter((command) => command.args.includes("clone")).length;
     expect(cloneCount).toBe(1);
+  });
+});
+
+describe("checkoutOrganizationSkills", () => {
+  it("checks out the organization skills repository read-only into its own directory", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const checked = await checkoutOrganizationSkills(sandbox, ref, {
+      url: "https://git/acme/skills.git",
+      ref: "main",
+    });
+    expect(checked.path).toBe(`${ref.workspacePath}/organization-skills`);
+    expect(checked.readOnly).toBe(true);
+    expect(
+      sandbox.commands.some((command) => command.file === "chmod" && command.args.includes(checked.path)),
+    ).toBe(true);
   });
 });

@@ -55,6 +55,8 @@ export interface AgentRunProjectInput {
   stagingRead: boolean;
   spriteRetentionHours: number;
   defaultAutonomy: string;
+  /** SDD section 16. The organization skills repository slug of the Project, or null. */
+  organizationSkillsRepository: string | null;
 }
 
 /** SDD section 7. The Work Item text, exactly as the author wrote it. */
@@ -599,6 +601,7 @@ export async function agentRunWorkflow(
         requiredContext: attemptInput.requiredContext,
         humanDecisions: humanInputs,
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
+        skills: attemptInput.prepared.skills,
         repairFindings: attemptInput.repairFindings,
         stagingRead: attemptInput.prepared.runtime.stagingRead,
         timeoutMs: budgetMs,
@@ -988,6 +991,18 @@ export async function agentRunWorkflow(
           stagingRead: input.project.stagingRead,
           spriteRetentionHours: input.project.spriteRetentionHours,
         },
+        organizationSkills:
+          input.project.organizationSkillsRepository === null
+            ? null
+            : {
+                url: buildRepositoryUrl(
+                  input.project.repositoryBaseUrl,
+                  input.project.organizationSkillsRepository,
+                ),
+                // No discovery step resolves a skills repository, so the Project default branch
+                // is the only defined ref. See controller decision 3.
+                ref: input.project.defaultBranch,
+              },
         goal: refined.goal,
       };
 
@@ -1010,6 +1025,7 @@ export async function agentRunWorkflow(
           references: sandbox.references,
           defaults: sandbox.defaults,
           environment: {},
+          organizationSkills: sandbox.organizationSkills,
         });
       } catch (error) {
         // A configuration fault is not an infrastructure fault. The Run ends in
