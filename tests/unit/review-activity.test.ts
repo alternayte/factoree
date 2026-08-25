@@ -447,4 +447,36 @@ describe("the review activity", () => {
     expect(result.reportUsable).toBe(false);
     expect(result.reportProblem).toBe("The Reviewer wrote no report.");
   });
+
+  // Action Policy enforcement. SDD section 29 denies `writePrimaryWorktree` to the reviewer
+  // role. The activity must detect a Reviewer write to the primary worktree on disk, and must
+  // never publish a review built on top of it.
+
+  it("refuses the review when the Reviewer session changed the primary worktree", async () => {
+    const { activities, sandbox, findings } = build();
+    let writeTreeCalls = 0;
+    sandbox.onExec = (command) => {
+      const line = [command.file, ...command.args].join(" ");
+      if (line.includes("write-tree")) {
+        writeTreeCalls += 1;
+        return { exitCode: 0, stdout: `${(writeTreeCalls === 1 ? "a" : "b").repeat(40)}\n`, stderr: "" };
+      }
+      if (/--name-only/.test(line)) return { exitCode: 0, stdout: "src/foo.ts", stderr: "" };
+      if (/diff --cached [0-9a-f]{40}$/.test(line)) {
+        return { exitCode: 0, stdout: "diff --git a/src/foo.ts b/src/foo.ts\n+changed\n", stderr: "" };
+      }
+      if (/^cat /.test(line)) return { exitCode: 0, stdout: passReport, stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const result: ReviewActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.review(activityInput),
+      input,
+    );
+
+    expect(result.reportUsable).toBe(false);
+    expect(result.passed).toBe(false);
+    expect(result.reportProblem).toMatch(/Action Policy/);
+    expect(findings.rows).toHaveLength(0);
+  });
 });

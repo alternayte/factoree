@@ -96,6 +96,15 @@ export interface RunRepository {
    */
   setValidationContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
   /**
+   * SDD section 44 and section 46. Records the immutable publication facts of one Run. The method
+   * throws when it reaches no Run of that tenant, because a silent success hides a caller defect.
+   */
+  setPublication(
+    tenantId: string,
+    runId: string,
+    publication: { patchSha256: string; commitSha: string; pullRequestUrl: string },
+  ): Promise<void>;
+  /**
    * SDD section 28. Refinement caps the autonomy level of the Run. `createRun` happens before
    * Refinement, so the Run row first holds the Project default. This method writes the capped
    * level. The method throws when it reaches no Run of that tenant, because a silent success

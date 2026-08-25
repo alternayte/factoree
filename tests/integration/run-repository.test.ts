@@ -194,6 +194,34 @@ describe("PrismaRunRepository.setValidationContractVersion", () => {
   });
 });
 
+describe("PrismaRunRepository.setPublication", () => {
+  it("writes the publication facts to the Run", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    await runs.setPublication(tenantId, runId, {
+      patchSha256: "c".repeat(64),
+      commitSha: "d".repeat(40),
+      pullRequestUrl: "https://github.com/acme/demo/pull/1",
+    });
+    const reloaded = await runs.findById(tenantId, runId);
+    expect(reloaded?.patchSha256).toBe("c".repeat(64));
+    expect(reloaded?.commitSha).toBe("d".repeat(40));
+    expect(reloaded?.pullRequestUrl).toBe("https://github.com/acme/demo/pull/1");
+  });
+
+  it("throws when it reaches no Run of that tenant, because a silent success hides a caller defect", async () => {
+    const runs = new PrismaRunRepository(prisma);
+    const { runId } = await seedTenantProjectAndRun(prisma);
+    await expect(
+      runs.setPublication("other-tenant", runId, {
+        patchSha256: "e".repeat(64),
+        commitSha: "f".repeat(40),
+        pullRequestUrl: "https://github.com/acme/demo/pull/2",
+      }),
+    ).rejects.toThrow();
+  });
+});
+
 describe("PrismaWebhookLog", () => {
   it("accepts a delivery once", async () => {
     const log = new PrismaWebhookLog(prisma);

@@ -18,6 +18,9 @@ const schema = z.object({
   EVIDENCE_STORAGE: z.enum(["filesystem", "linear"]).default("filesystem"),
   EVIDENCE_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-evidence"),
   GITHUB_BASE_URL: z.string().url().default("https://github.com"),
+  GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),
+  FACTOREE_GIT_AUTHOR_NAME: z.string().min(1).default("Factoree"),
+  FACTOREE_GIT_AUTHOR_EMAIL: z.string().email().default("factoree@users.noreply.github.com"),
 }).refine((value) => value.SANDBOX_ADAPTER !== "fly-sprites" || value.SPRITES_TOKEN !== undefined, {
   message: "SPRITES_TOKEN is required when SANDBOX_ADAPTER is fly-sprites",
   path: ["SPRITES_TOKEN"],

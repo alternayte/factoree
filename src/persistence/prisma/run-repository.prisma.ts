@@ -171,6 +171,28 @@ export class PrismaRunRepository implements RunRepository {
     }
   }
 
+  async setPublication(
+    tenantId: string,
+    runId: string,
+    publication: { patchSha256: string; commitSha: string; pullRequestUrl: string },
+  ): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: {
+        patchSha256: publication.patchSha256,
+        commitSha: publication.commitSha,
+        pullRequestUrl: publication.pullRequestUrl,
+      },
+    });
+    // A write that reaches no row must not report success. These values name the exact
+    // publication facts of the Run. A wrong Run or a wrong tenant is a caller defect. A silent
+    // success makes a Run that holds publication facts report that it holds none.
+    if (updated.count === 0) {
+      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the publication facts`);
+    }
+  }
+
   async setAutonomyLevel(tenantId: string, runId: string, level: string): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
     const updated = await this.prisma.run.updateMany({

@@ -117,6 +117,13 @@ export const metrics = {
     buckets: [0.1, 1, 5, 30, 120, 600],
     registers: [registry],
   }),
+  publishDuration: new Histogram({
+    name: "factoree_publish_duration_seconds",
+    help: "Publication duration in seconds",
+    labelNames,
+    buckets: [0.1, 1, 5, 30, 120, 600],
+    registers: [registry],
+  }),
   repairs: new Counter({
     name: "factoree_repairs_total",
     help: "Repair attempts started",

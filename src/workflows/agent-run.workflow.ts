@@ -18,6 +18,10 @@ import type { VerifyActivityOutput } from "~/activities/verification.activities.
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
+import type {
+  CheckBaseActivityOutput,
+  PublishActivityOutput,
+} from "~/activities/publishing.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
@@ -185,6 +189,22 @@ const isConfigurationFault = (error: unknown): boolean => {
 };
 
 /**
+ * Maps a publication failure to its SDD failure reason. The error crosses the activity boundary,
+ * so the workflow sees the Temporal `ApplicationFailure` shape and must read the type name.
+ */
+const publicationFailureReasonOf = (
+  error: unknown,
+): "PATCH_HASH_MISMATCH" | "EMPTY_PATCH" | "PUBLICATION_FAILED" => {
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ApplicationFailure) {
+      if (current.type === "PATCH_HASH_MISMATCH") return "PATCH_HASH_MISMATCH";
+      if (current.type === "EMPTY_PATCH") return "EMPTY_PATCH";
+    }
+  }
+  return "PUBLICATION_FAILED";
+};
+
+/**
  * The margin the Implementer activity keeps after the Run budget ends. It covers the
  * cancellation of the agent process and the write of the AgentExecution row.
  */
@@ -258,6 +278,29 @@ const buildVerifyActivities = (budgetMs: number) =>
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
     retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
   });
+
+/**
+ * SDD section 46. The publication clones the repository, applies the patch, pushes, and calls
+ * GitHub. A slow network must not fail it, and every step of it is idempotent, so a retry is
+ * safe. Controller decision 8 keeps the branch name and the pull request lookup deterministic.
+ * SDD section 49 forbids a semantic failure to consume the infrastructure retry policy, so the
+ * four semantic types below fail fast.
+ */
+const publishingActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "15 minutes",
+  heartbeatTimeout: "2 minutes",
+  retry: {
+    maximumAttempts: 3,
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    nonRetryableErrorTypes: [
+      RUN_CONFIGURATION_ERROR_TYPE,
+      "PATCH_HASH_MISMATCH",
+      "EMPTY_PATCH",
+      "PUBLICATION_FAILED",
+    ],
+  },
+});
 
 // The cancellation of a live Implementer session runs after the Run budget has ended, so it
 // needs its own short timeout.
@@ -337,7 +380,10 @@ export async function agentRunWorkflow(
       | "VALIDATION_BLOCKED"
       | "VALIDATION_MANUAL_REQUIRED"
       | "REVIEW_BLOCKING_FINDINGS"
-      | "REVIEW_UNAVAILABLE",
+      | "REVIEW_UNAVAILABLE"
+      | "PATCH_HASH_MISMATCH"
+      | "EMPTY_PATCH"
+      | "PUBLICATION_FAILED",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
     // SDD section 48. A blocking review finding has its own terminal state. Every other reason
@@ -360,7 +406,45 @@ export async function agentRunWorkflow(
     return { runId: id, status };
   };
 
+  /**
+   * SDD section 45 and section 48. A moved target branch is not a failure of the change, so it
+   * carries no failure reason. Version 1 must not rebase automatically, so the Run ends here and
+   * publishes nothing. The base SHA arrives as an argument, because the prepared sandbox is out
+   * of scope at this point of the file.
+   */
+  const endStale = async (
+    runBaseSha: string,
+    currentTargetSha: string,
+  ): Promise<AgentRunWorkflowResult> => {
+    status = "STALE_BASE";
+    await activities.completeRun({
+      tenantId: input.tenantId,
+      runId: id,
+      status,
+      completedAt: new Date(Date.now()).toISOString(),
+    });
+    await notify(() =>
+      activities.postError({
+        sessionId: input.agentSessionId,
+        message:
+          "The target branch moved while Factoree worked, so the verified change no longer " +
+          `applies to it. The Run started at ${runBaseSha} and the ` +
+          `branch now points at ${currentTargetSha}. Factoree published nothing, and it did not ` +
+          "rebase. Delegate the Work Item again to rerun it against the new base.",
+      }),
+    );
+    return { runId: id, status };
+  };
+
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
+
+  /**
+   * The pull request URL of a successful publication, or null while nothing is published. A stop
+   * message and a timeout message must not claim that nothing was published once it exists. The
+   * Run status does not change, because SDD section 68 forbids a success terminal state before
+   * Phase 10 builds the Proof Pack.
+   */
+  let publishedPullRequestUrl: string | null = null;
 
   /**
    * SDD section 23 requires one focused question. The workflow asks that question. It waits for
@@ -606,7 +690,11 @@ export async function agentRunWorkflow(
     await notify(() =>
       activities.postFinalResponse({
         sessionId: input.agentSessionId,
-        body: "Factoree stopped this Run at your request. No change was published.",
+        body:
+          publishedPullRequestUrl === null
+            ? "Factoree stopped this Run at your request. No change was published."
+            : "Factoree stopped this Run at your request. The verified change is already " +
+              `published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
       }),
     );
     return { runId: id, status };
@@ -934,6 +1022,14 @@ export async function agentRunWorkflow(
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
 
+      // SDD section 46 needs these two values after the loop ends, and the loop scope does not
+      // survive the `break`. The successful pass writes them just before it breaks.
+      let publishedChangedFiles: string[] = [];
+      let publishedVerificationSummary = "";
+      // The git tree the independent review examined. The publication refuses a tree that
+      // differs, so a write after the review can never reach GitHub.
+      let publishedWorktreeSha = "";
+
       for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
@@ -1189,7 +1285,12 @@ export async function agentRunWorkflow(
           );
         }
 
-        if (review.passed) break;
+        if (review.passed) {
+          publishedChangedFiles = review.changedFiles;
+          publishedVerificationSummary = verification.summary;
+          publishedWorktreeSha = review.worktreeSha;
+          break;
+        }
 
         // SDD section 42. A blocking finding enters the same bounded repair loop.
         if (repairCount >= maxRepairs) {
@@ -1208,6 +1309,113 @@ export async function agentRunWorkflow(
         await activities.setRunStatus({ runId: id, status, repairCount, repairReason: "REVIEW" });
         continue;
       }
+
+      // SDD section 49. The independent review passed, so Factoree captures the verified patch,
+      // proves the target branch has not moved, and publishes. SDD section 46 keeps every step of
+      // the publication on the control plane, because SDD section 29 denies git remote write from
+      // an agent.
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+      if (stopRequested) return await cancelRun();
+
+      status = "PUBLISHING";
+      await activities.setRunStatus({ runId: id, status });
+
+      const publishInput = {
+        runId: id,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        spriteId: preparedSandbox.spriteId,
+        adapter: preparedSandbox.adapter,
+        workspacePath: preparedSandbox.workspacePath,
+        primaryPath: preparedSandbox.primaryPath,
+        repositorySlug: resolvedContext.primary.slug,
+        repositoryBaseUrl: input.project.repositoryBaseUrl,
+        baseBranch: input.project.defaultBranch,
+        baseSha: preparedSandbox.baseSha,
+        reviewedChangedFiles: publishedChangedFiles,
+        reviewedWorktreeSha: publishedWorktreeSha,
+        workItemTitle: input.workItem.title,
+        workItemUrl: input.workItem.url,
+        verificationSummary: publishedVerificationSummary,
+        repairCount,
+      };
+
+      // SDD section 45. The stale-base check runs before any write, so a moved branch reaches no
+      // remote.
+      // SDD section 50. A stop that arrives during the base read must end the Run CANCELLED,
+      // because Factoree published nothing.
+      let baseCheck: CheckBaseActivityOutput;
+      try {
+        baseCheck = await publishingActivities.checkBase({
+          runId: id,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          repositorySlug: publishInput.repositorySlug,
+          repositoryBaseUrl: publishInput.repositoryBaseUrl,
+          branch: publishInput.baseBranch,
+          baseSha: publishInput.baseSha,
+        });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (stopRequested) return await cancelRun();
+        return await failRun(
+          "PUBLICATION_FAILED",
+          "Factoree could not read the target branch, so it published nothing.",
+        );
+      }
+
+      // A stop that arrives during the base read must not end the Run STALE_BASE.
+      if (stopRequested) return await cancelRun();
+
+      if (!baseCheck.fresh) return await endStale(publishInput.baseSha, baseCheck.currentTargetSha);
+
+      if (stopRequested) return await cancelRun();
+
+      let publication: PublishActivityOutput;
+      try {
+        publication = await publishingActivities.publish(publishInput);
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        // SDD section 50. A human stop is never a configuration fault. It is never a publication
+        // failure either, because this path published nothing.
+        if (stopRequested) return await cancelRun();
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            "Factoree could not publish, because the Run configuration is invalid. Add a " +
+              "`GITHUB_TOKEN` Project secret that carries write access and that no agent session " +
+              "receives.",
+          );
+        }
+        const reason = publicationFailureReasonOf(error);
+        return await failRun(
+          reason,
+          reason === "PATCH_HASH_MISMATCH"
+            ? "The patch of the trusted checkout did not equal the verified patch, so Factoree " +
+                "published nothing. SDD section 46 blocks publication on a hash mismatch."
+            : reason === "EMPTY_PATCH"
+              ? "Every check passed and the change holds no file, so Factoree had nothing to " +
+                  "publish."
+              : "Factoree could not publish the verified change. Factoree created no pull request " +
+                  "for it.",
+        );
+      }
+
+      await notify(() =>
+        activities.postProgress({
+          sessionId: input.agentSessionId,
+          message:
+            `Factoree published the verified change. Pull request: ${publication.pullRequestUrl}. ` +
+            `Base SHA: ${publishInput.baseSha}. Patch SHA-256: ${publication.patchSha256}.`,
+        }),
+      );
+
+      // The publication succeeded. A later stop message and a later timeout message read this
+      // value, so neither one claims that Factoree published nothing.
+      publishedPullRequestUrl = publication.pullRequestUrl;
+
+      // SDD section 68 forbids `READY_FOR_HUMAN` without a Proof Pack, and Phase 10 builds it. The
+      // Run therefore keeps the residual wait rather than invent a success terminal state.
     }
 
     // User validation passed, and the independent review passed as well. SDD section 68 forbids
@@ -1216,7 +1424,15 @@ export async function agentRunWorkflow(
     // until the Run budget ends it, so this step invents no success terminal state.
     const stopped = await condition(() => stopRequested, remainingMs());
 
-    if (!stopped) return await failRun("RUN_TIMEOUT", timeoutMessage);
+    if (!stopped) {
+      return await failRun(
+        "RUN_TIMEOUT",
+        publishedPullRequestUrl === null
+          ? timeoutMessage
+          : "Factoree stopped the Run because it reached the maximum Run duration. The verified " +
+            `change is already published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
+      );
+    }
 
     return await cancelRun();
   } catch (error) {

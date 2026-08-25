@@ -1,3 +1,4 @@
+import { PATCH_GIT_OPTIONS } from "~/domain/publishing/patch.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
@@ -37,14 +38,19 @@ export interface SourceDiffInput {
   maxBytes?: number;
 }
 
+interface GitTarget {
+  ref: SandboxRef;
+  primaryPath: string;
+}
+
 const git = async (
   dependencies: SourceDiffDependencies,
-  input: SourceDiffInput,
+  target: GitTarget,
   args: string[],
 ): Promise<string> => {
-  const result = await dependencies.sandbox.exec(input.ref, {
+  const result = await dependencies.sandbox.exec(target.ref, {
     file: "git",
-    args: ["-C", input.primaryPath, ...args],
+    args: ["-C", target.primaryPath, ...args],
   });
   if (result.exitCode !== 0) {
     throw new SourceDiffError(
@@ -77,9 +83,15 @@ export const captureSourceDiff = async (
   // covers a new file as well as a changed file.
   await git(dependencies, input, ["add", "-A"]);
 
+  // The name query uses the same rename pinning as the publication capture. Git defaults
+  // `diff.renames` to true, so an unpinned query names only the destination of a rename. The
+  // publication names both paths. The two lists must agree, or the publication refuses the
+  // change for a defect that does not exist.
   const names = await git(dependencies, input, [
+    ...PATCH_GIT_OPTIONS,
     "diff",
     "--cached",
+    "--no-renames",
     "--name-only",
     input.baseSha,
   ]);
@@ -111,4 +123,24 @@ export const captureSourceDiff = async (
     truncated: true,
     changedFiles,
   };
+};
+
+/**
+ * The git tree object of the primary worktree, staged. Two equal fingerprints prove the tracked
+ * content did not change between two moments.
+ *
+ * SDD section 29 denies `writePrimaryWorktree` to every role except the Implementer. The review
+ * activity takes this value before and after the Reviewer session, so a Reviewer write is a fact
+ * on disk that Factoree can see, and not a promise in a prompt.
+ *
+ * The value covers the tracked content only. A path that `.gitignore` matches stays outside it.
+ * Anything under `.git/` stays outside it as well. A Reviewer write to such a path is invisible
+ * here. The published patch is not affected, because the patch capture skips the same paths.
+ */
+export const worktreeFingerprint = async (
+  dependencies: SourceDiffDependencies,
+  input: { ref: SandboxRef; primaryPath: string },
+): Promise<string> => {
+  await git(dependencies, input, ["add", "-A"]);
+  return (await git(dependencies, input, ["write-tree"])).trim();
 };

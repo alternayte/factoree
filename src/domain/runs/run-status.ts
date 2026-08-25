@@ -62,6 +62,14 @@ export const RUN_FAILURE_REASONS = [
   // SDD section 40. Factoree could not obtain a usable review, so it proved nothing about the
   // change. A repair cannot help. See controller decision 7.
   "REVIEW_UNAVAILABLE",
+  // SDD section 46 step 5. The patch of the trusted checkout did not reproduce the verified
+  // hash, so publication is blocked. A repair cannot help.
+  "PATCH_HASH_MISMATCH",
+  // SDD section 44. Every check passed and the worktree holds no change against the base SHA,
+  // so there is no verified artifact to publish.
+  "EMPTY_PATCH",
+  // SDD section 46. The trusted checkout, the push, or the pull request creation failed.
+  "PUBLICATION_FAILED",
   "INTERNAL_ERROR",
 ] as const;
 

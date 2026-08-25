@@ -9,6 +9,10 @@ import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-co
 let environment: TestWorkflowEnvironment;
 const createCalls: string[] = [];
 const completions: string[] = [];
+/** Every `publish` call of the test, by Run. AT-35 allows one pull request per Run only. */
+const publishCalls: string[] = [];
+/** Every publication result the double returned, in call order. */
+const publishResults: Array<{ runId: string; created: boolean; pullRequestUrl: string }> = [];
 
 const activities = {
   createRun: async (input: { linearAgentSessionId: string }) => {
@@ -117,7 +121,36 @@ const activities = {
     sessionId: "ses_fake_reviewer",
     reportUsable: true,
     reportProblem: null,
+    changedFiles: ["src/app.ts"],
+    worktreeSha: "b".repeat(40),
   }),
+  // Phase 9 adds the publication path. This map is a plain object literal and is not typed as
+  // `Activities`, so `npm run typecheck` cannot catch a missing entry here either.
+  checkBase: async (input: { baseSha: string }) => ({
+    fresh: true,
+    currentTargetSha: input.baseSha,
+  }),
+  // Controller decision 8. The branch name and the pull request lookup are deterministic, so a
+  // second call after a worker restart finds the pull request the first call opened. The double
+  // returns the same pull request record every time. Only the first call reports a creation.
+  publish: async (input: { runId: string }) => {
+    publishCalls.push(input.runId);
+    const created = publishCalls.filter((entry) => entry === input.runId).length === 1;
+    const result = {
+      patchSha256: "d".repeat(64),
+      commitSha: "e".repeat(40),
+      pullRequestUrl: "https://github.com/acme/primary/pull/1",
+      pullRequestNumber: 1,
+      branch: `factoree/run-${input.runId}`,
+      created,
+    };
+    publishResults.push({
+      runId: input.runId,
+      created,
+      pullRequestUrl: result.pullRequestUrl,
+    });
+    return result;
+  },
 };
 
 const newWorker = async (): Promise<Worker> =>
@@ -175,7 +208,8 @@ describe("AT-35 worker restart", () => {
     });
 
     // Wait until the Run exists, then stop the worker while the workflow is still open.
-    for (let attempt = 0; attempt < 40 && createCalls.length === 0; attempt += 1) {
+    // The budget must cover the workflow task timeout on a loaded machine.
+    for (let attempt = 0; attempt < 200 && createCalls.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(createCalls).toHaveLength(1);
@@ -184,14 +218,52 @@ describe("AT-35 worker restart", () => {
 
     const second = await newWorker();
     const secondRun = second.run();
-    await handle.signal(stopSignal);
-    const result = await handle.result();
+
+    // Wait until the Run published, then restart the worker a second time. A publication whose
+    // result did not reach the history repeats on the third worker, so this restart exercises
+    // the idempotency of SDD section 46 and of controller decision 8.
+    // The first shutdown left a workflow task open. The budget must cover the workflow
+    // task timeout on a loaded machine.
+    for (let attempt = 0; attempt < 1200 && publishCalls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(publishCalls).toHaveLength(1);
     second.shutdown();
     await secondRun;
+
+    const third = await newWorker();
+    const thirdRun = third.run();
+    await handle.signal(stopSignal);
+    const result = await handle.result();
+    third.shutdown();
+    await thirdRun;
 
     expect(result.runId).toBe("run-session-at35");
     expect(createCalls).toHaveLength(1);
     expect(completions).toEqual(["run-session-at35"]);
+
+    // AT-35. A worker restart creates no second pull request. Two facts prove that, and the
+    // test states each of them on its own.
+    const results = publishResults.filter((entry) => entry.runId === "run-session-at35");
+
+    // Fact 1. The number of publication attempts the double really received. Temporal replays a
+    // recorded activity result, so the restart above repeats the attempt only when the result of
+    // the first attempt did not reach the history.
+    expect(results).toHaveLength(publishCalls.length);
+    expect(results.length).toBeGreaterThanOrEqual(1);
+
+    // Fact 2. The first attempt opened the pull request. Every later attempt found that same
+    // pull request and reported no creation. This statement holds for one attempt and for two,
+    // and it fails as soon as a second attempt reports a fresh creation.
+    const createdFlags = results.map((entry) => entry.created);
+    expect(createdFlags[0]).toBe(true);
+    expect(createdFlags.filter((flag) => flag)).toHaveLength(1);
+
+    // Every attempt named the same pull request, so no Run holds two of them.
+    expect(new Set(results.map((entry) => entry.pullRequestUrl))).toEqual(
+      new Set(["https://github.com/acme/primary/pull/1"]),
+    );
+
     const description = await handle.describe();
     expect(description.status.name).toBe("COMPLETED");
   });

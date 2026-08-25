@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { createHash } from "node:crypto";
 import { Context } from "@temporalio/activity";
+import { ApplicationFailure } from "@temporalio/common";
 import { Worker } from "@temporalio/worker";
 import type { TestWorkflowEnvironment } from "@temporalio/testing";
 import type { WorkflowHandle } from "@temporalio/client";
@@ -29,6 +30,12 @@ import type {
   ReviewActivityInput,
   ReviewActivityOutput,
 } from "~/activities/review.activities.js";
+import type {
+  CheckBaseActivityInput,
+  CheckBaseActivityOutput,
+  PublishActivityInput,
+  PublishActivityOutput,
+} from "~/activities/publishing.activities.js";
 import { parseReviewReport, ReviewReportInvalidError } from "~/domain/review/review-report.js";
 import { decideReview } from "~/domain/review/blocking.js";
 import type { ReviewDecision } from "~/domain/review/blocking.js";
@@ -74,6 +81,9 @@ export const VALIDATION_SHA = "c".repeat(64);
 
 /** The frozen Validation Contract document the double reports. */
 export const VALIDATION_DOCUMENT = "# Validation Contract\n\nThe health endpoint answers 200.\n";
+
+/** The git tree the review double reports. The publish double accepts exactly this value. */
+export const REVIEWED_WORKTREE_SHA = "b".repeat(40);
 
 /** The failure text the review double reports when it blocks a change. */
 export const REVIEW_FAILURE_TEXT =
@@ -141,6 +151,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const postedErrors: string[] = [];
   /** Every message the workflow posted to the human on the progress path. */
   const postedProgress: string[] = [];
+  /** Every final response body the workflow posted, in order. */
+  const postedFinalResponses: string[] = [];
   /** The run ids whose preparation double raises a configuration fault. */
   const configurationFaults = new Set<string>();
   /** The run ids whose `userValidate` double raises a configuration fault. */
@@ -201,6 +213,20 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const reviewDecisions = new Map<string, ReviewDecision[]>();
   /** The run ids whose live Reviewer session the activity observed a cancellation for. */
   const cancelledLiveReviews: string[] = [];
+  /**
+   * A run id in this map replaces the `checkBase` result. SDD section 45 ends a Run on a moved
+   * target branch, so a test states a stale answer here.
+   */
+  const baseChecks = new Map<string, () => CheckBaseActivityOutput>();
+  /**
+   * A run id in this map replaces the `publish` result. The function can also throw, so a test
+   * can drive the three semantic publication failures of SDD section 46.
+   */
+  const publishOutcomes = new Map<string, () => PublishActivityOutput>();
+  /** Every recorded `publish` call, in order. */
+  const publishCalls: PublishActivityInput[] = [];
+  /** A run id in this map holds the publication open until the test resolves the promise. */
+  const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
   /** Every question the workflow elicited, in order. */
@@ -364,7 +390,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         summary: "Factoree froze the Validation Contract with 1 assertion.",
       };
     },
-    postFinalResponse: async () => undefined,
+    postFinalResponse: async (activityInput: { body: string }) => {
+      postedFinalResponses.push(activityInput.body);
+    },
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
     },
@@ -550,6 +578,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
             sessionId: "ses_fake_reviewer",
             reportUsable: false,
             reportProblem: error.message,
+            changedFiles,
+            worktreeSha: "",
           };
         }
         const decision = decideReview({
@@ -570,6 +600,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           sessionId: "ses_fake_reviewer",
           reportUsable: true,
           reportProblem: null,
+          changedFiles,
+          worktreeSha: REVIEWED_WORKTREE_SHA,
         };
       }
 
@@ -583,10 +615,54 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         sessionId: "ses_fake_reviewer",
         reportUsable: true,
         reportProblem: null,
+        changedFiles: ["src/app.ts"],
+        worktreeSha: REVIEWED_WORKTREE_SHA,
       };
       const outcome = reviewOutcomes.get(activityInput.runId);
       if (outcome === undefined) return passing;
       return { ...passing, ...outcome(activityInput.attempt) };
+    },
+    checkBase: async (
+      activityInput: CheckBaseActivityInput,
+    ): Promise<CheckBaseActivityOutput> => {
+      activityOrder.push("checkBase");
+      const override = baseChecks.get(activityInput.runId);
+      return override === undefined
+        ? { fresh: true, currentTargetSha: activityInput.baseSha }
+        : override();
+    },
+    publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
+      activityOrder.push("publish");
+      publishCalls.push(activityInput);
+      const held = heldPublishes.get(activityInput.runId);
+      if (held !== undefined) {
+        // The real activity takes time on the network, so a stop can arrive while it runs. The
+        // double heartbeats and awaits, the same way the `review` double does.
+        const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
+        try {
+          await held;
+        } finally {
+          clearInterval(heartbeat);
+        }
+      }
+      // The real activity refuses a reviewed tree that does not equal the captured tree. The
+      // double keeps that coupling, so the workflow must carry the value the review returned.
+      if (activityInput.reviewedWorktreeSha !== REVIEWED_WORKTREE_SHA) {
+        throw ApplicationFailure.nonRetryable(
+          "the primary worktree changed after the independent review examined it",
+          "PUBLICATION_FAILED",
+        );
+      }
+      const override = publishOutcomes.get(activityInput.runId);
+      if (override !== undefined) return override();
+      return {
+        patchSha256: "d".repeat(64),
+        commitSha: "e".repeat(40),
+        pullRequestUrl: "https://github.com/acme/fixture/pull/1",
+        pullRequestNumber: 1,
+        branch: `factoree/${activityInput.runId}`,
+        created: true,
+      };
     },
   };
 
@@ -665,6 +741,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     cancelledLiveSessions,
     postedErrors,
     postedProgress,
+    postedFinalResponses,
     configurationFaults,
     validatorConfigurationFaults,
     runtimeOverrides,
@@ -685,6 +762,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldReviews,
     reviewerConfigurationFaults,
     cancelledLiveReviews,
+    baseChecks,
+    publishOutcomes,
+    publishCalls,
+    heldPublishes,
     activityOrder,
     workItemLabels,
     failingLabelReads,

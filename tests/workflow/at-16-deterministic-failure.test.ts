@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { agentRunWorkflow, stopSignal } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
-import { VERIFY_FAILURE_TEXT, createWorkflowHarness, waitFor } from "./support/harness.js";
+import { VERIFY_FAILURE_TEXT, createWorkflowHarness, hold, waitFor } from "./support/harness.js";
 
 let environment: TestWorkflowEnvironment;
 
@@ -16,6 +16,8 @@ const {
   reviewCalls,
   runtimeOverrides,
   verifyOutcomes,
+  heldReviews,
+  cancelledLiveReviews,
   input,
   runWorker,
 } = harness;
@@ -94,20 +96,30 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     runtimeOverrides.set("run-ses-at16a", { repairMaxAttempts: 2 });
     verifyOutcomes.set("run-ses-at16a", (attempt) => attempt >= 2);
 
+    // The review pass stays open until this test releases it. The stop therefore arrives while
+    // the Run is still inside the review, so the Run never reaches the publication path. A stop
+    // sent after the review returns can race that path and make this test flake.
+    const releaseReview = hold(heldReviews, "run-ses-at16a");
+
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at16a");
       await waitFor(() => verifiesOf("run-ses-at16a").length === 2, "the second verification");
       // The second verification passes, so the Run enters USER_VALIDATING and then REVIEWING.
-      // The stop must wait for the review call, or the stop signal races the transition and this
-      // test flakes.
       await waitFor(
         () => userValidatesOf("run-ses-at16a").length === 1,
         "the user validation of ses-at16a",
       );
       await waitFor(() => reviewsOf("run-ses-at16a").length === 1, "the review of ses-at16a");
       await handle.signal(stopSignal);
+      // The stop must reach the live Reviewer session before the test releases the pass.
+      await waitFor(
+        () => cancelledLiveReviews.includes("run-ses-at16a"),
+        "the live cancellation of ses-at16a",
+      );
+      releaseReview();
       return handle.result();
     });
+    heldReviews.delete("run-ses-at16a");
 
     // The status sequence holds REPAIRING between the failed check and the repair attempt.
     const sequence = statusesOf("run-ses-at16a");

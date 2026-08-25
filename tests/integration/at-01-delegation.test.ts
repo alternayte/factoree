@@ -52,6 +52,9 @@ const env = {
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
   GITHUB_BASE_URL: "https://github.com",
+  GITHUB_API_BASE_URL: "https://api.github.com",
+  FACTOREE_GIT_AUTHOR_NAME: "Factoree",
+  FACTOREE_GIT_AUTHOR_EMAIL: "factoree@users.noreply.github.com",
   EVIDENCE_STORAGE: "filesystem",
   EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
 } satisfies Env;
@@ -154,6 +157,12 @@ beforeAll(async () => {
       evidenceStorage: { name: "unused", put: () => Promise.reject(new Error("unused")) },
       validationResults: new PrismaValidationResultStore(prisma),
       reviewFindings: new PrismaReviewFindingStore(prisma),
+      // The Phase 1 path never publishes, so these two doubles only satisfy the shape.
+      pullRequests: () => ({
+        findByHead: () => Promise.reject(new Error("this test never publishes")),
+        create: () => Promise.reject(new Error("this test never publishes")),
+      }),
+      gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       logger,
     }),
   });

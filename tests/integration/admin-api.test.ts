@@ -28,6 +28,9 @@ const env = {
   SANDBOX_ADAPTER: "local",
   SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
   GITHUB_BASE_URL: "https://github.com",
+  GITHUB_API_BASE_URL: "https://api.github.com",
+  FACTOREE_GIT_AUTHOR_NAME: "Factoree",
+  FACTOREE_GIT_AUTHOR_EMAIL: "factoree@users.noreply.github.com",
   EVIDENCE_STORAGE: "filesystem",
   EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
 } satisfies Env;

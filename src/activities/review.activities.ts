@@ -13,7 +13,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildReviewerInput } from "~/domain/review/reviewer-input.js";
-import { captureSourceDiff } from "~/domain/review/source-diff.js";
+import { captureSourceDiff, worktreeFingerprint } from "~/domain/review/source-diff.js";
 import {
   parseReviewReport,
   ReviewReportInvalidError,
@@ -62,6 +62,14 @@ export interface ReviewActivityOutput {
   /** False when the report is absent or fails to parse. Controller decision 7 owns this path. */
   reportUsable: boolean;
   reportProblem: string | null;
+  /** Every path the change touched, relative to the primary worktree. */
+  changedFiles: string[];
+  /**
+   * The git tree object of the primary worktree, taken after the Reviewer session returned. It
+   * is the identity of the content the independent review examined. The publication compares it
+   * with the tree it captures. An empty value means this review produced no fingerprint.
+   */
+  worktreeSha: string;
 }
 
 export interface ReviewActivityDependencies {
@@ -169,7 +177,16 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         { ref, primaryPath: input.primaryPath, baseSha: input.baseSha },
       );
 
-      // Step 6. The Project test secrets marked for injection. Same rule as the Implementer,
+      // Step 6. The staged tree object of the primary worktree, before the Reviewer session
+      // runs. The activity compares this to the same fingerprint taken after the session
+      // returns. A Reviewer write to the tracked content of the primary worktree is a fact
+      // Factoree can detect.
+      const beforeFingerprint = await worktreeFingerprint(
+        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
+        { ref, primaryPath: input.primaryPath },
+      );
+
+      // Step 7. The Project test secrets marked for injection. Same rule as the Implementer,
       // SDD section 30.
       const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
       const projectTestSecrets: Record<string, string> = {};
@@ -181,7 +198,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
       // Defect 3 fix. The report path carries the attempt number, so a stale report from an
       // earlier attempt can never be read as this attempt's report. The prompt below and the
-      // `cat` call at step 11 both read this one value.
+      // `cat` call at step 13 both read this one value.
       const reportPath = `${reviewDirectory}/report-${input.attempt}.json`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
@@ -199,7 +216,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         projectTestSecrets,
       });
 
-      // Step 8. SDD section 49. An unregistered reviewer runner is a fault in
+      // Step 9. SDD section 49. An unregistered reviewer runner is a fault in
       // `.factoree/config.yaml`, not a fault in the infrastructure. `RunConfigurationError`
       // routes the Run to `FAILED_CONFIGURATION`, so an operator can repair the name.
       let runner: AgentRunner;
@@ -262,7 +279,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
       let sessionResult;
       try {
-        // Step 9. A fresh session, every attempt. Factoree never resumes a Reviewer session and
+        // Step 10. A fresh session, every attempt. Factoree never resumes a Reviewer session and
         // never carries a session reference between attempts.
         sessionResult = await runner.run({
           runId: input.runId,
@@ -284,7 +301,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         context.cancellationSignal.removeEventListener("abort", onCancel);
       }
 
-      // Step 10. One AgentExecution row per review pass.
+      // Step 11. One AgentExecution row per review pass.
       await dependencies.executions.record({
         tenantId: input.tenantId,
         runId: input.runId,
@@ -324,17 +341,47 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           reportProblem: sessionResult.cancelled
             ? "The Reviewer session was cancelled."
             : "The Reviewer session did not complete.",
+          changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
 
-      // Step 11. A missing or unreadable report gives `reportText = null`.
+      // Step 12. The staged tree object of the primary worktree, after the Reviewer session
+      // returns and before the report is read. The reviewer role denies `writePrimaryWorktree`.
+      // A changed fingerprint proves the tracked content of the primary worktree changed, so
+      // Factoree refuses this review and publishes nothing. This check must run before the
+      // report is read, so a Reviewer write can never decide the Run.
+      const afterFingerprint = await worktreeFingerprint(
+        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
+        { ref, primaryPath: input.primaryPath },
+      );
+      if (afterFingerprint !== beforeFingerprint) {
+        return {
+          passed: false,
+          verdict: "fail",
+          findingCount: 0,
+          blockingCount: 0,
+          summary: "",
+          failures: [],
+          sessionId: sessionResult.session.sessionId,
+          reportUsable: false,
+          reportProblem:
+            "The Reviewer session changed the primary worktree. The Action Policy of SDD section 29 " +
+            "denies that action to the reviewer role, so Factoree refused this review and published " +
+            "nothing.",
+          changedFiles: diff.changedFiles,
+          worktreeSha: "",
+        };
+      }
+
+      // Step 13. A missing or unreadable report gives `reportText = null`.
       const reportResult = await dependencies.sandbox.exec(ref, {
         file: "cat",
         args: [reportPath],
       });
       const reportText = reportResult.exitCode === 0 ? reportResult.stdout : null;
 
-      // Step 12. An unusable report is not a repair path. It persists nothing.
+      // Step 14. An unusable report is not a repair path. It persists nothing.
       let report;
       if (reportText === null) {
         return {
@@ -347,6 +394,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           sessionId: sessionResult.session.sessionId,
           reportUsable: false,
           reportProblem: NO_REPORT,
+          changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
       try {
@@ -365,10 +414,12 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           // A parse error can quote the offending input, for example an unparsable JSON
           // fragment or an unrecognised value, so it must pass through the redactor too.
           reportProblem: dependencies.redactor.redactText(error.message),
+          changedFiles: diff.changedFiles,
+          worktreeSha: "",
         };
       }
 
-      // Step 13. `ValidationContract.version` stays the literal `1` of SDD section 24, so the
+      // Step 15. `ValidationContract.version` stays the literal `1` of SDD section 24, so the
       // stored row's numeric `version` column must be dropped here rather than passed through.
       const frozenContract: ValidationContract = {
         version: 1,
@@ -383,11 +434,11 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         changedFiles: diff.changedFiles,
       });
 
-      // Step 14. Every finding is persisted, blocking and non-blocking. Controller decision 17
+      // Step 16. Every finding is persisted, blocking and non-blocking. Controller decision 17
       // owns this. `decideReview` already decided `blocking` above, on the unredacted finding,
       // so redacting here cannot change which finding blocks. Only the values that leave this
       // activity are redacted: the persisted row, the returned failure lines below, and the log
-      // line at step 15.
+      // line at step 17.
       for (const item of decision.decisions) {
         const redacted = redactFinding(dependencies.redactor, item.finding);
         await dependencies.reviewFindings.record({
@@ -409,6 +460,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         });
       }
 
+      // Step 17.
       dependencies.logger.info("review finished", {
         tenant_id: input.tenantId,
         project_id: input.projectId,
@@ -419,7 +471,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         blocking_count: decision.blocking.length,
       });
 
-      // Step 16. `passed` comes from `decideReview`, never from the agent verdict. `failures` is
+      // Step 18. `passed` comes from `decideReview`, never from the agent verdict. `failures` is
       // rebuilt from the redacted finding, because `decision.failures` was built from the
       // unredacted finding and must never reach the next Implementer prompt.
       const redactedFailures = decision.blocking.map((item) =>
@@ -435,6 +487,9 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         sessionId: sessionResult.session.sessionId,
         reportUsable: true,
         reportProblem: null,
+        changedFiles: diff.changedFiles,
+        // The identity of the reviewed content. The publication refuses a tree that differs.
+        worktreeSha: afterFingerprint,
       };
     } finally {
       metrics.reviewDuration.observe(labels, (Date.now() - started) / 1000);
