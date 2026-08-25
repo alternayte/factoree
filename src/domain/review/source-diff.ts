@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PATCH_GIT_OPTIONS } from "~/domain/publishing/patch.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -143,4 +144,26 @@ export const worktreeFingerprint = async (
 ): Promise<string> => {
   await git(dependencies, input, ["add", "-A"]);
   return (await git(dependencies, input, ["write-tree"])).trim();
+};
+
+/**
+ * The git state of the primary worktree, outside the tracked content.
+ *
+ * `worktreeFingerprint` returns the tree object of the staged worktree. `publishing.activities`
+ * compares that exact value to the captured patch tree, so its return value must not change.
+ * This second fingerprint therefore stands beside it and covers what a tree object cannot see:
+ * the commit `HEAD` points at, and every ref the repository holds.
+ *
+ * An ignored path is deliberately out of scope. `git add -A` honours `.gitignore`, and SDD
+ * section 44 publishes tracked content only, so an ignored file can never reach GitHub.
+ */
+export const worktreeGitStateFingerprint = async (
+  dependencies: SourceDiffDependencies,
+  input: { ref: SandboxRef; primaryPath: string },
+): Promise<string> => {
+  const head = (await git(dependencies, input, ["rev-parse", "HEAD"])).trim();
+  const refs = (
+    await git(dependencies, input, ["for-each-ref", "--format=%(objectname) %(refname)"])
+  ).trim();
+  return createHash("sha256").update(`${head}\n${refs}\n`).digest("hex");
 };
