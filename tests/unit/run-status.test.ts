@@ -52,4 +52,15 @@ describe("run status", () => {
     expect(isTerminalRunStatus("READY_FOR_HUMAN")).toBe(true);
     expect(isTerminalRunStatus("IMPLEMENTING")).toBe(false);
   });
+
+  it("names the three publication failure reasons of Phase 9", () => {
+    expect(RUN_FAILURE_REASONS).toContain("PATCH_HASH_MISMATCH");
+    expect(RUN_FAILURE_REASONS).toContain("EMPTY_PATCH");
+    expect(RUN_FAILURE_REASONS).toContain("PUBLICATION_FAILED");
+  });
+
+  it("keeps STALE_BASE a terminal status and not a failure reason", () => {
+    expect(isTerminalRunStatus("STALE_BASE")).toBe(true);
+    expect(RUN_FAILURE_REASONS).not.toContain("STALE_BASE");
+  });
 });

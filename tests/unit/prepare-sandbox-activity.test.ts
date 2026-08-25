@@ -80,6 +80,10 @@ const build = (
     setAutonomyLevel: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the autonomy level'),
     ),
+    // The real store throws when the write reaches no row. The fake must not be more permissive.
+    setPublication: vi.fn().mockRejectedValue(
+      new Error('no Run "run-1" of tenant "tenant-1" received the publication facts'),
+    ),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({
