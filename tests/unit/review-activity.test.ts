@@ -241,7 +241,7 @@ describe("the review activity", () => {
       verdict: "fail",
       findings: [
         {
-          id: "RV-1",
+          id: `RV-1-${secret}`,
           severity: "high",
           category: "correctness",
           requirement: "VAL-1",
@@ -258,13 +258,15 @@ describe("the review activity", () => {
     );
 
     // The finding still blocks. The evidence still names the changed file `src/foo.ts`, so
-    // redacting the secret out of the evidence text cannot change `decideReview`'s ruling.
+    // redacting the secret out of the id, evidence, and description cannot change
+    // `decideReview`'s ruling.
     expect(result.passed).toBe(false);
     expect(result.blockingCount).toBe(1);
 
     expect(findings.rows).toHaveLength(1);
     const row = findings.rows[0];
     expect(row?.blocking).toBe(true);
+    expect(row?.findingKey).not.toContain(secret);
     expect(row?.evidence).not.toContain(secret);
     expect(row?.description).not.toContain(secret);
     expect(row?.decisionReason).not.toContain(secret);

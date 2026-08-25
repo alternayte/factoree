@@ -101,14 +101,16 @@ const NO_REPORT = "The Reviewer wrote no report.";
 
 /**
  * Redacts the free-text fields of one finding. The Reviewer session receives the Project test
- * secrets in its environment, so a value it echoes into `requirement`, `evidence`, or
+ * secrets in its environment, so a value it echoes into `id`, `requirement`, `evidence`, or
  * `description` must never reach a persisted row, a returned failure line, or a log line. SDD
  * section 60. This must run only after `decideReview` has already used the unredacted finding
  * to decide blocking, because a redaction can change the text of `evidence` and must never
- * change which finding blocks.
+ * change which finding blocks. The redaction returns a new object, so the `finding` inside
+ * `decision` stays untouched.
  */
 const redactFinding = (redactor: Redactor, finding: ReviewFinding): ReviewFinding => ({
   ...finding,
+  id: redactor.redactText(finding.id),
   requirement: redactor.redactText(finding.requirement),
   evidence: redactor.redactText(finding.evidence),
   description: redactor.redactText(finding.description),
