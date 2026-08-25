@@ -253,10 +253,20 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       };
     });
 
+    // SDD section 42. `verify` writes one evidence row per check PER ATTEMPT, so a Run that
+    // repaired holds the failing rows of the earlier attempt as well. Only the last attempt
+    // describes the change Factoree published, and a stale failing row would tell the human
+    // that a passing Run failed its own verification.
+    const checkRows = evidenceRows.filter((row) => row.kind === "deterministic_check");
+    const lastCheckAttempt = checkRows.reduce(
+      (held, row) => Math.max(held, metadataNumber(row.metadata, "attempt")),
+      -1,
+    );
+
     // SDD section 47 forbids a raw log dump, so only the named fields travel. The `log` key of
     // the evidence metadata is never read here, and a spread would defeat the whole rule.
-    const checks: ProofPackCheck[] = evidenceRows
-      .filter((row) => row.kind === "deterministic_check")
+    const checks: ProofPackCheck[] = checkRows
+      .filter((row) => metadataNumber(row.metadata, "attempt") === lastCheckAttempt)
       .map((row) => ({
         name: metadataText(row.metadata, "name"),
         command: metadataText(row.metadata, "command"),

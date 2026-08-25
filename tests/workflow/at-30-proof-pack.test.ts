@@ -12,6 +12,7 @@ const {
   postedFinalResponses,
   proofPackCalls,
   proofPackOutcomes,
+  verifyOutcomes,
   heldProofPacks,
   publishCalls,
   activityOrder,
@@ -108,6 +109,26 @@ describe("AT-30 — the Proof Pack completes a successful Run", () => {
       expect(message).toContain("https://github.com/acme/fixture/pull/1");
     } finally {
       proofPackOutcomes.delete(runId);
+    }
+  });
+
+  it("counts review passes, not implementer attempts", async () => {
+    const runId = "run-ses-at30g";
+    // Deterministic verification fails on attempt 1, so the Run repairs before it ever reaches a
+    // Reviewer. The attempt counter then reads 2 while exactly one review pass ran. The Proof
+    // Pack reports this number to a human, so it must be the review count.
+    verifyOutcomes.set(runId, (attempt) => attempt >= 2);
+
+    try {
+      const result = await runWorker(async () => (await startRun("ses-at30g")).result());
+      expect(result.status).toBe("READY_FOR_HUMAN");
+
+      const call = proofPackCalls.filter((entry) => entry.runId === runId).at(-1);
+      expect(call?.reviewPasses).toBe(1);
+      // The repair still happened, and the repair count reports it.
+      expect(call?.repairCount).toBe(1);
+    } finally {
+      verifyOutcomes.delete(runId);
     }
   });
 

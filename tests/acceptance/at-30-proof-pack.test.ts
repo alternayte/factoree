@@ -187,6 +187,29 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
     metadata: {},
     idempotencyKey: `run:${runId}:validation:2:VAL-UI-001:browser`,
   });
+  // Attempt 1 failed its deterministic verification, and the repair of attempt 2 fixed it. Both
+  // rows exist, exactly as `verify` writes them. The Proof Pack must report the last attempt.
+  await evidence.record({
+    tenantId,
+    runId,
+    validationAssertionId: null,
+    kind: "deterministic_check",
+    source: "verify:unit",
+    sha256: "9".repeat(64),
+    storageRef: null,
+    metadata: {
+      name: "unit",
+      command: "npm test",
+      exitCode: 1,
+      passed: false,
+      durationMs: 900,
+      stdoutSha256: "7".repeat(64),
+      stderrSha256: "8".repeat(64),
+      attempt: 1,
+      log: "IMPLEMENTER TRANSCRIPT LINE",
+    },
+    idempotencyKey: `run:${runId}:verify:1:unit`,
+  });
   await evidence.record({
     tenantId,
     runId,
@@ -203,11 +226,12 @@ const seedProvedRun = async (options: { changedFileCount?: number } = {}) => {
       durationMs: 1200,
       stdoutSha256: "1".repeat(64),
       stderrSha256: "2".repeat(64),
+      attempt: 2,
       // SDD section 47 forbids a raw log dump into Linear. The verify activity writes the
       // retained log here, so this value proves the rule rather than assume it.
       log: "IMPLEMENTER TRANSCRIPT LINE",
     },
-    idempotencyKey: `run:${runId}:verify:1:unit`,
+    idempotencyKey: `run:${runId}:verify:2:unit`,
   });
 
   // The blocking finding of attempt 1 was repaired. The non-blocking finding of attempt 2 is a
@@ -377,6 +401,20 @@ describe("AT-30 — the Proof Pack of a successful L3 Run", () => {
     expect(body).not.toContain(SECRET);
     // SDD section 47 forbids a raw log dump into Linear.
     expect(body).not.toContain("IMPLEMENTER TRANSCRIPT LINE");
+  });
+
+  it("reports the deterministic checks of the last attempt only", async () => {
+    const before = posted.length;
+    const seeded = await seedProvedRun();
+    await seeded.activities.publishProofPack(seeded.input);
+    const body = posted.slice(before).at(-1) ?? "";
+
+    // A stale failing row of the repaired attempt would tell the human that a passing Run failed
+    // its own verification.
+    expect(body).toContain("exit code 0");
+    expect(body).not.toContain("exit code 1");
+    expect(body).not.toContain("Failed.");
+    expect(body.match(/- unit:/g)).toHaveLength(1);
   });
 
   it("produces the same hash twice, because it is a function of recorded state", async () => {

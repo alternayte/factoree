@@ -1055,6 +1055,10 @@ export async function agentRunWorkflow(
       let publishedBlockingCount = 0;
       let publishedReviewVerdict: "pass" | "fail" = "fail";
       let publishedReviewPasses = 0;
+      // The number of Reviewer sessions this Run ran. The attempt counter is not the same value,
+      // because a repair that verification or validation asked for raises the attempt without
+      // reaching a review. The Proof Pack reports this count to a human, so it must be exact.
+      let reviewPasses = 0;
       let publishedPreviewUrl: string | null = null;
 
       for (;;) {
@@ -1261,6 +1265,7 @@ export async function agentRunWorkflow(
 
         status = "REVIEWING";
         await activities.setRunStatus({ runId: id, status });
+        reviewPasses += 1;
 
         let review: ReviewActivityOutput;
         try {
@@ -1320,7 +1325,7 @@ export async function agentRunWorkflow(
           publishedValidationPassed = userValidation.passed;
           publishedBlockingCount = review.blockingCount;
           publishedReviewVerdict = review.verdict;
-          publishedReviewPasses = attempt;
+          publishedReviewPasses = reviewPasses;
           publishedPreviewUrl = userValidation.previewUrl;
           break;
         }
