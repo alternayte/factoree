@@ -1,0 +1,9 @@
+Controller verification at f2c121f, every stage serialized:
+  npx eslint .                                    exit 0
+  npx tsc --noEmit                                exit 0
+  npx vitest run --config vitest.config.ts        exit 0   1051 passed, 7 skipped, 1058 total
+  npx vitest run --config vitest.integration.config.ts  exit 0   249 passed
+  npx vitest run --config vitest.workflow.config.ts     exit 0   85 passed
+  npm run build                                   exit 0
+  aggregate                                       exit 0
+exit=0

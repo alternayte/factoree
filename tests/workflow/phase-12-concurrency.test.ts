@@ -69,7 +69,7 @@ describe("Phase 12 — three concurrent Runs complete independently", () => {
     // call. The workflow forwards `preparedSandbox.spriteId` into the `publish` activity input.
     // The sprite id there is the OUTPUT the Run kept. The Run used that value later, not the
     // input it sent. The harness computes the sprite id as `sprite-${runId}`. See harness.ts
-    // line 421. A cross-wired sandbox reference would show up here as a mismatched pair.
+    // line 421. A cross-wired sandbox reference can show up here as a mismatched pair.
     for (const session of sessions) {
       const runId = `run-${session}`;
       const publishCall = harness.publishCalls.find((entry) => entry.runId === runId);
