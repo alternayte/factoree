@@ -388,7 +388,7 @@ describe("the publish activity", () => {
 
   it("returns the existing pull request when the base moved, because the publication already happened", async () => {
     // The idempotency rule of AT-35 outranks the base gate here. This Run already published, so
-    // the existing pull request stays the correct answer. A throw here would break a retry.
+    // the existing pull request stays the correct answer. A throw here breaks a retry.
     const existing = {
       number: 7,
       url: "https://github.com/acme/app/pull/7",

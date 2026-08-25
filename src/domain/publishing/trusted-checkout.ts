@@ -69,7 +69,7 @@ export class TrustedCheckoutError extends Error {
  * SDD section 30 forbids that exposure. The environment of a process is readable by the same
  * user only, so it is the safe carrier.
  *
- * A local path remote needs no header. The header is harmless on such a remote, so this function
+ * A local path remote needs no header. The header is harmless on such a remote. This function
  * returns an empty environment only when the caller supplies no token or no `http` URL.
  */
 export const credentialEnvironment = (

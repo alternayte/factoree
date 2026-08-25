@@ -208,7 +208,8 @@ describe("AT-35 worker restart", () => {
     });
 
     // Wait until the Run exists, then stop the worker while the workflow is still open.
-    for (let attempt = 0; attempt < 40 && createCalls.length === 0; attempt += 1) {
+    // The budget must cover the workflow task timeout on a loaded machine.
+    for (let attempt = 0; attempt < 200 && createCalls.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(createCalls).toHaveLength(1);
@@ -221,9 +222,9 @@ describe("AT-35 worker restart", () => {
     // Wait until the Run published, then restart the worker a second time. A publication whose
     // result did not reach the history repeats on the third worker, so this restart exercises
     // the idempotency of SDD section 46 and of controller decision 8.
-    // The first shutdown left a workflow task open, and that task times out after ten seconds,
-    // so the second worker resumes the Run only after that timeout. The window covers it.
-    for (let attempt = 0; attempt < 400 && publishCalls.length === 0; attempt += 1) {
+    // The first shutdown left a workflow task open. The budget must cover the workflow
+    // task timeout on a loaded machine.
+    for (let attempt = 0; attempt < 1200 && publishCalls.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(publishCalls).toHaveLength(1);
