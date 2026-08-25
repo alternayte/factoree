@@ -29,6 +29,10 @@ import type {
   ReviewActivityInput,
   ReviewActivityOutput,
 } from "~/activities/review.activities.js";
+import { parseReviewReport, ReviewReportInvalidError } from "~/domain/review/review-report.js";
+import { decideReview } from "~/domain/review/blocking.js";
+import type { ReviewDecision } from "~/domain/review/blocking.js";
+import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { ProjectRuntimeConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import {
   DEFAULT_PROJECT_DEFAULTS,
@@ -77,6 +81,29 @@ export const REVIEW_FAILURE_TEXT =
 
 /** The failure text the verify double reports when it fails a check. */
 export const VERIFY_FAILURE_TEXT = 'Verification check "unit" failed with exit code 1.';
+
+/**
+ * The frozen Validation Contract `decideReview` checks a report's `requirement` field against.
+ * SDD section 41 lets a Reviewer name an assertion of the frozen contract as the mandatory
+ * requirement a finding breaks, so `decideReview` needs one contract, not the whole Run. This
+ * one carries the single assertion the controller ruling B report uses.
+ */
+export const REVIEW_HARNESS_CONTRACT: ValidationContract = {
+  version: 1,
+  runId: "irrelevant-to-decideReview",
+  workItem: "harness",
+  goal: "harness",
+  assertions: [
+    {
+      id: "VAL-API-001",
+      requirement: "AC-1",
+      statement: "The API rejects an expired token.",
+      method: "http",
+      evidence: ["request-response"],
+      preconditions: [],
+    },
+  ],
+};
 
 /**
  * Builds the activity doubles and the recorded state of one workflow test file. Every test file
@@ -160,6 +187,18 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const heldReviews = new Map<string, Promise<void>>();
   /** The run ids whose `review` double raises a configuration fault. */
   const reviewerConfigurationFaults = new Set<string>();
+  /**
+   * Controller ruling B. A run id in this map drives the real `parseReviewReport` and the real
+   * `decideReview` instead of a scripted outcome. The function reads the report text and the
+   * changed-file list for one attempt, the way the fixture report of AT-22, AT-23, and AT-24
+   * arrives from a scripted Reviewer session in production.
+   */
+  const reviewReports = new Map<
+    string,
+    (attempt: number) => { text: string; changedFiles: string[] }
+  >();
+  /** Every real `ReviewDecision` the `review` double produced through `reviewReports`, in order. */
+  const reviewDecisions = new Map<string, ReviewDecision[]>();
   /** The run ids whose live Reviewer session the activity observed a cancellation for. */
   const cancelledLiveReviews: string[] = [];
   /** Every activity name the workflow called, in order. */
@@ -490,6 +529,50 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           clearInterval(heartbeat);
         }
       }
+      // Controller ruling B. When the test supplied a scripted report, the double parses it
+      // with the real `parseReviewReport` and decides it with the real `decideReview`, so the
+      // rule under test is the real rule and not a hand-written outcome.
+      const reportFn = reviewReports.get(activityInput.runId);
+      if (reportFn !== undefined) {
+        const { text, changedFiles } = reportFn(activityInput.attempt);
+        let report;
+        try {
+          report = parseReviewReport(text);
+        } catch (error) {
+          if (!(error instanceof ReviewReportInvalidError)) throw error;
+          return {
+            passed: false,
+            verdict: "fail",
+            findingCount: 0,
+            blockingCount: 0,
+            summary: "",
+            failures: [],
+            sessionId: "ses_fake_reviewer",
+            reportUsable: false,
+            reportProblem: error.message,
+          };
+        }
+        const decision = decideReview({
+          report,
+          contract: REVIEW_HARNESS_CONTRACT,
+          changedFiles,
+        });
+        const list = reviewDecisions.get(activityInput.runId) ?? [];
+        list.push(decision);
+        reviewDecisions.set(activityInput.runId, list);
+        return {
+          passed: decision.passed,
+          verdict: report.verdict,
+          findingCount: decision.decisions.length,
+          blockingCount: decision.blocking.length,
+          summary: decision.summary,
+          failures: decision.failures,
+          sessionId: "ses_fake_reviewer",
+          reportUsable: true,
+          reportProblem: null,
+        };
+      }
+
       const passing: ReviewActivityOutput = {
         passed: true,
         verdict: "pass",
@@ -597,6 +680,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     cancelledLiveValidations,
     reviewCalls,
     reviewOutcomes,
+    reviewReports,
+    reviewDecisions,
     heldReviews,
     reviewerConfigurationFaults,
     cancelledLiveReviews,
