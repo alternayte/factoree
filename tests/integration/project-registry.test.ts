@@ -121,4 +121,30 @@ describe("project registry", () => {
     expect(row.accessTokenCipher).not.toContain("lin_oauth_abcdefghijklmnopqrstuvwxyz012345");
     expect(await tenants.getInstallationToken("ws-7")).toBe("lin_oauth_abcdefghijklmnopqrstuvwxyz012345");
   });
+
+  it("stores and clears the organization skills repository of SDD section 16", async () => {
+    const tenant = await tenants.ensureTenant("ws-8", "Workspace Eight");
+    const project = await projects.create({
+      tenantId: tenant.id,
+      key: "skills-project",
+      name: "Skills project",
+      primaryRepository: "acme/app",
+      organizationSkillsRepository: "acme/skills",
+    });
+    expect(project.organizationSkillsRepository).toBe("acme/skills");
+
+    const updated = await projects.update(tenant.id, project.id, { organizationSkillsRepository: null });
+    expect(updated?.organizationSkillsRepository).toBeNull();
+  });
+
+  it("defaults the organization skills repository to null", async () => {
+    const tenant = await tenants.ensureTenant("ws-9", "Workspace Nine");
+    const project = await projects.create({
+      tenantId: tenant.id,
+      key: "plain-project",
+      name: "Plain project",
+      primaryRepository: "acme/app",
+    });
+    expect(project.organizationSkillsRepository).toBeNull();
+  });
 });

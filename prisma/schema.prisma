@@ -39,6 +39,9 @@ model Project {
   name               String
   primaryRepository  String
   referenceRepositories String[]     @default([])
+  // SDD section 16. A Project can define one organization-wide skills repository. The value is
+  // an owner and repository slug, the same shape `primaryRepository` uses.
+  organizationSkillsRepository String?
   linearTeamId       String?
   defaultAutonomy    String          @default("L2")
   maxRunMinutes      Int             @default(90)

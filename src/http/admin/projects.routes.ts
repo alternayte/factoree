@@ -10,6 +10,8 @@ const createSchema = z.object({
   name: z.string().min(1),
   primaryRepository: z.string().regex(/^[^/]+\/[^/]+$/),
   referenceRepositories: z.array(z.string()).default([]),
+  // SDD section 16. One organization-wide skills repository, as an owner and repository slug.
+  organizationSkillsRepository: z.string().regex(/^[^/]+\/[^/]+$/).nullable().optional(),
   linearTeamId: z.string().min(1).optional(),
   defaultAutonomy: z.enum(["L0", "L1", "L2", "L3", "L4"]).default("L2"),
   maxRunMinutes: z.number().int().positive().max(600).default(90),
@@ -37,6 +39,9 @@ export const registerProjectRoutes = (
       name: parsed.data.name,
       primaryRepository: parsed.data.primaryRepository,
       referenceRepositories: parsed.data.referenceRepositories,
+      ...(parsed.data.organizationSkillsRepository === undefined
+        ? {}
+        : { organizationSkillsRepository: parsed.data.organizationSkillsRepository }),
       ...(parsed.data.linearTeamId === undefined ? {} : { linearTeamId: parsed.data.linearTeamId }),
       defaultAutonomy: parsed.data.defaultAutonomy,
       maxRunMinutes: parsed.data.maxRunMinutes,
@@ -75,6 +80,9 @@ export const registerProjectRoutes = (
       ...(body.data.referenceRepositories === undefined
         ? {}
         : { referenceRepositories: body.data.referenceRepositories }),
+      ...(body.data.organizationSkillsRepository === undefined
+        ? {}
+        : { organizationSkillsRepository: body.data.organizationSkillsRepository }),
       ...(body.data.linearTeamId === undefined ? {} : { linearTeamId: body.data.linearTeamId }),
       ...(body.data.defaultAutonomy === undefined ? {} : { defaultAutonomy: body.data.defaultAutonomy }),
       ...(body.data.maxRunMinutes === undefined ? {} : { maxRunMinutes: body.data.maxRunMinutes }),
