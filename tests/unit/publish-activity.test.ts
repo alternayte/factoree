@@ -369,7 +369,7 @@ describe("the publish activity", () => {
       }),
     ).rejects.toBeInstanceOf(RunConfigurationError);
   });
-  it("refuses a base that moved, before any trusted checkout and before any pull request call", async () => {
+  it("refuses a base that moved, before any trusted checkout and before any pull request creation", async () => {
     // SDD section 45. The workflow calls `checkBase` once. A Temporal retry of `publish` runs
     // minutes later, so `publish` must check the base itself. This case is that retry path.
     const { activities, pullRequests, publishToBranch, reader } = build({
@@ -381,10 +381,37 @@ describe("the publish activity", () => {
     ).rejects.toThrow(/target branch "main" moved after this Run started/);
 
     expect(publishToBranch.inputs).toEqual([]);
-    expect(pullRequests.lookups).toEqual([]);
     expect(pullRequests.created).toEqual([]);
     // The base check reads the plain URL only. A credential must never reach a git argument list.
     expect(reader.urls).toEqual(["https://github.com/acme/app.git"]);
+  });
+
+  it("returns the existing pull request when the base moved, because the publication already happened", async () => {
+    // The idempotency rule of AT-35 outranks the base gate here. This Run already published, so
+    // the existing pull request stays the correct answer. A throw here would break a retry.
+    const existing = {
+      number: 7,
+      url: "https://github.com/acme/app/pull/7",
+      headBranch: publishBranchName(input.runId),
+      headSha: COMMIT,
+    };
+    const { activities, pullRequests, publishToBranch, reader } = build({
+      existing,
+      currentTargetSha: "d".repeat(40),
+    });
+
+    const output: PublishActivityOutput = await environment.run(
+      (value: PublishActivityInput) => activities.publish(value),
+      input,
+    );
+
+    expect(output.created).toBe(false);
+    expect(output.pullRequestNumber).toBe(7);
+    expect(publishToBranch.inputs).toEqual([]);
+    expect(pullRequests.created).toEqual([]);
+    // The lookup answered first, so the base check never ran.
+    expect(pullRequests.lookups).toEqual([publishBranchName(input.runId)]);
+    expect(reader.urls).toEqual([]);
   });
 
   it("makes a moved base non-retryable, because a retry cannot repair it", async () => {

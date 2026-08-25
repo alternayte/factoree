@@ -288,24 +288,6 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // Step 7. An empty patch publishes nothing.
       if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
 
-      // Step 7b. SDD section 45. The base must still be fresh at the moment of publication. The
-      // workflow calls `checkBase` once, and a Temporal retry of this activity runs minutes
-      // later. The base branch can move in that interval, so this activity checks it again. The
-      // check reads the PLAIN URL, because `git ls-remote` puts its URL on the process argument
-      // list. SDD section 30 forbids a credential there.
-      const freshness = await checkBaseFreshness(dependencies.repositoryReader, {
-        url: plainUrl,
-        branch: input.baseBranch,
-        runBaseSha: input.baseSha,
-      });
-      if (!freshness.fresh) {
-        throw new PatchError(
-          `the target branch "${input.baseBranch}" moved after this Run started. Run base: ` +
-            `${input.baseSha}. Current target: ${freshness.currentTargetSha}. Factoree ` +
-            "published nothing.",
-        );
-      }
-
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
 
@@ -339,6 +321,31 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           branch,
           created: false,
         };
+      }
+
+      // Step 8b. SDD section 45. The base must still be fresh at the moment of a NEW
+      // publication. The workflow calls `checkBase` once, and a Temporal retry of this activity
+      // runs minutes later. The base branch can move in that interval, so this activity checks
+      // it again. This check is a fail-closed backstop for the retry path.
+      //
+      // The order matters. Step 8 above returns the pull request this Run already published, so
+      // a moved base never breaks that idempotent answer. The publication already happened, so
+      // the existing pull request stays the correct answer. This gate guards a new publication
+      // only.
+      //
+      // The check reads the PLAIN URL, because `git ls-remote` puts its URL on the process
+      // argument list. SDD section 30 forbids a credential there.
+      const freshness = await checkBaseFreshness(dependencies.repositoryReader, {
+        url: plainUrl,
+        branch: input.baseBranch,
+        runBaseSha: input.baseSha,
+      });
+      if (!freshness.fresh) {
+        throw new PatchError(
+          `the target branch "${input.baseBranch}" moved after this Run started. Run base: ` +
+            `${input.baseSha}. Current target: ${freshness.currentTargetSha}. Factoree ` +
+            "published nothing.",
+        );
       }
 
       // Step 9. SDD section 46 steps 1 to 8. The trusted checkout runs on the control plane.

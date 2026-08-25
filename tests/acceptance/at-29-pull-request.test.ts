@@ -243,11 +243,10 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
     expect(seam.received[0] ?? "").not.toContain(TOKEN);
     expect(seam.received[0] ?? "").not.toContain("x-access-token");
     expect(seam.tokens[0]).toBe(TOKEN);
-    // The base backstop reads the plain URL too. SDD section 45 requires that check.
-    expect(reader.urls).toEqual([
-      "https://github.test/acme/app.git",
-      "https://github.test/acme/app.git",
-    ]);
+    // The base backstop reads the plain URL too. SDD section 45 requires that check. The first
+    // call published, so it ran the check. The second call found the existing pull request and
+    // returned it, so it ran no check at all.
+    expect(reader.urls).toEqual(["https://github.test/acme/app.git"]);
   });
 
   it("creates no second pull request when the same input runs again (AT-35)", () => {
