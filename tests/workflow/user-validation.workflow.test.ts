@@ -57,6 +57,7 @@ const passing: UserValidateActivityOutput = {
   summary: "Every user validation assertion passed.",
   failures: [],
   sessionId: "ses_fake_validator",
+  previewUrl: null,
 };
 
 const failing: UserValidateActivityOutput = {
@@ -68,6 +69,7 @@ const failing: UserValidateActivityOutput = {
   summary: "One user validation assertion failed.",
   failures: ["VAL-UI-001: the button is missing."],
   sessionId: "ses_fake_validator",
+  previewUrl: null,
 };
 
 const manualOnly: UserValidateActivityOutput = {
@@ -79,6 +81,7 @@ const manualOnly: UserValidateActivityOutput = {
   summary: "One user validation assertion needs a human.",
   failures: [],
   sessionId: "ses_fake_validator",
+  previewUrl: null,
 };
 
 const blockedOnly: UserValidateActivityOutput = {
@@ -90,6 +93,7 @@ const blockedOnly: UserValidateActivityOutput = {
   summary: "One user validation assertion is blocked.",
   failures: [],
   sessionId: "ses_fake_validator",
+  previewUrl: null,
 };
 
 describe("USER_VALIDATING", () => {

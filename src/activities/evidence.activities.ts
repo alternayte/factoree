@@ -1,8 +1,24 @@
+import { ApplicationFailure } from "@temporalio/activity";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import type { AssertionOutcome, EvidenceArtifact } from "~/domain/validation/validation-result.js";
 import type { Logger } from "~/telemetry/logger.js";
+import type { RunRepository } from "~/domain/runs/run-repository.js";
+import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
+import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
+import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
+import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { Redactor } from "~/telemetry/redaction.js";
+import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import {
+  hashProofPack,
+  renderProofPack,
+  type ProofPackAssertion,
+  type ProofPackCheck,
+  type ProofPackEvidenceRef,
+} from "~/domain/evidence/proof-pack.js";
 
 export interface EvidencePersistenceDependencies {
   evidence: EvidenceStore;
@@ -90,7 +106,10 @@ export const createEvidencePersistence = (
         source: artifact.source,
         sha256: stored.sha256,
         storageRef: stored.storageRef,
-        metadata: artifact.metadata,
+        // SDD section 42. A repair produces a second artefact for the same assertion. The row
+        // must therefore name its attempt, exactly as a deterministic check row does. Without it
+        // the Proof Pack cannot tell a failed attempt's artefact from the passing one.
+        metadata: { ...artifact.metadata, attempt: input.attempt },
         idempotencyKey:
           `run:${input.runId}:validation:${input.attempt}:` +
           `${input.outcome.assertionId}:${artifact.source}`,
@@ -115,5 +134,255 @@ export const createEvidencePersistence = (
       attempt: input.attempt,
       step: "user_validate",
     });
+  },
+});
+
+export interface ProofPackActivityDependencies {
+  runs: RunRepository;
+  contextContracts: ContextContractStore;
+  validationContracts: ValidationContractStore;
+  validationResults: ValidationResultStore;
+  evidence: EvidenceStore;
+  reviewFindings: ReviewFindingStore;
+  agentSession: AgentSessionPort;
+  secrets: SecretStore;
+  redactor: Redactor;
+  logger: Logger;
+}
+
+export interface PublishProofPackActivityInput {
+  runId: string;
+  tenantId: string;
+  projectId: string;
+  sessionId: string;
+  workItem: { title: string; url: string | null };
+  pullRequestUrl: string;
+  commitSha: string;
+  patchSha256: string;
+  baseSha: string;
+  changedFiles: string[];
+  patchByteLength: number;
+  previewUrl: string | null;
+  repairCount: number;
+  repairLimit: number;
+  reviewVerdict: "pass" | "fail";
+  reviewPasses: number;
+  /**
+   * SDD section 42. The attempt number of the LAST Reviewer session. A passing review reports no
+   * finding and therefore writes no row, so the stored rows cannot name this attempt. Only the
+   * caller knows it, and without it a repaired blocker of an earlier attempt is reported as open.
+   */
+  reviewAttempt: number;
+}
+
+export interface PublishProofPackActivityOutput {
+  sha256: string;
+  /** The number of assertions the Proof Pack mapped to evidence. */
+  assertionCount: number;
+  /** The number of non-blocking findings it reported as a known limitation. */
+  limitationCount: number;
+  postedAt: string;
+}
+
+/** Reads one number out of evidence metadata. An absent value becomes -1, never a silent 0. */
+const metadataNumber = (metadata: Record<string, unknown>, key: string): number =>
+  typeof metadata[key] === "number" ? metadata[key] : -1;
+
+const metadataText = (metadata: Record<string, unknown>, key: string): string =>
+  typeof metadata[key] === "string" ? metadata[key] : "";
+
+/**
+ * SDD section 47. Builds one Proof Pack from the persisted state of one Run, records its hash,
+ * and posts it as the Linear final response. It reads recorded facts only. No agent claim and no
+ * workflow-carried summary decides what it reports.
+ */
+export const createProofPackActivities = (dependencies: ProofPackActivityDependencies) => ({
+  async publishProofPack(
+    input: PublishProofPackActivityInput,
+  ): Promise<PublishProofPackActivityOutput> {
+    // SDD section 60. Every Project secret reaches the redactor before any text is built. A
+    // persisted reason can carry one, because an agent wrote it.
+    await registerProjectSecrets(
+      dependencies.redactor,
+      dependencies.secrets,
+      input.tenantId,
+      input.projectId,
+      dependencies.logger,
+    );
+
+    const contract = await dependencies.validationContracts.findByRun(input.tenantId, input.runId);
+    if (contract === null) {
+      throw ApplicationFailure.nonRetryable(
+        `Run ${input.runId} has no frozen Validation Contract, so no Proof Pack can prove it.`,
+        "PROOF_PACK_INPUT_MISSING",
+      );
+    }
+    const contextContract = await dependencies.contextContracts.findByRun(
+      input.tenantId,
+      input.runId,
+    );
+    const resultRows = await dependencies.validationResults.listForRun(input.tenantId, input.runId);
+    const evidenceRows = await dependencies.evidence.listForRun(input.tenantId, input.runId);
+    const findingRows = await dependencies.reviewFindings.listForRun(input.tenantId, input.runId);
+
+    // SDD section 42. The last attempt of one assertion is its outcome. An earlier repair
+    // attempt is history, and it must not decide what the Proof Pack reports.
+    const latest = new Map<string, (typeof resultRows)[number]>();
+    for (const row of resultRows) {
+      const held = latest.get(row.assertionKey);
+      if (held === undefined || row.attempt >= held.attempt) latest.set(row.assertionKey, row);
+    }
+
+    // SDD section 42. A repair leaves the artefacts of the failed attempt beside those of the
+    // passing one. Only the last attempt describes the change Factoree published, so a failure
+    // screenshot must never sit next to a PASS. A row that carries no attempt yields -1, and
+    // every row of that assertion then matches, so nothing is ever silently dropped.
+    const lastAttemptByAssertion = new Map<string, number>();
+    for (const row of evidenceRows) {
+      if (row.validationAssertionId === null) continue;
+      const attempt = metadataNumber(row.metadata, "attempt");
+      const held = lastAttemptByAssertion.get(row.validationAssertionId);
+      if (held === undefined || attempt > held) {
+        lastAttemptByAssertion.set(row.validationAssertionId, attempt);
+      }
+    }
+
+    const evidenceByAssertion = new Map<string, ProofPackEvidenceRef[]>();
+    for (const row of evidenceRows) {
+      if (row.validationAssertionId === null) continue;
+      if (metadataNumber(row.metadata, "attempt") !== lastAttemptByAssertion.get(row.validationAssertionId)) {
+        continue;
+      }
+      const list = evidenceByAssertion.get(row.validationAssertionId) ?? [];
+      list.push({
+        kind: row.kind,
+        source: row.source,
+        sha256: row.sha256,
+        storageRef: row.storageRef,
+      });
+      evidenceByAssertion.set(row.validationAssertionId, list);
+    }
+
+    const assertions: ProofPackAssertion[] = contract.assertions.map((assertion) => {
+      const outcome = latest.get(assertion.id);
+      return {
+        id: assertion.id,
+        requirement: assertion.requirement,
+        statement: assertion.statement,
+        method: assertion.method,
+        requiredEvidence: assertion.evidence,
+        // An assertion with no result row proved nothing. BLOCKED is the honest report, and
+        // SDD section 68 then refuses the completion.
+        result: outcome?.result ?? "BLOCKED",
+        reason: outcome?.reason ?? "No result row exists for this assertion.",
+        evidence: evidenceByAssertion.get(assertion.rowId) ?? [],
+      };
+    });
+
+    // SDD section 42. `verify` writes one evidence row per check PER ATTEMPT, so a Run that
+    // repaired holds the failing rows of the earlier attempt as well. Only the last attempt
+    // describes the change Factoree published, and a stale failing row would tell the human
+    // that a passing Run failed its own verification.
+    const checkRows = evidenceRows.filter((row) => row.kind === "deterministic_check");
+    const lastCheckAttempt = checkRows.reduce(
+      (held, row) => Math.max(held, metadataNumber(row.metadata, "attempt")),
+      -1,
+    );
+
+    // SDD section 47 forbids a raw log dump, so only the named fields travel. The `log` key of
+    // the evidence metadata is never read here, and a spread would defeat the whole rule.
+    const checks: ProofPackCheck[] = checkRows
+      .filter((row) => metadataNumber(row.metadata, "attempt") === lastCheckAttempt)
+      .map((row) => ({
+        name: metadataText(row.metadata, "name"),
+        command: metadataText(row.metadata, "command"),
+        exitCode: metadataNumber(row.metadata, "exitCode"),
+        passed: row.metadata["passed"] === true,
+        durationMs: metadataNumber(row.metadata, "durationMs"),
+        stdoutSha256: metadataText(row.metadata, "stdoutSha256"),
+        stderrSha256: metadataText(row.metadata, "stderrSha256"),
+      }));
+
+    // SDD section 42. Only the last review pass describes the change Factoree published. An
+    // earlier pass reported a defect a repair already closed. The attempt comes from the caller,
+    // never from the rows: a passing review writes no row at all, so the highest stored attempt
+    // is the earlier FAILING pass, and using it would report a repaired blocker as open.
+    const findings = findingRows
+      .filter((row) => row.attempt === input.reviewAttempt)
+      .map((row) => ({
+        id: row.findingKey,
+        severity: row.severity,
+        category: row.category,
+        requirement: row.requirement,
+        evidence: row.evidence,
+        description: row.description,
+        blocking: row.blocking,
+        decisionReason: row.decisionReason,
+        attempt: row.attempt,
+      }));
+
+    const items = contextContract?.items ?? [];
+    const body = dependencies.redactor.redactText(
+      renderProofPack({
+        runId: input.runId,
+        workItem: input.workItem,
+        pullRequestUrl: input.pullRequestUrl,
+        assertions,
+        checks,
+        reviewVerdict: input.reviewVerdict,
+        reviewPasses: input.reviewPasses,
+        findings,
+        contextItems: items
+          .filter((item) => item.classification !== "discoverable")
+          .map((item) => ({
+            ref: item.reference.ref,
+            authority: item.authority,
+            classification: item.classification,
+            sourceVersion: item.sourceVersion,
+            contentSha256: item.contentSha256,
+            reason: item.reason,
+          })),
+        discoverableItemCount: items.filter((item) => item.classification === "discoverable").length,
+        conflicts: (contextContract?.conflicts ?? [])
+          .filter((conflict) => conflict.resolution === "resolved")
+          .map((conflict) => ({
+            id: conflict.id,
+            subject: conflict.subject,
+            winnerRef: conflict.winnerRef,
+            loserRef: conflict.loserRef,
+            reason: conflict.reason,
+          })),
+        changedFiles: input.changedFiles,
+        patchByteLength: input.patchByteLength,
+        previewUrl: input.previewUrl,
+        baseSha: input.baseSha,
+        patchSha256: input.patchSha256,
+        commitSha: input.commitSha,
+        repairCount: input.repairCount,
+        repairLimit: input.repairLimit,
+      }),
+    );
+
+    const sha256 = hashProofPack(body);
+    const postedAt = new Date();
+
+    // The durable record comes first. A Linear outage must not lose the proof that the Proof
+    // Pack exists, and the activity retry then posts the identical body again.
+    await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt });
+    await dependencies.agentSession.respond(input.sessionId, body);
+
+    dependencies.logger.info("proof pack posted", {
+      tenant_id: input.tenantId,
+      run_id: input.runId,
+      step: "proof_pack",
+      proof_pack_sha256: sha256,
+    });
+
+    return {
+      sha256,
+      assertionCount: assertions.length,
+      limitationCount: findings.filter((finding) => !finding.blocking).length,
+      postedAt: postedAt.toISOString(),
+    };
   },
 });

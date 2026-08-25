@@ -35,6 +35,8 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   pullRequestUrl: row.pullRequestUrl,
   contextContractVersion: row.contextContractVersion,
   validationContractVersion: row.validationContractVersion,
+  proofPackSha256: row.proofPackSha256,
+  proofPackPostedAt: row.proofPackPostedAt,
   repairCount: row.repairCount,
   createdAt: row.createdAt,
   startedAt: row.startedAt,
@@ -190,6 +192,23 @@ export class PrismaRunRepository implements RunRepository {
     // success makes a Run that holds publication facts report that it holds none.
     if (updated.count === 0) {
       throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the publication facts`);
+    }
+  }
+
+  async setProofPack(
+    tenantId: string,
+    runId: string,
+    proofPack: { sha256: string; postedAt: Date },
+  ): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { proofPackSha256: proofPack.sha256, proofPackPostedAt: proofPack.postedAt },
+    });
+    // SDD section 68 reads this value to decide whether the Run can complete. A silent success
+    // makes a Run that posted a Proof Pack report that it posted none.
+    if (updated.count === 0) {
+      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the Proof Pack facts`);
     }
   }
 

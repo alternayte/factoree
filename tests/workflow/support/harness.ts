@@ -36,6 +36,10 @@ import type {
   PublishActivityInput,
   PublishActivityOutput,
 } from "~/activities/publishing.activities.js";
+import type {
+  PublishProofPackActivityInput,
+  PublishProofPackActivityOutput,
+} from "~/activities/evidence.activities.js";
 import { parseReviewReport, ReviewReportInvalidError } from "~/domain/review/review-report.js";
 import { decideReview } from "~/domain/review/blocking.js";
 import type { ReviewDecision } from "~/domain/review/blocking.js";
@@ -225,6 +229,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const publishOutcomes = new Map<string, () => PublishActivityOutput>();
   /** Every recorded `publish` call, in order. */
   const publishCalls: PublishActivityInput[] = [];
+  /** Every recorded `publishProofPack` call, in order. */
+  const proofPackCalls: PublishProofPackActivityInput[] = [];
+  /** A run id in this map replaces the `publishProofPack` result. The function can also throw. */
+  const proofPackOutcomes = new Map<string, () => PublishProofPackActivityOutput>();
+  /** A run id in this map holds `publishProofPack` until the promise resolves. */
+  const heldProofPacks = new Map<string, Promise<void>>();
   /** A run id in this map holds the publication open until the test resolves the promise. */
   const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
@@ -530,6 +540,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         summary: "Every user validation assertion passed.",
         failures: [],
         sessionId: "ses_fake_validator",
+        previewUrl: null,
       };
     },
     review: async (activityInput: ReviewActivityInput): Promise<ReviewActivityOutput> => {
@@ -662,6 +673,32 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         pullRequestNumber: 1,
         branch: `factoree/${activityInput.runId}`,
         created: true,
+        patchByteLength: 812,
+      };
+    },
+    publishProofPack: async (
+      activityInput: PublishProofPackActivityInput,
+    ): Promise<PublishProofPackActivityOutput> => {
+      activityOrder.push("publishProofPack");
+      proofPackCalls.push(activityInput);
+      const held = heldProofPacks.get(activityInput.runId);
+      if (held !== undefined) {
+        // The real activity reads five stores and posts to Linear, so a stop can arrive while it
+        // runs. The double heartbeats and awaits, the same way the `publish` double does.
+        const heartbeat = setInterval(() => Context.current().heartbeat(), 100);
+        try {
+          await held;
+        } finally {
+          clearInterval(heartbeat);
+        }
+      }
+      const override = proofPackOutcomes.get(activityInput.runId);
+      if (override !== undefined) return override();
+      return {
+        sha256: "9".repeat(64),
+        assertionCount: 1,
+        limitationCount: 0,
+        postedAt: "2026-01-01T03:00:00.000Z",
       };
     },
   };
@@ -766,6 +803,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     publishOutcomes,
     publishCalls,
     heldPublishes,
+    proofPackCalls,
+    proofPackOutcomes,
+    heldProofPacks,
     activityOrder,
     workItemLabels,
     failingLabelReads,

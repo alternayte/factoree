@@ -88,6 +88,8 @@ export interface PublishActivityOutput {
   branch: string;
   /** False when a pull request for this head branch already existed. Controller decision 8. */
   created: boolean;
+  /** SDD section 47. The size of the verified patch, for the human change summary. */
+  patchByteLength: number;
 }
 
 export interface PublishingActivityDependencies {
@@ -320,6 +322,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           pullRequestNumber: existing.number,
           branch,
           created: false,
+          patchByteLength: patch.byteLength,
         };
       }
 
@@ -427,6 +430,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         pullRequestNumber: created.number,
         branch,
         created: true,
+        patchByteLength: patch.byteLength,
       };
     } catch (error) {
       throw asNonRetryable(dependencies.redactor, error);

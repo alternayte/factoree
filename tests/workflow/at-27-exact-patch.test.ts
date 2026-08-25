@@ -16,6 +16,8 @@ const {
   publishOutcomes,
   publishCalls,
   heldPublishes,
+  heldProofPacks,
+  proofPackCalls,
   activityOrder,
   input,
   runWorker,
@@ -82,17 +84,12 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
 
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at27b");
-      await waitFor(
-        () => publishCalls.filter((entry) => entry.runId === runId).length === 1,
-        "the publication of ses-at27b",
-      );
-      await handle.signal(stopSignal);
       return handle.result();
     });
 
-    // The Run keeps the residual wait, because SDD section 68 forbids a success terminal state
-    // without a Proof Pack.
-    expect(result.status).toBe("CANCELLED");
+    // SDD section 47 and section 68. The Proof Pack completes a proved Run, so this Run needs no
+    // stop to reach a terminal state.
+    expect(result.status).toBe("READY_FOR_HUMAN");
 
     const call = publishCalls.filter((entry) => entry.runId === runId).at(-1);
     expect(call?.reviewedChangedFiles).toEqual(["src/app.ts"]);
@@ -108,10 +105,12 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
         ),
     ).toBe(true);
 
-    expect(activityOrder.slice(orderBefore).slice(-3)).toEqual([
+    // SDD section 47. The Proof Pack follows the publication, so it closes the ordered tail.
+    expect(activityOrder.slice(orderBefore).slice(-4)).toEqual([
       "review",
       "checkBase",
       "publish",
+      "publishProofPack",
     ]);
   });
 
@@ -119,17 +118,24 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
     const runId = "run-ses-at27c";
     const finalBefore = postedFinalResponses.length;
 
+    // The Proof Pack is held, so the stop lands while the Run sits between a successful
+    // publication and its Proof Pack. Without the hold the two race, and a racing test proves
+    // nothing about the stop path.
+    const release = hold(heldProofPacks, runId);
+
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at27c");
       await waitFor(
-        () => publishCalls.filter((entry) => entry.runId === runId).length === 1,
-        "the publication of ses-at27c",
+        () => proofPackCalls.filter((entry) => entry.runId === runId).length === 1,
+        "the Proof Pack of ses-at27c",
       );
       await handle.signal(stopSignal);
+      release();
       return handle.result();
     });
 
-    // SDD section 68 forbids a success terminal state before Phase 10, so the status stands.
+    // SDD section 50. The human stopped the Run, so it ends CANCELLED. The publication already
+    // happened, and the message must say so.
     expect(result.status).toBe("CANCELLED");
 
     const body = postedFinalResponses.slice(finalBefore).at(-1) ?? "";

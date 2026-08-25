@@ -49,6 +49,7 @@ const failing: UserValidateActivityOutput = {
   summary: "One user validation assertion failed.",
   failures: ["VAL-API-002: the reload does not show the saved name."],
   sessionId: "ses_fake_validator",
+  previewUrl: null,
 };
 
 const passing: UserValidateActivityOutput = {
@@ -60,6 +61,7 @@ const passing: UserValidateActivityOutput = {
   summary: "Every user validation assertion passed.",
   failures: [],
   sessionId: "ses_fake_validator",
+  previewUrl: null,
 };
 
 /**

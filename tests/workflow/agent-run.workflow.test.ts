@@ -103,7 +103,11 @@ describe("agentRunWorkflow", () => {
     });
   });
 
-  it("fails with RUN_TIMEOUT after the maximum Run duration", async () => {
+  it("completes READY_FOR_HUMAN when the Run finishes inside its budget", async () => {
+    // SDD section 47 and section 48. Phase 9 ended a proved Run in the residual wait, so this
+    // Run once failed with RUN_TIMEOUT. The Proof Pack now completes it. A Run that truly
+    // reaches its deadline still fails RUN_TIMEOUT, which the two held-activity tests below
+    // prove against the preparation step and the Implementer step.
     const result = await runWorker(async () => {
       const handle = await environment.client.workflow.start(agentRunWorkflow, {
         taskQueue: "test",
@@ -112,8 +116,8 @@ describe("agentRunWorkflow", () => {
       });
       return handle.result();
     });
-    expect(result.status).toBe("FAILED");
-    expect(completions.at(-1)?.failureReason).toBe("RUN_TIMEOUT");
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    expect(completions.at(-1)?.failureReason).toBeUndefined();
   });
 
   it("moves through PREPARING and IMPLEMENTING after refinement and context resolution", async () => {

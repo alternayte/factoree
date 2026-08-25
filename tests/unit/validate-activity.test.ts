@@ -352,6 +352,35 @@ describe("the userValidate activity", () => {
     expect(output.passed).toBe(false);
   });
 
+  it("reports the exposed preview base URL, so the Proof Pack can name it", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner);
+    const environment = new MockActivityEnvironment();
+
+    const output: UserValidateActivityOutput = await environment.run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      input,
+    );
+
+    // SDD section 47. The Proof Pack names the preview a human can still open while the sandbox
+    // lives. It must be the address the validator actually used.
+    expect(output.previewUrl).toMatch(/^http/);
+  });
+
+  it("reports no preview URL when the sandbox could not expose one", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner, new NoExposeSandbox());
+    const environment = new MockActivityEnvironment();
+
+    const output: UserValidateActivityOutput = await environment.run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      input,
+    );
+
+    // A URL Factoree never exposed must never reach the Proof Pack. Null is the honest report.
+    expect(output.previewUrl).toBeNull();
+  });
+
   it("reports an unregistered validator runner as a configuration fault", async () => {
     const runner = new FakeRunner();
     const { activities } = build(runner);

@@ -30,7 +30,7 @@ import { createVerificationActivities } from "./verification.activities.js";
 import { createRefinementActivities } from "./refinement.activities.js";
 import { createContextActivities } from "./context.activities.js";
 import { createValidationActivities } from "./validation.activities.js";
-import { createEvidencePersistence } from "./evidence.activities.js";
+import { createEvidencePersistence, createProofPackActivities } from "./evidence.activities.js";
 import { createReviewActivities } from "./review.activities.js";
 import { createPublishingActivities } from "./publishing.activities.js";
 
@@ -135,6 +135,18 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     repositoryReader: dependencies.repositoryReader,
     pullRequests: dependencies.pullRequests,
     gitAuthor: dependencies.gitAuthor,
+    logger: dependencies.logger,
+  }),
+  ...createProofPackActivities({
+    runs: dependencies.runs,
+    contextContracts: dependencies.contextContracts,
+    validationContracts: dependencies.validationContracts,
+    validationResults: dependencies.validationResults,
+    evidence: dependencies.evidence,
+    reviewFindings: dependencies.reviewFindings,
+    agentSession: dependencies.agentSession,
+    secrets: dependencies.secrets,
+    redactor: dependencies.redactor,
     logger: dependencies.logger,
   }),
   ...createVerificationActivities({

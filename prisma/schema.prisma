@@ -114,6 +114,8 @@ model Run {
   pullRequestUrl           String?
   contextContractVersion   String?
   validationContractVersion String?
+  proofPackSha256          String?
+  proofPackPostedAt        DateTime?
   repairCount              Int       @default(0)
   createdAt                DateTime  @default(now())
   startedAt                DateTime?
