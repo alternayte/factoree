@@ -41,15 +41,38 @@ const VERIFICATION_SUMMARY = "every deterministic check passed on attempt 1";
  */
 const localCloneUrl = (remote: BareRemote) => {
   const received: string[] = [];
+  const tokens: (string | undefined)[] = [];
   const seam = (input: TrustedCheckoutInput) => {
     received.push(input.cloneUrl);
+    tokens.push(input.token);
     return realPublishToBranch({ ...input, cloneUrl: remote.cloneUrl });
   };
   seam.received = received;
+  seam.tokens = tokens;
   return seam;
 };
 
-/** The `publish` activity must never read the repository. A call here fails the test. */
+/**
+ * The base backstop of the `publish` activity reads the target branch. SDD section 45 requires
+ * that check on every attempt. The reader records each URL, so a test proves the URL stays plain.
+ */
+const baseRepositoryReader = (sha: () => string): RepositoryReader & { urls: string[] } => {
+  const urls: string[] = [];
+  return {
+    urls,
+    resolveRef: (url: string): Promise<string> => {
+      urls.push(url);
+      return Promise.resolve(sha());
+    },
+    listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
+    readBlob: (): Promise<string | null> => Promise.resolve(null),
+  };
+};
+
+/**
+ * The hostile-scheme case must reach no remote at all. The scheme gate runs before the base
+ * check, so a call here fails the test that made it.
+ */
 const forbiddenRepositoryReader = (): RepositoryReader => ({
   resolveRef: (): Promise<string> =>
     Promise.reject(new Error("the publish activity must not read the repository")),
@@ -90,6 +113,7 @@ let first: PublishActivityOutput;
 let second: PublishActivityOutput;
 let branch: string;
 let logLines: string[];
+let reader: RepositoryReader & { urls: string[] };
 
 const environment = new MockActivityEnvironment();
 
@@ -123,13 +147,14 @@ beforeAll(async () => {
   const redactor = new Redactor([]);
   logLines = [];
   seam = localCloneUrl(remote);
+  reader = baseRepositoryReader(() => remote.baseSha);
   runs = memoryRuns();
   const activities = createPublishingActivities({
     sandbox,
     secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
     redactor,
     runs,
-    repositoryReader: forbiddenRepositoryReader(),
+    repositoryReader: reader,
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
     gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
     logger: createLogger({ level: "debug", redactor, sink: (line) => logLines.push(line) }),
@@ -211,8 +236,18 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
     expect(api.created[0]?.headBranch).toBe(`factoree/run-${RUN_ID}`);
     expect(api.created[0]?.baseBranch).toBe("main");
     expect(api.created[0]?.slug).toBe(SLUG);
-    // The activity built an authenticated `https:` URL and never passed a local path itself.
-    expect(seam.received[0] ?? "").toMatch(/^https:\/\/x-access-token:/);
+    // The activity passed the PLAIN `https:` URL and never a local path of its own. SDD
+    // section 30 forbids the credential on the process argument list, so the credential travels
+    // out of band instead.
+    expect(seam.received[0] ?? "").toBe("https://github.test/acme/app.git");
+    expect(seam.received[0] ?? "").not.toContain(TOKEN);
+    expect(seam.received[0] ?? "").not.toContain("x-access-token");
+    expect(seam.tokens[0]).toBe(TOKEN);
+    // The base backstop reads the plain URL too. SDD section 45 requires that check.
+    expect(reader.urls).toEqual([
+      "https://github.test/acme/app.git",
+      "https://github.test/acme/app.git",
+    ]);
   });
 
   it("creates no second pull request when the same input runs again (AT-35)", () => {

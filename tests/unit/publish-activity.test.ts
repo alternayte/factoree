@@ -14,7 +14,12 @@ import type {
   PullRequestPort,
   PullRequestRecord,
 } from "~/domain/publishing/pull-request.js";
-import type { TrustedCheckoutInput, TrustedPublication } from "~/domain/publishing/trusted-checkout.js";
+import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
+import {
+  TrustedCheckoutError,
+  type TrustedCheckoutInput,
+  type TrustedPublication,
+} from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { Command, CommandResult, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
@@ -50,15 +55,22 @@ const stubSandbox = (options: { changedFiles: string[]; patchText: string }): Sa
   } as unknown as Sandbox;
 };
 
+interface RecordingReader extends RepositoryReader {
+  readonly urls: string[];
+}
+
 /**
- * A `RepositoryReader` double that refuses every call. The `publish` activity must never read
- * the repository, because `git ls-remote` puts its URL on the process argument list. A call
- * here fails the test that made it.
+ * A `RepositoryReader` double for the base backstop of the `publish` activity. It records every
+ * URL it received, so a test proves the activity passed the plain URL. SDD section 30 forbids a
+ * credential on the process argument list, and `git ls-remote` puts its URL there.
  */
-const forbiddenRepositoryReader = (): RepositoryReader => {
+const recordingRepositoryReader = (targetSha: string): RecordingReader => {
+  const urls: string[] = [];
   return {
-    resolveRef(): Promise<string> {
-      return Promise.reject(new Error("the publish activity must not read the repository"));
+    urls,
+    resolveRef(url: string): Promise<string> {
+      urls.push(url);
+      return Promise.resolve(targetSha);
     },
     listTree(): Promise<TreeListing> {
       return Promise.resolve({ entries: [], truncated: false });
@@ -113,12 +125,15 @@ const stubRuns = (): RunRepository & { publications: PublicationRow[] } => {
   } as unknown as RunRepository & { publications: PublicationRow[] };
 };
 
-const stubPublishToBranch = (): ((input: TrustedCheckoutInput) => Promise<TrustedPublication>) & {
+const stubPublishToBranch = (
+  failure?: Error,
+): ((input: TrustedCheckoutInput) => Promise<TrustedPublication>) & {
   inputs: TrustedCheckoutInput[];
 } => {
   const inputs: TrustedCheckoutInput[] = [];
   const fake = (input: TrustedCheckoutInput): Promise<TrustedPublication> => {
     inputs.push(input);
+    if (failure !== undefined) return Promise.reject(failure);
     return Promise.resolve({
       commitSha: COMMIT,
       publishedPatchSha256: input.verifiedPatchSha256,
@@ -155,14 +170,25 @@ const build = (options: {
   changedFiles?: string[];
   patchText?: string;
   existing?: PullRequestRecord | null;
+  /** The SHA the target branch holds now. The default equals the Run base SHA, so it is fresh. */
+  currentTargetSha?: string;
+  /** The failure the trusted checkout double throws. */
+  checkoutFailure?: Error;
+  /** The failure every pull request call throws. */
+  pullRequestFailure?: Error;
 } = {}) => {
   const lines: string[] = [];
   const redactor = new Redactor([]);
   const secrets = options.secrets ?? new MemorySecretStore({ GITHUB_TOKEN: TOKEN });
   const pullRequests = memoryPullRequests(options.existing ?? null);
+  if (options.pullRequestFailure !== undefined) {
+    const failure = options.pullRequestFailure;
+    pullRequests.findByHead = (): Promise<PullRequestRecord | null> => Promise.reject(failure);
+    pullRequests.create = (): Promise<PullRequestRecord> => Promise.reject(failure);
+  }
   const runs = stubRuns();
-  const reader = forbiddenRepositoryReader();
-  const publishToBranch = stubPublishToBranch();
+  const reader = recordingRepositoryReader(options.currentTargetSha ?? BASE);
+  const publishToBranch = stubPublishToBranch(options.checkoutFailure);
   const dependencies: PublishingActivityDependencies = {
     sandbox: stubSandbox({
       changedFiles: options.changedFiles ?? ["src/a.ts"],
@@ -181,6 +207,7 @@ const build = (options: {
     activities: createPublishingActivities(dependencies),
     pullRequests,
     runs,
+    reader,
     publishToBranch,
     lines,
   };
@@ -282,9 +309,11 @@ describe("the publish activity", () => {
     expect(lines.join("\n")).not.toContain(TOKEN);
     // The trusted checkout is the one place the credential travels, and it never returns. This
     // positive assertion pins that place, so a stub that produced no token cannot pass.
-    expect(publishToBranch.inputs[0]?.cloneUrl).toBe(
-      `https://x-access-token:${TOKEN}@github.com/acme/app.git`,
-    );
+    // The clone URL is plain. SDD section 30 forbids the credential on the process argument
+    // list, so the trusted checkout receives it out of band instead.
+    expect(publishToBranch.inputs[0]?.cloneUrl).toBe("https://github.com/acme/app.git");
+    expect(publishToBranch.inputs[0]?.cloneUrl ?? "").not.toContain(TOKEN);
+    expect(publishToBranch.inputs[0]?.token).toBe(TOKEN);
 
     const mismatch = build({ changedFiles: ["src/a.ts", "src/b.ts"] });
     const error = await mismatch.activities
@@ -339,5 +368,106 @@ describe("the publish activity", () => {
         repositoryBaseUrl: "file:///tmp/repos",
       }),
     ).rejects.toBeInstanceOf(RunConfigurationError);
+  });
+  it("refuses a base that moved, before any trusted checkout and before any pull request call", async () => {
+    // SDD section 45. The workflow calls `checkBase` once. A Temporal retry of `publish` runs
+    // minutes later, so `publish` must check the base itself. This case is that retry path.
+    const { activities, pullRequests, publishToBranch, reader } = build({
+      currentTargetSha: "d".repeat(40),
+    });
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), input),
+    ).rejects.toThrow(/target branch "main" moved after this Run started/);
+
+    expect(publishToBranch.inputs).toEqual([]);
+    expect(pullRequests.lookups).toEqual([]);
+    expect(pullRequests.created).toEqual([]);
+    // The base check reads the plain URL only. A credential must never reach a git argument list.
+    expect(reader.urls).toEqual(["https://github.com/acme/app.git"]);
+  });
+
+  it("makes a moved base non-retryable, because a retry cannot repair it", async () => {
+    const { activities } = build({ currentTargetSha: "d".repeat(40) });
+    const error = await activities
+      .publish(input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ApplicationFailure);
+    expect((error as ApplicationFailure).type).toBe("PUBLICATION_FAILED");
+    expect((error as ApplicationFailure).nonRetryable).toBe(true);
+  });
+
+  it("passes the clone URL without the credential and supplies the credential apart from it", async () => {
+    const { activities, publishToBranch } = build();
+
+    await environment.run((value: PublishActivityInput) => activities.publish(value), input);
+
+    const received = publishToBranch.inputs[0];
+    expect(received?.cloneUrl).toBe("https://github.com/acme/app.git");
+    expect(received?.cloneUrl ?? "").not.toContain(TOKEN);
+    expect(received?.cloneUrl ?? "").not.toContain("x-access-token");
+    expect(received?.token).toBe(TOKEN);
+  });
+
+  it("makes a rejected credential non-retryable", async () => {
+    const failure = new TrustedCheckoutError(
+      "a git command of the trusted checkout failed: fatal: Authentication failed for the remote",
+      { deterministic: true },
+    );
+    const { activities } = build({ checkoutFailure: failure });
+    const error = await activities
+      .publish(input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ApplicationFailure);
+    expect((error as ApplicationFailure).type).toBe("PUBLICATION_FAILED");
+    expect((error as ApplicationFailure).nonRetryable).toBe(true);
+  });
+
+  it("keeps a network timeout of the trusted checkout retryable", async () => {
+    const failure = new TrustedCheckoutError(
+      "a git command of the trusted checkout failed: Command failed: git clone, timed out",
+      { deterministic: false },
+    );
+    const { activities } = build({ checkoutFailure: failure });
+    const error = await activities
+      .publish(input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(TrustedCheckoutError);
+    expect(error).not.toBeInstanceOf(ApplicationFailure);
+  });
+
+  it("makes a GitHub 404 non-retryable", async () => {
+    const { activities } = build({
+      pullRequestFailure: new GitHubApiError("the GitHub API answered 404 for the pull request", 404),
+    });
+    const error = await activities
+      .publish(input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ApplicationFailure);
+    expect((error as ApplicationFailure).type).toBe("PUBLICATION_FAILED");
+    expect((error as ApplicationFailure).nonRetryable).toBe(true);
+  });
+
+  it("keeps a GitHub 500 retryable", async () => {
+    const { activities } = build({
+      pullRequestFailure: new GitHubApiError("the GitHub API answered 500 for the pull request", 500),
+    });
+    const error = await activities
+      .publish(input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(error).not.toBeInstanceOf(ApplicationFailure);
+  });
+
+  it("keeps a GitHub 429 and a GitHub 408 retryable, because the server asks for a later attempt", () => {
+    expect(new GitHubApiError("answered 429", 429).deterministic).toBe(false);
+    expect(new GitHubApiError("answered 408", 408).deterministic).toBe(false);
+    expect(new GitHubApiError("answered 401", 401).deterministic).toBe(true);
+    expect(new GitHubApiError("answered 403", 403).deterministic).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 import { ApplicationFailure } from "@temporalio/activity";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
@@ -18,6 +19,7 @@ import { checkBase as checkBaseFreshness } from "~/domain/publishing/stale-base.
 import {
   PatchHashMismatchError,
   publishToBranch as publishToBranchDefault,
+  TrustedCheckoutError,
 } from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
@@ -93,7 +95,10 @@ export interface PublishingActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   runs: RunRepository;
-  /** `checkBase` reads the target branch. It passes the plain URL, never a credential. */
+  /**
+   * `checkBase` and the base backstop of `publish` read the target branch. Each one passes the
+   * plain URL, never a credential.
+   */
   repositoryReader: RepositoryReader;
   pullRequests: (token: string) => PullRequestPort;
   gitAuthor: { name: string; email: string };
@@ -106,13 +111,14 @@ export interface PublishingActivityDependencies {
 }
 
 /**
- * Builds the authenticated clone URL. The scheme must be exactly `https:`. A `git clone` of an
- * `ext::` URL or a `file:` URL reaches command execution on the control plane. The `--`
- * separator does not stop a remote helper, so the scheme check is the only defence.
+ * Proves the clone URL scheme is exactly `https:`. A `git clone` of an `ext::` URL or a `file:`
+ * URL reaches command execution on the control plane. The `--` separator does not stop a remote
+ * helper, so this scheme check is the only defence.
  *
- * The result carries the credential in its userinfo. No caller logs it. No caller returns it.
+ * The URL stays plain. SDD section 30 forbids the credential on the process argument list, so the
+ * trusted checkout receives the credential through the git environment instead.
  */
-const buildAuthenticatedUrl = (plainUrl: string, token: string): string => {
+const assertHttpsRepositoryUrl = (plainUrl: string): void => {
   let parsed: URL;
   try {
     parsed = new URL(plainUrl);
@@ -128,9 +134,6 @@ const buildAuthenticatedUrl = (plainUrl: string, token: string): string => {
         "`https:` only. Repair the repository base URL of the Project.",
     );
   }
-  parsed.username = "x-access-token";
-  parsed.password = token;
-  return parsed.toString();
 };
 
 /**
@@ -169,7 +172,7 @@ const readGitHubToken = async (
 /**
  * SDD section 49. A semantic publication failure must not consume the Temporal retry policy. A
  * retry repeats the same fault. A network failure and a GitHub 500 stay retryable, so this
- * function converts three error types only. The message passes through the redactor first.
+ * function converts a deterministic failure only. The message passes through the redactor first.
  */
 const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
   if (error instanceof PatchHashMismatchError) {
@@ -179,6 +182,16 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
     return ApplicationFailure.nonRetryable(redactor.redactText(error.message), "EMPTY_PATCH");
   }
   if (error instanceof PatchError) {
+    return ApplicationFailure.nonRetryable(redactor.redactText(error.message), "PUBLICATION_FAILED");
+  }
+  // A rejected credential, a missing repository, a missing ref, and a patch that does not apply
+  // repeat for ever. A network failure and a timeout carry no such phrase, so they stay
+  // retryable.
+  if (error instanceof TrustedCheckoutError && error.deterministic) {
+    return ApplicationFailure.nonRetryable(redactor.redactText(error.message), "PUBLICATION_FAILED");
+  }
+  // A GitHub 4xx names a fault of the request itself. A 408, a 429, and every 5xx stay retryable.
+  if (error instanceof GitHubApiError && error.deterministic) {
     return ApplicationFailure.nonRetryable(redactor.redactText(error.message), "PUBLICATION_FAILED");
   }
   return error;
@@ -241,9 +254,10 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
       dependencies.redactor.addSecret(token);
 
-      // Step 4. The plain URL goes into every message. The authenticated URL goes to git only.
+      // Step 4. The plain URL goes to git and into every message. The credential travels apart
+      // from it, so no process argument list ever holds it.
       const plainUrl = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
-      const authenticatedUrl = buildAuthenticatedUrl(plainUrl, token);
+      assertHttpsRepositoryUrl(plainUrl);
 
       const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
 
@@ -273,6 +287,24 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       // Step 7. An empty patch publishes nothing.
       if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
+
+      // Step 7b. SDD section 45. The base must still be fresh at the moment of publication. The
+      // workflow calls `checkBase` once, and a Temporal retry of this activity runs minutes
+      // later. The base branch can move in that interval, so this activity checks it again. The
+      // check reads the PLAIN URL, because `git ls-remote` puts its URL on the process argument
+      // list. SDD section 30 forbids a credential there.
+      const freshness = await checkBaseFreshness(dependencies.repositoryReader, {
+        url: plainUrl,
+        branch: input.baseBranch,
+        runBaseSha: input.baseSha,
+      });
+      if (!freshness.fresh) {
+        throw new PatchError(
+          `the target branch "${input.baseBranch}" moved after this Run started. Run base: ` +
+            `${input.baseSha}. Current target: ${freshness.currentTargetSha}. Factoree ` +
+            "published nothing.",
+        );
+      }
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
@@ -321,7 +353,8 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       const publish = dependencies.publishToBranch ?? publishToBranchDefault;
       const publication = await publish({
-        cloneUrl: authenticatedUrl,
+        cloneUrl: plainUrl,
+        token,
         baseSha: input.baseSha,
         branch,
         patchBase64: patch.patchBase64,

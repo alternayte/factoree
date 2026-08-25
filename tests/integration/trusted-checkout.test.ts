@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  credentialEnvironment,
+  isDeterministicCheckoutFailure,
   publishToBranch,
   PatchHashMismatchError,
   TrustedCheckoutError,
@@ -177,6 +179,56 @@ describe("publishToBranch", () => {
       encoding: "utf8",
     }).trim();
     expect(remoteHead).toBe(first.commitSha);
+
+    // The same SHA alone is a weak claim, because both calls land in the same second. The
+    // recorded dates state the claim properly. A wall clock value that returns to the commit
+    // path fails these two assertions at once.
+    const authorDate = execFileSync("git", ["log", "-1", "--format=%aI", branch], {
+      cwd: bare,
+      encoding: "utf8",
+    }).trim();
+    const committerDate = execFileSync("git", ["log", "-1", "--format=%cI", branch], {
+      cwd: bare,
+      encoding: "utf8",
+    }).trim();
+    expect(authorDate).toBe(COMMIT_TIMESTAMP);
+    expect(committerDate).toBe(COMMIT_TIMESTAMP);
+  });
+
+  it("keeps the credential out of the process argument list and marks a deterministic failure", async () => {
+    // SDD section 30. `ps` and `/proc/<pid>/cmdline` are world readable, so the credential
+    // travels through the git environment instead of an argv element.
+    const environment = credentialEnvironment("https://github.test/acme/app.git", "ghp_secret0value");
+    expect(environment.GIT_CONFIG_COUNT).toBe("1");
+    expect(environment.GIT_CONFIG_KEY_0).toBe("http.https://github.test/.extraheader");
+    expect(environment.GIT_CONFIG_VALUE_0).toBe(
+      `Authorization: Basic ${Buffer.from("x-access-token:ghp_secret0value", "utf8").toString("base64")}`,
+    );
+    // A local path remote needs no header.
+    expect(credentialEnvironment(bare, "ghp_secret0value")).toEqual({});
+
+    // SDD section 49. A base SHA the clone does not hold repeats on every attempt.
+    const error = await publishToBranch({
+      cloneUrl: bare,
+      baseSha: "0".repeat(40),
+      branch: "factoree/run-missing-base",
+      patchBase64,
+      verifiedPatchSha256: sha256OfBase64(patchBase64),
+      commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
+      authorName: "Factoree",
+      authorEmail: "factoree@example.test",
+    })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(TrustedCheckoutError);
+    expect((error as TrustedCheckoutError).deterministic).toBe(true);
+
+    // A timeout carries no deterministic phrase, so it stays retryable.
+    expect(isDeterministicCheckoutFailure("Command failed: git clone, the read timed out")).toBe(false);
+    expect(isDeterministicCheckoutFailure("fatal: Authentication failed for the remote")).toBe(true);
+    expect(isDeterministicCheckoutFailure("error: patch failed: README.md:1")).toBe(true);
+    expect(isDeterministicCheckoutFailure("fatal: unable to read tree (0000)")).toBe(true);
   });
 });
 

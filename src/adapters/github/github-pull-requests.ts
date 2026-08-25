@@ -15,6 +15,31 @@ interface GitHubPullRequestBody {
   message?: unknown;
 }
 
+/**
+ * One failed GitHub API call. SDD section 49 forbids a semantic failure to consume the
+ * infrastructure retry policy, so this error reports whether the same call fails the same way on
+ * every attempt. The adapter imports no Temporal type. The activity boundary owns the
+ * conversion, exactly as the repository reader already arranges it.
+ */
+export class GitHubApiError extends Error {
+  /** The HTTP status of the answer. */
+  readonly status: number;
+
+  /**
+   * True when the same request fails the same way on every attempt. A 4xx names a fault of the
+   * request itself, so a retry repeats it. A 408 and a 429 are the two exceptions, because the
+   * server asks for a later attempt. A 5xx stays retryable.
+   */
+  readonly deterministic: boolean;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GitHubApiError";
+    this.status = status;
+    this.deterministic = status >= 400 && status < 500 && status !== 408 && status !== 429;
+  }
+}
+
 export interface GitHubPullRequestsOptions {
   apiBaseUrl: string;
   /** The GitHub write credential. SDD section 30 keeps it on the control plane only. */
@@ -105,8 +130,9 @@ export class GitHubPullRequests implements PullRequestPort {
       } catch {
         message = "";
       }
-      throw new Error(
+      throw new GitHubApiError(
         `the GitHub API answered ${response.status} for ${url}${message === "" ? "" : `: ${message}`}`,
+        response.status,
       );
     }
     return text === "" ? null : (JSON.parse(text) as unknown);
