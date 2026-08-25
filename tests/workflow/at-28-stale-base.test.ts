@@ -45,6 +45,11 @@ describe("AT-28 — a moved target branch ends the Run in STALE_BASE", () => {
     const runId = "run-ses-at28";
     baseChecks.set(runId, () => ({ fresh: false, currentTargetSha: MOVED_SHA }));
 
+    // `postedErrors` and `activityOrder` are file-global, so this case records the length of
+    // each before it starts. Every assertion below then reads this Run alone.
+    const errorsBefore = postedErrors.length;
+    const orderBefore = activityOrder.length;
+
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at28");
       return handle.result();
@@ -59,12 +64,15 @@ describe("AT-28 — a moved target branch ends the Run in STALE_BASE", () => {
 
     // Factoree published nothing, so the publication activity never ran.
     expect(publishCalls.filter((entry) => entry.runId === runId)).toEqual([]);
-    expect(activityOrder).not.toContain("publish");
-    expect(activityOrder.slice(-2)).toEqual(["review", "checkBase"]);
+    expect(activityOrder.slice(orderBefore)).not.toContain("publish");
+    expect(activityOrder.slice(orderBefore).slice(-2)).toEqual(["review", "checkBase"]);
     expect(statusesOf(runId)).toContain("PUBLISHING");
 
-    // The human learns both SHAs and learns that Factoree did not rebase.
-    const message = postedErrors.at(-1) ?? "";
+    // The human learns both SHAs and learns that Factoree did not rebase. The moved SHA belongs
+    // to this Run alone, so it names the error of this Run inside the file-global list.
+    const messages = postedErrors.slice(errorsBefore).filter((entry) => entry.includes(MOVED_SHA));
+    expect(messages).toHaveLength(1);
+    const message = messages[0] ?? "";
     expect(message).toContain("a".repeat(40));
     expect(message).toContain(MOVED_SHA);
     expect(message).toContain("did not rebase");

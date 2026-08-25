@@ -98,7 +98,7 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
 
     // The review pass stays open until this test releases it. The stop therefore arrives while
     // the Run is still inside the review, so the Run never reaches the publication path. A stop
-    // sent after the review returned would race that path and this test would flake.
+    // sent after the review returns can race that path and make this test flake.
     const releaseReview = hold(heldReviews, "run-ses-at16a");
 
     const result = await runWorker(async () => {

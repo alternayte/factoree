@@ -48,6 +48,11 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
       );
     });
 
+    // `postedProgress` and `activityOrder` are file-global, so this case records the length of
+    // each before it starts. Every assertion below then reads this Run alone, and the case does
+    // not depend on the order the cases run in.
+    const progressBefore = postedProgress.length;
+
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at27a");
       return handle.result();
@@ -60,13 +65,18 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
 
     // The retry policy denies a second attempt on a semantic failure, so exactly one call ran.
     expect(publishCalls.filter((entry) => entry.runId === runId)).toHaveLength(1);
-    // No pull request URL reached the human, so the harness recorded no creation.
-    expect(postedProgress.filter((message) => message.includes("Pull request:"))).toEqual([]);
+    // No pull request URL reached the human of this Run, so it published nothing.
+    expect(
+      postedProgress.slice(progressBefore).filter((message) => message.includes("Pull request:")),
+    ).toEqual([]);
     expect(statusesOf(runId)).toContain("PUBLISHING");
   });
 
   it("records the pull request URL and ends the activity order with review, checkBase, publish", async () => {
     const runId = "run-ses-at27b";
+
+    const progressBefore = postedProgress.length;
+    const orderBefore = activityOrder.length;
 
     const result = await runWorker(async () => {
       const handle = await startRun("ses-at27b");
@@ -89,11 +99,17 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
     expect(call?.baseBranch).toBe("main");
 
     expect(
-      postedProgress.some((message) =>
-        message.includes("Pull request: https://github.com/acme/fixture/pull/1"),
-      ),
+      postedProgress
+        .slice(progressBefore)
+        .some((message) =>
+          message.includes("Pull request: https://github.com/acme/fixture/pull/1"),
+        ),
     ).toBe(true);
 
-    expect(activityOrder.slice(-3)).toEqual(["review", "checkBase", "publish"]);
+    expect(activityOrder.slice(orderBefore).slice(-3)).toEqual([
+      "review",
+      "checkBase",
+      "publish",
+    ]);
   });
 });
