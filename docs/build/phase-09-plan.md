@@ -104,6 +104,7 @@ These decisions resolve every question the specification leaves open. An executi
   - `export const PATCH_GIT_OPTIONS: string[]`
   - `export const PATCH_DIFF_ARGS: string[]`
   - `export class PatchError extends Error`
+  - `export class EmptyPatchError extends Error`
   - `export interface VerifiedPatch { patchBase64: string; patchSha256: string; changedFiles: string[]; treeSha: string; byteLength: number }`
   - `export const capturePatch: (dependencies: { sandbox: Sandbox; redactor: Redactor }, input: { ref: SandboxRef; primaryPath: string; baseSha: string }) => Promise<VerifiedPatch>`
   - `export const sha256OfBase64: (base64: string) => string`
@@ -261,6 +262,21 @@ export class PatchError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PatchError";
+  }
+}
+
+/**
+ * SDD section 44. Every check passed and the primary worktree holds no change against the base
+ * SHA, so there is no verified artifact to publish. Task 8 maps this to the `EMPTY_PATCH` Run
+ * failure reason.
+ */
+export class EmptyPatchError extends Error {
+  constructor() {
+    super(
+      "the primary worktree holds no change against the base SHA, so Factoree has nothing to " +
+        "publish",
+    );
+    this.name = "EmptyPatchError";
   }
 }
 
@@ -1447,7 +1463,7 @@ export interface PublishActivityOutput {
 - `publish` refuses an empty patch by throwing an error whose `name` is `"EmptyPatchError"`, declared in `src/domain/publishing/patch.ts`. The workflow maps it to `EMPTY_PATCH`.
 - `publish` finds an existing pull request for the head branch before it touches the trusted checkout. When one exists, it records the publication again and returns `created: false`. Controller decision 8 and AT-35.
 - `publish` calls `dependencies.runs.setPublication` after the pull request exists, and it returns the values it wrote.
-- `PatchHashMismatchError` propagates unchanged, so the workflow can map it to `PATCH_HASH_MISMATCH`. Wrap it in nothing.
+- A semantic publication failure must not consume the Temporal retry policy. SDD section 49 requires that. The `publish` activity therefore catches `PatchHashMismatchError`, `EmptyPatchError`, and `PatchError`, and rethrows each as `ApplicationFailure.nonRetryable(message, type)` with the type `"PATCH_HASH_MISMATCH"`, `"EMPTY_PATCH"`, or `"PUBLICATION_FAILED"`. The message passes through the redactor first. A network failure and a GitHub 500 stay retryable and are not converted.
 - Every activity records a metric. Add `publishDuration` to `src/telemetry/metrics.ts` following the shape of `reviewDuration`.
 
 - [ ] **Step 1: Write the failing unit test**
@@ -1611,7 +1627,32 @@ Add a terminal helper for the stale base, beside `failRun`:
   };
 ```
 
-Replace the comment block above the residual wait with the publication path. The exact insertion point is the line `// User validation passed, and the independent review passed as well.` after the loop. Write:
+**Placement.** `review` and `verification` are declared inside the `for (;;)` loop, so they are
+out of scope after it. `preparedSandbox` and `resolvedContext` are declared in the block that
+encloses the loop, so they stay in scope. Therefore:
+
+1. Declare two carriers immediately before the loop, beside `let repairCount = 0;`:
+
+```ts
+    // SDD section 46 needs these two values after the loop ends, and the loop scope does not
+    // survive the `break`. The successful pass writes them just before it breaks.
+    let publishedChangedFiles: string[] = [];
+    let publishedVerificationSummary = "";
+```
+
+2. Replace `if (review.passed) break;` with:
+
+```ts
+        if (review.passed) {
+          publishedChangedFiles = review.changedFiles;
+          publishedVerificationSummary = verification.summary;
+          break;
+        }
+```
+
+3. Place the publication path immediately after the closing brace of the `for (;;)` loop and
+   before the closing brace of the enclosing block, so `preparedSandbox` and `resolvedContext`
+   are in scope. The residual wait stays where it is, after that block. Write:
 
 ```ts
     // SDD section 49. The independent review passed, so Factoree captures the verified patch,
@@ -1628,18 +1669,18 @@ Replace the comment block above the residual wait with the publication path. The
       runId: id,
       tenantId: input.tenantId,
       projectId: input.projectId,
-      spriteId: preparedSandbox.sprite.spriteId,
-      adapter: preparedSandbox.sprite.adapter,
-      workspacePath: preparedSandbox.sprite.workspacePath,
-      primaryPath: preparedSandbox.checkout.primary.path,
+      spriteId: preparedSandbox.spriteId,
+      adapter: preparedSandbox.adapter,
+      workspacePath: preparedSandbox.workspacePath,
+      primaryPath: preparedSandbox.primaryPath,
       repositorySlug: resolvedContext.primary.slug,
       repositoryBaseUrl: input.project.repositoryBaseUrl,
       baseBranch: input.project.defaultBranch,
-      baseSha: preparedSandbox.checkout.primary.baseSha,
-      reviewedChangedFiles: review.changedFiles,
+      baseSha: preparedSandbox.baseSha,
+      reviewedChangedFiles: publishedChangedFiles,
       workItemTitle: input.workItem.title,
       workItemUrl: input.workItem.url,
-      verificationSummary: verification.summary,
+      verificationSummary: publishedVerificationSummary,
       repairCount,
     };
 
@@ -1708,14 +1749,17 @@ Add the small classifier beside `isConfigurationFault`:
 const publicationFailureReasonOf = (
   error: unknown,
 ): "PATCH_HASH_MISMATCH" | "EMPTY_PATCH" | "PUBLICATION_FAILED" => {
-  const name = errorTypeOf(error);
-  if (name === "PatchHashMismatchError") return "PATCH_HASH_MISMATCH";
-  if (name === "EmptyPatchError") return "EMPTY_PATCH";
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ApplicationFailure) {
+      if (current.type === "PATCH_HASH_MISMATCH") return "PATCH_HASH_MISMATCH";
+      if (current.type === "EMPTY_PATCH") return "EMPTY_PATCH";
+    }
+  }
   return "PUBLICATION_FAILED";
 };
 ```
 
-Read the existing `isConfigurationFault` helper in the same file and follow exactly how it reads the error type across the activity boundary. Write `errorTypeOf` in the same style, or reuse whatever that helper already uses.
+This helper walks the `cause` chain in exactly the same way `isConfigurationFault` does on line 180 of the same file. Keep the two helpers side by side.
 
 - [ ] **Step 4: Update the hand-built activity map**
 
