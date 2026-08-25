@@ -550,6 +550,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
             sessionId: "ses_fake_reviewer",
             reportUsable: false,
             reportProblem: error.message,
+            changedFiles,
           };
         }
         const decision = decideReview({
@@ -570,6 +571,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           sessionId: "ses_fake_reviewer",
           reportUsable: true,
           reportProblem: null,
+          changedFiles,
         };
       }
 
@@ -583,6 +585,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         sessionId: "ses_fake_reviewer",
         reportUsable: true,
         reportProblem: null,
+        changedFiles: ["src/app.ts"],
       };
       const outcome = reviewOutcomes.get(activityInput.runId);
       if (outcome === undefined) return passing;

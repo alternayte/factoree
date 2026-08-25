@@ -37,14 +37,19 @@ export interface SourceDiffInput {
   maxBytes?: number;
 }
 
+interface GitTarget {
+  ref: SandboxRef;
+  primaryPath: string;
+}
+
 const git = async (
   dependencies: SourceDiffDependencies,
-  input: SourceDiffInput,
+  target: GitTarget,
   args: string[],
 ): Promise<string> => {
-  const result = await dependencies.sandbox.exec(input.ref, {
+  const result = await dependencies.sandbox.exec(target.ref, {
     file: "git",
-    args: ["-C", input.primaryPath, ...args],
+    args: ["-C", target.primaryPath, ...args],
   });
   if (result.exitCode !== 0) {
     throw new SourceDiffError(
@@ -111,4 +116,20 @@ export const captureSourceDiff = async (
     truncated: true,
     changedFiles,
   };
+};
+
+/**
+ * The git tree object of the primary worktree, staged. Two equal fingerprints prove the tracked
+ * content did not change between two moments.
+ *
+ * SDD section 29 denies `writePrimaryWorktree` to every role except the Implementer. The review
+ * activity takes this value before and after the Reviewer session, so a Reviewer write is a fact
+ * on disk that Factoree can see, and not a promise in a prompt.
+ */
+export const worktreeFingerprint = async (
+  dependencies: SourceDiffDependencies,
+  input: { ref: SandboxRef; primaryPath: string },
+): Promise<string> => {
+  await git(dependencies, input, ["add", "-A"]);
+  return (await git(dependencies, input, ["write-tree"])).trim();
 };
