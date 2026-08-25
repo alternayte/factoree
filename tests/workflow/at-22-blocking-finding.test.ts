@@ -46,21 +46,25 @@ describe("AT-22 — a blocking finding repairs the Run", () => {
     reviewReports.set(runId, (attempt) => ({
       text: JSON.stringify({
         version: 1,
-        verdict: "fail",
-        findings: [
-          {
-            id: "RV-1",
-            severity: "high",
-            category: "correctness",
-            requirement: "VAL-API-001",
-            evidence: "src/auth.ts:84",
-            description: "The handler returns 200 for an expired token.",
-          },
-        ],
+        verdict: attempt === 1 ? "fail" : "pass",
+        findings:
+          attempt === 1
+            ? [
+                {
+                  id: "RV-1",
+                  severity: "high",
+                  category: "correctness",
+                  requirement: "VAL-API-001",
+                  evidence: "src/auth.ts:84",
+                  description: "The handler returns 200 for an expired token.",
+                },
+              ]
+            : [],
       }),
-      // Attempt 1 blocks. The repair fixes it, so attempt 2 reports no finding, exactly as the
-      // harness `passing` default does when a test states no override.
-      changedFiles: attempt === 1 ? ["src/auth.ts"] : [],
+      // The changed-file list stays non-empty on both attempts, so the scope gate never fires.
+      // The repair really fixes the finding: the second review's report names no finding at
+      // all, so `decideReview` blocks nothing.
+      changedFiles: ["src/auth.ts"],
     }));
 
     await runWorker(async () => {
@@ -91,9 +95,9 @@ describe("AT-22 — a blocking finding repairs the Run", () => {
     expect(decisions[0]?.decisions[0]?.finding.id).toBe("RV-1");
     expect(decisions[0]?.decisions[0]?.blocking).toBe(true);
     expect(decisions[0]?.passed).toBe(false);
-    // The repair fixed it: the second review's finding no longer names a file this attempt
-    // changed, so `decideReview` does not block it, and the decision passes.
-    expect(decisions[1]?.decisions[0]?.blocking).toBe(false);
+    // The repair fixed it: the second review reports no finding at all, so `decideReview`
+    // blocks nothing.
+    expect(decisions[1]?.decisions).toHaveLength(0);
     expect(decisions[1]?.passed).toBe(true);
   });
 });

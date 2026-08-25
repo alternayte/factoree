@@ -164,7 +164,10 @@ const verifyInputFor = (
   attempt: number,
 ): VerifyActivityInput => ({
   ...base,
-  commands: [{ name: "smoke", run: "true" }],
+  // A real check against the fixture, not a tautology. It fails if `server.cjs` is missing, so
+  // attempt 2 is a real re-verification of the fixture the repair changed, and not a repeat of
+  // a command that can never fail.
+  commands: [{ name: "smoke", run: "test -f server.cjs" }],
   timeoutMs: 30_000,
   attempt,
 });
@@ -281,18 +284,18 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
       expect(validate1.hasFailure).toBe(true);
       expect(validate1.results.some((result) => result.result === "FAIL")).toBe(true);
 
-      // Point 3. The Run enters REPAIRING and the repair count reaches 1. Read back from the
-      // real database, the same row a real Run's status transition would leave.
-      await runs.updateStatus(runId, "REPAIRING", { repairCount: 1 });
-      const repaired = await runs.findById(tenantId, runId);
-      expect(repaired?.status).toBe("REPAIRING");
-      expect(repaired?.repairCount).toBe(1);
+      // The repair clause and the reverification clause of AT-20 are not this file's evidence.
+      // A workflow test cannot drive its own status transition and then read it back as proof,
+      // and it cannot call two activities in a chosen order and call that order the system's
+      // own. `tests/workflow/at-20-validation-repair.test.ts` owns both clauses: it drives the
+      // real workflow, so the REPAIRING transition and the implement-verify-userValidate order
+      // of the repair attempt are the workflow's own decisions, not this test's.
 
       // The repair itself: fixes the one line that made the reload behavior wrong.
       await applyPreviewFixtureNamePersistenceFix(root);
 
-      // Point 4. The second attempt reruns deterministic verification, then user validation,
-      // in that order, before any review.
+      // The second attempt's own deterministic verification and user validation, run against
+      // the repaired fixture, so the database evidence below reflects a real second attempt.
       const verify2: VerifyActivityOutput = await activityEnvironment().run(
         (input: VerifyActivityInput) => verification.verify(input),
         verifyInputFor({ runId, tenantId, projectId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 2),
