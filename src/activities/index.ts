@@ -21,6 +21,7 @@ import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
+import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
@@ -31,6 +32,7 @@ import { createContextActivities } from "./context.activities.js";
 import { createValidationActivities } from "./validation.activities.js";
 import { createEvidencePersistence } from "./evidence.activities.js";
 import { createReviewActivities } from "./review.activities.js";
+import { createPublishingActivities } from "./publishing.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -56,6 +58,9 @@ export interface ActivityDependencies {
   evidenceStorage: EvidenceStorage;
   validationResults: ValidationResultStore;
   reviewFindings: ReviewFindingStore;
+  /** SDD section 46 step 9. The credential of the Project builds the port for each Run. */
+  pullRequests: (token: string) => PullRequestPort;
+  gitAuthor: { name: string; email: string };
   logger: Logger;
 }
 
@@ -120,6 +125,16 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     contracts: dependencies.validationContracts,
     reviewFindings: dependencies.reviewFindings,
+    logger: dependencies.logger,
+  }),
+  ...createPublishingActivities({
+    sandbox: dependencies.sandbox,
+    secrets: dependencies.secrets,
+    redactor: dependencies.redactor,
+    runs: dependencies.runs,
+    repositoryReader: dependencies.repositoryReader,
+    pullRequests: dependencies.pullRequests,
+    gitAuthor: dependencies.gitAuthor,
     logger: dependencies.logger,
   }),
   ...createVerificationActivities({

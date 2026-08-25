@@ -157,6 +157,12 @@ beforeAll(async () => {
       evidenceStorage: { name: "unused", put: () => Promise.reject(new Error("unused")) },
       validationResults: new PrismaValidationResultStore(prisma),
       reviewFindings: new PrismaReviewFindingStore(prisma),
+      // The Phase 1 path never publishes, so these two doubles only satisfy the shape.
+      pullRequests: () => ({
+        findByHead: () => Promise.reject(new Error("this test never publishes")),
+        create: () => Promise.reject(new Error("this test never publishes")),
+      }),
+      gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       logger,
     }),
   });

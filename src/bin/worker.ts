@@ -25,6 +25,7 @@ import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
@@ -222,6 +223,8 @@ const worker = await Worker.create({
     evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
     reviewFindings: new PrismaReviewFindingStore(prisma),
+    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: env.GITHUB_API_BASE_URL, token }),
+    gitAuthor: { name: env.FACTOREE_GIT_AUTHOR_NAME, email: env.FACTOREE_GIT_AUTHOR_EMAIL },
     logger,
   }),
 });
