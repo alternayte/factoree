@@ -53,7 +53,9 @@ class ScriptedReviewerRunner implements AgentRunner {
     };
   }
 
-  resume(_session: AgentSessionRef, _input: AgentResumeInput): Promise<AgentRunResult> {
+  resume(session: AgentSessionRef, input: AgentResumeInput): Promise<AgentRunResult> {
+    void session;
+    void input;
     throw new Error("AT-21 never resumes the Reviewer session.");
   }
 

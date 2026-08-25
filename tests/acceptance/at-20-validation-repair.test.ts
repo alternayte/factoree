@@ -6,7 +6,7 @@ import { MockActivityEnvironment } from "@temporalio/testing";
 import { createValidationActivities } from "~/activities/validation.activities.js";
 import type { UserValidateActivityInput, UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import { createVerificationActivities } from "~/activities/verification.activities.js";
-import type { VerifyActivityInput } from "~/activities/verification.activities.js";
+import type { VerifyActivityInput, VerifyActivityOutput } from "~/activities/verification.activities.js";
 import { createEvidencePersistence } from "~/activities/evidence.activities.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type {
@@ -96,7 +96,9 @@ class ScriptedValidatorRunner implements AgentRunner {
     };
   }
 
-  resume(_session: AgentSessionRef, _input: AgentResumeInput): Promise<AgentRunResult> {
+  resume(session: AgentSessionRef, input: AgentResumeInput): Promise<AgentRunResult> {
+    void session;
+    void input;
     throw new Error("AT-20 never resumes the User Validator session.");
   }
 
@@ -264,7 +266,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
 
     try {
       // Point 1. Deterministic verification passes on the first attempt.
-      const verify1 = await activityEnvironment().run(
+      const verify1: VerifyActivityOutput = await activityEnvironment().run(
         (input: VerifyActivityInput) => verification.verify(input),
         verifyInputFor({ runId, tenantId, projectId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 1),
       );
@@ -291,7 +293,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
 
       // Point 4. The second attempt reruns deterministic verification, then user validation,
       // in that order, before any review.
-      const verify2 = await activityEnvironment().run(
+      const verify2: VerifyActivityOutput = await activityEnvironment().run(
         (input: VerifyActivityInput) => verification.verify(input),
         verifyInputFor({ runId, tenantId, projectId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 2),
       );
