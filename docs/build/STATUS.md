@@ -8,127 +8,127 @@
 
 ## Phases
 
-- Completed: Phase 1 — Control plane; Phase 2 — Sandbox and first runner; Phase 3 — Deterministic verification; Phase 4 — Refinement and Context Contract; Phase 5 — Backstage and MCP; Phase 6 — Validation Contract; Phase 7 — User validation and evidence; Phase 8 — Review and repair; Phase 9 — Trusted publishing; Phase 10 — Proof Pack
+- Completed: Phase 1 — Control plane; Phase 2 — Sandbox and first runner; Phase 3 — Deterministic verification; Phase 4 — Refinement and Context Contract; Phase 5 — Backstage and MCP; Phase 6 — Validation Contract; Phase 7 — User validation and evidence; Phase 8 — Review and repair; Phase 9 — Trusted publishing; Phase 10 — Proof Pack; Phase 11 — Second runner and skills
 - Current: none
-- Next: Phase 11 — Second runner and skills
+- Next: Phase 12 — Hardening
 
 ## Git
 
 - Branch: `main`
-- Phase 10 range: `d65b8a2..ac0fd7f`, 11 commits on `phase-10-proof-pack`, then the no-fast-forward merge `432eac3`.
+- Phase 11 range: `84a0e9b..8bc12f7`, 14 commits on `phase-11-runner-and-skills`, then the no-fast-forward merge.
 - The repository has no remote. Each phase merges into local `main` with a no-fast-forward commit.
 
-## Phase 10 verification
+## Phase 11 verification
 
 The controller ran every check below itself. Agent claims were not accepted as evidence.
 
 | Check | Result |
 | --- | --- |
-| `npm run verify` at the branch head `4c4b965` | exit 0, run in stages with a real aggregate exit code: lint 0, typecheck 0, unit 965 passed and 7 skipped, integration and acceptance 221, workflow 81, build 0 |
-| Skip count | 7, the same as the Phase 2 through Phase 9 baseline. Phase 10 skipped no test. |
-| Second whole verification | exit 0 again. A single green run is not proof. |
-| Phase 10 exit condition | pass: a human decides on the change from the Proof Pack alone |
-| AT-30 | pass. `tests/acceptance/at-30-proof-pack.test.ts` drives the real activity over real Prisma stores against a real database. It asserts all eleven AT-30 items, one row per assertion, the recorded Proof Pack hash, and a bounded size for a 200-file change. |
-| AT-32 for the Proof Pack | pass. `tests/unit/at-32-redaction.test.ts` loads the fixture secret into EVERY free text field the Proof Pack can carry, so a field the renderer forgets cannot pass. |
-| Workflow completion | pass. `tests/workflow/at-30-proof-pack.test.ts` proves one Proof Pack, `READY_FOR_HUMAN` with no failure reason, the Proof Pack strictly after the publication, the failure path, and the stop path. |
-| Every earlier acceptance test | still passes, with three deliberate expectation changes recorded below |
-| Whole-suite reruns | the workflow suite ran green twice, as the Phase 9 rule requires |
-| External audit (OpenCode, DeepSeek v4 Pro) | 3 findings. The controller reproduced all three and repaired all three. |
-| Controller verification | found two BLOCKING defects that every task test missed. See below. |
+| `npm run verify` at the branch head `8bc12f7` | exit 0, run in stages with a real aggregate exit code: lint 0, typecheck 0, unit 1028 passed and 7 skipped, integration and acceptance 241, workflow 81, build 0 |
+| Skip count | 7, the same as the Phase 2 through Phase 10 baseline. Phase 11 skipped no test. |
+| Second whole verification | exit 0 again, with identical counts. A single green run is not proof. |
+| Phase 11 exit condition | pass: the same fixture workflow reaches passing verification with either required runner |
+| AT-14 | pass. `tests/acceptance/at-14-opencode.test.ts` drives a real git fixture, a real `LocalProcessSandbox`, and a real stub process to passing deterministic verification. |
+| AT-15 | pass. `tests/acceptance/at-15-claude-code.test.ts` is byte-identical to AT-14 apart from the runner name. No workflow change was needed. |
+| AT-37 | pass. `tests/acceptance/at-37-skills.test.ts` builds two real git fixtures and proves discovery across all three formats, the recorded origin, the name conflict naming BOTH paths, and the skill lines reaching the real Implementer prompt. |
+| Every earlier acceptance test | still passes |
+| Whole-suite reruns | the whole verification ran green twice, as the Phase 9 rule requires |
+| External audit (OpenCode, DeepSeek v4 Pro) | 3 findings, no finding in 7 of 10 categories. The controller validated all three. Two were repaired, one was validated as pre-existing and carried. |
+| Whole-branch review | exit condition met. One blocker, this file. Three findings, all repaired. |
+| Controller verification | found one REAL failure the agents missed. See below. |
 
-Evidence: `docs/build/evidence/phase-10-verify.txt`, last line `exit=0`.
+Evidence: `docs/build/evidence/phase-11-verify.txt`, last line `exit=0`. Audit transcript: `docs/build/evidence/phase-11-audit.txt`.
 
-**READY_FOR_HUMAN is now reachable, and it is the only success terminal state.** SDD section 68 is closed. The Phase 9 residual wait is deleted, because it existed only as the placeholder for the missing success state.
+**Both required runners of SDD section 33 now exist and are registered.** A stock repository configuration can finally review and validate. The Phase 10 limitation is closed.
 
-**The two blocking defects the controller's own review found, that every task test missed.**
+**The failure the controller's own verification found, that every agent missed.**
 
-1. **The Proof Pack listed the deterministic checks of EVERY attempt.** `verify` writes one evidence row per check per attempt. A Run that repaired therefore held the failing attempt-1 row beside the passing attempt-2 row, and the Proof Pack printed both. A human read that a passing Run failed its own verification. The reader now keeps the last attempt only.
-2. **The review pass count reported the Implementer attempt.** A repair that verification or validation asked for raises the attempt without reaching a Reviewer, so the count overstated the number of review sessions. A real counter now increments beside the `REVIEWING` status.
+`tests/acceptance/phase-08-exit.test.ts` was a latent race, and it failed once. The test waits for the second review, signals a stop, and then races the workflow terminal path. Under CPU contention the workflow wins, and the Run ends `FAILED` rather than `CANCELLED`. **The contention came from the controller running a fix agent and a verification at the same time. That was a controller process error, and the flake was already there.** The test now holds the `publish` activity, so the stop lands deterministically. The fix was proved by five clean runs and one run under deliberate load.
 
-**The three defects the external audit found, all reproduced by the controller.**
+**The true control flow of that rig was not what the controller assumed.** That rig uses the real `review` activity, so the worktree SHA check of `publish` always fails against the fixed harness constant. The Run never reaches `publishProofPack`. The gate is therefore `heldPublishes`, not `heldProofPacks`. **Verify a control flow before you gate on it.**
 
-1. **A passing review writes NO finding row, so the Proof Pack inferred the wrong review pass.** `decideReview` maps over `report.findings`, and a passing report carries none. The highest STORED attempt was therefore the earlier FAILING pass. A Run whose attempt-1 review found a blocker and whose attempt-2 review passed reported that blocker as open, under `Blocking findings that remain: 1`, on a Run that reached `READY_FOR_HUMAN`. **The last review attempt now travels from the workflow, because only the caller knows it.** Never infer the last review pass from the rows that exist.
-2. **Validation evidence carried no attempt dimension at all.** A repaired assertion showed the artefact of the FAILED attempt beside its `PASS` result, so a human who opened the reference saw a failure. The evidence row now records its attempt, exactly as a deterministic check row does, and the Proof Pack keeps the last attempt of each assertion.
-3. **The SDD section 68 freeze clause was nominal, not real.** The clause names an ORDER, and the check only proved that a contract existed. The workflow now records the first Implementer start, and the invariant compares the two moments.
+## Read this before Phase 12
 
-## Read this before Phase 11
+**Both runners share one base, and the base holds every behaviour that is not the command line.** `CliAgentRunner` in `src/adapters/runners/cli-agent-runner.ts` holds the poll loop, the timeout budget, the cancel path, `activeSession`, the summary redaction, and the session bookkeeping. A subclass supplies only `startCommand`, `resumeCommand`, and `parseOutput`. **A new runner belongs there, and it must not reimplement the loop.**
 
-**The Proof Pack reads recorded facts, and the workflow supplies only what no row can carry.** `publishProofPack` in `src/activities/evidence.activities.ts` reads five stores. The workflow passes the publication facts, the changed files, the preview URL, the repair budget, and **the last review attempt**. That last value is not derivable from the database, for the reason in audit finding 1 above.
+**The Claude Code prompt travels on standard input, and the script is a fixed string.** `printf %s "$FACTOREE_PROMPT" | "$FACTOREE_CLAUDE_BIN" ...` never interpolates a runtime value, so no prompt content is ever re-parsed by the shell. **Never build that script by concatenation. A prompt with a backtick or `$( )` would then execute.**
 
-**Every recorded fact is scoped to its last attempt, and each one is scoped differently.** A validation result row carries `attempt`. A review finding row carries `attempt`, but a passing pass writes no row. A deterministic check row carries `attempt` in its metadata. A validation evidence row carries `attempt` in its metadata only since Phase 10. **A new fact the Proof Pack reports must state how it is scoped, and a test must prove it against a repaired Run.** Three separate defects in this phase were all this one mistake.
+**The runner name is `claude`, not `claude-code`.** SDD section 15 sets that name as the stock validator and reviewer.
 
-**The renderer cannot dump a log, by construction.** No type in `src/domain/evidence/proof-pack.ts` carries log text, so a caller cannot pass one. The activity reads named metadata fields and never spreads metadata. **Do not add a field that carries free agent output, and never spread an evidence row's metadata into the Proof Pack.**
+**Runner registration lives in one factory.** `buildAgentRunnerRegistry` in `src/adapters/runners/registry.ts` is used by `src/bin/worker.ts` AND by the exit test, so the test proves real registration. **An earlier version of that test read `worker.ts` as text and would have passed with an empty registry.**
 
-**The completion invariant is the one gate to success.** `completionInvariantFailures` in `src/domain/runs/completion-invariant.ts` states every SDD section 68 clause and reports all of them. It runs immediately before the only `READY_FOR_HUMAN` write. **A new clause belongs there, and a clause that names an order must compare the order, not merely check that a value exists.**
+**Skill discovery is two modules, and the split matters.** `src/domain/runs/skill-discovery.ts` is pure and holds the parse, the precedence, the conflict report, and the rendering. `src/domain/runs/skill-source.ts` holds every read, and every read goes through `Sandbox.exec`. **`resolveSkills` does NOT re-order its input. `discoverSkills` owns precedence order, so a change there silently changes which skill wins.**
 
-**A Proof Pack that cannot be posted fails the Run.** The status is `FAILED` with `COMPLETION_INVARIANT_UNMET`, and the message names the pull request, because the change IS published. Factoree must never report a success it cannot prove.
+**The skill cap applies in precedence order, then sorts for display.** An earlier version sorted first and capped second, so an organization skill sorting early displaced a repository skill sorting late. **A cap that runs before the ordering it claims to honour is a silent contradiction.**
 
-**The hash is recorded BEFORE the Linear post.** A Linear outage must not lose the proof that the Proof Pack exists. A retry posts the identical body, because the body is a function of recorded state.
+**A name conflict is reported even when the cap dropped it.** The line for a dropped name says the limit dropped every one of them and that Factoree applies none. **A conflict nobody is told about is the silent overwrite SDD section 16 forbids.**
 
-**Two workflow tests changed meaning, and one was passing for the wrong reason.** `at-27` signalled a stop and relied on the Run sitting in the residual wait; it now holds the Proof Pack activity so the stop lands deterministically. `at-35` built its own activity map by hand and lacked `publishProofPack`, so its Run failed the invariant while the test still asserted `COMPLETED`. **It now asserts the terminal state, and the controller proved the new assertion fails when the activity is missing.**
+**A skill file is read with `head -c 65536`, not `cat`.** Only the frontmatter is ever used, and up to 1,200 reads are possible. A test asserts on the command that reaches the sandbox, so an unbounded read cannot return silently.
 
-**A stock repository configuration still cannot review or publish.** SDD section 15 sets `reviewer: claude`, and `ClaudeCodeRunner` arrives in Phase 11. Publication needs a Project secret named `GITHUB_TOKEN` without the injection mark.
+**Skills reach the Implementer only.** SDD section 34 lists them. SDD sections 38 and 40 do not. **Do not widen the Reviewer or the User Validator input.**
 
 ## Human decisions
 
 None required so far. Every decision was taken by the controller and is recorded in the phase plans, the commit history, or the lists below.
 
-Phase 4 through Phase 9 decisions still stand. Decisions added in Phase 10:
+Phase 4 through Phase 10 decisions still stand. Decisions added in Phase 11:
 
-1. **The residual wait is deleted, not left unreachable.** Every path of the publication block returns, so the wait was dead code. Phase 10 exists to remove it.
-2. **A stop that arrives after a successful publication still ends the Run `CANCELLED`.** This keeps the Phase 9 behaviour. The message names the pull request, so the human is never told that nothing was published.
-3. **A Proof Pack failure is `COMPLETION_INVARIANT_UNMET`, a new failure reason.** SDD section 48 fixes the state names, not the failure reasons, so a new reason is allowed. The state is `FAILED`.
-4. **The Proof Pack is built from persisted state, not from workflow-carried summaries.** A summary is an agent-shaped claim. A row is a fact. The exceptions are listed in the Phase 11 note above and each one is justified.
-5. **The Proof Pack hash lives on the Run row.** A new migration adds `Run.proofPackSha256` and `Run.proofPackPostedAt`, so the clause "Proof Pack exists" is provable from durable state rather than from a workflow variable.
-6. **The Proof Pack reports every NON-blocking finding as a known limitation, with the reason it did not block.** This closes the Phase 8 carried finding about a defect that failed only one gate.
-7. **The Proof Pack states the success criterion of every assertion.** This closes the carried finding that the Validation Plan's criteria never reached a human.
-8. **`previewUrl` was added to the user validation output.** A preview Factoree never exposed stays null, because a URL that never existed must not reach a human.
-9. **The `at-35` test now asserts the terminal state.** A test that only asserts `COMPLETED` cannot tell a proved Run from a Run that failed its own invariant.
-10. **Every free text field passes the same table-cell normalization.** A newline breaks a Markdown table AND a bullet list, so the criteria bullets use it too.
+1. **The organization skills repository is a Project column, not a `.factoree/config.yaml` key.** SDD section 57 ranks the repository file below the Project, so a repository must not name its own organization skills source.
+2. **It is checked out read-only into `${workspacePath}/organization-skills`,** outside the `reference/` tree, so it can never collide with a reference repository name and never appears in the reference path list.
+3. **It is checked out at the Project default branch, not a pinned SHA.** No discovery step resolves a SHA for it.
+4. **A name conflict keeps every skill and applies exactly one.** The applied skill and every shadowed skill reach the prompt by name, path, and scope.
+5. **Precedence is repository before organization, then `.agents`, `.claude`, `.codex`, then directory name ascending.**
+6. **The prompt carries the skill name, the description, and the origin. It never carries the body.** A body can reach tens of kilobytes and would push the goal out of the prompt.
+7. **Skills reach the Implementer only.**
+8. **An unknown runner name fails the Run at preparation, as `CONFIGURATION_INVALID`.** The sandbox is released on that path, and a test asserts the destroy count.
+9. **`CliAgentRunner` is an extraction, not a rewrite.** Every pre-existing runner test passed unchanged, which is the proof.
+10. **A skill read failure is logged at debug level on every non-zero exit.** Classifying a failure by its stderr text is fragile across `ls` and `head` implementations, and a wrong guess warns on every ordinary miss.
+11. **The Phase 8 exit test flake was fixed although it is outside Phase 11 scope.** A racing acceptance test makes every future phase verification unreliable.
 
 ## Carried findings for later phases
 
-Reviewed, judged not reachable or not in scope now, deliberately not fixed. Every Phase 4 through Phase 9 entry that Phase 10 did not close still stands.
+Reviewed, judged not reachable or not in scope now, deliberately not fixed. Every Phase 4 through Phase 10 entry that Phase 11 did not close still stands.
 
-**Closed by Phase 10:**
+**Closed by Phase 11:**
 
-- The Reviewer could not audit the Validation Plan's success criteria. The Proof Pack now states the frozen statement, the method, the requirement, and the outcome of every assertion.
-- The Proof Pack should surface a `blocker` or `high` finding that failed only one gate. Every non-blocking finding now appears with its severity and the reason it did not block.
+- A stock repository configuration could not review or validate. Both required runners are now registered.
 
-**New in Phase 10:**
+**New in Phase 11:**
 
-- **The Proof Pack reports the LAST attempt of every fact, so an earlier failure is invisible to the human.** That is deliberate, because the earlier failure was repaired. **A human who wants the repair history must read the database.** A later phase can add a one-line repair history to the Proof Pack.
-- **A validation evidence row written BEFORE Phase 10 carries no attempt.** The reader treats a missing attempt as -1, so every row of that assertion matches and nothing is dropped. No live Run exists yet, so no such row exists. **Delete this note once Phase 12 runs against a live account.**
-- **The Proof Pack never names the Sprite retention deadline.** The preview URL it prints dies with the sandbox after the SDD section 51 window. A human who reads the Proof Pack late sees a dead link with no explanation.
-- **`tests/workflow/at-16-deterministic-failure.test.ts` asserts an exact activity-name list.** A later phase that adds an activity to the implement, verify, validate, review, publish path must update that list. Phase 10 did not, because a failing Run posts no Proof Pack.
-- **`tests/workflow/at-35-worker-restart.test.ts` still hand-builds its own activity map.** A later phase that adds an activity must update that file by hand. Phase 10 proved the file now fails loudly when it is stale.
+- **The organization skills checkout discards its computed `baseSha`, and it is pinned to a branch rather than a SHA.** SDD section 55 asks for the repository, the SHA, and the path. Two Runs a day apart can therefore read different skills with no record of the difference. `checkoutOrganizationSkills` already RETURNS the SHA, so recording it is a one-field change once a provenance sink exists.
+- **`head -c N -- path` is verified on this machine only.** The local sandbox uses the host binary. The Fly Sprites base image is unverified, and a BusyBox `head` handles `--` less certainly. **Phase 12 must confirm it on the real image.**
+- **`OpenCodeRunner.resumeCommand` puts the session id in argv, while `ClaudeCodeRunner` keeps it in the environment.** A session id is not a credential, so this breaches no SDD section. The branch created a standard it applies to one runner only.
+- **`CliAgentRunner.sessions` is never pruned.** It grows without bound in the number of Runs, for the life of the worker process. Only a restart clears it. This is PRE-EXISTING, inherited verbatim from the Phase 2 runner, and disposal needs a signal that a Run has ended. **Phase 12 hardening owns it.**
+- **The fixture drive of AT-14 and AT-15 is a hand-assembled path, not the Temporal workflow.** The workflow is runner-agnostic structurally, because it only forwards a string, but no test drives a full `agentRunWorkflow` Run with `claude`. **Phase 12 can close that gap for real.**
+- **A skill description is attacker-controlled text that reaches the Implementer prompt.** Newline collapse and a 300-character cap stop a forged extra prompt line. In-line instruction text still reaches the model, mitigated only by the SDD section 57 precedence notice. Known and accepted, not solved.
 
 **Still open from earlier phases, highest priority:**
 
-- **The SDD section 46 hash assertion compares two diff texts that two different git binaries produce.** Phase 12 should log the git version on both sides, so a version skew is diagnosable rather than indistinguishable from tampering.
-- **Three routes from a real defect to a passing review remain, all by design.** The Proof Pack now surfaces two of them to the human as known limitations.
+- **The SDD section 46 hash assertion compares two diff texts that two different git binaries produce.** Phase 12 should log the git version on both sides.
+- **Three routes from a real defect to a passing review remain, all by design.**
 - **The worktree fingerprint misses an ignored path and anything under `.git/`.** Phase 12 hardening owns it.
-- **Everything else carried from Phase 9 and earlier still stands,** including the Phase 6 redaction gap for human-authored goal text at every persistence boundary, the Linear evidence storage that has never run against a live account, and every Phase 12 live-proof item.
+- **Everything else carried from Phase 10 and earlier still stands,** including the Phase 6 redaction gap for human-authored goal text at every persistence boundary, the Linear evidence storage that has never run against a live account, and every Phase 12 live-proof item.
 
 ## Blockers
 
 None.
 
-Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for the Phase 12 live acceptance test. Phase 11 does not need them.
+Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for the Phase 12 live acceptance test.
 
 ## Environment notes
 
 - Node 24 LTS is at `/opt/homebrew/opt/node@24/bin`. The Homebrew `node` 25 binary on this machine is broken, so prefix PATH with the Node 24 path.
 - The shell alias `cat` points at a broken `bat`. Use `/bin/cat`. **Never write a file through a `cat` heredoc, and never build a commit message with `git commit -m "$(cat <<EOF ...)"`.** Use `git commit -F` with a file.
-- **`npx prisma generate` needs `DATABASE_URL`.** Any value works, because it generates only. Use `DATABASE_URL="postgresql://u:p@localhost:5432/db" npx prisma generate`.
+- **`npx prisma generate` needs `DATABASE_URL`.** Any value works. Use `DATABASE_URL="postgresql://u:p@localhost:5432/db" npx prisma generate`.
 - `timeout` and `gtimeout` are not installed.
 - Docker is required for the integration and workflow suites.
-- **`npm run verify` takes longer than a two-minute foreground tool call.** Run it in stages in the background and poll the output file. **Compute a real aggregate exit code across the stages.** `/tmp/verify.sh` in the Phase 10 session did this correctly.
-- **A pipeline hides the exit code of the command before it.** `npm run typecheck 2>&1 | tail -5` reports the exit code of `tail`, which is always 0. Phase 10 nearly accepted a failing typecheck for this reason. **Redirect to a file and read `$?` on its own line.**
-- **`pkill -f "<pattern>"` also kills the waiting shell whose command line contains that pattern.** Phase 10 killed six of its own monitors this way. Match on the script path alone.
+- **`npm run verify` takes longer than a two-minute foreground tool call.** Run it in stages in the background and poll the output file. **Compute a real aggregate exit code across the stages.**
+- **A pipeline hides the exit code of the command before it.** Redirect to a file and read `$?` on its own line.
+- **NEVER run a test suite while another suite runs.** Phase 11 lost a whole verification cycle this way. The contention exposed a latent race in `phase-08-exit`, and two separate agents hit CPU-starvation flakes. **Serialize every suite run.**
+- **`pkill -f "<pattern>"` also kills the waiting shell whose command line contains that pattern.** Match on the script path alone.
 - **Run the whole-repository `npm run lint` and `npm run typecheck` yourself at every task gate.**
 - The acceptance tests run under `vitest.integration.config.ts`, not under a config of their own.
-- **Run every suite more than once before you believe a green result.** Phase 9 hit two timing-dependent failures that a single run missed, and Phase 10 found a latent race in `at-27` that only the new terminal state exposed.
-- Phase 10 added one migration, `20260828120000_add_proof_pack`.
-- **`opencode` version 1.18.18 is installed and authenticated for DeepSeek. Use `deepseek/deepseek-v4-pro`.** Run `opencode models` first, because the provider prefix has changed before. **Pass the prompt as the message argument, not with `-f`.** The Phase 10 audit prompt named ten categories, listed six deliberate designs to exclude, and demanded a file and a line for every finding. It produced three real defects and no false positive.
+- **Run every suite more than once before you believe a green result.**
+- Phase 11 added one migration, `20260901120000_add_organization_skills`.
+- **`opencode` is installed. The OpenCode-brokered account hit an "Insufficient balance" error during the Phase 11 audit.** A direct `deepseek` provider is also authenticated. Use `deepseek/deepseek-v4-pro`. **Run `opencode models` first, because the provider prefix has changed twice.** Pass the prompt as the message argument, not with `-f`.
 - An OpenCode run can be killed by a session interrupt. Start it detached with `nohup` if it must survive.
