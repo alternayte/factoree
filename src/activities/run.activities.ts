@@ -3,6 +3,7 @@ import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
+import { failureCategoryOf } from "~/domain/runs/failure-category.js";
 
 export interface RunActivityDependencies {
   runs: RunRepository;
@@ -75,8 +76,12 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   }): Promise<void> {
     const before = await dependencies.runs.findById(input.tenantId, input.runId);
     const alreadyTerminal = before !== null && isTerminalRunStatus(before.status);
+    // SDD section 67. The category is derived from the reason, never supplied by the caller.
+    const failureCategory =
+      input.failureReason === undefined ? undefined : failureCategoryOf(input.failureReason);
     const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
+      ...(failureCategory === undefined ? {} : { failureCategory }),
       completedAt: new Date(input.completedAt),
     });
     const labels = { tenant_id: run.tenantId, project_id: run.projectId };
@@ -87,7 +92,12 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       metrics.runDuration.observe(labels, (completedAt.getTime() - run.createdAt.getTime()) / 1000);
       if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
       else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);
-      else metrics.runsFailed.inc({ ...labels, reason: input.failureReason ?? "UNKNOWN" });
+      else
+        metrics.runsFailed.inc({
+          ...labels,
+          reason: input.failureReason ?? "UNKNOWN",
+          category: failureCategory ?? "INTERNAL",
+        });
     }
     dependencies.logger.info("run completed", {
       tenant_id: run.tenantId,

@@ -1,4 +1,5 @@
 import type { RunFailureReason, RunStatus } from "./run-status.js";
+import type { RunFailureCategory } from "./failure-category.js";
 
 export interface RunRecord {
   id: string;
@@ -9,6 +10,7 @@ export interface RunRecord {
   temporalWorkflowId: string;
   status: RunStatus;
   failureReason: RunFailureReason | null;
+  failureCategory: RunFailureCategory | null;
   autonomyLevel: string;
   implementerRunner: string | null;
   validatorRunner: string | null;
@@ -42,6 +44,11 @@ export interface CreateRunInput {
 
 export interface RunStatusPatch {
   failureReason?: RunFailureReason;
+  /**
+   * SDD section 67. The normalized category of the failure reason. The activity derives it,
+   * so no caller can record a category that disagrees with the reason.
+   */
+  failureCategory?: RunFailureCategory;
   startedAt?: Date;
   completedAt?: Date;
   repairCount?: number;

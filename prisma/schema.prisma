@@ -104,6 +104,7 @@ model Run {
   temporalWorkflowId       String    @unique
   status                   String
   failureReason            String?
+  failureCategory          String?
   autonomyLevel            String
   implementerRunner        String?
   validatorRunner          String?
@@ -112,6 +113,7 @@ model Run {
   spriteAdapter            String?
   spriteRetainUntil        DateTime?
   baseSha                  String?
+  organizationSkillsSha    String?
   patchSha256              String?
   commitSha                String?
   pullRequestUrl           String?

@@ -146,6 +146,27 @@ describe("PrismaRunRepository", () => {
     expect(second).toEqual({ spriteId: "sprite-7a", adapter: "fake" });
   });
 
+  it("stores the normalized failure category beside the failure reason (SDD section 67)", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    await repository.updateStatus(runId, "FAILED", {
+      failureReason: "VERIFICATION_FAILED",
+      failureCategory: "VERIFICATION",
+      completedAt: new Date(),
+    });
+    const stored = await repository.findById(tenantId, runId);
+    expect(stored?.failureReason).toBe("VERIFICATION_FAILED");
+    expect(stored?.failureCategory).toBe("VERIFICATION");
+  });
+
+  it("leaves the category null on a Run that did not fail", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+    await repository.updateStatus(runId, "READY_FOR_HUMAN", { completedAt: new Date() });
+    const stored = await repository.findById(tenantId, runId);
+    expect(stored?.failureCategory).toBeNull();
+  });
+
   it("gives two concurrent writers a different superseded sandbox each", async () => {
     const repository = new PrismaRunRepository(prisma);
     const created = await repository.createIfAbsent(input("session-8"));

@@ -22,7 +22,9 @@ export const metrics = {
   runsFailed: new Counter({
     name: "factoree_runs_failed_total",
     help: "Runs that reached a failure state",
-    labelNames: [...labelNames, "reason"],
+    // SDD section 67 requires a normalized category. The reason stays, because an operator
+    // needs the exact rule. The category groups the reasons an operator acts on the same way.
+    labelNames: [...labelNames, "reason", "category"],
     registers: [registry],
   }),
   runsCancelled: new Counter({

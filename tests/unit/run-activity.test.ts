@@ -15,6 +15,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   temporalWorkflowId: "workflow-1",
   status,
   failureReason: null,
+  failureCategory: null,
   autonomyLevel: "L2",
   implementerRunner: null,
   validatorRunner: null,
@@ -44,6 +45,7 @@ const build = () => {
       calls.push({ id, status, ...(patch === undefined ? {} : { patch }) });
       return Promise.resolve(record(status, patch?.repairCount ?? 0));
     },
+    findById: () => Promise.resolve(null),
   } as unknown as RunRepository;
   const redactor = new Redactor();
   const activities = createRunActivities({ runs, logger: createLogger({ level: "error", redactor }) });
@@ -112,5 +114,22 @@ describe("setRunStatus", () => {
     await activities.setRunStatus({ runId: "run-1", status: "VERIFYING" });
     await activities.setRunStatus({ runId: "run-1", status: "PREPARING" });
     expect(await repairCount()).toBe(before);
+  });
+});
+
+describe("completeRun", () => {
+  it("derives the category from the reason and never reads it from the caller (SDD section 67)", async () => {
+    const { activities, calls } = build();
+    await activities.completeRun({
+      tenantId: "tenant-1",
+      runId: "run-1",
+      status: "FAILED",
+      failureReason: "PATCH_HASH_MISMATCH",
+      completedAt: new Date().toISOString(),
+    });
+    // The activity input carries no category. The persisted patch must still carry one.
+    expect(calls.find((call) => call.status === "FAILED")?.patch?.failureCategory).toBe(
+      "PUBLICATION",
+    );
   });
 });

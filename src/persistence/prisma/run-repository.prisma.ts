@@ -10,6 +10,7 @@ import type {
   RunStatusPatch,
 } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
+import type { RunFailureCategory } from "~/domain/runs/failure-category.js";
 
 type RunRow = Awaited<ReturnType<FactoreePrismaClient["run"]["findFirst"]>>;
 
@@ -22,6 +23,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   temporalWorkflowId: row.temporalWorkflowId,
   status: row.status as RunStatus,
   failureReason: (row.failureReason as RunFailureReason | null) ?? null,
+  failureCategory: (row.failureCategory as RunFailureCategory | null) ?? null,
   autonomyLevel: row.autonomyLevel,
   implementerRunner: row.implementerRunner,
   validatorRunner: row.validatorRunner,
@@ -89,6 +91,7 @@ export class PrismaRunRepository implements RunRepository {
       data: {
         status,
         ...(patch.failureReason === undefined ? {} : { failureReason: patch.failureReason }),
+        ...(patch.failureCategory === undefined ? {} : { failureCategory: patch.failureCategory }),
         ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
         ...(patch.completedAt === undefined ? {} : { completedAt: patch.completedAt }),
         ...(patch.repairCount === undefined ? {} : { repairCount: patch.repairCount }),
