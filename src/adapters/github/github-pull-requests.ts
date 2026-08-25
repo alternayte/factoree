@@ -11,6 +11,7 @@ export const GITHUB_API_TIMEOUT_MS = 30_000;
 interface GitHubPullRequestBody {
   number?: unknown;
   html_url?: unknown;
+  head?: unknown;
   message?: unknown;
 }
 
@@ -62,10 +63,16 @@ export class GitHubPullRequests implements PullRequestPort {
   private toRecord(body: GitHubPullRequestBody, headBranch: string): PullRequestRecord {
     const number = body.number;
     const url = body.html_url;
-    if (typeof number !== "number" || typeof url !== "string") {
-      throw new Error("GitHub returned a pull request without a number or without a URL");
+    // The tip commit of the head branch. The publication record needs it, and GitHub already
+    // answers it here, so Factoree never runs a second git read to learn it.
+    const head = body.head as { sha?: unknown } | undefined;
+    const headSha = head?.sha;
+    if (typeof number !== "number" || typeof url !== "string" || typeof headSha !== "string") {
+      throw new Error(
+        "GitHub returned a pull request without a number, without a URL, or without a head SHA",
+      );
     }
-    return { number, url, headBranch };
+    return { number, url, headBranch, headSha };
   }
 
   private async call(url: string, init: RequestInit): Promise<unknown> {

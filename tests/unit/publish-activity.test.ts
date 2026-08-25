@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
+import { ApplicationFailure } from "@temporalio/common";
 import {
   createPublishingActivities,
   publishBranchName,
@@ -47,14 +48,15 @@ const stubSandbox = (options: { changedFiles: string[]; patchText: string }): Sa
   } as unknown as Sandbox;
 };
 
-/** A `RepositoryReader` double. Only `resolveRef` is reached by this activity. */
-const stubRepositoryReader = (): RepositoryReader & { urls: string[] } => {
-  const urls: string[] = [];
+/**
+ * A `RepositoryReader` double that refuses every call. The `publish` activity must never read
+ * the repository, because `git ls-remote` puts its URL on the process argument list. A call
+ * here fails the test that made it.
+ */
+const forbiddenRepositoryReader = (): RepositoryReader => {
   return {
-    urls,
-    resolveRef(url: string): Promise<string> {
-      urls.push(url);
-      return Promise.resolve(COMMIT);
+    resolveRef(): Promise<string> {
+      return Promise.reject(new Error("the publish activity must not read the repository"));
     },
     listTree(): Promise<TreeListing> {
       return Promise.resolve({ entries: [], truncated: false });
@@ -82,7 +84,12 @@ const memoryPullRequests = (existing: PullRequestRecord | null = null): MemoryPu
     },
     create(input: CreatePullRequestInput): Promise<PullRequestRecord> {
       created.push(input);
-      return Promise.resolve({ number: 42, url: "https://github.com/acme/app/pull/42", headBranch: input.headBranch });
+      return Promise.resolve({
+        number: 42,
+        url: "https://github.com/acme/app/pull/42",
+        headBranch: input.headBranch,
+        headSha: COMMIT,
+      });
     },
   };
 };
@@ -151,7 +158,7 @@ const build = (options: {
   const secrets = options.secrets ?? new MemorySecretStore({ GITHUB_TOKEN: TOKEN });
   const pullRequests = memoryPullRequests(options.existing ?? null);
   const runs = stubRuns();
-  const reader = stubRepositoryReader();
+  const reader = forbiddenRepositoryReader();
   const publishToBranch = stubPublishToBranch();
   const dependencies: PublishingActivityDependencies = {
     sandbox: stubSandbox({
@@ -171,7 +178,6 @@ const build = (options: {
     activities: createPublishingActivities(dependencies),
     pullRequests,
     runs,
-    reader,
     publishToBranch,
     lines,
   };
@@ -209,11 +215,21 @@ describe("the publish activity", () => {
     expect(pullRequests.created).toEqual([]);
   });
 
+  it("refuses a patch with no changed file but nonzero bytes", async () => {
+    const { activities, pullRequests } = build({ changedFiles: [], patchText: PATCH_TEXT });
+    const empty: PublishActivityInput = { ...input, reviewedChangedFiles: [] };
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), empty),
+    ).rejects.toThrow(/nothing to.*publish/s);
+    expect(pullRequests.lookups).toEqual([]);
+  });
+
   it("returns created false and creates nothing when the head branch already holds a pull request", async () => {
     const existing = {
       number: 7,
       url: "https://github.com/acme/app/pull/7",
       headBranch: publishBranchName(input.runId),
+      headSha: COMMIT,
     };
     const { activities, pullRequests, runs, publishToBranch } = build({ existing });
 
@@ -226,6 +242,9 @@ describe("the publish activity", () => {
     expect(output.pullRequestNumber).toBe(7);
     expect(pullRequests.created).toEqual([]);
     expect(publishToBranch.inputs).toEqual([]);
+    // The commit SHA comes from the pull request answer. The reader would throw if it were
+    // called, so this success proves the credential never reaches a git command line.
+    expect(output.commitSha).toBe(COMMIT);
     expect(runs.publications).toHaveLength(1);
   });
 
@@ -258,8 +277,11 @@ describe("the publish activity", () => {
 
     expect(JSON.stringify(output)).not.toContain(TOKEN);
     expect(lines.join("\n")).not.toContain(TOKEN);
-    // The trusted checkout is the one place the credential travels, and it never returns.
-    expect(publishToBranch.inputs[0]?.cloneUrl).toContain("x-access-token");
+    // The trusted checkout is the one place the credential travels, and it never returns. This
+    // positive assertion pins that place, so a stub that produced no token cannot pass.
+    expect(publishToBranch.inputs[0]?.cloneUrl).toBe(
+      `https://x-access-token:${TOKEN}@github.com/acme/app.git`,
+    );
 
     const mismatch = build({ changedFiles: ["src/a.ts", "src/b.ts"] });
     const error = await mismatch.activities
@@ -267,6 +289,28 @@ describe("the publish activity", () => {
       .then(() => null)
       .catch((thrown: unknown) => thrown);
     expect(String(error)).not.toContain(TOKEN);
+  });
+
+  it("converts a semantic failure of the capture activity into a non-retryable failure", async () => {
+    const { activities } = build({ changedFiles: [], patchText: PATCH_TEXT });
+    const captureInput = {
+      runId: input.runId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      spriteId: input.spriteId,
+      adapter: input.adapter,
+      workspacePath: input.workspacePath,
+      primaryPath: input.primaryPath,
+      baseSha: input.baseSha,
+      reviewedChangedFiles: [],
+    };
+    const error = await activities
+      .capturePatch(captureInput)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ApplicationFailure);
+    expect((error as ApplicationFailure).type).toBe("EMPTY_PATCH");
+    expect((error as ApplicationFailure).nonRetryable).toBe(true);
   });
 
   it("refuses a repository base URL that is not https", async () => {

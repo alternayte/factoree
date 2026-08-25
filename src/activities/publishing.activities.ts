@@ -101,6 +101,7 @@ export interface PublishingActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   runs: RunRepository;
+  /** `checkBase` reads the target branch. It passes the plain URL, never a credential. */
   repositoryReader: RepositoryReader;
   pullRequests: (token: string) => PullRequestPort;
   gitAuthor: { name: string; email: string };
@@ -229,7 +230,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       // Step 4. An empty patch means every check passed over no change, so there is nothing to
       // publish.
-      if (patch.changedFiles.length === 0 && patch.byteLength === 0) throw new EmptyPatchError();
+      if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
 
       dependencies.logger.info("patch captured", {
         tenant_id: input.tenantId,
@@ -246,6 +247,10 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         byteLength: patch.byteLength,
         treeSha: patch.treeSha,
       };
+    } catch (error) {
+      // SDD section 49. A retry of a mismatched file list or of an empty patch repeats the same
+      // fault, so it must not consume the Temporal retry policy.
+      throw asNonRetryable(dependencies.redactor, error);
     } finally {
       metrics.publishDuration.observe(labels, (Date.now() - started) / 1000);
     }
@@ -325,7 +330,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       assertSameChangedFiles(input.reviewedChangedFiles, patch.changedFiles);
 
       // Step 7. An empty patch publishes nothing.
-      if (patch.changedFiles.length === 0 && patch.byteLength === 0) throw new EmptyPatchError();
+      if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
@@ -334,7 +339,11 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // before the trusted checkout, so an existing pull request stops the push too.
       const existing = await port.findByHead(input.repositorySlug, branch);
       if (existing !== null) {
-        const commitSha = await dependencies.repositoryReader.resolveRef(authenticatedUrl, branch);
+        // GitHub already answered the tip commit of the head branch. Factoree therefore runs no
+        // second git read here. A `git ls-remote` puts its URL on the process argument list, so
+        // an authenticated URL there would expose the credential to any local process. SDD
+        // section 30 forbids that.
+        const commitSha = existing.headSha;
         await dependencies.runs.setPublication(input.tenantId, input.runId, {
           patchSha256: patch.patchSha256,
           commitSha,

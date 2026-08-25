@@ -3,6 +3,11 @@ export interface PullRequestRecord {
   number: number;
   url: string;
   headBranch: string;
+  /**
+   * The commit SHA at the tip of the head branch. GitHub already answers it as `head.sha`, so
+   * the publication record needs no second network read and no credential on a command line.
+   */
+  headSha: string;
 }
 
 export interface CreatePullRequestInput {

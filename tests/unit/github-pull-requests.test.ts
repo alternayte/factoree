@@ -20,7 +20,7 @@ const json = (status: number, body: unknown): Response =>
 
 describe("GitHubPullRequests", () => {
   it("creates one pull request and returns its number and URL", async () => {
-    const { port, calls } = client(() => json(201, { number: 7, html_url: "https://github.com/o/r/pull/7" }));
+    const { port, calls } = client(() => json(201, { number: 7, html_url: "https://github.com/o/r/pull/7", head: { sha: "dddddddddddddddddddddddddddddddddddddddd" } }));
     const record = await port.create({
       slug: "o/r",
       headBranch: "factoree/run-1",
@@ -28,16 +28,30 @@ describe("GitHubPullRequests", () => {
       title: "Factoree: x",
       body: "body",
     });
-    expect(record).toEqual({ number: 7, url: "https://github.com/o/r/pull/7", headBranch: "factoree/run-1" });
+    expect(record).toEqual({
+      number: 7,
+      url: "https://github.com/o/r/pull/7",
+      headBranch: "factoree/run-1",
+      headSha: "dddddddddddddddddddddddddddddddddddddddd",
+    });
     expect(calls[0]?.url).toBe("https://api.example.test/repos/o/r/pulls");
     expect(calls[0]?.init.method).toBe("POST");
   });
 
   it("finds an existing pull request for the head branch", async () => {
-    const { port, calls } = client(() => json(200, [{ number: 9, html_url: "https://github.com/o/r/pull/9" }]));
+    const { port, calls } = client(() => json(200, [{ number: 9, html_url: "https://github.com/o/r/pull/9", head: { sha: "dddddddddddddddddddddddddddddddddddddddd" } }]));
     const record = await port.findByHead("o/r", "factoree/run-1");
     expect(record?.number).toBe(9);
+    // The tip commit of the head branch arrives with the answer. Factoree needs no second read.
+    expect(record?.headSha).toBe("dddddddddddddddddddddddddddddddddddddddd");
     expect(calls[0]?.url).toContain("head=o%3Afactoree%2Frun-1");
+  });
+
+  it("refuses an answer that carries no head SHA", async () => {
+    const { port } = client(() => json(201, { number: 7, html_url: "https://github.com/o/r/pull/7" }));
+    await expect(
+      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b" }),
+    ).rejects.toThrow(/head SHA/);
   });
 
   it("returns null when no pull request exists for the head branch", async () => {
