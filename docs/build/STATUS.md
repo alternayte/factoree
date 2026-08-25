@@ -8,116 +8,124 @@
 
 ## Phases
 
-- Completed: Phase 1 — Control plane; Phase 2 — Sandbox and first runner; Phase 3 — Deterministic verification; Phase 4 — Refinement and Context Contract; Phase 5 — Backstage and MCP; Phase 6 — Validation Contract; Phase 7 — User validation and evidence; Phase 8 — Review and repair
+- Completed: Phase 1 — Control plane; Phase 2 — Sandbox and first runner; Phase 3 — Deterministic verification; Phase 4 — Refinement and Context Contract; Phase 5 — Backstage and MCP; Phase 6 — Validation Contract; Phase 7 — User validation and evidence; Phase 8 — Review and repair; Phase 9 — Trusted publishing
 - Current: none
-- Next: Phase 9 — Trusted publishing
+- Next: Phase 10 — Proof Pack
 
 ## Git
 
 - Branch: `main`
-- Phase 8 range: `d75406a..7880746`, 23 commits. 22 on `phase-08-review-repair`, then the no-fast-forward merge.
+- Phase 9 range: `d2cb59b..1e9746c`, 22 commits on `phase-09-trusted-publishing`, then the no-fast-forward merge.
 - The repository has no remote. Each phase merges into local `main` with a no-fast-forward commit.
 
-## Phase 8 verification
+## Phase 9 verification
 
 The controller ran every check below itself. Agent claims were not accepted as evidence.
 
 | Check | Result |
 | --- | --- |
-| `npm run verify` on the branch head `ccdab22` | exit 0, run in stages so no part could be cut short: lint 0, typecheck 0, unit 862 passed and 7 skipped, integration and acceptance 166, workflow 69, build 0 |
-| `npm run verify` on `main` after the merge | exit 0, the same counts |
-| Skip count | 7, the same as the Phase 2 through Phase 7 baseline. Phase 8 skipped no test. |
-| Phase 8 exit condition | pass: a known defect is found, repaired, revalidated, and re-reviewed |
-| AT-20 validation repair | pass. The repair clause is proved by `tests/workflow/at-20-validation-repair.test.ts`, which drives the real workflow. The reverification is the workflow's own recorded activity order, not a test's sequencing. |
-| AT-21 fresh review | pass, proved three ways: the session identifiers differ, the `AgentExecution` rows carry both roles with two distinct session references, and the real reviewer prompt holds neither the Implementer summary nor its success sentence. It also asserts the SDD section 40 input list really arrives. |
-| AT-22 blocking finding | pass. The harness drives the real `parseReviewReport` and the real `decideReview`, so the rule under test is the real rule. |
-| AT-23 scope control | pass at `medium` and at `blocker`, and the two cases assert different gates, so one alone would not prove the rule. |
-| AT-24 repair limit | pass, including the mixed-stage case where one repair comes from verification and one from review. That is the SDD section 42 per-Run proof. |
+| `npm run verify` at the branch head `1e9746c` | exit 0, run in stages with a real aggregate exit code: lint 0, typecheck 0, unit 909 passed and 7 skipped, integration and acceptance 188, workflow 74, build 0 |
+| Skip count | 7, the same as the Phase 2 through Phase 8 baseline. Phase 9 skipped no test. |
+| Phase 9 exit condition | pass: only the exact verified patch can reach GitHub |
+| AT-27 exact patch | pass, proved four ways in `tests/acceptance/phase-09-exit.test.ts` against a real bare repository. Case 2 changes the patch and keeps the hash. Case 3 keeps the patch and changes the hash. The comparison is sensitive to BOTH sides, so neither case alone proves the rule. Every refusal asserts the remote gained no ref. |
+| AT-28 stale base | pass. `tests/workflow/at-28-stale-base.test.ts` proves the Run ends `STALE_BASE` with no failure reason and never calls `publish`. Exit case 4 drives the real `checkBase` against a real moved remote. |
+| AT-29 pull request | pass. `tests/acceptance/at-29-pull-request.test.ts` drives the real `publish` activity against a real bare repository and a local GitHub API fixture. Exactly one pull request, carrying the Work Item, the Run ID, the base SHA, the patch hash, and the verification summary. |
+| AT-35 publication case | pass. A second attempt returns `created: false` and creates no second pull request. The workflow test asserts the ordered `created` flags hold exactly one `true`. |
 | Every earlier acceptance test | still passes unchanged |
-| Task reviews | 9 tasks, 9 task reviews, 6 fix rounds. Task 2 needed three rounds on one string helper. |
-| Final whole-branch review | 1 Important, no Critical. The Important was fixed, and the re-review found a residual hole in the same finding, which was also fixed. |
-| External audit (OpenCode, DeepSeek reasoner) | 6 of 10 categories clean, 4 defects. The controller reproduced all four itself and fixed all four. |
+| Task reviews | 10 tasks, 10 task reviews, 6 fix rounds. Task 5 needed seven fixes in one round. |
+| Whole-branch review | 4 Important, no Critical. All four fixed and re-reviewed clean. |
+| External audit (OpenCode, DeepSeek v4 Pro) | 4 findings. The controller reproduced all four. One was already fixed. Three were repaired. |
+| Controller verification | found one BLOCKING regression that every review missed. See below. |
 
-Evidence: `docs/build/evidence/phase-08-verify.txt`, last line `exit=0`.
+Evidence: `docs/build/evidence/phase-09-verify.txt`, last line `exit=0`.
+
+**The blocking regression the controller's own verification found.** A Linear stop that arrived while the Run was inside the new publication path ended the Run `FAILED` rather than `CANCELLED`. SDD section 50 says a stop must prevent publication, and reporting a failure for a Run a human stopped is wrong. `tests/acceptance/phase-08-exit.test.ts` caught it with `expected 'FAILED' to be 'CANCELLED'`. The defect is timing dependent, so three earlier whole-suite runs passed. **Never accept a green suite as proof that a stop path is safe. Run the suite more than once.** The `catch` around `publish` now checks the stop before it classifies any error, the `checkBase` call carries the same guard, and a stop after a SUCCESSFUL publication keeps the message that names the pull request.
+
+**The four defects the whole-branch review found.**
+
+1. **The verified TREE identity never crossed the review-to-publish seam.** The review computed a tree SHA and discarded it, and `publish` compared FILE NAMES only. A watch-mode formatter or a codegen daemon that rewrote an already-changed file after the review would publish content no Reviewer saw. `reviewedWorktreeSha` now crosses the seam and `publish` compares it to `patch.treeSha`. An empty value is a mismatch, never a skip.
+2. **A rename could never be published.** The Phase 8 changed-file query carried no rename pinning while the Phase 9 one used `--no-renames`, so a rename produced different file lists and killed the Run at publish, blaming the review. Both queries now share `PATCH_GIT_OPTIONS`.
+3. **A push that succeeded followed by a failed pull request creation was unrecoverable.** A fresh committer date gave a new commit SHA, the retry push was rejected as non-fast-forward, and the Run died with an orphan branch. The trusted commit now carries a fixed timestamp, so a retry pushes the identical commit as a no-op.
+4. **A stop or a timeout after a successful publication told the human that nothing was published.** The message now names the pull request. The Run STATUS is unchanged, because SDD section 68 still forbids a success terminal state.
 
 **The four defects the external audit found, all reproduced by the controller.**
 
-1. **A sentence-final path defeated the changed-file gate.** `"src/auth.ts:84."` kept its location through `stripLocation`, so the gate reported that the finding named no changed file, and a genuine `blocker` or `high` finding became non-blocking. Ordinary Reviewer prose triggers it. A trailing `!` or `?` failed the same way. The controller's own earlier fix round set the replace order that caused it.
-2. **A decorated assertion identifier resolved to nothing.** `requirementIsResolvable` compared a `VAL-` requirement exactly, so `"VAL-API-001."` and `"VAL-API-001: an explanation"` named no mandatory requirement and did not block.
-3. **A stale report could decide a later attempt.** The report path was fixed at `review/report.json` and nothing removed it, so a repair attempt whose fresh session wrote no report parsed the previous attempt's report and persisted it as this attempt's findings. The path is now `report-${attempt}.json`.
-4. **A review that did not complete could still decide the Run.** The activity recorded `completed` and `cancelled` on the `AgentExecution` row and never read them, so a timed-out Reviewer that had written a report still decided the outcome, including a pass.
+1. **`publish` never asserted the base.** The check lived only in the separate `checkBase` activity, which the workflow calls once, so a Temporal retry of `publish` minutes later republished with no base check at all. `publish` now re-asserts the base itself.
+2. **The GitHub token was world readable.** The authenticated clone URL was an argv element of `git clone`, so the credential was visible through `ps` and `/proc/<pid>/cmdline`. The code already avoided that exposure for `git ls-remote` a few lines away. The credential now travels as `GIT_CONFIG_KEY_0=http.<origin>/.extraheader` on the clone and the push, and never in argv.
+3. **The commit was non-deterministic.** Already closed by the whole-branch fix wave.
+4. **A deterministic failure consumed the whole retry policy.** A rejected credential, a missing ref, an inapplicable patch, and a GitHub 401, 403, or 404 each burned three attempts. A deterministic git failure and a GitHub 4xx other than 408 and 429 are now non-retryable.
 
-Items 1, 2, and 4 were paths from a real defect to a passing review. That is exactly what this phase exists to prevent.
+## Read this before Phase 10
 
-**The defect the whole-branch review found.** The parsed review report reached the `ReviewFinding` table and the next Implementer prompt without passing the redactor, while `captureSourceDiff` beside it redacted everything. The Reviewer session holds the Project test secrets, so an echoed value would have been persisted in clear. The fix redacts the parsed finding fields, never the raw JSON text, because a replacement inside a JSON string could corrupt the parse and fail a Run for the wrong reason. **The blocking decision is taken on the unredacted fields first, and only the values that leave the activity are redacted.** Keep that order.
+**Factoree publishes, and the agent never does.** SDD section 46 runs entirely on the control plane, in a fresh temporary directory, outside the sandbox and outside every agent session. `src/domain/publishing/trusted-checkout.ts` is the one owner. The step 5 hash assertion sits before the first `checkout -b`, so a branch, a commit, and a push are structurally unreachable on a mismatch. Keep that order.
 
-## Read this before Phase 9
+**The publication path runs in exactly this order, and the order is load bearing.** Inside `publish`: capture the patch, `assertSameChangedFiles`, the tree comparison against `reviewedWorktreeSha`, the empty-patch refusal, `findByHead` with the `created: false` early return, the base freshness re-check, then the checkout, the push, and the create. **The pull request lookup must stay BEFORE the base check.** An already-published Run whose base then moved must return its pull request, not fail.
 
-**The Reviewer writes DATA, and Factoree decides.** A fresh session receives the SDD section 40 input list and writes one JSON report into `${workspacePath}/review/report-${attempt}.json`. Factoree parses it, decides which findings block, persists every finding, and decides the Run. The agent's `verdict` field is recorded on the row and never decides. `tests/acceptance/phase-08-exit.test.ts` proves the two can disagree: a report claiming `"verdict": "pass"` while carrying a valid `high` finding still blocks.
+**Three gates now prove that the published change is the reviewed change.** The file names must match, the tree SHA must match, and the patch hash must reproduce in the trusted checkout. The tree gate is the one that closes the window between the review and the publication. **An empty `reviewedWorktreeSha` is a mismatch.** Every gate fails closed.
 
-**A finding blocks only when four conditions hold together:** the severity is `blocker` or `high`; the category is not `style`; the requirement resolves; and the evidence names a file the change touched. All four live in `src/domain/review/blocking.ts`. The exit test isolates three of the four with `RV-1`, `RV-3`, and `RV-4`, so deleting any one rule fails it.
+**The GitHub credential never enters an argv.** It reaches the redactor first, then travels only as a `GIT_CONFIG_*` environment value and as an HTTP header. **Never pass an authenticated URL to a git command.** Two separate reviews caught two separate instances of that mistake in this phase.
 
-**`src/domain/review/blocking.ts` is a security-relevant gate, and it must fail closed.** Six of the phase's fix rounds landed on it. Every change to `stripLocation`, `namesChangedFile`, or `requirementIdentifierOf` must add a case that proves the change does not let a real blocking finding through. **The replace order inside `stripLocation` is load-bearing.** The full stop is removed twice, before and after the location strip, because `src/auth.ts.` needs the second removal and `src/auth.ts:84.` needs the first.
+**`assertHttpsRepositoryUrl` is the only defence against a remote-helper URL.** An `ext::` URL reaches command execution on the control plane, and the `--` separator does not stop a remote helper. `tests/acceptance/at-29-pull-request.test.ts` covers it. **Do not delete that check, and do not delete its test.**
 
-**`captureSourceDiff` runs the SDD section 44 command pair,** `git add -A` then `git diff --cached <base_sha>`. **Phase 9 must hash that same output**, so the change under review and the change under publication can never differ. `src/domain/review/source-diff.ts` is the one owner. It redacts before it truncates, and `--binary` is deliberately absent.
+**The diff options are pinned in one place.** `PATCH_GIT_OPTIONS` and `PATCH_DIFF_ARGS` in `src/domain/publishing/patch.ts` are read by the sandbox capture, by the control-plane recomputation, and by the Phase 8 changed-file query. **A change to one of them changes all three.** That is the point.
 
-**`runReview` calls the shared `runAgentActivity` helper,** like `runImplementer` and `runUserValidate`. The helper holds the stop entry guard, the ordering `sleep(1)`, and the cancellation handling. **Do not add a fourth long-activity stage that bypasses it.**
+**The Action Policy has its first enforcement point.** `worktreeFingerprint` in `src/domain/review/source-diff.ts` runs before and after the Reviewer session, and a changed tracked tree refuses the review. It covers TRACKED content only.
 
-**The repair budget is shared across all three stages.** SDD section 42 bounds repairs per Run and not per stage, so verification, user validation, and review increment one counter. `tests/workflow/at-24-repair-limit.test.ts` proves the mixed-stage case.
+**Still no success terminal state.** A Run that publishes falls into the residual wait and ends `FAILED` with `RUN_TIMEOUT`, or `CANCELLED` on a stop, with a message that names the pull request. SDD section 68 forbids `READY_FOR_HUMAN` without a Proof Pack. **Phase 10 builds it, and Phase 10 is the phase that finally closes the invariant.**
 
-**There is still no success terminal state.** A Run whose review passes falls into the residual wait and ends `FAILED` with `RUN_TIMEOUT`. SDD section 68 forbids `READY_FOR_HUMAN` without a PR and a Proof Pack. Phase 9 and Phase 10 build those.
-
-**A stock repository configuration still cannot review.** SDD section 15 sets `reviewer: claude`, and `ClaudeCodeRunner` arrives in Phase 11. An unknown reviewer runner is a configuration fault that names the configured and the registered runners, exactly as the validator runner already does.
+**A stock repository configuration still cannot review or publish.** SDD section 15 sets `reviewer: claude`, and `ClaudeCodeRunner` arrives in Phase 11. Publication needs a Project secret named `GITHUB_TOKEN` without the injection mark.
 
 ## Human decisions
 
 None required so far. Every decision was taken by the controller and is recorded in the phase plans, the commit history, or the lists below.
 
-Phase 4 through Phase 7 decisions still stand. Decisions added in Phase 8 are the eighteen recorded in `docs/build/phase-08-plan.md`, plus these eleven taken during execution:
+Phase 4 through Phase 8 decisions still stand. Decisions added in Phase 9 are the twelve recorded in `docs/build/phase-09-plan.md`, plus these sixteen taken during execution:
 
-1. **AT-22 and AT-23 assert the workflow decision, not a persisted row.** The workflow suite runs activity doubles and holds no database. Persistence is proved by the Task 6 unit test and by the exit test.
-2. **A workflow test drives the real `decideReview` and the real `parseReviewReport` through the harness double.** The agent session and the sandbox stay doubles, so the rule under test is the real rule.
-3. **No Phase 8 test may need a live model.** Every test drives real components against a real fixture repository, with a scripted runner that writes a real report file.
-4. **The evidence resolver must fail closed.** Three fix rounds closed trailing prose, a line range, an absolute path, leading prose, and wrapping punctuation. The audit later closed a sentence-final location and a trailing `!` or `?`.
-5. **AT-20's repair clause moved to a workflow test.** The acceptance file had asserted `REPAIRING` from a status it had written itself, which proved only that the repository round-trips a status.
-6. **The AT-22 comment had to match its code.** The test had passed attempt 2 by emptying the changed-file list, which exercises the scope gate, while its comment claimed the repair fixed the finding. Attempt 2 now emits no finding.
-7. **The exit test must be sensitive to each blocking rule on its own.** A finding that two gates each stop proves neither.
-8. **`decisionReason` is redacted with the finding fields,** because `decideFinding` interpolates the requirement and the evidence into it verbatim.
-9. **`finding.id` is redacted too.** It is agent free text and it reaches both the persisted `findingKey` and the next Implementer prompt through `failureLine`.
-10. **A report Factoree cannot use ends the Run and starts no repair.** A repair cannot fix a broken review.
-11. **The report path carries the attempt.** A fixed path let a stale report decide a later attempt.
+1. **The published patch carries `--binary` and is NOT the Reviewer diff.** The Phase 8 STATUS note said Phase 9 must hash the output of `captureSourceDiff`. That note conflicted with SDD section 44, and the SDD won. A redacted, truncated diff cannot be applied and must never be hashed. The intent is kept by the changed-file agreement check.
+2. **Task 1 defines `EmptyPatchError`,** because a later task consumes it and no task created it.
+3. **The workflow uses the flat fields of `PrepareSandboxActivityOutput`.** The plan had invented a nested shape.
+4. **The publication path hoists two carriers before the repair loop,** because `review` and `verification` are loop-scoped and cannot be read after the `break`.
+5. **A semantic publication failure becomes `ApplicationFailure.nonRetryable` with an explicit type,** rather than relying on Temporal to derive it from a class name.
+6. **The unpinned-git-input finding entered a fix round rather than the deferred list.** An unpinned input makes a good change present as tampering and blocks a correct publication.
+7. **An `ext::` URL survives the `--` separator,** so the scheme check exists and must stay.
+8. **The worktree fingerprint finding became a comment accuracy fix.** The check covers tracked content only, and the published patch skips the same paths.
+9. **`nonRetryableErrorTypes` belongs in the workflow proxy options,** not in the activity. That is the house pattern.
+10. **The concurrent duplicate pull request race stays open.** GitHub answers 422 for a second pull request on one head branch.
+11. **The base64 portability defect was repaired in the source, not worked around in the tests.** A shim in front of the code under test weakens the evidence, because the host decides whether the real capture runs.
+12. **The controller owns `docs/build/evidence/phase-09-verify.txt`,** and the committed 1577-line integration transcript was deleted. It carried absolute paths from the build machine.
+13. **The branch name is `factoree/run-<runId>`,** from the source. The plan text was stale.
+14. **The orphan branch defect is fixed by a deterministic commit,** so a retry pushes the identical commit SHA as a no-op. That removes the failure rather than recovering from it.
+15. **The base re-check sits AFTER the pull request lookup.** An earlier ordering broke idempotency for an already-published Run whose base then moved.
+16. **The `at-35` polling budget was raised rather than the flake accepted.** A correct implementation must not fail because the machine is busy.
 
 ## Carried findings for later phases
 
-Reviewed, judged not reachable or not in scope now, deliberately not fixed. Every Phase 4 through Phase 7 entry that Phase 8 did not close still stands.
+Reviewed, judged not reachable or not in scope now, deliberately not fixed. Every Phase 4 through Phase 8 entry that Phase 9 did not close still stands.
 
-**New in Phase 8, highest priority:**
+**New in Phase 9, highest priority:**
 
-- **The Reviewer cannot audit the Validation Plan's success criteria.** The Phase 7 notes named the Phase 8 Reviewer as a place to surface the widest defect-to-`PASS` path in the system: a `command` entry of `{ run: "true", expectExitCode: 0 }` passes a `command` assertion, and an `http` entry may state `expectStatus: 500`. The workflow passes the Reviewer only `"<id>: <result>. <reason>"` lines, never the plan text. SDD section 40 does not list the plan among the Reviewer inputs, so Phase 8 did not expand scope. **Phase 10 owns it,** because the Proof Pack is the last place a human can see those criteria before deciding.
-- **The Action Policy is still never enforced.** No call to `assertAllowed` or `decide` exists anywhere in `src/`. The reviewer role denies `writePrimaryWorktree` in the table, and nothing enforces it. `captureSourceDiff` runs `git add -A`, so a reviewer write would be staged and would reach the captured diff. **Phase 9 owns it,** and Phase 9 is the phase that turns that diff into a published patch.
-- **Three routes from a real defect to a passing review remain, all by design.** The Reviewer can label a correctness defect `style`; it can cite a `VAL-` requirement that names no frozen assertion; and it can point its evidence outside the change. Each clears the finding. Every one is persisted with its decision reason, so a human can audit it. The Proof Pack should surface a `blocker` or `high` finding that failed only one gate.
+- **The SDD section 46 hash assertion compares two diff texts that two different git binaries produce.** Twelve configuration values are pinned, and two git versions can still format a diff differently. The failure is closed, so such a Run publishes nothing and reports `PATCH_HASH_MISMATCH` for a correct change. **Phase 12 should log the git version on both sides, so a version skew is diagnosable rather than indistinguishable from tampering.**
+- **The Reviewer still cannot audit the Validation Plan's success criteria.** Carried from Phase 8, unchanged. **Phase 10 owns it,** because the Proof Pack is the last place a human sees those criteria.
+- **Three routes from a real defect to a passing review remain, all by design.** Carried from Phase 8. The Proof Pack should surface a `blocker` or `high` finding that failed only one gate.
+- **The worktree fingerprint misses an ignored path and anything under `.git/`.** A Reviewer that writes `.git/info/exclude` can hide a later write from the check. The published patch skips the same paths, so patch integrity holds. **Phase 12 hardening owns it.**
 
-**New in Phase 8, small:**
+**New in Phase 9, small:**
 
-- A finding that fails ONLY the requirement gate is silently non-blocking. Making that one case block instead is worth considering.
-- The progress post runs before the `reportUsable` check, so an unusable report still posts a summary, and that summary is empty on that path.
-- The `REVIEW_UNAVAILABLE` message leaves a double space when `reportProblem` is null.
-- `buildReviewActivities` duplicates `buildUserValidateActivities` byte for byte. A fourth copy earns the abstraction.
-- `git add -A` inside `captureSourceDiff` stages any untracked artefact the preview or verification left behind, which inflates the changed-file list. It errs toward blocking.
-- `PrismaReviewFindingStore.record` catches any create error and reads the winner, not only a unique-constraint violation. It mirrors `PrismaValidationResultStore`, so a change belongs to a sweep of both.
-- `executions.record` persists the agent's own free-text session summary without redaction. It predates Phase 8 and applies to every role.
-- An empty report file is untested. It reaches `parseReviewReport` and becomes unusable either way.
-- The exit test's assertion that the two reviewer sessions differ cannot fail, because the scripted double mints a new identifier per call. AT-21 carries the real proof.
-- AT-23 asserts no passing terminal state, only that no repair started.
-- An inline Markdown link in the evidence field still fails the changed-file gate. A Windows backslash path fails on the separator.
+- A GitHub 403 secondary rate limit is a 4xx that GitHub asks a client to retry, and it is now non-retryable. A 429 and a 408 are correctly retryable.
+- `Permission denied` is treated as deterministic, and it can also come from a transient local file lock.
+- `findByHead` uses `state=all`, so a CLOSED pull request on the same head branch is adopted as the current one. Only reachable for a reused Run identifier.
+- `credentialEnvironment` returns an empty environment for a missing token. The activity refuses an empty secret earlier, so it fails closed.
+- The deterministic-commit integration test asserts the recorded author date and committer date, which is the robust form. The same-SHA assertion alone was not.
+- `tests/workflow/at-35-worker-restart.test.ts` still hand-builds its own activity map and is the only workflow test file that does not use the shared harness. **A later phase that adds an activity must update that file by hand.**
+- `tests/workflow/at-16-deterministic-failure.test.ts` asserts an exact activity-name list. A later phase that adds an activity to the implement, verify, validate, review, publish path must update that list.
 
-**Everything else carried from Phase 7 and earlier still stands,** including the Phase 6 redaction gap for human-authored goal text at every persistence boundary, the Linear evidence storage that has never run against a live account, and every Phase 12 live-proof item.
+**Everything else carried from Phase 8 and earlier still stands,** including the Phase 6 redaction gap for human-authored goal text at every persistence boundary, the Linear evidence storage that has never run against a live account, and every Phase 12 live-proof item.
 
 ## Blockers
 
 None.
 
-Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for the Phase 12 live acceptance test. They are not needed for Phase 9.
+Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for the Phase 12 live acceptance test. Phase 10 does not need them.
 
 ## Environment notes
 
@@ -125,12 +133,10 @@ Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for 
 - The shell alias `cat` points at a broken `bat`. Use `/bin/cat`. **Never write a file through a `cat` heredoc, and never build a commit message with `git commit -m "$(cat <<EOF ...)"`.** Use `git commit -F` with a file.
 - `timeout` and `gtimeout` are not installed.
 - Docker is required for the integration and workflow suites.
-- **`npm run verify` takes longer than a two-minute foreground tool call.** Run it in stages in the background and poll the output file. A background run that a harness timeout kills reports nothing, so read the real output before you believe a result. **Two Phase 8 agents stalled repeatedly by waiting on a foreground suite.** Tell an agent this rule in its dispatch.
-- **Run the whole-repository `npm run lint` yourself at every task gate.** Phase 8 shipped a red lint and a red typecheck at one task, and the controller's own gate caught it. This is the second phase in a row where that gate earned its place.
+- **`npm run verify` takes longer than a two-minute foreground tool call.** Run it in stages in the background and poll the output file. **Compute a real aggregate exit code across the stages.** A naive `echo "exit=$?"` after a loop reports only the LAST stage, and it reported `exit=0` over a failing workflow stage in this phase.
+- **Run the whole-repository `npm run lint` and `npm run typecheck` yourself at every task gate.**
 - The acceptance tests run under `vitest.integration.config.ts`, not under a config of their own.
-- The Phase 8 migration `20260827120000_add_review_findings` creates one table and adds one foreign key. It was verified with `prisma migrate diff` against a real shadow database, output "No difference detected", and the integration suite applies it with `prisma migrate deploy` before every run. Its index names are 42 and 32 bytes, under the Postgres 63-byte limit.
-- **Run the whole integration suite before calling a task complete, not one file.** Run the whole workflow suite as well when a task adds an activity, and run it twice.
-- The Temporal and Testcontainers suites produce occasional timing flakes. **Do not accept "it is a known flake" from an agent.** Rerun the suite yourself.
-- **`tests/workflow/at-35-worker-restart.test.ts` still hand-builds its own activity map** and is the only workflow test file that does not use the shared harness. Its map is a plain object literal and is not typed as `Activities`, so `npm run typecheck` cannot catch a missing entry. **A later phase that adds an activity must update that file by hand.** Phase 8 added `review` to it.
-- **`tests/workflow/at-16-deterministic-failure.test.ts` asserts an exact activity-name list.** A later phase that adds an activity to the implement, verify, validate, review path must update that list.
-- `opencode` version 1.18.18 is installed and authenticated for DeepSeek, and was used for the external audit of Phase 4 through Phase 8. **Pass the prompt as the message argument, not with `-f`.** The `-f` flag reads the message as a file name and the run fails. The Phase 8 audit prompt named ten categories, listed the ten deliberate designs to exclude, and demanded a file and a line for every finding. That shape produced four real defects and no noise.
+- **Run every suite more than once before you believe a green result.** Phase 9 hit two timing-dependent failures that a single run missed: a real stop-path regression in `phase-08-exit`, and a load-sensitive budget in `at-35`. **Do not accept "it is a known flake" from an agent. Rerun the suite yourself, and run the failing file alone several times.**
+- Phase 9 added no migration. `Run.patchSha256`, `Run.commitSha`, and `Run.pullRequestUrl` already existed.
+- **`opencode` version 1.18.18 is installed and authenticated for DeepSeek. The model `deepseek/deepseek-reasoner` NO LONGER EXISTS.** Two audit attempts failed with an opaque `UnknownError` before the cause was found. Run `opencode models` and use `deepseek/deepseek-v4-pro`. **Pass the prompt as the message argument, not with `-f`.** The audit prompt that produced four real defects named ten categories, listed the deliberate designs to exclude, and demanded a file and a line for every finding.
+- An OpenCode run can be killed by a session interrupt. Start it detached with `nohup` if it must survive.
