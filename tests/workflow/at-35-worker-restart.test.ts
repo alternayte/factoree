@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
-import { agentRunWorkflow, stopSignal } from "~/workflows/agent-run.workflow.js";
+import { agentRunWorkflow } from "~/workflows/agent-run.workflow.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
 import { DEFAULT_PROJECT_RUNTIME_CONFIG } from "~/domain/runs/project-runtime-config.js";
 
@@ -11,6 +11,10 @@ const createCalls: string[] = [];
 const completions: string[] = [];
 /** Every `publish` call of the test, by Run. AT-35 allows one pull request per Run only. */
 const publishCalls: string[] = [];
+/** Every terminal state the Run reached. AT-35 must end in a proved Run, not in a failure. */
+const terminalStatuses: Array<{ status: string; failureReason: string | undefined }> = [];
+/** Every `publishProofPack` call of the test, by Run. */
+const proofPackCalls: string[] = [];
 /** Every publication result the double returned, in call order. */
 const publishResults: Array<{ runId: string; created: boolean; pullRequestUrl: string }> = [];
 
@@ -22,8 +26,9 @@ const activities = {
   },
   setRunStatus: async () => undefined,
   setRunAutonomyLevel: async () => undefined,
-  completeRun: async (input: { runId: string }) => {
+  completeRun: async (input: { runId: string; status: string; failureReason?: string }) => {
     completions.push(input.runId);
+    terminalStatuses.push({ status: input.status, failureReason: input.failureReason });
   },
   acknowledgeSession: async () => undefined,
   postProgress: async () => undefined,
@@ -143,6 +148,7 @@ const activities = {
       pullRequestNumber: 1,
       branch: `factoree/run-${input.runId}`,
       created,
+      patchByteLength: 812,
     };
     publishResults.push({
       runId: input.runId,
@@ -150,6 +156,18 @@ const activities = {
       pullRequestUrl: result.pullRequestUrl,
     });
     return result;
+  },
+  // This file builds its own activity map by hand, so a new activity of the publication path
+  // must be added here as well. Without it the Run fails the completion invariant, and this
+  // test then passes for the wrong reason.
+  publishProofPack: async (input: { runId: string }) => {
+    proofPackCalls.push(input.runId);
+    return {
+      sha256: "9".repeat(64),
+      assertionCount: 1,
+      limitationCount: 0,
+      postedAt: "2026-01-01T03:00:00.000Z",
+    };
   },
 };
 
@@ -233,7 +251,9 @@ describe("AT-35 worker restart", () => {
 
     const third = await newWorker();
     const thirdRun = third.run();
-    await handle.signal(stopSignal);
+    // Phase 9 needed a stop here, because a published Run then sat in the residual wait. The
+    // Proof Pack of SDD section 47 now completes the Run on its own, so a stop would race with
+    // the completion and reach an already-finished workflow.
     const result = await handle.result();
     third.shutdown();
     await thirdRun;
@@ -263,6 +283,12 @@ describe("AT-35 worker restart", () => {
     expect(new Set(results.map((entry) => entry.pullRequestUrl))).toEqual(
       new Set(["https://github.com/acme/primary/pull/1"]),
     );
+
+    // Fact 3. The restart path ended in a proved Run, not in a failure that merely looked
+    // complete to Temporal. SDD section 68 reaches READY_FOR_HUMAN only with a Proof Pack.
+    expect(proofPackCalls).toContain("run-session-at35");
+    expect(terminalStatuses.at(-1)?.status).toBe("READY_FOR_HUMAN");
+    expect(terminalStatuses.at(-1)?.failureReason).toBeUndefined();
 
     const description = await handle.describe();
     expect(description.status.name).toBe("COMPLETED");

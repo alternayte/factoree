@@ -22,6 +22,7 @@ import type {
   CheckBaseActivityOutput,
   PublishActivityOutput,
 } from "~/activities/publishing.activities.js";
+import type { PublishProofPackActivityOutput } from "~/activities/evidence.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
@@ -36,6 +37,9 @@ import { buildRepositoryUrl } from "../domain/projects/repository-url.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { renderRisks } from "../domain/refinement/risk.js";
+// The workflow bundler resolves a relative path only, so this value import does not use the
+// `~/` alias either.
+import { completionInvariantFailures } from "../domain/runs/completion-invariant.js";
 
 export interface AgentRunProjectInput {
   primaryRepository: string;
@@ -302,6 +306,20 @@ const publishingActivities = proxyActivities<Activities>({
   },
 });
 
+/**
+ * SDD section 47. The Proof Pack reads five stores and posts one Linear response. It is not a
+ * fast activity, and a missing input is the only failure a retry cannot repair.
+ */
+const proofPackActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "5 minutes",
+  retry: {
+    maximumAttempts: 3,
+    initialInterval: "1 second",
+    backoffCoefficient: 2,
+    nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE, "PROOF_PACK_INPUT_MISSING"],
+  },
+});
+
 // The cancellation of a live Implementer session runs after the Run budget has ended, so it
 // needs its own short timeout.
 const cancelActivities = proxyActivities<Activities>({
@@ -383,7 +401,8 @@ export async function agentRunWorkflow(
       | "REVIEW_UNAVAILABLE"
       | "PATCH_HASH_MISMATCH"
       | "EMPTY_PATCH"
-      | "PUBLICATION_FAILED",
+      | "PUBLICATION_FAILED"
+      | "COMPLETION_INVARIANT_UNMET",
     message: string,
   ): Promise<AgentRunWorkflowResult> => {
     // SDD section 48. A blocking review finding has its own terminal state. Every other reason
@@ -1029,6 +1048,14 @@ export async function agentRunWorkflow(
       // The git tree the independent review examined. The publication refuses a tree that
       // differs, so a write after the review can never reach GitHub.
       let publishedWorktreeSha = "";
+      // SDD section 68 and section 47 need these values after the loop ends. The successful pass
+      // writes them just before it breaks, exactly as the three values above do.
+      let publishedVerificationPassed = false;
+      let publishedValidationPassed = false;
+      let publishedBlockingCount = 0;
+      let publishedReviewVerdict: "pass" | "fail" = "fail";
+      let publishedReviewPasses = 0;
+      let publishedPreviewUrl: string | null = null;
 
       for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -1289,6 +1316,12 @@ export async function agentRunWorkflow(
           publishedChangedFiles = review.changedFiles;
           publishedVerificationSummary = verification.summary;
           publishedWorktreeSha = review.worktreeSha;
+          publishedVerificationPassed = verification.passed;
+          publishedValidationPassed = userValidation.passed;
+          publishedBlockingCount = review.blockingCount;
+          publishedReviewVerdict = review.verdict;
+          publishedReviewPasses = attempt;
+          publishedPreviewUrl = userValidation.previewUrl;
           break;
         }
 
@@ -1414,27 +1447,89 @@ export async function agentRunWorkflow(
       // value, so neither one claims that Factoree published nothing.
       publishedPullRequestUrl = publication.pullRequestUrl;
 
-      // SDD section 68 forbids `READY_FOR_HUMAN` without a Proof Pack, and Phase 10 builds it. The
-      // Run therefore keeps the residual wait rather than invent a success terminal state.
+      // SDD section 50. A stop that arrived during the publication ends the Run CANCELLED. The
+      // pull request already exists, and the stop message names it.
+      if (stopRequested) return await cancelRun();
+
+      // SDD section 47. One Proof Pack, built from persisted state, posted as the Linear final
+      // response. SDD section 68 forbids READY_FOR_HUMAN without it.
+      let proofPack: PublishProofPackActivityOutput;
+      try {
+        proofPack = await proofPackActivities.publishProofPack({
+          runId: id,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          sessionId: input.agentSessionId,
+          workItem: { title: input.workItem.title, url: input.workItem.url },
+          pullRequestUrl: publication.pullRequestUrl,
+          commitSha: publication.commitSha,
+          patchSha256: publication.patchSha256,
+          baseSha: publishInput.baseSha,
+          changedFiles: publishedChangedFiles,
+          patchByteLength: publication.patchByteLength,
+          previewUrl: publishedPreviewUrl,
+          repairCount,
+          repairLimit: maxRepairs,
+          reviewVerdict: publishedReviewVerdict,
+          reviewPasses: publishedReviewPasses,
+        });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (stopRequested) return await cancelRun();
+        // SDD section 68. The change is published, and Factoree cannot prove it to a human. It
+        // must never report a success it cannot prove, so the Run fails and names the pull
+        // request a human must now read by hand.
+        return await failRun(
+          "COMPLETION_INVARIANT_UNMET",
+          "Factoree published the verified change and could not post the Proof Pack. Review the " +
+            `pull request by hand. Pull request: ${publication.pullRequestUrl}.`,
+        );
+      }
+
+      if (stopRequested) return await cancelRun();
+
+      // SDD section 68. Every clause is checked from recorded facts, immediately before the one
+      // state that claims success. No agent claim reaches this check.
+      const unmet = completionInvariantFailures({
+        workItemReady: refined.status === "ready",
+        contextContractVersion,
+        unresolvedConflict: resolvedContext.unresolvedConflict !== null,
+        validationContractVersion,
+        validationContractFrozenAt: validation.frozenAt,
+        validationPassed: publishedValidationPassed,
+        verificationPassed: publishedVerificationPassed,
+        blockingFindingCount: publishedBlockingCount,
+        repairCount,
+        repairLimit: maxRepairs,
+        patchSha256: publication.patchSha256,
+        baseUnchanged: baseCheck.fresh,
+        pullRequestUrl: publication.pullRequestUrl,
+        proofPackSha256: proofPack.sha256,
+      });
+
+      if (unmet.length > 0) {
+        return await failRun(
+          "COMPLETION_INVARIANT_UNMET",
+          "Factoree published the verified change and cannot report it complete. " +
+            `${unmet.join(" ")} Pull request: ${publication.pullRequestUrl}.`,
+        );
+      }
+
+      // SDD section 48. The Run is complete. This is the one success terminal state, and the
+      // completion invariant above is the only gate that reaches it.
+      status = "READY_FOR_HUMAN";
+      await activities.completeRun({
+        tenantId: input.tenantId,
+        runId: id,
+        status,
+        completedAt: new Date(Date.now()).toISOString(),
+      });
+      return { runId: id, status };
     }
 
-    // User validation passed, and the independent review passed as well. SDD section 68 forbids
-    // READY_FOR_HUMAN without a Validation Contract, a PR, and a Proof Pack, and Phase 9 and
-    // Phase 10 build those. Until then the Run stays open for a stop signal, for human input, or
-    // until the Run budget ends it, so this step invents no success terminal state.
-    const stopped = await condition(() => stopRequested, remainingMs());
-
-    if (!stopped) {
-      return await failRun(
-        "RUN_TIMEOUT",
-        publishedPullRequestUrl === null
-          ? timeoutMessage
-          : "Factoree stopped the Run because it reached the maximum Run duration. The verified " +
-            `change is already published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
-      );
-    }
-
-    return await cancelRun();
+    // Every path of the block above reaches a terminal state of SDD section 48. Phase 9 kept a
+    // residual wait here, because no success terminal state existed yet. The Proof Pack of
+    // SDD section 47 now completes a proved Run, so that wait is gone.
   } catch (error) {
     // Any unhandled activity failure must still drive the Run to a terminal state.
     status = "FAILED";
