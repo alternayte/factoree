@@ -65,7 +65,7 @@ export interface ActivityDependencies {
 }
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
-  ...createRunActivities({ runs: dependencies.runs, logger: dependencies.logger }),
+  ...createRunActivities({ runs: dependencies.runs, logger: dependencies.logger, runners: dependencies.runners }),
   ...createLinearActivities({ agentSession: dependencies.agentSession, workItems: dependencies.workItems }),
   ...createSandboxActivities({
     sandboxManager: dependencies.sandboxManager,

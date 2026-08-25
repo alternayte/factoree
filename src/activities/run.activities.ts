@@ -1,6 +1,7 @@
 import type { Logger } from "~/telemetry/logger.js";
 import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
+import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 import { failureCategoryOf } from "~/domain/runs/failure-category.js";
@@ -8,6 +9,7 @@ import { failureCategoryOf } from "~/domain/runs/failure-category.js";
 export interface RunActivityDependencies {
   runs: RunRepository;
   logger: Logger;
+  runners: AgentRunnerRegistry;
 }
 
 export const createRunActivities = (dependencies: RunActivityDependencies) => ({
@@ -99,6 +101,9 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
           category: failureCategory ?? "INTERNAL",
         });
     }
+    // The Run reached a terminal state. Every runner session of this Run is now dead, so the
+    // runner must not keep it. This bounds `CliAgentRunner.sessions` by the Runs in flight.
+    for (const runner of dependencies.runners.all()) runner.releaseRun?.(input.runId);
     dependencies.logger.info("run completed", {
       tenant_id: run.tenantId,
       project_id: run.projectId,
