@@ -3,6 +3,7 @@ import {
   REQUIRED_LIVE_CREDENTIALS,
   missingCredentials,
 } from "../live/required-credentials.js";
+import { credentialsFor } from "../live/profile.js";
 
 describe("the live acceptance credential list", () => {
   it("names one credential for every live dependency of SDD section 66", () => {
@@ -59,4 +60,24 @@ describe("the live acceptance credential list", () => {
       expect(document, `${entry.name} is absent from docs/live-acceptance.md`).toContain(entry.name);
     }
   });
+
+  it("reports every absent credential of the full profile, still", () => {
+    // The full profile must keep demanding all 14 values. This guards the exit-78 path.
+    expect(missingCredentials({})).toHaveLength(credentialsFor("full").length);
+    expect(missingCredentials({})).toHaveLength(14);
+  });
+
+  it(
+    "documents every local credential in .env.local.example (PENDING Task 3, expected to fail until it creates that file)",
+    async () => {
+      const { readFile } = await import("node:fs/promises");
+      const example = await readFile(
+        new URL("../../.env.local.example", import.meta.url),
+        "utf8",
+      );
+      for (const entry of credentialsFor("local")) {
+        expect(example, `${entry.name} is absent from .env.local.example`).toContain(entry.name);
+      }
+    },
+  );
 });

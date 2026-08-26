@@ -95,9 +95,17 @@ export const REQUIRED_LIVE_CREDENTIALS: LiveCredential[] = [
   },
 ];
 
-/** Every required credential the environment does not supply. An empty value counts as absent. */
-export const missingCredentials = (env: NodeJS.ProcessEnv): LiveCredential[] =>
-  REQUIRED_LIVE_CREDENTIALS.filter((entry) => {
+/** Every credential of the given list the environment does not supply. An empty value counts
+ * as absent. */
+export const missingCredentialsFor = (
+  env: NodeJS.ProcessEnv,
+  credentials: LiveCredential[],
+): LiveCredential[] =>
+  credentials.filter((entry) => {
     const value = env[entry.name];
     return value === undefined || value.trim() === "";
   });
+
+/** Every required full-profile credential the environment does not supply. */
+export const missingCredentials = (env: NodeJS.ProcessEnv): LiveCredential[] =>
+  missingCredentialsFor(env, REQUIRED_LIVE_CREDENTIALS);
