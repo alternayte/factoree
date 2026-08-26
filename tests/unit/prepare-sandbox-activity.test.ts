@@ -17,7 +17,7 @@ const stubRunner = (name: string): AgentRunner => ({
   name,
   run: () => Promise.reject(new Error("not used")),
   resume: () => Promise.reject(new Error("not used")),
-  cancel: () => Promise.resolve(),
+  cancel: () => Promise.resolve("no-live-session" as const),
 });
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";

@@ -110,16 +110,27 @@ describe("OpenCodeRunner", () => {
     expect(result.summary).toContain("[REDACTED]");
   });
 
-  it("cancels the sandbox process for a session", async () => {
+  it("cancels the sandbox process for a session and reports the outcome", async () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => runner.activeSession("run-1") !== undefined);
-    await runner.cancel({ sessionId: "ses_1", processId: "process-2", runner: "opencode" });
+    const outcome = await runner.cancel({ sessionId: "ses_1", processId: "process-2", runner: "opencode" });
     const result = await started;
     expect(sandbox.calls).toContain("cancelProcess");
     expect(result.cancelled).toBe(true);
+    expect(outcome).toBe("cancelled");
+  });
+
+  it("reports no-live-session for a process id this runner does not hold", async () => {
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    const outcome = await runner.cancel({
+      sessionId: "ses_unknown",
+      processId: "process-unknown",
+      runner: "opencode",
+    });
+    expect(outcome).toBe("no-live-session");
   });
 
   it("resumes a session with the opencode session flag", async () => {

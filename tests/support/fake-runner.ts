@@ -1,4 +1,5 @@
 import type {
+  AgentCancelOutcome,
   AgentResumeInput,
   AgentRunInput,
   AgentRunResult,
@@ -17,6 +18,8 @@ export class FakeRunner implements AgentRunner {
   private live: AgentSessionRef | null = null;
   /** The delay before the session registers. It models the start of the sandbox process. */
   private startDelayMs = 0;
+  /** The outcome the next `cancel` call reports. A test sets it to model a remote worker. */
+  private cancelOutcome: AgentCancelOutcome = "cancelled";
 
   constructor(
     readonly name = "opencode",
@@ -73,8 +76,13 @@ export class FakeRunner implements AgentRunner {
     return Promise.resolve(this.result);
   }
 
-  cancel(session: AgentSessionRef): Promise<void> {
+  /** Sets the outcome the next `cancel` call reports. Default is "cancelled". */
+  setCancelOutcome(outcome: AgentCancelOutcome): void {
+    this.cancelOutcome = outcome;
+  }
+
+  cancel(session: AgentSessionRef): Promise<AgentCancelOutcome> {
     this.cancelled.push(session);
-    return Promise.resolve();
+    return Promise.resolve(this.cancelOutcome);
   }
 }

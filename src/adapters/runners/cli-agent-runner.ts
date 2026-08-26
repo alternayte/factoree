@@ -1,4 +1,5 @@
 import type {
+  AgentCancelOutcome,
   AgentResumeInput,
   AgentRunInput,
   AgentRunResult,
@@ -139,11 +140,12 @@ export abstract class CliAgentRunner implements AgentRunner {
     return await this.awaitProcess(live, input.timeoutMs);
   }
 
-  async cancel(session: AgentSessionRef): Promise<void> {
+  async cancel(session: AgentSessionRef): Promise<AgentCancelOutcome> {
     const live = this.sessions.get(session.processId);
-    if (live === undefined) return;
+    if (live === undefined) return "no-live-session";
     live.cancelled = true;
     await live.sandbox.cancelProcess(live.ref, live.process);
+    return "cancelled";
   }
 
   /**

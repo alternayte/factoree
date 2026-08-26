@@ -163,13 +163,15 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         if (session !== undefined) {
           try {
             // A runner that never answers must not hold this activity open.
-            await Promise.race([
+            const outcome = await Promise.race([
               runner.cancel(session),
-              new Promise((_resolve, reject) =>
+              new Promise<never>((_resolve, reject) =>
                 setTimeout(() => reject(new Error("the runner did not answer the cancel")), CANCEL_TIMEOUT_MS).unref(),
               ),
             ]);
-            cancelledSession = true;
+            // This path runs in the same process that started the session, so the lookup above
+            // already proves the session is live here. The outcome is "cancelled" in practice.
+            cancelledSession = outcome === "cancelled";
           } catch (error) {
             dependencies.logger.error("the cancellation of the Implementer session failed", {
               tenant_id: input.tenantId,
@@ -274,7 +276,39 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
   },
 
   async cancelImplementer(input: { runnerName: string; session: AgentSessionRef }): Promise<void> {
-    // SDD section 50: a stop signal must cancel the active agent process.
-    await dependencies.runners.get(input.runnerName).cancel(input.session);
+    // SDD section 50: a stop signal must cancel the active agent process. The task queue holds
+    // more than one worker, and `CliAgentRunner` keeps its live sessions in process memory, so
+    // this activity can run on a worker that never started the session. See SDD section 33.
+    const outcome = await dependencies.runners.get(input.runnerName).cancel(input.session);
+    if (outcome === "no-live-session") {
+      dependencies.logger.error("this worker holds no live session for the cancellation", {
+        runner: input.runnerName,
+        session_id: input.session.sessionId,
+        process_id: input.session.processId,
+        message:
+          "this worker holds no live session, so the agent process can still run on another worker",
+      });
+      // `cancelActivities` retries up to three attempts, so a retry can reach the worker that
+      // owns the session. Both call sites wrap this activity in `notify()`, which swallows the
+      // final exception, so a Run still reaches its terminal state and is never stranded. The
+      // throw buys a real remediation attempt and costs nothing.
+      throw new LiveSessionNotFoundError(input.runnerName, input.session);
+    }
+    dependencies.logger.info("the cancellation reached the live session", {
+      runner: input.runnerName,
+      session_id: input.session.sessionId,
+      process_id: input.session.processId,
+    });
   },
 });
+
+/** SDD section 50 obligation 1. This worker holds no live session for the given process id. */
+export class LiveSessionNotFoundError extends Error {
+  constructor(runnerName: string, session: AgentSessionRef) {
+    super(
+      `The runner "${runnerName}" holds no live session for process "${session.processId}" ` +
+        `on this worker. The agent process can still run on another worker.`,
+    );
+    this.name = "LiveSessionNotFoundError";
+  }
+}
