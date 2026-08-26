@@ -23,9 +23,12 @@ SDD section 66 names that state and says plainly it is not equivalent to Done.
 
 ## Git
 
-- Branch: `phase-12-hardening`
-- Phase 12 range: `9fb9585..HEAD`, 17 commits on `phase-12-hardening`. The branch holds
-  no merge commit yet.
+- Branch: `main`. Phase 12 is merged.
+- Phase 12 range: `9fb9585..314d998`, 18 commits on `phase-12-hardening`, then the
+  no-fast-forward merge `03aa4c5`.
+- **The merged result on `main` verified exit 0.** The controller ran every stage on `main`
+  after the merge: lint 0, typecheck 0, unit 1051 passed and 7 skipped, integration 249
+  passed, workflow 85 passed, build 0. A merge can break what neither side broke alone.
 - The repository HAS a remote. `origin` is `https://github.com/alternayte/factoree.git`.
   Phase 11 and earlier recorded "no remote", and that statement was wrong. The controller
   corrected it in Phase 12.

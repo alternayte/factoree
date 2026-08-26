@@ -18,3 +18,16 @@ Controller `npm ci` verification at df09a1f, run after both whole-phase passes e
 
 The install was clean. The build and the unit suite both ran from that clean install.
 exit=0
+
+
+Controller verification of the MERGED result on `main`, at merge commit 03aa4c5:
+  npx eslint .                                          exit 0
+  npx tsc --noEmit                                      exit 0
+  npx vitest run --config vitest.config.ts              exit 0   1051 passed, 7 skipped, 1058 total
+  npx vitest run --config vitest.integration.config.ts  exit 0   249 passed
+  npx vitest run --config vitest.workflow.config.ts     exit 0   85 passed
+  npm run build                                         exit 0
+  aggregate                                             exit 0
+
+Every count matches the two pre-merge passes. The merge introduced no regression.
+exit=0
