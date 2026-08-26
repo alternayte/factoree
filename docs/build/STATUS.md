@@ -26,7 +26,12 @@ SDD section 66 names that state and says plainly it is not equivalent to Done.
 - Branch: `phase-12-hardening`
 - Phase 12 range: `9fb9585..HEAD`, 17 commits on `phase-12-hardening`. The branch holds
   no merge commit yet.
-- The repository has no remote.
+- The repository HAS a remote. `origin` is `https://github.com/alternayte/factoree.git`.
+  Phase 11 and earlier recorded "no remote", and that statement was wrong. The controller
+  corrected it in Phase 12.
+- **No phase has ever pushed to that remote, and `phase-12-hardening` tracks no upstream.**
+  Every phase merges into local `main` with a no-fast-forward commit. A push is an outward
+  action. Ask the human before you push.
 
 ## Phase 12 verification
 
