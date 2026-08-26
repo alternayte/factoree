@@ -117,9 +117,9 @@ verify:
     run_stage lint npm run lint
     run_stage typecheck npm run typecheck
     run_stage unit npm test
+    run_stage build npm run build
     run_stage integration npm run test:integration
     run_stage workflow npm run test:workflow
-    run_stage build npm run build
 
     rm -f "${log}"
     exit "${status}"
