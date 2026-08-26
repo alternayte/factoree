@@ -65,6 +65,149 @@ The command reports a wrong `SANDBOX_ADAPTER` value distinctly from an
 absent one, so an operator who forgot to switch it back sees the real
 problem.
 
+## Setup: create the Tenant, the Project, and the Project secrets
+
+Every path below needs a Project row and a `GITHUB_TOKEN` Project secret. Do
+this setup once, before you start Path A, Path A-Sprite, or Path B. Each path
+below refers back to this section instead of repeating it.
+
+Every admin call in this section carries the admin token in the
+`Authorization` header, as a bearer token:
+
+    Authorization: Bearer <ADMIN_API_TOKEN>
+
+`src/http/admin/auth.ts` checks this header on every `/admin/*` route.
+Replace `<ADMIN_API_TOKEN>` with the real value of your `ADMIN_API_TOKEN`
+environment variable. Never write the real value into this document or into
+a command you paste somewhere else.
+
+### 1. The Tenant
+
+A separate Tenant creation call is not needed. The Project create call
+below creates the Tenant for you. It reads `linearWorkspaceId` and
+`workspaceName` from the request body and calls `ensureTenant` internally,
+defined in `src/domain/projects/project-registry.ts` and wired at
+`src/http/admin/projects.routes.ts:35`.
+
+### 2. Create the Project
+
+Call `POST /admin/projects`. `src/http/admin/projects.routes.ts:6-19` and
+`:32-51` define this route. The request body needs these required fields:
+
+| Field | Requirement |
+| --- | --- |
+| `linearWorkspaceId` | Required. The Linear workspace ID of your test workspace. Factoree creates the Tenant from this value. |
+| `key` | Required. A short unique identifier for the Project. |
+| `name` | Required. A human-readable Project name. |
+| `primaryRepository` | Required. The GitHub fixture repository, as `owner/name`. |
+
+These fields carry a default and need no value unless you want a non-default
+setting: `workspaceName`, `referenceRepositories`, `organizationSkillsRepository`,
+`linearTeamId`, `defaultAutonomy`, `maxRunMinutes`, `defaultBranch`.
+
+Example:
+
+    curl -s -X POST "$API_BASE/admin/projects" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "linearWorkspaceId": "<LINEAR_WORKSPACE_ID>",
+        "workspaceName": "Live acceptance workspace",
+        "key": "live-accept",
+        "name": "Live acceptance fixture Project",
+        "primaryRepository": "<GITHUB_OWNER>/<GITHUB_REPO>"
+      }'
+
+The response carries the new Project, with its `id`. Copy that `id`. The
+remaining steps in this section need it.
+
+### 3. Set the `GITHUB_TOKEN` Project secret
+
+**This is the credential Factoree uses to push the branch and to open the
+pull request.** Without it, publication fails at the last step of a run,
+after refinement, context resolution, validation, implementation,
+verification, and review already ran.
+
+Call `PUT /admin/projects/:id/secrets/GITHUB_TOKEN`, defined at
+`src/http/admin/projects.routes.ts:106-122`. The secret name in the URL is
+`GITHUB_TOKEN`, the exact constant `GITHUB_TOKEN_SECRET` in
+`src/activities/publishing.activities.ts:32`.
+
+    curl -s -X PUT \
+      "$API_BASE/admin/projects/<PROJECT_ID>/secrets/GITHUB_TOKEN?linearWorkspaceId=<LINEAR_WORKSPACE_ID>" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{"value": "<GITHUB_WRITE_TOKEN>", "injectIntoImplementer": false}'
+
+**Do not set `injectIntoImplementer` to `true` on this secret.** SDD section
+30 forbids a GitHub write credential in an Implementer session. Leave the
+field absent, or set it to `false` explicitly; the field defaults to
+`false`. If the secret carries the injection mark, publication refuses with
+this error and demands rotation, at
+`src/activities/publishing.activities.ts:158-163`:
+
+    The Project secret "GITHUB_TOKEN" carries the injection mark, so the credential
+    already reached an agent session. SDD section 30 forbids that. Rotate the credential.
+    Then add it again without the injection mark.
+
+### Why the GitHub token is a Project secret, not an environment variable
+
+An environment variable is process wide. The worker starts agent sessions
+from the same process, so a GitHub credential in the environment can reach
+an agent. SDD section 30 forbids the Implementer from holding a GitHub write
+credential. A Project secret stays scoped to one Project and reaches only
+the publishing step, never the Implementer, unless an operator marks it
+explicitly for injection.
+
+Factoree also serves more than one Project. Each Project pushes to its own
+repository with its own token. One environment variable cannot hold a
+different token per Project, so the token must live in the Project secret
+store instead.
+
+`LIVE_GITHUB_TOKEN` is a DIFFERENT credential from the `GITHUB_TOKEN` Project
+secret. `tests/live/scenario.ts` reads `LIVE_GITHUB_TOKEN` from the
+environment to act as the human operator, and to confirm the pull request
+Factoree opens actually exists. `GITHUB_TOKEN` is the credential Factoree
+itself uses to push and to open that pull request. The two names invite
+confusion. Keep them distinct in your head, and in your `.env` file.
+
+### 4. Create the Backstage context source row
+
+Call `POST /admin/projects/:id/context-sources`, defined at
+`src/http/admin/context-sources.routes.ts:32-64`. Set `kind` to
+`"backstage"`.
+
+    curl -s -X POST \
+      "$API_BASE/admin/projects/<PROJECT_ID>/context-sources?linearWorkspaceId=<LINEAR_WORKSPACE_ID>" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "sourceId": "backstage-catalog",
+        "kind": "backstage",
+        "endpoint": "<BACKSTAGE_CATALOG_URL>",
+        "enabled": true
+      }'
+
+### 5. Create the MCP context source row
+
+Call the same endpoint again. Set `kind` to `"mcp"`.
+
+    curl -s -X POST \
+      "$API_BASE/admin/projects/<PROJECT_ID>/context-sources?linearWorkspaceId=<LINEAR_WORKSPACE_ID>" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "sourceId": "mcp-source",
+        "kind": "mcp",
+        "endpoint": "<MCP_SOURCE_URL>",
+        "enabled": true
+      }'
+
+`src/domain/context/context-source-configuration.ts:9` fixes the two valid
+`kind` values to `"backstage"` and `"mcp"`. Every path, including Path A and
+Path A-Sprite, needs one enabled row of each kind for the Project the
+fixture issue belongs to.
+
 ## Path A: the local run
 
 This path needs only a Linear account and a GitHub account. Both providers
@@ -127,8 +270,9 @@ Run every command from the repository root. The `justfile` drives this path.
 10. Set the public URL as the webhook target in the Linear app settings of the test workspace.
     Linear delivers the delegation webhook to that URL. Linear must reach the API over the
     public internet. This is the one part of the local path that is not purely local.
-11. Register the local Backstage stub and the local MCP stub as context source rows with
-    `POST /admin/projects/:id/context-sources`.
+11. Complete the "Setup: create the Tenant, the Project, and the Project secrets" section
+    above: create the Project, set the `GITHUB_TOKEN` Project secret, then register the local
+    Backstage stub and the local MCP stub as context source rows.
 12. Run `just live-local` to run the live acceptance scenario against the local infrastructure.
 13. Run `just down` to stop the local PostgreSQL container when you finish.
 
@@ -217,8 +361,9 @@ Run every command from the repository root. The `justfile` drives this path.
 10. In a separate terminal, run `just tunnel` to start a public tunnel to the HTTP API. Copy
     the public URL the tunnel command prints.
 11. Set the public URL as the webhook target in the Linear app settings of the test workspace.
-12. Register the local Backstage stub and the local MCP stub as context source rows with
-    `POST /admin/projects/:id/context-sources`.
+12. Complete the "Setup: create the Tenant, the Project, and the Project secrets" section
+    above: create the Project, set the `GITHUB_TOKEN` Project secret, then register the local
+    Backstage stub and the local MCP stub as context source rows.
 13. Run `just live-sprite` to run the live acceptance scenario against local infrastructure and
     a real Fly Sprite.
 14. Run `just down` to stop the local PostgreSQL container when you finish.
@@ -343,9 +488,10 @@ Backstage and MCP name no environment variable. Each needs one enabled
    set `SANDBOX_ADAPTER` and `SPRITES_TOKEN`.
 2. Start PostgreSQL and apply the migrations with `npm run db:migrate`.
 3. Start the worker against the real Temporal service.
-4. Register the test Backstage catalog and the test MCP source as context
-   source rows with `POST /admin/projects/:id/context-sources`, so the
-   worker can reach them.
+4. Complete the "Setup: create the Tenant, the Project, and the Project secrets" section
+   above: create the Project, set the `GITHUB_TOKEN` Project secret, then register the test
+   Backstage catalog and the test MCP source as context source rows, so the worker can reach
+   them.
 5. Run `npm run acceptance:live`.
 6. Read the printed report.
 
@@ -383,3 +529,17 @@ to other projects on this machine, not only Factoree data.
 `just down` stops the local PostgreSQL container and keeps the named volume
 `factoree_postgres_data`. Only `just nuke` deletes that volume, and it prints
 a warning before it does.
+
+## Troubleshooting: missing `GITHUB_TOKEN` Project secret
+
+A run can fail at the last step, after refinement, context resolution,
+validation, implementation, verification, and review already ran, with this
+error:
+
+    The Project holds no secret named "GITHUB_TOKEN". Factoree needs it to push the branch and
+    to open the pull request. Add it to the Project secrets.
+
+This means the Project has no `GITHUB_TOKEN` secret. Follow "3. Set the
+`GITHUB_TOKEN` Project secret" in the Setup section above. Set the value to
+a GitHub token with write access to the Project's `primaryRepository`. Do
+not mark it for injection into the Implementer.
