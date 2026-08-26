@@ -3,6 +3,12 @@ import {
   REQUIRED_LIVE_CREDENTIALS,
   missingCredentials,
 } from "../live/required-credentials.js";
+import {
+  credentialsFor,
+  LOCAL_DEPENDENCIES,
+  LOCAL_EXCLUDED_DEPENDENCIES,
+  LOCAL_REPLACEMENT_CREDENTIALS,
+} from "../live/profile.js";
 
 describe("the live acceptance credential list", () => {
   it("names one credential for every live dependency of SDD section 66", () => {
@@ -59,4 +65,41 @@ describe("the live acceptance credential list", () => {
       expect(document, `${entry.name} is absent from docs/live-acceptance.md`).toContain(entry.name);
     }
   });
+
+  it("reports every absent credential of the full profile, still", () => {
+    // The full profile must keep demanding all 14 values. This guards the exit-78 path.
+    expect(missingCredentials({})).toHaveLength(credentialsFor("full").length);
+    expect(missingCredentials({})).toHaveLength(14);
+  });
+
+  it("accounts for every dependency of the full list in the local profile build", () => {
+    // A future dependency kind that falls into neither LOCAL_DEPENDENCIES,
+    // LOCAL_REPLACEMENT_CREDENTIALS, nor LOCAL_EXCLUDED_DEPENDENCIES vanishes from the
+    // local list silently. This test fails loudly instead.
+    const fullDependencies = new Set(REQUIRED_LIVE_CREDENTIALS.map((entry) => entry.dependency));
+    const replacementDependencies = new Set(
+      LOCAL_REPLACEMENT_CREDENTIALS.map((entry) => entry.dependency),
+    );
+    const accountedFor = new Set([
+      ...LOCAL_DEPENDENCIES,
+      ...replacementDependencies,
+      ...LOCAL_EXCLUDED_DEPENDENCIES,
+    ]);
+    const unaccounted = [...fullDependencies].filter((dependency) => !accountedFor.has(dependency));
+    expect(unaccounted, `unaccounted dependency: ${unaccounted.join(", ")}`).toEqual([]);
+  });
+
+  it(
+    "documents every local credential in .env.local.example",
+    async () => {
+      const { readFile } = await import("node:fs/promises");
+      const example = await readFile(
+        new URL("../../.env.local.example", import.meta.url),
+        "utf8",
+      );
+      for (const entry of credentialsFor("local")) {
+        expect(example, `${entry.name} is absent from .env.local.example`).toContain(entry.name);
+      }
+    },
+  );
 });
