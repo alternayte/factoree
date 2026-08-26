@@ -1,0 +1,25 @@
+# Local infrastructure only. PostgreSQL 16 matches tests/integration/support/database.ts and
+# prisma/migrations/migration_lock.toml. Temporal is not here, because the installed `temporal`
+# CLI ships a dev server. Run it with `just temporal`.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: factoree
+      POSTGRES_PASSWORD: factoree
+      POSTGRES_DB: factoree
+    ports:
+      - "5432:5432"
+    volumes:
+      - factoree_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factoree -d factoree"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+# This volume holds the local PostgreSQL data. `just down` never deletes it. Only `just nuke`
+# deletes it, and that recipe prints a warning first.
+volumes:
+  factoree_postgres_data:
+    name: factoree_postgres_data
