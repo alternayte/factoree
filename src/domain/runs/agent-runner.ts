@@ -34,6 +34,9 @@ export interface AgentResumeInput {
   timeoutMs: number;
 }
 
+/** What a cancel call actually did. SDD section 50 obligation 1 must not report a silent success. */
+export type AgentCancelOutcome = "cancelled" | "no-live-session";
+
 export interface AgentRunResult {
   session: AgentSessionRef;
   /** True only when the runner process exited zero. It is a claim, not evidence. See SDD section P-01. */
@@ -51,7 +54,7 @@ export interface AgentRunner {
   readonly name: string;
   run(input: AgentRunInput): Promise<AgentRunResult>;
   resume(session: AgentSessionRef, input: AgentResumeInput): Promise<AgentRunResult>;
-  cancel(session: AgentSessionRef): Promise<void>;
+  cancel(session: AgentSessionRef): Promise<AgentCancelOutcome>;
   /**
    * Disposes every session this runner holds for one Run. A Run has a known end, and the
    * workflow reaches that end, so no timer and no size cap is needed. The member is optional,

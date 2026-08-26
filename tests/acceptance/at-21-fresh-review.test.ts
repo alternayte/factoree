@@ -7,6 +7,7 @@ import { createReviewActivities } from "~/activities/review.activities.js";
 import type { ReviewActivityInput, ReviewActivityOutput } from "~/activities/review.activities.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type {
+  AgentCancelOutcome,
   AgentResumeInput,
   AgentRunInput,
   AgentRunResult,
@@ -60,8 +61,8 @@ class ScriptedReviewerRunner implements AgentRunner {
     throw new Error("AT-21 never resumes the Reviewer session.");
   }
 
-  cancel(): Promise<void> {
-    return Promise.resolve();
+  cancel(): Promise<AgentCancelOutcome> {
+    return Promise.resolve("no-live-session");
   }
 }
 

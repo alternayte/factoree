@@ -16,6 +16,7 @@ import { createEvidencePersistence } from "~/activities/evidence.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type {
+  AgentCancelOutcome,
   AgentResumeInput,
   AgentRunInput,
   AgentRunResult,
@@ -178,8 +179,8 @@ class ScriptedValidatorRunner implements AgentRunner {
     throw new Error("The Phase 8 exit test never resumes a validator session.");
   }
 
-  cancel(): Promise<void> {
-    return Promise.resolve();
+  cancel(): Promise<AgentCancelOutcome> {
+    return Promise.resolve("no-live-session");
   }
 }
 
@@ -220,8 +221,8 @@ class ScriptedReviewerRunner implements AgentRunner {
     throw new Error("The Phase 8 exit test never resumes a Reviewer session.");
   }
 
-  cancel(): Promise<void> {
-    return Promise.resolve();
+  cancel(): Promise<AgentCancelOutcome> {
+    return Promise.resolve("no-live-session");
   }
 }
 

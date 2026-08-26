@@ -10,6 +10,7 @@ import type { VerifyActivityInput, VerifyActivityOutput } from "~/activities/ver
 import { createEvidencePersistence } from "~/activities/evidence.activities.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type {
+  AgentCancelOutcome,
   AgentResumeInput,
   AgentRunInput,
   AgentRunResult,
@@ -102,8 +103,8 @@ class ScriptedValidatorRunner implements AgentRunner {
     throw new Error("AT-20 never resumes the User Validator session.");
   }
 
-  cancel(): Promise<void> {
-    return Promise.resolve();
+  cancel(): Promise<AgentCancelOutcome> {
+    return Promise.resolve("no-live-session");
   }
 }
 

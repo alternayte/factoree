@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
-import { createAgentActivities } from "~/activities/agent.activities.js";
+import { createAgentActivities, LiveSessionNotFoundError } from "~/activities/agent.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRecord, RecordAgentExecutionInput } from "~/domain/runs/agent-execution.js";
@@ -143,6 +143,45 @@ describe("the implement activity", () => {
     expect(result.exitCode).toBe(1);
     expect(recorded[0]?.idempotencyKey).toBe("run:run-1:implementer:1");
     expect(runner.cancelled).toHaveLength(0);
+  });
+});
+
+describe("cancelImplementer", () => {
+  it("throws and logs at error when the runner reports no-live-session", async () => {
+    const runner = new FakeRunner();
+    runner.setCancelOutcome("no-live-session");
+    const logLines: string[] = [];
+    const redactor = new Redactor();
+    const activities = createAgentActivities({
+      runners: new AgentRunnerRegistry([runner]),
+      sandbox: new FakeSandbox(),
+      executions: { record: () => Promise.resolve({} as AgentExecutionRecord), listForRun: () => Promise.resolve([]) },
+      secrets: new MemorySecretStore(),
+      redactor,
+      logger: createLogger({ level: "error", redactor, sink: (line) => logLines.push(line) }),
+    });
+
+    const session = { sessionId: "ses_fake", processId: "process-fake", runner: "opencode" };
+    await expect(
+      activities.cancelImplementer({ runnerName: "opencode", session }),
+    ).rejects.toThrow(LiveSessionNotFoundError);
+
+    expect(logLines).toHaveLength(1);
+    const entry = JSON.parse(logLines[0] ?? "{}") as Record<string, unknown>;
+    expect(entry.level).toBe("error");
+    expect(entry.runner).toBe("opencode");
+    expect(entry.session_id).toBe("ses_fake");
+    expect(entry.process_id).toBe("process-fake");
+  });
+
+  it("returns normally and does not throw when the runner reports cancelled", async () => {
+    const runner = new FakeRunner();
+    runner.setCancelOutcome("cancelled");
+    const { activities } = build(runner);
+    const session = { sessionId: "ses_fake", processId: "process-fake", runner: "opencode" };
+    await expect(
+      activities.cancelImplementer({ runnerName: "opencode", session }),
+    ).resolves.toBeUndefined();
   });
 });
 
