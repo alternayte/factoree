@@ -10,10 +10,14 @@ import { REQUIRED_LIVE_CREDENTIALS, type LiveCredential } from "./required-crede
 
 export type LiveProfile = "local" | "full";
 
-const LOCAL_DEPENDENCIES: LiveCredential["dependency"][] = ["linear", "github", "runner"];
+export const LOCAL_DEPENDENCIES: LiveCredential["dependency"][] = ["linear", "github", "runner"];
+
+/** The dependency SDD section 66 names that the local profile drops on purpose. The Fly Sprite
+ * has no local stand-in, so the local profile demands no credential for it. */
+export const LOCAL_EXCLUDED_DEPENDENCIES: LiveCredential["dependency"][] = ["fly-sprites"];
 
 /** The local endpoint values that replace the Temporal Cloud, Backstage, and MCP credentials. */
-const LOCAL_REPLACEMENT_CREDENTIALS: LiveCredential[] = [
+export const LOCAL_REPLACEMENT_CREDENTIALS: LiveCredential[] = [
   {
     name: "LIVE_LOCAL_TEMPORAL_ADDRESS",
     dependency: "temporal",
@@ -73,7 +77,7 @@ export const PROFILE_BANNER: Record<LiveProfile, string> = {
     "SDD SECTION 66 LIVE ACCEPTANCE",
     "",
     "This run uses every real dependency SDD section 66 names.",
-    "A pass here is SDD section 66 proof.",
+    "A pass on this run is SDD section 66 proof. A failure is not.",
   ].join("\n"),
   local: [
     "LOCAL LIVE ACCEPTANCE",

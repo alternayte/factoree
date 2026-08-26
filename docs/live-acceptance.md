@@ -66,6 +66,17 @@ Copy `.env.local.example` to `.env` and fill the values below.
 `LIVE_LOCAL_MCP_ENDPOINT` with working defaults. Leave those four values as
 they are unless you change a stub port.
 
+**These four values gate the scenario check. They do not configure the**
+**worker.** The scenario reads them only to confirm the local infrastructure
+is present. The worker reads its own Temporal setting from the `.env` keys
+`TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE`. The worker reads its own
+Backstage and MCP settings from its topology configuration, not from an
+`.env` key. Keep `LIVE_LOCAL_TEMPORAL_ADDRESS` equal to `TEMPORAL_ADDRESS`
+and `LIVE_LOCAL_TEMPORAL_NAMESPACE` equal to `TEMPORAL_NAMESPACE`. Keep
+`LIVE_LOCAL_BACKSTAGE_BASE_URL` and `LIVE_LOCAL_MCP_ENDPOINT` equal to the
+endpoint each worker topology row names. A mismatch between the two sets
+goes undetected.
+
 ### Procedure
 
 Run every command from the repository root. The `justfile` drives this path.
@@ -77,12 +88,18 @@ Run every command from the repository root. The `justfile` drives this path.
 5. In a separate terminal, run `just temporal` to start the Temporal dev server.
 6. In a separate terminal, run `just stubs` to start the Backstage stub and the MCP stub.
 7. In a separate terminal, run `just worker` to start the Temporal worker.
-8. Run `just live-local` to run the live acceptance scenario against the local infrastructure.
-9. Run `just down` to stop the local PostgreSQL container when you finish.
+8. In a separate terminal, run `just api` to start the HTTP API.
+9. In a separate terminal, run `just tunnel` to start a public tunnel to the HTTP API. Copy the
+   public URL the tunnel command prints.
+10. Set the public URL as the webhook target in the Linear app settings of the test workspace.
+    Linear delivers the delegation webhook to that URL. Linear must reach the API over the
+    public internet. This is the one part of the local path that is not purely local.
+11. Run `just live-local` to run the live acceptance scenario against the local infrastructure.
+12. Run `just down` to stop the local PostgreSQL container when you finish.
 
-Commands 1, 2, 3, 4, and 9 have recorded evidence from a real run on this
-machine. Commands 5, 6, 7, and 8 have not run to completion in this
-repository. `tests/live/scenario.ts` has never executed against a real
+Commands 1, 2, 3, 4, and 12 have recorded evidence from a real run on this
+machine. Commands 5, 6, 7, 8, 9, 10, and 11 have not run to completion in
+this repository. `tests/live/scenario.ts` has never executed against a real
 service.
 
 **Expect defects on the first run of `just live-local`.** Do not assume a
@@ -140,7 +157,7 @@ number in this document to stay accurate.
 
 1. Create a GitHub fixture repository. Do not use a production repository.
 2. If `gh` is already authenticated as your account, reuse that session
-   instead of creating a new token where the tooling permits it.
+   instead of a new token.
 3. Create a token with write access to the fixture repository only. Put it
    in `LIVE_GITHUB_TOKEN`.
 4. Copy the repository name as `owner/name`. Put it in
@@ -224,9 +241,9 @@ and it prints one line for each.
 
 The scenario reads facts from the Proof Pack comment Factoree posts in
 Linear. It does not itself drive the coding-agent runner. It does not itself
-create the Fly Sprite. An operator must confirm the worker process is running
-against every credential above before the command starts, or the scenario
-times out and reports every fact absent.
+create the Fly Sprite. An operator must confirm the worker process runs
+against every credential above before the command starts. Otherwise the
+scenario times out and reports every fact absent.
 
 `tests/live/scenario.ts` has never executed against a real service. Expect
 defects on the first run, on both Path A and Path B.

@@ -3,7 +3,12 @@ import {
   REQUIRED_LIVE_CREDENTIALS,
   missingCredentials,
 } from "../live/required-credentials.js";
-import { credentialsFor } from "../live/profile.js";
+import {
+  credentialsFor,
+  LOCAL_DEPENDENCIES,
+  LOCAL_EXCLUDED_DEPENDENCIES,
+  LOCAL_REPLACEMENT_CREDENTIALS,
+} from "../live/profile.js";
 
 describe("the live acceptance credential list", () => {
   it("names one credential for every live dependency of SDD section 66", () => {
@@ -67,8 +72,25 @@ describe("the live acceptance credential list", () => {
     expect(missingCredentials({})).toHaveLength(14);
   });
 
+  it("accounts for every dependency of the full list in the local profile build", () => {
+    // A future dependency kind that falls into neither LOCAL_DEPENDENCIES,
+    // LOCAL_REPLACEMENT_CREDENTIALS, nor LOCAL_EXCLUDED_DEPENDENCIES vanishes from the
+    // local list silently. This test fails loudly instead.
+    const fullDependencies = new Set(REQUIRED_LIVE_CREDENTIALS.map((entry) => entry.dependency));
+    const replacementDependencies = new Set(
+      LOCAL_REPLACEMENT_CREDENTIALS.map((entry) => entry.dependency),
+    );
+    const accountedFor = new Set([
+      ...LOCAL_DEPENDENCIES,
+      ...replacementDependencies,
+      ...LOCAL_EXCLUDED_DEPENDENCIES,
+    ]);
+    const unaccounted = [...fullDependencies].filter((dependency) => !accountedFor.has(dependency));
+    expect(unaccounted, `unaccounted dependency: ${unaccounted.join(", ")}`).toEqual([]);
+  });
+
   it(
-    "documents every local credential in .env.local.example (PENDING Task 3, expected to fail until it creates that file)",
+    "documents every local credential in .env.local.example",
     async () => {
       const { readFile } = await import("node:fs/promises");
       const example = await readFile(

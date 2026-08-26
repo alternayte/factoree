@@ -42,6 +42,17 @@ migrate:
     export DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)"
     npm run db:migrate
 
+# Start a public tunnel to the local HTTP API, so a real Linear webhook can reach it. This
+# machine has `ngrok` installed and has no `cloudflared` install, so this recipe uses `ngrok`.
+tunnel:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ngrok >/dev/null 2>&1; then
+        echo "ngrok is not installed. Install it first. Run: brew install ngrok" >&2
+        exit 1
+    fi
+    ngrok http 3000
+
 # Start the Temporal dev server in the foreground.
 temporal:
     PATH="{{node_path}}:$PATH" temporal server start-dev
@@ -51,6 +62,10 @@ stubs:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{node_path}}:$PATH"
+    while IFS="=" read -r key value; do
+        [[ -z "${key}" || "${key}" == \#* ]] && continue
+        export "${key}=${value}"
+    done < .env
     trap 'kill 0' EXIT
     node --experimental-strip-types tools/local/backstage-stub.ts &
     node --experimental-strip-types tools/local/mcp-stub.ts &
