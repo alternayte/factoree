@@ -20,7 +20,7 @@ export const RUN_FAILURE_CATEGORIES = [
   "AGENT",
   /** Deterministic verification did not pass within the repair budget. SDD section 35. */
   "VERIFICATION",
-  /** User-level validation did not pass, or Factoree could not run it. SDD section 36. */
+  /** User-level validation did not pass, or Factoree ran no validation. SDD section 36. */
   "VALIDATION",
   /** The independent review blocked, or Factoree obtained no usable review. SDD section 40. */
   "REVIEW",

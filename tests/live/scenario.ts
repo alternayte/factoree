@@ -20,7 +20,7 @@
  *      resolution ran, the Validation Contract froze, deterministic verification ran, review
  *      ran, and the Fly Sprite changed code.
  *   4. Confirms the pull request the Proof Pack links exists in the real GitHub fixture
- *      repository, using the real `GitHubPullRequests` adapter.
+ *      repository. It confirms this with the real `GitHubPullRequests` adapter.
  *
  * A future maintainer who runs this against real accounts must expect it to take minutes, because
  * step 2 waits on an asynchronous Run.
@@ -31,6 +31,8 @@ import { PROOF_PACK_HEADINGS } from "~/domain/evidence/proof-pack.js";
 
 /** How long the scenario waits for Factoree to post the Proof Pack comment. */
 const PROOF_PACK_TIMEOUT_MS = 30 * 60 * 1000;
+/** How long the scenario waits for the first agent activity, proving delegation reached Factoree. */
+const AGENT_ACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 /** How often the scenario re-reads the issue while it waits. */
 const POLL_INTERVAL_MS = 15_000;
 
@@ -98,11 +100,22 @@ const waitForProofPack = async (linear: LinearClient, issueId: string): Promise<
   return null;
 };
 
-/** Whether Factoree posted any agent activity at all, proving the delegation reached it. */
-const hasAgentActivity = async (linear: LinearClient, issueId: string): Promise<boolean> => {
-  const issue = await linear.issue(issueId);
-  const comments = await issue.comments();
-  return comments.nodes.length > 0;
+/**
+ * Polls for the first agent activity Factoree posted, proving the delegation reached it. A
+ * comment counts only when `agentSessionId` is set, because Factoree posts through
+ * `LinearAgentClient.emit`, which calls `createAgentActivity` and so every comment it produces
+ * carries an agent session identifier. A comment a human wrote carries no such identifier and
+ * cannot pass this check.
+ */
+const waitForAgentActivity = async (linear: LinearClient, issueId: string): Promise<boolean> => {
+  const deadline = Date.now() + AGENT_ACTIVITY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const issue = await linear.issue(issueId);
+    const comments = await issue.comments();
+    if (comments.nodes.some((comment) => comment.agentSessionId !== undefined)) return true;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return false;
 };
 
 export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number> => {
@@ -114,13 +127,13 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
   try {
     const delegation = await delegateFixtureIssue(linear, teamId);
     issueId = delegation.issueId;
-    const reached = await hasAgentActivity(linear, delegation.issueId);
+    const reached = await waitForAgentActivity(linear, delegation.issueId);
     facts.push({
       name: "Real Linear delegation reaches Factoree",
       holds: reached,
       detail: reached
-        ? `issue ${delegation.identifier} received at least one agent activity`
-        : `issue ${delegation.identifier} received no agent activity before this check ran`,
+        ? `issue ${delegation.identifier} received at least one Factoree agent activity`
+        : `issue ${delegation.identifier} received no Factoree agent activity before the timeout`,
     });
   } catch (error) {
     facts.push({

@@ -66,7 +66,7 @@ It creates a real fixture issue in the Linear test workspace, delegates it to Fa
 and waits for the Proof Pack comment. It reads the Proof Pack sections to confirm that
 context resolution ran, the Validation Contract froze, deterministic verification ran,
 review ran, and the Fly Sprite changed code. It then confirms the linked pull request
-exists in the real GitHub fixture repository. The command names each fact it could not
+exists in the real GitHub fixture repository. The command names each fact it cannot
 prove, and it prints one line for each.
 
 ## What the command cannot prove alone

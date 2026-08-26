@@ -7,3 +7,14 @@ Controller verification at f2c121f, every stage serialized:
   npm run build                                   exit 0
   aggregate                                       exit 0
 exit=0
+
+
+Controller `npm ci` verification at df09a1f, run after both whole-phase passes ended:
+  npm ci                                          exit 0
+  npx prisma generate                             exit 0
+  npm run build                                   exit 0
+  npx vitest run --config vitest.config.ts        exit 0   1051 passed, 7 skipped, 1058 total
+  aggregate                                       exit 0
+
+The install was clean. The build and the unit suite both ran from that clean install.
+exit=0
