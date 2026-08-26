@@ -24,6 +24,9 @@ SDD section 66 names that state and says plainly it is not equivalent to Done.
 ## Git
 
 - Branch: `main`. Phase 12 is merged.
+- Post-phase fix: the worker-local silent-cancel finding, merged as `c11db35`. The merged
+  result verified exit 0: lint 0, typecheck 0, unit 1054 passed and 7 skipped, integration
+  249 passed, workflow 85 passed, build 0.
 - Phase 12 range: `9fb9585..314d998`, 18 commits on `phase-12-hardening`, then the
   no-fast-forward merge `03aa4c5`.
 - **The merged result on `main` verified exit 0.** The controller ran every stage on `main`
@@ -95,15 +98,18 @@ Phase 4 through Phase 11 entry that Phase 12 did not close still stands.
 
 **New in Phase 12:**
 
-1. **Worker-local state versus a shared task queue.** `CliAgentRunner.sessions` lives
-   in one process, and `src/bin/worker.ts` pins nothing to a worker. On a two-worker
-   deployment `completeRun` can land on worker B, so `releaseRun` frees nothing on
-   worker A and the unbounded growth returns. Worse, `cancelImplementer` can land on
-   worker B, where `cancel()` returns silently when it holds no session, so the
-   workflow believes SDD section 50 obligation 1 was met when nothing was cancelled.
-   Invisible today, because the deployment runs one worker and every Phase 12 test is
-   single-process. Fix by making `cancel` report whether it found the session, or by
-   pinning the session to its worker.
+1. **Worker-local state versus a shared task queue. HALF CLOSED.** `CliAgentRunner.sessions`
+   lives in one process, and `src/bin/worker.ts` pins nothing to a worker.
+   **The silent-cancel half is CLOSED by the post-phase fix `c11db35`.** A cancel that
+   reached a worker holding no live session returned silently, so the workflow recorded
+   that SDD section 50 obligation 1 was met while a live agent kept running.
+   `AgentRunner.cancel` now returns `"cancelled"` or `"no-live-session"`.
+   `cancelImplementer` logs at error and throws on the second, so the bounded retry of
+   three attempts can reach the owning worker. Both call sites wrap the activity in
+   `notify()`, so a Run still reaches its terminal state.
+   **The unbounded-growth half is STILL OPEN.** `releaseRun` remains worker-local. On a
+   two-worker deployment `completeRun` can land on worker B and free nothing on worker A.
+   Fix by pinning a session to its worker, or by moving session state out of process.
 2. **The timeout cancel is post-hoc, not pre-emptive.** `remainingMs() === 0` is
    checked between stages only. Every activity is bounded by the Run budget, and
    `IMPLEMENT_MARGIN_MS` is five minutes, so an agent can survive about five minutes
