@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Historical note (env cleanup):** this plan created `.env.local.example` and `.env.sprite.example`. A later cleanup deleted both files. Every value below now lives in the single `.env.example`, in the Group B section. Read `docs/live-acceptance.md` for the current procedure.
+
 **Goal:** Give an operator a one-command local path that runs the real `tests/live/scenario.ts` against local infrastructure, so the first Fly Sprite run is not also the first execution of that code.
 
 **Architecture:** A `justfile` drives every step. `docker-compose.yml` runs PostgreSQL only, because the installed `temporal` CLI already ships a dev server. Two tiny Fastify stubs stand in for the Backstage catalog and the MCP source. `tests/live` gains a PROFILE: `local` uses local infrastructure and the local sandbox, `full` demands every SDD section 66 dependency. The two profiles never share a pass count.
@@ -41,7 +43,7 @@ Every local run must print that it is not SDD section 66 proof. The `full` profi
 | --- | --- |
 | `justfile` (create) | Every operator command. The single entry point. |
 | `docker-compose.yml` (create) | PostgreSQL only. Temporal runs from the CLI dev server. |
-| `.env.local.example` (create) | The local profile values. Distinct from `.env.example`. |
+| `.env.example` Group B (superseded plan; originally created as a separate file) | The local profile values. Distinct from `.env.example`. |
 | `tools/local/backstage-stub.ts` (create) | A Fastify server answering the Backstage catalog shape the adapter reads. |
 | `tools/local/mcp-stub.ts` (create) | A Fastify server answering the MCP shape the adapter reads. |
 | `tests/live/profile.ts` (create) | The profile type, the per-profile credential list, and the banner text. |
@@ -120,7 +122,7 @@ git commit -m "feat(live): split the live acceptance credential list by profile"
 Read `tests/unit/required-credentials.test.ts` first. Extend it so it proves:
 - The `full` profile still reports every absent credential and still drives the exit-78 path.
 - The documentation test still passes: every `full` credential name appears in `.env.example` AND `docs/live-acceptance.md`.
-- Every `local` credential name appears in `.env.local.example`. Task 3 creates that file, so write this assertion now and expect it to fail until Task 3 lands. State that in the test name.
+- Every `local` credential name appears in `.env.example`. This assertion is superseded; the env cleanup consolidated every example file into one.
 
 - [ ] **Step 2: Implement the entry point change**
 
@@ -155,7 +157,7 @@ Neither script joins `npm run verify`.
 
 **Files:**
 - Create: `docker-compose.yml`
-- Create: `.env.local.example`
+- Create: `.env.example` (superseded; later consolidated)
 - Create: `tools/local/backstage-stub.ts`
 - Create: `tools/local/mcp-stub.ts`
 
@@ -171,7 +173,7 @@ PostgreSQL only. Use the same major version the Prisma schema targets. Expose 54
 
 Use Fastify, which is already a dependency. Each stub takes its port from an environment variable with a default. Each serves one fixture entity that the local scenario resolves. Keep each file under 80 lines.
 
-- [ ] **Step 4: Write `.env.local.example`**
+- [x] **Step 4: Write the local values (superseded; consolidated into .env.example)**
 
 Every `local` profile credential name from Task 1, with a working default for each local endpoint. The real Linear, GitHub, and runner values stay blank, because the operator supplies them.
 

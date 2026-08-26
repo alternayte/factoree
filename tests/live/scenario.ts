@@ -28,6 +28,12 @@
 import { LinearClient } from "@linear/sdk";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
 import { PROOF_PACK_HEADINGS } from "~/domain/evidence/proof-pack.js";
+import { createPrismaClient } from "~/persistence/prisma/client.js";
+import { resolveProfile } from "./profile.js";
+
+/** SDD section 59 fixes this path. An operator creates a Backstage or an MCP context source
+ * configuration row with it. */
+export const CONTEXT_SOURCE_ADMIN_ENDPOINT = "POST /admin/projects/:id/context-sources";
 
 /** How long the scenario waits for Factoree to post the Proof Pack comment. */
 const PROOF_PACK_TIMEOUT_MS = 30 * 60 * 1000;
@@ -118,10 +124,57 @@ const waitForAgentActivity = async (linear: LinearClient, issueId: string): Prom
   return false;
 };
 
+/**
+ * SDD section 66 requires a test Backstage catalog and a test MCP source. Backstage and MCP
+ * are not environment-configured. They are `ContextSourceConfiguration` rows in the database,
+ * per Project. This check queries those rows directly, rather than trusting an environment
+ * gate, because a gate proves nothing about what the worker actually reads.
+ */
+const checkContextSources = async (env: NodeJS.ProcessEnv): Promise<LiveFact> => {
+  const name = "The Project has an enabled Backstage source and an enabled MCP source";
+  const databaseUrl = env.DATABASE_URL ?? "";
+  const teamId = env.LIVE_LINEAR_TEAM_ID ?? "";
+  const profile = resolveProfile(env);
+  const standInNote =
+    profile === "full"
+      ? ""
+      : " This profile's stub endpoints satisfy this requirement when registered as rows.";
+  const prisma = createPrismaClient(databaseUrl);
+  try {
+    const project = await prisma.project.findFirst({ where: { linearTeamId: teamId } });
+    if (project === null) {
+      return {
+        name,
+        holds: false,
+        detail:
+          `no Project row names Linear team ${teamId}. Create the Project first, then add a ` +
+          `context source with ${CONTEXT_SOURCE_ADMIN_ENDPOINT}.${standInNote}`,
+      };
+    }
+    const sources = await prisma.contextSourceConfiguration.findMany({
+      where: { projectId: project.id, enabled: true },
+    });
+    const hasBackstage = sources.some((source) => source.kind === "backstage");
+    const hasMcp = sources.some((source) => source.kind === "mcp");
+    const holds = hasBackstage && hasMcp;
+    return {
+      name,
+      holds,
+      detail: holds
+        ? "an enabled backstage row and an enabled mcp row exist for the Project."
+        : `the Project is missing an enabled backstage row, an enabled mcp row, or both. ` +
+          `Create the missing row with ${CONTEXT_SOURCE_ADMIN_ENDPOINT}.${standInNote}`,
+    };
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number> => {
   const linear = new LinearClient({ accessToken: env.LIVE_LINEAR_API_KEY ?? "" });
   const teamId = env.LIVE_LINEAR_TEAM_ID ?? "";
   const facts: LiveFact[] = [];
+  facts.push(await checkContextSources(env));
 
   let issueId: string | null = null;
   try {
