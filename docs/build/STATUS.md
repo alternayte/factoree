@@ -124,14 +124,33 @@ Phase 4 through Phase 11 entry that Phase 12 did not close still stands.
 
 ## Blockers
 
-Live Linear, GitHub, Fly Sprites, and Temporal Cloud credentials are needed for
-`npm run acceptance:live`. `.env.example` names the required variables:
-`LIVE_LINEAR_API_KEY`, `LIVE_LINEAR_TEAM_ID`, `LIVE_GITHUB_TOKEN`,
-`LIVE_GITHUB_REPOSITORY`, `LIVE_FLY_API_TOKEN`, `LIVE_FLY_ORGANIZATION`,
-`LIVE_TEMPORAL_ADDRESS`, `LIVE_TEMPORAL_NAMESPACE`, `LIVE_RUNNER_NAME`,
-`LIVE_RUNNER_API_KEY`, `LIVE_BACKSTAGE_BASE_URL`, `LIVE_BACKSTAGE_TOKEN`,
-`LIVE_MCP_ENDPOINT`, and `LIVE_MCP_TOKEN`. See `docs/live-acceptance.md` for the full
-procedure.
+Live Linear, GitHub, and Fly credentials are needed for `just live`, the SDD section 66 proof.
+
+**A later cleanup deleted every environment variable that nothing read.** The repository now
+holds ONE example file, `.env.example`, in two groups. Group A mirrors `src/config/env.ts`.
+Group B holds the four values `tests/live/scenario.ts` really reads.
+
+There are three live profiles. Only `full` satisfies SDD section 66. The other two print a
+banner containing `NOT SDD SECTION 66 PROOF`.
+
+| Recipe | Profile | Requires | Real dependencies |
+| --- | --- | --- | --- |
+| `just live-local` | `local` | 8 variables | Linear, GitHub, runner |
+| `just live-sprite` | `sprite` | 9 variables | the above, plus a real Fly Sprite |
+| `just live` | `full` | 9 variables | every SDD section 66 dependency |
+
+The four driver values are `LIVE_LINEAR_API_KEY`, `LIVE_LINEAR_TEAM_ID`, `LIVE_GITHUB_TOKEN`,
+and `LIVE_GITHUB_REPOSITORY`. The scenario acts as the human, so it needs its own Linear and
+GitHub credentials. The application holds its own credentials in the database.
+
+`SPRITES_TOKEN` is the Fly credential the worker uses. `SANDBOX_ADAPTER` selects the sandbox.
+The `sprite` and `full` profiles check that its VALUE equals `fly-sprites`.
+
+**Backstage and MCP are NOT environment-configured.** They are `ContextSourceConfiguration`
+rows per Project. The scenario checks those rows at run time and names the admin endpoint that
+creates them.
+
+See `docs/live-acceptance.md` for the full procedure.
 
 ## Environment notes
 

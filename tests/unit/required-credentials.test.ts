@@ -1,150 +1,105 @@
 import { describe, expect, it } from "vitest";
 import {
-  REQUIRED_LIVE_CREDENTIALS,
-  missingCredentials,
+  DRIVER_CREDENTIALS,
+  COMMON_INFRASTRUCTURE_REQUIREMENTS,
+  LOCAL_SANDBOX_REQUIREMENT,
+  SPRITE_SANDBOX_REQUIREMENTS,
+  unmetRequirementsFor,
 } from "../live/required-credentials.js";
-import {
-  credentialsFor,
-  LOCAL_DEPENDENCIES,
-  LOCAL_EXCLUDED_DEPENDENCIES,
-  LOCAL_REPLACEMENT_CREDENTIALS,
-} from "../live/profile.js";
+import { credentialsFor } from "../live/profile.js";
 
-describe("the live acceptance credential list", () => {
-  it("names one credential for every live dependency of SDD section 66", () => {
-    // SDD section 66 lists seven live dependencies. Every one needs at least one credential
-    // or endpoint, or the live test cannot reach it.
-    const dependencies = new Set(REQUIRED_LIVE_CREDENTIALS.map((entry) => entry.dependency));
-    expect([...dependencies].sort()).toEqual([
-      "backstage",
-      "fly-sprites",
-      "github",
-      "linear",
-      "mcp",
-      "runner",
-      "temporal",
-    ]);
+const fillPresent = (env: NodeJS.ProcessEnv, requirements: { name: string; kind: string; value?: string }[]): void => {
+  for (const entry of requirements) {
+    env[entry.name] = entry.kind === "equals" ? (entry.value ?? "value") : "value";
+  }
+};
+
+describe("the live acceptance driver credentials", () => {
+  it("names exactly the four values tests/live/scenario.ts reads", () => {
+    const names = DRIVER_CREDENTIALS.map((entry) => entry.name).sort();
+    expect(names).toEqual(
+      [
+        "LIVE_LINEAR_API_KEY",
+        "LIVE_LINEAR_TEAM_ID",
+        "LIVE_GITHUB_TOKEN",
+        "LIVE_GITHUB_REPOSITORY",
+      ].sort(),
+    );
   });
 
-  it("reports every absent credential", () => {
-    expect(missingCredentials({})).toHaveLength(REQUIRED_LIVE_CREDENTIALS.length);
+  it("documents every driver credential in .env.example", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
+    for (const entry of DRIVER_CREDENTIALS) {
+      expect(example, `${entry.name} is absent from .env.example`).toContain(entry.name);
+    }
+  });
+});
+
+describe("unmetRequirementsFor", () => {
+  it("reports every absent requirement", () => {
+    const requirements = [...DRIVER_CREDENTIALS, ...COMMON_INFRASTRUCTURE_REQUIREMENTS];
+    expect(unmetRequirementsFor({}, requirements)).toHaveLength(requirements.length);
   });
 
-  it("reports nothing when every credential is present", () => {
+  it("reports nothing when every present requirement is supplied", () => {
     const env: NodeJS.ProcessEnv = {};
-    for (const entry of REQUIRED_LIVE_CREDENTIALS) env[entry.name] = "value";
-    expect(missingCredentials(env)).toEqual([]);
+    fillPresent(env, DRIVER_CREDENTIALS);
+    expect(unmetRequirementsFor(env, DRIVER_CREDENTIALS)).toEqual([]);
   });
 
   it("treats an empty string as absent", () => {
     const env: NodeJS.ProcessEnv = {};
-    for (const entry of REQUIRED_LIVE_CREDENTIALS) env[entry.name] = "value";
-    env[REQUIRED_LIVE_CREDENTIALS[0]!.name] = "";
-    expect(missingCredentials(env).map((entry) => entry.name)).toEqual([
-      REQUIRED_LIVE_CREDENTIALS[0]!.name,
+    fillPresent(env, DRIVER_CREDENTIALS);
+    env[DRIVER_CREDENTIALS[0]!.name] = "";
+    expect(unmetRequirementsFor(env, DRIVER_CREDENTIALS).map((entry) => entry.requirement.name)).toEqual([
+      DRIVER_CREDENTIALS[0]!.name,
     ]);
   });
 
-  it("documents every credential in .env.example", async () => {
-    // A credential nobody documented is a credential the operator cannot supply. SDD section
-    // 66 requires the list in `.env.example`.
+  it("reports an equals requirement as unmet when the variable is absent", () => {
+    const unmet = unmetRequirementsFor({}, [LOCAL_SANDBOX_REQUIREMENT]);
+    expect(unmet).toHaveLength(1);
+    expect(unmet[0]!.actual).toBeUndefined();
+  });
+
+  it("reports an equals requirement as unmet, with the actual value, when the value is wrong", () => {
+    const unmet = unmetRequirementsFor({ SANDBOX_ADAPTER: "fly-sprites" }, [LOCAL_SANDBOX_REQUIREMENT]);
+    expect(unmet).toHaveLength(1);
+    expect(unmet[0]!.actual).toBe("fly-sprites");
+  });
+
+  it("reports an equals requirement as met when the value matches", () => {
+    const unmet = unmetRequirementsFor({ SANDBOX_ADAPTER: "local" }, [LOCAL_SANDBOX_REQUIREMENT]);
+    expect(unmet).toEqual([]);
+  });
+
+  it("keeps the sprite sandbox requirements at SANDBOX_ADAPTER and SPRITES_TOKEN", () => {
+    const names = SPRITE_SANDBOX_REQUIREMENTS.map((entry) => entry.name).sort();
+    expect(names).toEqual(["SANDBOX_ADAPTER", "SPRITES_TOKEN"]);
+  });
+
+  it("documents every common infrastructure requirement in .env.example", async () => {
     const { readFile } = await import("node:fs/promises");
     const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
-    for (const entry of REQUIRED_LIVE_CREDENTIALS) {
+    for (const entry of COMMON_INFRASTRUCTURE_REQUIREMENTS) {
       expect(example, `${entry.name} is absent from .env.example`).toContain(entry.name);
     }
   });
 
-  it("documents every credential in docs/live-acceptance.md", async () => {
+  it("documents every driver credential in docs/live-acceptance.md", async () => {
     const { readFile } = await import("node:fs/promises");
-    const document = await readFile(
-      new URL("../../docs/live-acceptance.md", import.meta.url),
-      "utf8",
-    );
-    for (const entry of REQUIRED_LIVE_CREDENTIALS) {
+    const document = await readFile(new URL("../../docs/live-acceptance.md", import.meta.url), "utf8");
+    for (const entry of DRIVER_CREDENTIALS) {
       expect(document, `${entry.name} is absent from docs/live-acceptance.md`).toContain(entry.name);
     }
   });
+});
 
-  it("reports every absent credential of the full profile, still", () => {
-    // The full profile must keep demanding all 14 values. This guards the exit-78 path.
-    expect(missingCredentials({})).toHaveLength(credentialsFor("full").length);
-    expect(missingCredentials({})).toHaveLength(14);
-  });
-
-  it("accounts for every dependency of the full list in the local profile build", () => {
-    // A future dependency kind that falls into neither LOCAL_DEPENDENCIES,
-    // LOCAL_REPLACEMENT_CREDENTIALS, nor LOCAL_EXCLUDED_DEPENDENCIES vanishes from the
-    // local list silently. This test fails loudly instead.
-    const fullDependencies = new Set(REQUIRED_LIVE_CREDENTIALS.map((entry) => entry.dependency));
-    const replacementDependencies = new Set(
-      LOCAL_REPLACEMENT_CREDENTIALS.map((entry) => entry.dependency),
+describe("no invented LIVE_ variable remains", () => {
+  it("keeps credentialsFor(full) to exactly the driver credentials plus common infrastructure plus sprite sandbox requirements", () => {
+    expect(credentialsFor("full")).toHaveLength(
+      DRIVER_CREDENTIALS.length + COMMON_INFRASTRUCTURE_REQUIREMENTS.length + SPRITE_SANDBOX_REQUIREMENTS.length,
     );
-    const accountedFor = new Set([
-      ...LOCAL_DEPENDENCIES,
-      ...replacementDependencies,
-      ...LOCAL_EXCLUDED_DEPENDENCIES,
-    ]);
-    const unaccounted = [...fullDependencies].filter((dependency) => !accountedFor.has(dependency));
-    expect(unaccounted, `unaccounted dependency: ${unaccounted.join(", ")}`).toEqual([]);
-  });
-
-  it(
-    "documents every local credential in .env.local.example",
-    async () => {
-      const { readFile } = await import("node:fs/promises");
-      const example = await readFile(
-        new URL("../../.env.local.example", import.meta.url),
-        "utf8",
-      );
-      for (const entry of credentialsFor("local")) {
-        expect(example, `${entry.name} is absent from .env.local.example`).toContain(entry.name);
-      }
-    },
-  );
-
-  it("accounts for every dependency of the full list in the sprite profile build", () => {
-    // The sprite profile is the local list plus every fly-sprites credential. A future
-    // dependency kind that falls into neither the local accounting nor "fly-sprites" vanishes
-    // from the sprite list silently. This test fails loudly instead.
-    const fullDependencies = new Set(REQUIRED_LIVE_CREDENTIALS.map((entry) => entry.dependency));
-    const replacementDependencies = new Set(
-      LOCAL_REPLACEMENT_CREDENTIALS.map((entry) => entry.dependency),
-    );
-    const accountedFor = new Set([
-      ...LOCAL_DEPENDENCIES,
-      ...replacementDependencies,
-      ...LOCAL_EXCLUDED_DEPENDENCIES,
-      "fly-sprites",
-    ]);
-    const unaccounted = [...fullDependencies].filter((dependency) => !accountedFor.has(dependency));
-    expect(unaccounted, `unaccounted dependency: ${unaccounted.join(", ")}`).toEqual([]);
-  });
-
-  it(
-    "documents every sprite credential in .env.sprite.example",
-    async () => {
-      const { readFile } = await import("node:fs/promises");
-      const example = await readFile(
-        new URL("../../.env.sprite.example", import.meta.url),
-        "utf8",
-      );
-      for (const entry of credentialsFor("sprite")) {
-        expect(example, `${entry.name} is absent from .env.sprite.example`).toContain(entry.name);
-      }
-    },
-  );
-
-  it("documents every sprite credential in docs/live-acceptance.md", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const document = await readFile(
-      new URL("../../docs/live-acceptance.md", import.meta.url),
-      "utf8",
-    );
-    for (const entry of credentialsFor("sprite")) {
-      expect(document, `${entry.name} is absent from docs/live-acceptance.md`).toContain(
-        entry.name,
-      );
-    }
   });
 });

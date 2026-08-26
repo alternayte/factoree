@@ -9,7 +9,7 @@
  * profile SDD section 66 demands. The `local` profile is a convenience for the scenario code.
  * A `local` pass is NOT SDD section 66 proof. Read `docs/build/local-harness-plan.md`.
  */
-import { missingCredentialsFor } from "./required-credentials.js";
+import { unmetRequirementsFor } from "./required-credentials.js";
 import { PROFILE_BANNER, credentialsFor, resolveProfile } from "./profile.js";
 
 const BLOCKED_EXTERNAL_EXIT = 78;
@@ -18,16 +18,22 @@ const main = async (): Promise<number> => {
   const profile = resolveProfile(process.env);
   process.stdout.write(`${PROFILE_BANNER[profile]}\n\n`);
 
-  const credentials = credentialsFor(profile);
-  const missing = missingCredentialsFor(process.env, credentials);
-  if (missing.length > 0) {
+  const requirements = credentialsFor(profile);
+  const unmet = unmetRequirementsFor(process.env, requirements);
+  if (unmet.length > 0) {
     process.stdout.write("BLOCKED_EXTERNAL\n\n");
     process.stdout.write(
-      `The live acceptance test needs ${credentials.length} values. ` +
-        `${missing.length} of them are absent:\n\n`,
+      `The live acceptance test needs ${requirements.length} values. ` +
+        `${unmet.length} of them do not meet their requirement:\n\n`,
     );
-    for (const entry of missing) {
-      process.stdout.write(`  ${entry.name} (${entry.dependency}) — ${entry.description}\n`);
+    for (const { requirement, actual } of unmet) {
+      const state =
+        actual === undefined
+          ? "is absent"
+          : `is "${actual}", but it must equal "${requirement.value}"`;
+      process.stdout.write(
+        `  ${requirement.name} (${requirement.dependency}) ${state} — ${requirement.description}\n`,
+      );
     }
     process.stdout.write("\nRead docs/live-acceptance.md for the setup procedure.\n");
     process.stdout.write("BLOCKED_EXTERNAL is not equivalent to DONE. See SDD section 66.\n");
