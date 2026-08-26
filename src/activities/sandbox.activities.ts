@@ -57,6 +57,11 @@ export interface PrepareSandboxActivityOutput {
   repositoryInstructions: string;
   /** SDD sections 16 and 34. The applicable skills, as prompt lines. */
   skills: string[];
+  /**
+   * SDD section 55. The commit the organization skills checkout resolved to. It is absent when
+   * the Project configures no organization skills repository.
+   */
+  organizationSkillsSha?: string;
 }
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
@@ -136,6 +141,9 @@ const prepare = async (
       retainUntil,
       baseSha: prepared.checkout.primary.baseSha,
       implementerRunner: prepared.runtime.implementerRunner,
+      ...(prepared.organizationSkillsSha === undefined
+        ? {}
+        : { organizationSkillsSha: prepared.organizationSkillsSha }),
     });
   } catch (error) {
     // The Run holds no reference to this sandbox, and a Temporal retry creates a new one. The
@@ -192,6 +200,9 @@ const prepare = async (
     preview: prepared.preview,
     repositoryInstructions: prepared.repositoryInstructions,
     skills: prepared.skills,
+    ...(prepared.organizationSkillsSha === undefined
+      ? {}
+      : { organizationSkillsSha: prepared.organizationSkillsSha }),
   };
 };
 

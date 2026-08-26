@@ -52,6 +52,12 @@ export interface AgentRunner {
   run(input: AgentRunInput): Promise<AgentRunResult>;
   resume(session: AgentSessionRef, input: AgentResumeInput): Promise<AgentRunResult>;
   cancel(session: AgentSessionRef): Promise<void>;
+  /**
+   * Disposes every session this runner holds for one Run. A Run has a known end, and the
+   * workflow reaches that end, so no timer and no size cap is needed. The member is optional,
+   * because a runner that holds no per-Run state has nothing to release.
+   */
+  releaseRun?(runId: string): void;
 }
 
 export class UnknownAgentRunnerError extends Error {
@@ -84,6 +90,11 @@ export class AgentRunnerRegistry {
 
   names(): string[] {
     return [...this.runners.keys()].sort();
+  }
+
+  /** Every registered runner. The order is the registration order. */
+  all(): AgentRunner[] {
+    return [...this.runners.values()];
   }
 }
 

@@ -12,6 +12,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:workflow": "vitest run --config vitest.workflow.config.ts",
+    "acceptance:live": "node --experimental-strip-types --import ./tests/live/register-loader.mjs tests/live/acceptance-live.ts",
     "build": "tsc -p tsconfig.build.json",
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:integration && npm run test:workflow && npm run build",
     "db:generate": "prisma generate",

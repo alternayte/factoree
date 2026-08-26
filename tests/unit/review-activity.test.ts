@@ -479,4 +479,35 @@ describe("the review activity", () => {
     expect(result.reportProblem).toMatch(/Action Policy/);
     expect(findings.rows).toHaveLength(0);
   });
+
+  it("fails the review when the Reviewer moved HEAD but changed no tracked file", async () => {
+    // The tracked tree is identical before and after. Only `rev-parse HEAD` differs. SDD
+    // section 40: the Reviewer reads. It does not commit.
+    const { activities, sandbox, findings } = build();
+    let revParseCalls = 0;
+    sandbox.onExec = (command) => {
+      const line = [command.file, ...command.args].join(" ");
+      if (line.includes("write-tree")) return { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
+      if (line.includes("rev-parse HEAD")) {
+        revParseCalls += 1;
+        return { exitCode: 0, stdout: `${(revParseCalls === 1 ? "a" : "b").repeat(40)}\n`, stderr: "" };
+      }
+      if (/--name-only/.test(line)) return { exitCode: 0, stdout: "src/foo.ts", stderr: "" };
+      if (/diff --cached [0-9a-f]{40}$/.test(line)) {
+        return { exitCode: 0, stdout: "diff --git a/src/foo.ts b/src/foo.ts\n+changed\n", stderr: "" };
+      }
+      if (/^cat /.test(line)) return { exitCode: 0, stdout: passReport, stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const result: ReviewActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.review(activityInput),
+      input,
+    );
+
+    expect(result.reportUsable).toBe(false);
+    expect(result.passed).toBe(false);
+    expect(result.verdict).toBe("fail");
+    expect(findings.rows).toHaveLength(0);
+  });
 });

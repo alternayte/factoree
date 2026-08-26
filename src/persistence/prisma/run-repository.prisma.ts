@@ -10,6 +10,7 @@ import type {
   RunStatusPatch,
 } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
+import type { RunFailureCategory } from "~/domain/runs/failure-category.js";
 
 type RunRow = Awaited<ReturnType<FactoreePrismaClient["run"]["findFirst"]>>;
 
@@ -22,6 +23,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   temporalWorkflowId: row.temporalWorkflowId,
   status: row.status as RunStatus,
   failureReason: (row.failureReason as RunFailureReason | null) ?? null,
+  failureCategory: (row.failureCategory as RunFailureCategory | null) ?? null,
   autonomyLevel: row.autonomyLevel,
   implementerRunner: row.implementerRunner,
   validatorRunner: row.validatorRunner,
@@ -35,6 +37,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   pullRequestUrl: row.pullRequestUrl,
   contextContractVersion: row.contextContractVersion,
   validationContractVersion: row.validationContractVersion,
+  organizationSkillsSha: row.organizationSkillsSha ?? null,
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   repairCount: row.repairCount,
@@ -89,6 +92,7 @@ export class PrismaRunRepository implements RunRepository {
       data: {
         status,
         ...(patch.failureReason === undefined ? {} : { failureReason: patch.failureReason }),
+        ...(patch.failureCategory === undefined ? {} : { failureCategory: patch.failureCategory }),
         ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
         ...(patch.completedAt === undefined ? {} : { completedAt: patch.completedAt }),
         ...(patch.repairCount === undefined ? {} : { repairCount: patch.repairCount }),
@@ -119,6 +123,9 @@ export class PrismaRunRepository implements RunRepository {
           spriteRetainUntil: sandbox.retainUntil,
           baseSha: sandbox.baseSha,
           implementerRunner: sandbox.implementerRunner,
+          ...(sandbox.organizationSkillsSha === undefined
+            ? {}
+            : { organizationSkillsSha: sandbox.organizationSkillsSha }),
         },
       });
       // A write that reaches no row must not report success. The Run would then hold no

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRunActivities } from "~/activities/run.activities.js";
 import type { RunRecord, RunRepository, RunStatusPatch } from "~/domain/runs/run-repository.js";
 import type { RunStatus } from "~/domain/runs/run-status.js";
+import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -15,6 +16,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   temporalWorkflowId: "workflow-1",
   status,
   failureReason: null,
+  failureCategory: null,
   autonomyLevel: "L2",
   implementerRunner: null,
   validatorRunner: null,
@@ -28,6 +30,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   pullRequestUrl: null,
   contextContractVersion: null,
   validationContractVersion: null,
+  organizationSkillsSha: null,
   proofPackSha256: null,
   proofPackPostedAt: null,
   repairCount,
@@ -39,15 +42,22 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
 /** Records every `updateStatus` call, so a test can read the patch the activity sent. */
 const build = () => {
   const calls: Array<{ id: string; status: RunStatus; patch?: RunStatusPatch }> = [];
+  const released: string[] = [];
   const runs = {
     updateStatus: (id: string, status: RunStatus, patch?: RunStatusPatch) => {
       calls.push({ id, status, ...(patch === undefined ? {} : { patch }) });
       return Promise.resolve(record(status, patch?.repairCount ?? 0));
     },
+    findById: () => Promise.resolve(null),
   } as unknown as RunRepository;
   const redactor = new Redactor();
-  const activities = createRunActivities({ runs, logger: createLogger({ level: "error", redactor }) });
-  return { activities, calls };
+  // A minimal double of `AgentRunnerRegistry`. Its one runner records every run id `completeRun`
+  // releases, so a test can prove the release reaches the runner.
+  const runners = {
+    all: () => [{ name: "fake", releaseRun: (runId: string) => released.push(runId) }],
+  } as unknown as AgentRunnerRegistry;
+  const activities = createRunActivities({ runs, logger: createLogger({ level: "error", redactor }), runners });
+  return { activities, calls, released };
 };
 
 /** The current value of `factoree_repairs_total` for the labels of the test Run and one reason. */
@@ -112,5 +122,33 @@ describe("setRunStatus", () => {
     await activities.setRunStatus({ runId: "run-1", status: "VERIFYING" });
     await activities.setRunStatus({ runId: "run-1", status: "PREPARING" });
     expect(await repairCount()).toBe(before);
+  });
+});
+
+describe("completeRun", () => {
+  it("derives the category from the reason and never reads it from the caller (SDD section 67)", async () => {
+    const { activities, calls } = build();
+    await activities.completeRun({
+      tenantId: "tenant-1",
+      runId: "run-1",
+      status: "FAILED",
+      failureReason: "PATCH_HASH_MISMATCH",
+      completedAt: new Date().toISOString(),
+    });
+    // The activity input carries no category. The persisted patch must still carry one.
+    expect(calls.find((call) => call.status === "FAILED")?.patch?.failureCategory).toBe(
+      "PUBLICATION",
+    );
+  });
+
+  it("releases every runner session when the Run reaches a terminal state", async () => {
+    const { activities, released } = build();
+    await activities.completeRun({
+      tenantId: "tenant-1",
+      runId: "run-1",
+      status: "READY_FOR_HUMAN",
+      completedAt: new Date().toISOString(),
+    });
+    expect(released).toEqual(["run-1"]);
   });
 });

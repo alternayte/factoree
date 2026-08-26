@@ -139,6 +139,7 @@ const stubPublishToBranch = (
       publishedPatchSha256: input.verifiedPatchSha256,
       treeSha: "b".repeat(40),
       branch: input.branch,
+      gitVersion: "git version 0.0.0-test",
     });
   };
   fake.inputs = inputs;

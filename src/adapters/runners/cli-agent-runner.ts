@@ -50,15 +50,13 @@ export abstract class CliAgentRunner implements AgentRunner {
   abstract readonly name: string;
   private readonly pollIntervalMs: number;
   private readonly clock: () => number;
-  // An entry lives for the lifetime of this runner instance. Factoree runs run and resume
-  // as Temporal activities, and Temporal retries an activity with its original arguments
-  // unchanged, so a caller can present an old AgentSessionRef on a retry. An entry must not
-  // be removed while any caller can still hold a reference to it. This map therefore grows
-  // without a bound on the number of Runs, for the life of the worker process. Only a worker
-  // restart clears it. Disposal of run-scoped state belongs to a later phase that knows when
-  // a Run has ended.
+  // Every session of one Run, by process id. A Temporal activity retry can present an old
+  // `AgentSessionRef`, so an entry must live until the Run itself ends. `releaseRun` disposes
+  // every entry of one Run, which bounds the map by the number of Runs in flight.
   private readonly sessions = new Map<string, LiveSession>();
   private readonly activeByRun = new Map<string, string>();
+  /** The process ids one Run created, so `releaseRun` can dispose all of them. */
+  private readonly processesByRun = new Map<string, Set<string>>();
 
   constructor(protected readonly cliOptions: CliAgentRunnerOptions) {
     this.pollIntervalMs = cliOptions.pollIntervalMs ?? 1_000;
@@ -111,6 +109,7 @@ export abstract class CliAgentRunner implements AgentRunner {
     };
     this.sessions.set(process.id, live);
     this.activeByRun.set(input.runId, process.id);
+    this.trackProcess(input.runId, process.id);
 
     try {
       return await this.awaitProcess(live, input.timeoutMs);
@@ -135,6 +134,8 @@ export abstract class CliAgentRunner implements AgentRunner {
 
     const live: LiveSession = { ...previous, process, cancelled: false };
     this.sessions.set(process.id, live);
+    const owner = this.runOfProcess(session.processId);
+    if (owner !== undefined) this.trackProcess(owner, process.id);
     return await this.awaitProcess(live, input.timeoutMs);
   }
 
@@ -143,6 +144,37 @@ export abstract class CliAgentRunner implements AgentRunner {
     if (live === undefined) return;
     live.cancelled = true;
     await live.sandbox.cancelProcess(live.ref, live.process);
+  }
+
+  /**
+   * Disposes every session of one Run. Call it once the Run reaches a terminal state. A later
+   * call with the same run id is a no-op, so a Temporal activity retry is safe.
+   */
+  releaseRun(runId: string): void {
+    const processes = this.processesByRun.get(runId);
+    if (processes !== undefined) {
+      for (const processId of processes) this.sessions.delete(processId);
+      this.processesByRun.delete(runId);
+    }
+    this.activeByRun.delete(runId);
+  }
+
+  /** The number of sessions this runner still holds. A test uses it to prove the bound. */
+  retainedSessionCount(): number {
+    return this.sessions.size;
+  }
+
+  private trackProcess(runId: string, processId: string): void {
+    const existing = this.processesByRun.get(runId);
+    if (existing === undefined) this.processesByRun.set(runId, new Set([processId]));
+    else existing.add(processId);
+  }
+
+  private runOfProcess(processId: string): string | undefined {
+    for (const [runId, processes] of this.processesByRun) {
+      if (processes.has(processId)) return runId;
+    }
+    return undefined;
   }
 
   /** Polls the sandbox process until it exits, its budget ends, or Factoree cancels it. */

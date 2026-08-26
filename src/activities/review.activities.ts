@@ -13,7 +13,11 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildReviewerInput } from "~/domain/review/reviewer-input.js";
-import { captureSourceDiff, worktreeFingerprint } from "~/domain/review/source-diff.js";
+import {
+  captureSourceDiff,
+  worktreeFingerprint,
+  worktreeGitStateFingerprint,
+} from "~/domain/review/source-diff.js";
 import {
   parseReviewReport,
   ReviewReportInvalidError,
@@ -182,6 +186,14 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // returns. A Reviewer write to the tracked content of the primary worktree is a fact
       // Factoree can detect.
       const beforeFingerprint = await worktreeFingerprint(
+        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
+        { ref, primaryPath: input.primaryPath },
+      );
+
+      // The tree object cannot see `HEAD` or the ref set. A Reviewer that commits, resets, or
+      // creates a branch changes the base the patch is taken against, and no tree comparison
+      // catches that. SDD section 40 requires an independent review, not an edit.
+      const beforeGitState = await worktreeGitStateFingerprint(
         { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
         { ref, primaryPath: input.primaryPath },
       );
@@ -355,7 +367,11 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
         { ref, primaryPath: input.primaryPath },
       );
-      if (afterFingerprint !== beforeFingerprint) {
+      const afterGitState = await worktreeGitStateFingerprint(
+        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
+        { ref, primaryPath: input.primaryPath },
+      );
+      if (afterFingerprint !== beforeFingerprint || afterGitState !== beforeGitState) {
         return {
           passed: false,
           verdict: "fail",

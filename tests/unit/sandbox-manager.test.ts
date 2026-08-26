@@ -394,6 +394,25 @@ describe("SandboxManager.prepare skills", () => {
     expect(sandbox.networkPolicies[0]?.allowedDomains).toContain("git.acme.example");
   });
 
+  it("returns the SHA of the organization skills checkout (SDD section 55)", async () => {
+    // Two Runs a day apart can read two different skill sets. Without the SHA, no record shows
+    // which set a Run read.
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML);
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
+    const prepared = await manager.prepare({
+      ...input,
+      organizationSkills: { url: "https://git.acme.example/acme/skills.git", ref: "main" },
+    });
+    expect(prepared.organizationSkillsSha).toBe(HEAD);
+  });
+
+  it("returns no SHA when the Project configures no organization skills repository", async () => {
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML);
+    const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
+    const prepared = await manager.prepare(input);
+    expect(prepared.organizationSkillsSha).toBeUndefined();
+  });
+
   it("reports a failed skill directory read at debug level, through the logger given to SandboxManager", async () => {
     const events: { level: string; message: string; fields: LogFields | undefined }[] = [];
     const recordingLogger: Logger = {
