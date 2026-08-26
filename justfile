@@ -42,8 +42,8 @@ migrate:
     export DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)"
     npm run db:migrate
 
-# Start a public tunnel to the local HTTP API, so a real Linear webhook can reach it. This
-# machine has `ngrok` installed and has no `cloudflared` install, so this recipe uses `ngrok`.
+# Start a public tunnel to the local HTTP API, so a real Linear webhook can reach it.
+# This recipe uses `ngrok`, because this machine provides `ngrok` and not `cloudflared`.
 tunnel:
     #!/usr/bin/env bash
     set -euo pipefail
