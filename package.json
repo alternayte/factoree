@@ -14,6 +14,7 @@
     "test:workflow": "vitest run --config vitest.workflow.config.ts",
     "acceptance:live": "node --experimental-strip-types --import ./tests/live/register-loader.mjs tests/live/acceptance-live.ts",
     "acceptance:live:local": "FACTOREE_LIVE_PROFILE=local npm run acceptance:live",
+    "acceptance:live:sprite": "FACTOREE_LIVE_PROFILE=sprite npm run acceptance:live",
     "build": "tsc -p tsconfig.build.json",
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:integration && npm run test:workflow && npm run build",
     "db:generate": "prisma generate",

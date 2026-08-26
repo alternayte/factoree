@@ -43,8 +43,8 @@ const main = async (): Promise<number> => {
   const { runLiveAcceptance } = await import("./scenario.js");
   const exitCode = await runLiveAcceptance(process.env);
 
-  if (profile === "local") {
-    process.stdout.write(`\n${PROFILE_BANNER.local}\n`);
+  if (profile === "local" || profile === "sprite") {
+    process.stdout.write(`\n${PROFILE_BANNER[profile]}\n`);
   }
 
   return exitCode;

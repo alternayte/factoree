@@ -1,16 +1,21 @@
 # Live acceptance
 
 SDD section 66 requires one live proof of Factoree Version 1. This document
-holds two paths.
+holds three paths.
 
 Path A, the local run, uses local infrastructure. It proves the scenario code
 runs. **It does NOT satisfy SDD section 66 and it is NOT SDD section 66
 proof.**
 
+Path A-Sprite, the sprite run, is Path A plus a real Fly Sprite. It lets an
+operator debug the Sprite integration without a Backstage instance and
+without a Temporal Cloud account. **It does NOT satisfy SDD section 66 and it
+is NOT SDD section 66 proof.**
+
 Path B, the real run, uses every dependency SDD section 66 names. **Only Path
 B satisfies SDD section 66.**
 
-Read the whole document before you start either path.
+Read the whole document before you start any path.
 
 ## Path A: the local run
 
@@ -105,6 +110,94 @@ service.
 **Expect defects on the first run of `just live-local`.** Do not assume a
 failure is your own setup error. Check the printed report first, then check
 the stub logs, then check the worker logs.
+
+## Path A-Sprite: the sprite run
+
+This path needs a Linear account, a GitHub account, and a Fly.io account that
+can create a Sprite. It needs no Backstage instance and no Temporal Cloud
+account.
+
+### What this path proves and what it does not prove
+
+The sprite run is Path A plus a real Fly Sprite in place of the local
+sandbox. It substitutes local infrastructure only for the Temporal service,
+the Backstage catalog, and the MCP source. A pass proves that
+`tests/live/scenario.ts` runs against a real Fly Sprite, a real Linear
+workspace, and a real GitHub repository. **A pass here is NOT SDD section 66
+proof.** Only Path B, the real run against every named dependency, satisfies
+SDD section 66. Use this path to debug the Sprite integration on its own,
+because `tests/live/scenario.ts` has never executed against a real Sprite.
+
+### Cost
+
+Linear has a free plan. GitHub is free. The Temporal dev server, the
+Backstage stub, and the MCP stub run locally at no cost. **Fly.io charges
+money for a Sprite.** Check the Fly.io pricing page for the current rate. Do
+not rely on a number in this document to stay accurate. The coding-agent
+runner costs a small amount per Run in model tokens.
+
+### Accounts to create first
+
+1. A Linear test workspace. Do not use a production workspace.
+2. A GitHub fixture repository. Do not use a production repository.
+3. A Fly.io organization that can create a Sprite.
+
+Install the Factoree Linear app on the test workspace before you run the
+scenario. Create a Fly.io token that can create and delete a Sprite.
+
+### The sandbox adapter
+
+The worker reads `SANDBOX_ADAPTER` from `src/config/env.ts`. That setting
+defaults to `fly-sprites`, the real Fly Sprite adapter. Set
+`SANDBOX_ADAPTER=fly-sprites` in your `.env` file. A value left over from a
+Path A run can set `SANDBOX_ADAPTER=local`. That value defeats this path.
+
+The worker also needs `SPRITES_TOKEN`. `SPRITES_TOKEN` is a Fly.io token,
+separate from `LIVE_FLY_API_TOKEN`. `src/bin/worker.ts` builds the Sprite
+gateway from `SPRITES_TOKEN`, not from a `LIVE_` credential. Set
+`SPRITES_TOKEN` in your `.env` file too.
+
+### Sprite credentials
+
+Copy `.env.sprite.example` to `.env` and fill the values below.
+
+| Variable | Dependency | Value |
+| --- | --- | --- |
+| `LIVE_LINEAR_API_KEY` | Linear | A personal API key of the Linear test workspace. |
+| `LIVE_LINEAR_TEAM_ID` | Linear | The Linear team the live test creates its fixture issue in. |
+| `LIVE_GITHUB_TOKEN` | GitHub | A token with write access to the GitHub fixture repository only. |
+| `LIVE_GITHUB_REPOSITORY` | GitHub | The fixture repository, as owner/name. It must not be a production repository. |
+| `LIVE_FLY_API_TOKEN` | Fly Sprites | A Fly.io token that can create and delete a Sprite. |
+| `LIVE_FLY_ORGANIZATION` | Fly Sprites | The Fly.io organization the live Sprite belongs to. |
+| `LIVE_RUNNER_NAME` | Runner | The coding-agent runner to drive. Use `opencode` or `claude`. |
+| `LIVE_RUNNER_API_KEY` | Runner | The model provider key that runner authenticates with. |
+| `LIVE_LOCAL_TEMPORAL_ADDRESS` | Temporal (local) | The host and port of the local Temporal dev server. |
+| `LIVE_LOCAL_TEMPORAL_NAMESPACE` | Temporal (local) | The Temporal namespace the local dev server uses. |
+| `LIVE_LOCAL_BACKSTAGE_BASE_URL` | Backstage (local) | The base URL of the local Backstage stub. |
+| `LIVE_LOCAL_MCP_ENDPOINT` | MCP (local) | The endpoint of the local MCP stub. |
+
+### Procedure
+
+Run every command from the repository root. The `justfile` drives this path.
+
+1. Run `just` to list every recipe.
+2. Run `just install` to install the npm dependencies and generate the Prisma client.
+3. Run `just up` to start the local PostgreSQL container.
+4. Run `just migrate` to apply the Prisma migrations.
+5. In a separate terminal, run `just temporal` to start the Temporal dev server.
+6. In a separate terminal, run `just stubs` to start the Backstage stub and the MCP stub.
+7. Set `SANDBOX_ADAPTER=fly-sprites` and `SPRITES_TOKEN` in `.env` first.
+8. In a separate terminal, run `just worker` to start the Temporal worker.
+9. In a separate terminal, run `just api` to start the HTTP API.
+10. In a separate terminal, run `just tunnel` to start a public tunnel to the HTTP API. Copy
+    the public URL the tunnel command prints.
+11. Set the public URL as the webhook target in the Linear app settings of the test workspace.
+12. Run `just live-sprite` to run the live acceptance scenario against local infrastructure and
+    a real Fly Sprite.
+13. Run `just down` to stop the local PostgreSQL container when you finish.
+
+**Expect defects on the first run of `just live-sprite`.** `tests/live/scenario.ts` has never
+executed against a real Sprite. Check the printed report first, then check the worker logs.
 
 ## Path B: the real run, SDD section 66 proof
 

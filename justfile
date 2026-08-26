@@ -128,6 +128,10 @@ verify:
 live-local:
     PATH="{{node_path}}:$PATH" npm run acceptance:live:local
 
+# Run the live acceptance scenario against local infrastructure, plus a real Fly Sprite.
+live-sprite:
+    PATH="{{node_path}}:$PATH" npm run acceptance:live:sprite
+
 # Run the live acceptance scenario against every real SDD section 66 dependency.
 live:
     PATH="{{node_path}}:$PATH" npm run acceptance:live
