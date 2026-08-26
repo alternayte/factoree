@@ -1,14 +1,17 @@
 /**
- * SDD section 66. The live acceptance test runs under one of two profiles.
+ * SDD section 66. The live acceptance test runs under one of three profiles.
  *
  * The `full` profile demands every real SDD section 66 dependency. It is the default. The
  * `local` profile substitutes local infrastructure for the Fly Sprite, the Temporal service,
- * the Backstage catalog, and the MCP source. A `local` run proves the scenario code, not SDD
- * section 66. Read `docs/build/local-harness-plan.md` for the rule this file must not weaken.
+ * the Backstage catalog, and the MCP source. The `sprite` profile is the `local` profile plus a
+ * real Fly Sprite, for an operator who debugs the Sprite integration without a Backstage
+ * instance and without a Temporal Cloud account. A `local` or `sprite` run proves the scenario
+ * code, not SDD section 66. Read `docs/build/local-harness-plan.md` for the rule this file must
+ * not weaken.
  */
 import { REQUIRED_LIVE_CREDENTIALS, type LiveCredential } from "./required-credentials.js";
 
-export type LiveProfile = "local" | "full";
+export type LiveProfile = "local" | "sprite" | "full";
 
 export const LOCAL_DEPENDENCIES: LiveCredential["dependency"][] = ["linear", "github", "runner"];
 
@@ -50,9 +53,21 @@ const buildLocalCredentials = (): LiveCredential[] => [
   ...LOCAL_REPLACEMENT_CREDENTIALS,
 ];
 
+/**
+ * Derive the sprite credential list from the local list, not by a hand-written third list. The
+ * sprite profile keeps every local credential and adds every `fly-sprites` credential of
+ * `REQUIRED_LIVE_CREDENTIALS`. A future `fly-sprites` credential added to the full list reaches
+ * the sprite profile automatically, because this filters by dependency rather than by name.
+ */
+const buildSpriteCredentials = (): LiveCredential[] => [
+  ...buildLocalCredentials(),
+  ...REQUIRED_LIVE_CREDENTIALS.filter((entry) => entry.dependency === "fly-sprites"),
+];
+
 const CREDENTIALS_BY_PROFILE: Record<LiveProfile, LiveCredential[]> = {
   full: REQUIRED_LIVE_CREDENTIALS,
   local: buildLocalCredentials(),
+  sprite: buildSpriteCredentials(),
 };
 
 /** The credential list of one profile. The full list is the anti-weakening guard. */
@@ -66,9 +81,9 @@ export const credentialsFor = (profile: LiveProfile): LiveCredential[] =>
 export const resolveProfile = (env: NodeJS.ProcessEnv): LiveProfile => {
   const value = env.FACTOREE_LIVE_PROFILE;
   if (value === undefined || value.trim() === "") return "full";
-  if (value === "local" || value === "full") return value;
+  if (value === "local" || value === "sprite" || value === "full") return value;
   throw new Error(
-    `FACTOREE_LIVE_PROFILE has the unknown value "${value}". Use "local" or "full".`,
+    `FACTOREE_LIVE_PROFILE has the unknown value "${value}". Use "local", "sprite", or "full".`,
   );
 };
 
@@ -85,6 +100,14 @@ export const PROFILE_BANNER: Record<LiveProfile, string> = {
     "This run uses local infrastructure in place of the Fly Sprite, the Temporal",
     "service, the Backstage catalog, and the MCP source.",
     "It proves the scenario code.",
+    "It is NOT SDD SECTION 66 PROOF.",
+  ].join("\n"),
+  sprite: [
+    "SPRITE LIVE ACCEPTANCE",
+    "",
+    "This run uses a real Fly Sprite, and local infrastructure in place of the",
+    "Temporal service, the Backstage catalog, and the MCP source.",
+    "It proves the Sprite integration and the scenario code.",
     "It is NOT SDD SECTION 66 PROOF.",
   ].join("\n"),
 };

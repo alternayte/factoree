@@ -102,4 +102,49 @@ describe("the live acceptance credential list", () => {
       }
     },
   );
+
+  it("accounts for every dependency of the full list in the sprite profile build", () => {
+    // The sprite profile is the local list plus every fly-sprites credential. A future
+    // dependency kind that falls into neither the local accounting nor "fly-sprites" vanishes
+    // from the sprite list silently. This test fails loudly instead.
+    const fullDependencies = new Set(REQUIRED_LIVE_CREDENTIALS.map((entry) => entry.dependency));
+    const replacementDependencies = new Set(
+      LOCAL_REPLACEMENT_CREDENTIALS.map((entry) => entry.dependency),
+    );
+    const accountedFor = new Set([
+      ...LOCAL_DEPENDENCIES,
+      ...replacementDependencies,
+      ...LOCAL_EXCLUDED_DEPENDENCIES,
+      "fly-sprites",
+    ]);
+    const unaccounted = [...fullDependencies].filter((dependency) => !accountedFor.has(dependency));
+    expect(unaccounted, `unaccounted dependency: ${unaccounted.join(", ")}`).toEqual([]);
+  });
+
+  it(
+    "documents every sprite credential in .env.sprite.example",
+    async () => {
+      const { readFile } = await import("node:fs/promises");
+      const example = await readFile(
+        new URL("../../.env.sprite.example", import.meta.url),
+        "utf8",
+      );
+      for (const entry of credentialsFor("sprite")) {
+        expect(example, `${entry.name} is absent from .env.sprite.example`).toContain(entry.name);
+      }
+    },
+  );
+
+  it("documents every sprite credential in docs/live-acceptance.md", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const document = await readFile(
+      new URL("../../docs/live-acceptance.md", import.meta.url),
+      "utf8",
+    );
+    for (const entry of credentialsFor("sprite")) {
+      expect(document, `${entry.name} is absent from docs/live-acceptance.md`).toContain(
+        entry.name,
+      );
+    }
+  });
 });
