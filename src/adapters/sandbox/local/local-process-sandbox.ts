@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { chmod, cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -104,6 +105,25 @@ const INHERITED_ENVIRONMENT_NAMES = [
 ] as const;
 
 /**
+ * Ends one command and every process it started.
+ *
+ * A negative process identifier names the process group, which `detached` gave the command. The
+ * group ends the shell and the command the shell forked. A group that has already gone answers
+ * `ESRCH`, and the direct kill below covers the case where no group exists.
+ */
+const killTree = (child: ChildProcess): void => {
+  if (child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      // The group is already gone, or the platform names no group. The direct kill follows.
+    }
+  }
+  child.kill("SIGKILL");
+};
+
+/**
  * Builds the environment of one child process from the allow list, the environment attached to
  * the sandbox, and the command. The allow list stays the outermost control: it decides which of
  * the worker's own variables a child may read, and SDD section 30 depends on that.
@@ -175,13 +195,18 @@ export class LocalProcessSandbox implements Sandbox {
       const child = spawn(command.file, command.args, {
         cwd: this.resolveCwd(ref, command.cwd),
         env: buildChildEnvironment(command.isolated === true ? {} : (this.attached.get(ref.id) ?? {}), command.env),
+        // The command runs in a process group of its own, so a timeout can end the whole tree.
+        // A shell forks its command on Linux, and a signal to the shell alone leaves that child
+        // running. The grandchild keeps the pipes of the shell open, `close` never arrives, and
+        // the caller waits for a command it already killed.
+        detached: true,
       });
       const timer =
         command.timeoutMs === undefined
           ? null
           : setTimeout(() => {
               timedOut = true;
-              child.kill("SIGKILL");
+              killTree(child);
             }, command.timeoutMs);
       child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
       child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
