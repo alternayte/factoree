@@ -2,6 +2,8 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
+import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.js";
+import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import type { VerificationCommand } from "~/domain/runs/project-runtime-config.js";
@@ -78,10 +80,26 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
     const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
     const environment: Record<string, string> = {};
     for (const descriptor of descriptors) {
-      if (!descriptor.injectIntoImplementer) continue;
+      // A credential of another kind reaches its carrier by its own path, never this map.
+      if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
       const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
       if (value !== null) environment[descriptor.name] = value;
     }
+
+    // SDD section 30. The runner credential is attached again here, because the attachment lives
+    // in the worker process that made it, and another worker can run this activity.
+    await attachRunnerEnvironment(
+      dependencies.sandbox,
+      { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
+      dependencies.secrets,
+      input.tenantId,
+      input.projectId,
+    );
+
+    // SDD section 30. The implementer, the user validator, and the reviewer all reject forbidden
+    // material before their session starts. A verification command runs in the same sandbox, so
+    // it needs the same guard.
+    guardAgainstForbiddenMaterial(environment);
 
     const startedAt = Date.now();
     const outcome = await runVerification({

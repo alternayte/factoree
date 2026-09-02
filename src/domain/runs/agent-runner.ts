@@ -18,8 +18,18 @@ export interface AgentRunInput {
   role: AgentRole;
   sandbox: Sandbox;
   ref: SandboxRef;
-  /** The absolute path of the primary worktree inside the sandbox. */
+  /** The absolute path the session works from. It is a scratch directory for some roles. */
   workingDirectory: string;
+  /**
+   * The absolute path of the primary worktree inside the sandbox.
+   *
+   * A coding agent reads its own configuration from the repository it works on: the model, the
+   * provider timeouts, the instructions. The User Validator and the Reviewer work from a scratch
+   * directory beside the checkout, by SDD sections 36 and 40, so without this the session found
+   * no configuration and fell back to a default model. A real Run proved the cost: the validator
+   * ran a model the Project never chose, wrote nothing, and blocked every assertion.
+   */
+  repositoryPath?: string;
   /** The complete instruction text. It must never carry a forbidden credential. */
   prompt: string;
   promptVersion: string;
@@ -47,6 +57,13 @@ export interface AgentRunResult {
   durationMs: number;
   /** True when Factoree cancelled the session. */
   cancelled: boolean;
+  /**
+   * The bounded, redacted log of a session that did not finish, and null for one that did. SDD
+   * section 61 forbids a full transcript, and SDD section 39 needs an artifact that outlives the
+   * sandbox. A failure that reaches only the sandbox filesystem is lost when the sandbox is
+   * destroyed, and an operator then has nothing to read.
+   */
+  failureLog: string | null;
 }
 
 /** SDD section 33 requires that Temporal workflows depend only on this interface. */

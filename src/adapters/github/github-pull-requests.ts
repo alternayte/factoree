@@ -71,6 +71,30 @@ export class GitHubPullRequests implements PullRequestPort {
     return this.toRecord(body[0] as GitHubPullRequestBody, headBranch);
   }
 
+  /**
+   * The pull request of that number, or null when GitHub answers that it does not exist.
+   *
+   * The live acceptance scenario reads the Proof Pack, and SDD section 47 fixes the Pull request
+   * section as the URL of the pull request. A URL names a number, and it names no branch, so a
+   * confirmation by number reads what the Proof Pack actually holds. The port names this method
+   * not at all, because no part of a Run needs it: the publication already holds its own record.
+   */
+  async findByNumber(slug: string, number: number): Promise<PullRequestRecord | null> {
+    assertRepositorySlug(slug);
+    let body: unknown;
+    try {
+      body = await this.call(`${this.base}/repos/${slug}/pulls/${number}`, { method: "GET" });
+    } catch (error) {
+      // A pull request that does not exist is an answer, not a fault.
+      if (error instanceof GitHubApiError && error.status === 404) return null;
+      throw error;
+    }
+    const parsed = body as GitHubPullRequestBody;
+    const head = parsed.head as { ref?: unknown } | undefined;
+    const headBranch = typeof head?.ref === "string" ? head.ref : "";
+    return this.toRecord(parsed, headBranch);
+  }
+
   async create(input: CreatePullRequestInput): Promise<PullRequestRecord> {
     assertRepositorySlug(input.slug);
     const body = await this.call(`${this.base}/repos/${input.slug}/pulls`, {

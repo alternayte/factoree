@@ -94,6 +94,7 @@ class ScriptedValidatorRunner implements AgentRunner {
       cancelled: false,
       summary: "The user validation session is complete.",
       durationMs: 5,
+      failureLog: null,
     };
   }
 

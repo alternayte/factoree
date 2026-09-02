@@ -5,6 +5,11 @@ const schema = z.object({
   FACTOREE_SECRET_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32 bytes of hexadecimal"),
   ADMIN_API_TOKEN: z.string().min(32),
   LINEAR_WEBHOOK_SECRET: z.string().min(1),
+  // The OAuth application of Factoree. Both values together let the worker refresh a Linear
+  // access token, which lives for twenty-four hours. Without them an operator must store a new
+  // token by hand each day.
+  LINEAR_CLIENT_ID: z.string().min(1).optional(),
+  LINEAR_CLIENT_SECRET: z.string().min(1).optional(),
   TEMPORAL_ADDRESS: z.string().min(1).default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().min(1).default("default"),
   TEMPORAL_TASK_QUEUE: z.string().min(1).default("factoree"),

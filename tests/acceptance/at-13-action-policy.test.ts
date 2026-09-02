@@ -25,6 +25,7 @@ import { createFixtureRepository } from "./support/fixture-repository.js";
 const recordingGateway = (sent: unknown[]): SpritesGateway => {
   const ok: SpritesExecResult = { exitCode: 0, stdout: "", stderr: "" };
   const handle: SpritesSpriteHandle = {
+    writeFile: () => Promise.resolve(),
     execFile: () => Promise.resolve(ok),
     startDetached: () => Promise.resolve(),
     createCheckpoint: () => Promise.resolve({ id: "checkpoint-1" }),

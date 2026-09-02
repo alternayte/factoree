@@ -56,9 +56,27 @@ export interface InstallationInput {
   scopes?: string[];
 }
 
+/**
+ * One Linear installation, with the material a refresh needs. A Linear access token lives for
+ * twenty-four hours, so a long-lived worker must read the refresh token and the expiry, not the
+ * access token alone.
+ */
+export interface InstallationRecord {
+  linearWorkspaceId: string;
+  workspaceName: string;
+  appUserId: string | null;
+  accessToken: string;
+  refreshToken: string | null;
+  /** Null when the operator stored no expiry. The provider then treats the token as unexpiring. */
+  expiresAt: Date | null;
+  scopes: string[];
+}
+
 export interface TenantRegistry {
   ensureTenant(linearWorkspaceId: string, name: string): Promise<TenantRecord>;
   findByWorkspace(linearWorkspaceId: string): Promise<TenantRecord | null>;
   putInstallation(input: InstallationInput): Promise<TenantRecord>;
   getInstallationToken(linearWorkspaceId: string): Promise<string | null>;
+  /** The whole installation. `LinearTokenProvider` needs the refresh token and the expiry. */
+  getInstallation(linearWorkspaceId: string): Promise<InstallationRecord | null>;
 }

@@ -9,9 +9,11 @@ import { createLogger } from "~/telemetry/logger.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
+import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 
 const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore()) => {
+  const sandbox = new FakeSandbox();
   const recorded: RecordAgentExecutionInput[] = [];
   const executions = {
     record: (recordInput: RecordAgentExecutionInput): Promise<AgentExecutionRecord> => {
@@ -21,15 +23,17 @@ const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore(
     listForRun: () => Promise.resolve([]),
   };
   const redactor = new Redactor();
+  const evidence = new FakeEvidenceStore();
   const activities = createAgentActivities({
     runners: new AgentRunnerRegistry([runner]),
-    sandbox: new FakeSandbox(),
+    sandbox,
     executions,
     secrets,
     redactor,
     logger: createLogger({ level: "error", redactor, sink: () => undefined }),
+    evidence,
   });
-  return { activities, recorded, redactor };
+  return { activities, recorded, redactor, sandbox, evidence };
 };
 
 /** Polls until the predicate holds, and names itself when it gives up. */
@@ -157,6 +161,7 @@ describe("cancelImplementer", () => {
       sandbox: new FakeSandbox(),
       executions: { record: () => Promise.resolve({} as AgentExecutionRecord), listForRun: () => Promise.resolve([]) },
       secrets: new MemorySecretStore(),
+      evidence: new FakeEvidenceStore(),
       redactor,
       logger: createLogger({ level: "error", redactor, sink: (line) => logLines.push(line) }),
     });
@@ -226,5 +231,88 @@ describe("the implement activity and skills", () => {
     );
     expect(runner.runs[0]?.prompt).toContain("routes — Add a route.");
     expect(runner.runs[0]?.prompt).toContain("SDD section 57 ranks a skill ninth");
+  });
+});
+
+describe("implement activity, the runner credential", () => {
+  it("attaches the credential to the sandbox and keeps it out of the prompt", async () => {
+    const runner = new FakeRunner();
+    const secrets = new MemorySecretStore({
+      OPENCODE_API_KEY: { value: "zen-value", injectIntoImplementer: false, kind: "runner_credential" },
+    });
+    const { activities, sandbox } = build(runner, secrets);
+
+    await new MockActivityEnvironment().run(() => activities.implement(input));
+
+    expect(sandbox.attachedEnvironment).toEqual({ OPENCODE_API_KEY: "zen-value" });
+    // SDD section 30. The credential is not implementer material: it reaches the process
+    // environment of the agent, and neither the prompt nor the Implementer input.
+    expect(runner.runs[0]?.prompt).not.toContain("zen-value");
+    expect(runner.runs[0]?.environment).toEqual({});
+  });
+
+  it("refuses a runner credential that holds a GitHub token", async () => {
+    const runner = new FakeRunner();
+    const secrets = new MemorySecretStore({
+      MODEL_KEY: {
+        value: `ghp_${"a".repeat(36)}`,
+        injectIntoImplementer: false,
+        kind: "runner_credential",
+      },
+    });
+    const { activities } = build(runner, secrets);
+
+    await expect(new MockActivityEnvironment().run(() => activities.implement(input))).rejects.toThrow(
+      /GitHub or a Linear credential/,
+    );
+  });
+});
+
+describe("implement activity, the evidence of a failure", () => {
+  it("writes one immutable row that outlives the sandbox", async () => {
+    const runner = new FakeRunner("opencode", {
+      completed: false,
+      exitCode: 1,
+      summary: "Insufficient balance.",
+      failureLog: "--- stdout ---\nInsufficient balance.\n--- stderr ---\ndisposing instance\n",
+    });
+    const { activities, evidence } = build(runner);
+
+    await new MockActivityEnvironment().run(() => activities.implement(input));
+
+    expect(evidence.rows).toHaveLength(1);
+    const row = evidence.rows[0];
+    expect(row?.kind).toBe("command-output");
+    expect(row?.source).toBe("implement:opencode");
+    expect(row?.metadata).toMatchObject({
+      runner: "opencode",
+      exitCode: 1,
+      summary: "Insufficient balance.",
+    });
+    expect(String(row?.metadata["log"])).toContain("Insufficient balance.");
+  });
+
+  it("writes no row when the implementation finished", async () => {
+    const runner = new FakeRunner();
+    const { activities, evidence } = build(runner);
+
+    await new MockActivityEnvironment().run(() => activities.implement(input));
+
+    expect(evidence.rows).toEqual([]);
+  });
+
+  it("writes one row when Temporal retries the same attempt", async () => {
+    const runner = new FakeRunner("opencode", {
+      completed: false,
+      exitCode: 1,
+      summary: "boom",
+      failureLog: "log",
+    });
+    const { activities, evidence } = build(runner);
+
+    await new MockActivityEnvironment().run(() => activities.implement(input));
+    await new MockActivityEnvironment().run(() => activities.implement(input));
+
+    expect(evidence.rows).toHaveLength(1);
   });
 });

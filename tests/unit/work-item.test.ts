@@ -142,3 +142,54 @@ describe("parseWorkItem", () => {
     expect(item.constraints).toEqual(["Real."]);
   });
 });
+
+describe("parseWorkItem, a section title without a markdown heading", () => {
+  // The Linear editor stores a heading a human typed as ordinary text, so an issue that reads
+  // correctly in Linear arrives with `## Acceptance criteria` flattened. A real Run proved the
+  // cost: refinement found no criteria and derived one from every sentence, the title included,
+  // and each needed a human.
+  const parse = (description: string) =>
+    parseWorkItem({
+      title: "Show the app version in the dashboard footer",
+      description,
+      labels: [],
+      issueId: "issue-1",
+      url: "https://linear.app/factoree/issue/issue-1",
+    });
+
+  it("reads a bare section title as a section", () => {
+    const item = parse(
+      [
+        "Add the package version to the footer component.",
+        "",
+        "Acceptance criteria",
+        "",
+        "* The command `npm run type-check` exits with code 0.",
+        "* The command `npm test` exits with code 0.",
+      ].join("\n"),
+    );
+
+    expect(item.acceptanceCriteria.map((criterion) => criterion.statement)).toEqual([
+      "The command `npm run type-check` exits with code 0.",
+      "The command `npm test` exits with code 0.",
+    ]);
+    expect(item.goal).not.toContain("npm run type-check");
+  });
+
+  it("reads a bare title that carries emphasis or a colon", () => {
+    for (const heading of ["**Acceptance criteria**", "Acceptance criteria:", "ACCEPTANCE CRITERIA"]) {
+      const item = parse([`Do the thing.`, "", heading, "", "- The command `npm test` exits with code 0."].join("\n"));
+      expect(item.acceptanceCriteria, heading).toHaveLength(1);
+    }
+  });
+
+  it("leaves a sentence that merely mentions the words as ordinary text", () => {
+    const item = parse(
+      ["The acceptance criteria of the parent issue still apply here.", "", "## Constraints", "", "- Touch one file."].join("\n"),
+    );
+
+    expect(item.acceptanceCriteria).toEqual([]);
+    expect(item.goal).toContain("acceptance criteria of the parent issue");
+    expect(item.constraints).toEqual(["Touch one file."]);
+  });
+});

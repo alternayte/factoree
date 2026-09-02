@@ -3,6 +3,7 @@ import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
 import type {
   CreateProjectInput,
   InstallationInput,
+  InstallationRecord,
   ProjectRecord,
   ProjectRegistry,
   TenantRecord,
@@ -11,9 +12,19 @@ import type {
 } from "~/domain/projects/project-registry.js";
 import type {
   ProjectSecretDescriptor,
+  ProjectSecretKind,
   PutSecretOptions,
   SecretStore,
 } from "~/domain/projects/secret-store.js";
+import { assertSecretKindAndMark, PROJECT_SECRET_KINDS } from "~/domain/projects/secret-store.js";
+
+/**
+ * The column holds free text, so a row written by an older release, or by hand, can name a kind
+ * this release does not know. Such a row reads as `test`, the most restricted kind: it reaches an
+ * agent session only with the injection mark, and the guard inspects it there.
+ */
+const asSecretKind = (value: string): ProjectSecretKind =>
+  (PROJECT_SECRET_KINDS as readonly string[]).includes(value) ? (value as ProjectSecretKind) : "test";
 
 type ProjectRow = {
   id: string;
@@ -121,10 +132,14 @@ export class PrismaSecretStore implements SecretStore {
     // The mark defaults to false. A secret an operator does not mark never reaches the
     // Implementer environment. SDD section 30 requires the injection to be explicit.
     const injectIntoImplementer = options?.injectIntoImplementer ?? false;
+    const kind = options?.kind ?? "test";
+    // The store is the last gate before the row exists. A credential that carries the injection
+    // mark would reach the Implementer environment, and SDD section 30 forbids that.
+    assertSecretKindAndMark(kind, injectIntoImplementer);
     await this.prisma.projectSecret.upsert({
       where: { projectId_name: { projectId, name } },
-      create: { tenantId, projectId, name, valueCipher, injectIntoImplementer },
-      update: { valueCipher, injectIntoImplementer },
+      create: { tenantId, projectId, name, valueCipher, injectIntoImplementer, kind },
+      update: { valueCipher, injectIntoImplementer, kind },
     });
   }
 
@@ -146,7 +161,11 @@ export class PrismaSecretStore implements SecretStore {
       where: { tenantId, projectId },
       orderBy: { name: "asc" },
     });
-    return rows.map((row) => ({ name: row.name, injectIntoImplementer: row.injectIntoImplementer }));
+    return rows.map((row) => ({
+      name: row.name,
+      injectIntoImplementer: row.injectIntoImplementer,
+      kind: asSecretKind(row.kind),
+    }));
   }
 
   async remove(tenantId: string, projectId: string, name: string): Promise<boolean> {
@@ -204,5 +223,23 @@ export class PrismaTenantRegistry implements TenantRegistry {
   async getInstallationToken(linearWorkspaceId: string): Promise<string | null> {
     const row = await this.prisma.linearInstallation.findUnique({ where: { linearWorkspaceId } });
     return row ? decryptSecret(row.accessTokenCipher, this.keyHex) : null;
+  }
+
+  async getInstallation(linearWorkspaceId: string): Promise<InstallationRecord | null> {
+    const row = await this.prisma.linearInstallation.findUnique({
+      where: { linearWorkspaceId },
+      include: { tenant: true },
+    });
+    if (!row) return null;
+    return {
+      linearWorkspaceId: row.linearWorkspaceId,
+      workspaceName: row.tenant.name,
+      appUserId: row.appUserId,
+      accessToken: decryptSecret(row.accessTokenCipher, this.keyHex),
+      refreshToken:
+        row.refreshTokenCipher === null ? null : decryptSecret(row.refreshTokenCipher, this.keyHex),
+      expiresAt: row.expiresAt,
+      scopes: row.scopes,
+    };
   }
 }

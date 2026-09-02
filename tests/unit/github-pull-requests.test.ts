@@ -74,3 +74,48 @@ describe("GitHubPullRequests", () => {
     await expect(port.findByHead("../evil", "h")).rejects.toThrow();
   });
 });
+
+describe("GitHubPullRequests.findByNumber", () => {
+  // The Proof Pack names the pull request by its URL, and SDD section 47 fixes that section as
+  // the URL alone. The live acceptance scenario therefore confirms by number. It looked for a
+  // head branch in that section before, and the Proof Pack writes none, so it confirmed nothing
+  // even when the pull request existed.
+  it("reads the pull request of that number, and its head branch", async () => {
+    const { port, calls } = client(() =>
+      json(200, {
+        number: 2,
+        html_url: "https://github.com/o/r/pull/2",
+        head: { ref: "factoree/run-1", sha: "d".repeat(40) },
+      }),
+    );
+
+    const record = await port.findByNumber("o/r", 2);
+
+    expect(record).toEqual({
+      number: 2,
+      url: "https://github.com/o/r/pull/2",
+      headBranch: "factoree/run-1",
+      headSha: "d".repeat(40),
+    });
+    expect(calls[0]?.url).toBe("https://api.example.test/repos/o/r/pulls/2");
+    expect(calls[0]?.init.method).toBe("GET");
+  });
+
+  it("returns null when GitHub answers that the pull request does not exist", async () => {
+    const { port } = client(() => json(404, { message: "Not Found" }));
+
+    await expect(port.findByNumber("o/r", 404)).resolves.toBeNull();
+  });
+
+  it("reports any other failure, so a broken token never reads as a missing pull request", async () => {
+    const { port } = client(() => json(401, { message: "Bad credentials" }));
+
+    await expect(port.findByNumber("o/r", 2)).rejects.toThrow(/401/);
+  });
+
+  it("refuses a slug that is not owner and repository", async () => {
+    const { port } = client(() => json(200, {}));
+
+    await expect(port.findByNumber("not-a-slug", 2)).rejects.toThrow(/owner\/repo/);
+  });
+});

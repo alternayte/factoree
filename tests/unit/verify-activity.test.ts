@@ -107,3 +107,29 @@ describe("verify activity", () => {
     expect(env).not.toHaveProperty("UNMARKED_SECRET");
   });
 });
+
+describe("verify activity, SDD section 30", () => {
+  it("rejects a marked test secret that holds forbidden material", async () => {
+    const secrets = new MemorySecretStore({
+      FIXTURE_TOKEN: { value: `ghp_${"a".repeat(36)}`, injectIntoImplementer: true, kind: "test" },
+    });
+    const { activities } = build({ "npm test": { exitCode: 0, stdout: "", stderr: "" } }, secrets);
+
+    await expect(
+      activities.verify({ ...input, commands: [{ name: "test", run: "npm test" }] }),
+    ).rejects.toThrow(/must not receive "FIXTURE_TOKEN"/);
+  });
+
+  it("keeps a runner credential out of the verification environment", async () => {
+    const secrets = new MemorySecretStore({
+      OPENCODE_API_KEY: { value: "zen-value", injectIntoImplementer: false, kind: "runner_credential" },
+    });
+    const { activities, sandbox } = build({ "npm test": { exitCode: 0, stdout: "", stderr: "" } }, secrets);
+
+    await activities.verify({ ...input, commands: [{ name: "test", run: "npm test" }] });
+
+    for (const command of sandbox.commands) {
+      expect(command.env?.OPENCODE_API_KEY).toBeUndefined();
+    }
+  });
+});

@@ -17,7 +17,12 @@ export interface SandboxCreateInput {
   memoryMb?: number;
   cpus?: number;
   region?: string;
-  /** Environment values available to every command. Never place a secret here unless it is a Project test secret. */
+  /**
+   * Environment values available to every command. `SandboxManager.prepare` also attaches them
+   * with `attachEnvironment`, so an adapter that cannot set an environment at creation time still
+   * delivers them. A Project secret belongs here only when its kind permits an agent session to
+   * hold it. See SDD section 30.
+   */
   environment?: Record<string, string>;
 }
 
@@ -28,6 +33,16 @@ export interface Command {
   /** Absolute path, or a path relative to `SandboxRef.workspacePath`. */
   cwd?: string;
   env?: Record<string, string>;
+  /**
+   * Runs the command without the environment attached to the sandbox, so it sees the base
+   * environment of the adapter and `env` alone.
+   *
+   * SDD section 35 requires a clean shell for deterministic verification, and SDD section 30
+   * permits only a marked Project test secret in such a command. The runner credential of an
+   * agent session must not reach it. The base environment of the adapter still applies, because
+   * `PATH` and `HOME` belong to the sandbox, not to any session.
+   */
+  isolated?: boolean;
   /**
    * The deadline for `exec` only. `startProcess` ignores this field. A caller of `startProcess`
    * must enforce its own deadline and stop the process with `cancelProcess`.
@@ -83,9 +98,32 @@ export interface Sandbox {
   readonly capabilities: SandboxCapabilities;
 
   create(input: SandboxCreateInput): Promise<SandboxRef>;
+  /**
+   * Holds an environment that every later `exec` and `startProcess` on this sandbox receives.
+   *
+   * `SandboxCreateInput.environment` alone cannot carry a value to a command: the Fly Sprites exec
+   * API replaces the whole environment of each call, and the local adapter builds each child
+   * environment from an allow list. A `Command.env` value still wins, so a caller can withhold the
+   * environment from one command.
+   *
+   * The store is per process and per sandbox. An activity that execs into a sandbox another
+   * activity created must call this again, with the value it reads from the Project secret store.
+   * That re-read is deliberate: no credential then crosses a Temporal boundary.
+   */
+  attachEnvironment(ref: SandboxRef, environment: Record<string, string>): void;
   /** Applies the egress policy. `SandboxManager` calls this before any checkout. */
   applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void>;
   exec(ref: SandboxRef, command: Command): Promise<CommandResult>;
+  /**
+   * Writes one file inside the sandbox.
+   *
+   * A prompt reaches an agent through a file, not through the environment. Linux carries at most
+   * `MAX_ARG_STRLEN` bytes in one environment value, which is 131072, and a Reviewer prompt of a
+   * real Run measured 202351 bytes. The environment can never carry it, whatever the transport
+   * underneath. SDD section 30 keeps the prompt off the command line, and a file honours that:
+   * the file holds the prompt of the session that reads it, and nothing else.
+   */
+  writeFile(ref: SandboxRef, path: string, content: string): Promise<void>;
   /** Ignores `Command.timeoutMs`. The caller must enforce its own deadline. */
   startProcess(ref: SandboxRef, command: Command): Promise<ProcessRef>;
   /** Reads whatever the process has written so far and reports whether it has exited. */

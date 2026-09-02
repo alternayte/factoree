@@ -139,8 +139,13 @@ describe("SandboxManager.prepare", () => {
     const sandbox = sandboxWithConfig(BOOTSTRAP_CONFIG_YAML);
     const manager = new SandboxManager({ sandbox });
     await manager.prepare(input);
-    const bootstrap = sandbox.commands.find((command) => command.args.includes("npm ci"));
+    const bootstrap = sandbox.commands.find((command) =>
+      command.args.some((argument) => argument.includes("npm ci")),
+    );
     expect(bootstrap?.cwd).toBe("/workspace/primary");
+    // A failing stage of a pipeline must fail the bootstrap, so `curl ... | bash` cannot report
+    // success after a download that never happened.
+    expect(bootstrap?.args.at(-1)).toContain("set -o pipefail");
   });
 
   it("skips bootstrap when the repository configures no bootstrap command", async () => {
@@ -428,5 +433,33 @@ describe("SandboxManager.prepare skills", () => {
     const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true, logger: recordingLogger });
     await manager.prepare(input);
     expect(events.some((entry) => entry.message === "skill directory listing failed")).toBe(true);
+  });
+});
+
+describe("SandboxManager.prepare, a bootstrap that fails inside a pipeline", () => {
+  it("fails the Run and reports the output of both streams", async () => {
+    const sandbox = sandboxWithConfig(BOOTSTRAP_CONFIG_YAML);
+    const onExec = sandbox.onExec;
+    sandbox.onExec = (command) =>
+      command.args.some((argument) => argument.includes("npm ci"))
+        ? { exitCode: 6, stdout: "Installing opencode", stderr: "curl: (6) Could not resolve host" }
+        : (onExec?.(command) ?? { exitCode: 0, stdout: "", stderr: "" });
+    const manager = new SandboxManager({ sandbox });
+
+    await expect(manager.prepare(input)).rejects.toThrow(
+      /the bootstrap command failed with exit code 6: curl: \(6\) Could not resolve host \| Installing opencode/,
+    );
+  });
+
+  it("says so plainly when the command wrote nothing", async () => {
+    const sandbox = sandboxWithConfig(BOOTSTRAP_CONFIG_YAML);
+    const onExec = sandbox.onExec;
+    sandbox.onExec = (command) =>
+      command.args.some((argument) => argument.includes("npm ci"))
+        ? { exitCode: 1, stdout: "", stderr: "" }
+        : (onExec?.(command) ?? { exitCode: 0, stdout: "", stderr: "" });
+    const manager = new SandboxManager({ sandbox });
+
+    await expect(manager.prepare(input)).rejects.toThrow(/the command wrote no output/);
   });
 });

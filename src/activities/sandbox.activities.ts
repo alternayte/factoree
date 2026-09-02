@@ -11,6 +11,7 @@ import type {
 } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
 import type { SecretStore } from "~/domain/projects/secret-store.js";
+import { loadRepositoryReadToken, loadRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
@@ -98,6 +99,23 @@ const prepare = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
 ): Promise<PrepareSandboxActivityOutput> => {
+  // SDD section 30. A model provider credential of the coding agent reaches the sandbox from the
+  // Project secret store, never from a workflow argument, so no Temporal history holds its value.
+  // The workflow passes an empty environment, and this activity fills it.
+  const runnerEnvironment = await loadRunnerEnvironment(
+    dependencies.secrets,
+    input.tenantId,
+    input.projectId,
+  );
+
+  // SDD section 30. A private repository needs a read-only credential for the checkout. It never
+  // reaches an agent session: `checkout` gives it to the git clone command alone.
+  const repositoryCredential = await loadRepositoryReadToken(
+    dependencies.secrets,
+    input.tenantId,
+    input.projectId,
+  );
+
   const prepared = await dependencies.sandboxManager.prepare({
     runId: input.runId,
     tenantId: input.tenantId,
@@ -105,7 +123,8 @@ const prepare = async (
     primary: input.primary,
     references: input.references,
     defaults: input.defaults,
-    environment: input.environment,
+    environment: { ...input.environment, ...runnerEnvironment },
+    ...(repositoryCredential === null ? {} : { repositoryCredential }),
     ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
   });
 

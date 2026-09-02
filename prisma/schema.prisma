@@ -66,6 +66,9 @@ model ProjectSecret {
   // SDD section 30. Only a secret an operator marks reaches the Implementer environment. Every
   // secret reaches the redactor, marked or not.
   injectIntoImplementer Boolean @default(false)
+  // SDD section 30. What the secret is for. "test" keeps the behaviour of every row written
+  // before this column existed. A kind other than "test" must never carry the injection mark.
+  kind        String   @default("test")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -170,6 +170,7 @@ class ScriptedValidatorRunner implements AgentRunner {
       cancelled: false,
       summary: "The user validation session is complete.",
       durationMs: 5,
+      failureLog: null,
     };
   }
 
@@ -212,6 +213,7 @@ class ScriptedReviewerRunner implements AgentRunner {
       cancelled: false,
       summary: "The independent review is complete.",
       durationMs: 5,
+      failureLog: null,
     };
   }
 
@@ -482,6 +484,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
         cancelled: false,
         summary: "The change is applied.",
         durationMs: 5,
+        failureLog: null,
         cancelledSession: false,
       };
     },

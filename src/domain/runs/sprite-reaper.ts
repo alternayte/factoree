@@ -25,7 +25,7 @@ export interface SpriteReaperOptions {
   onDestroyed?: (entry: ExpiredSandbox) => void;
 }
 
-const DEFAULT_WORKSPACE_PATH = "/workspace";
+const DEFAULT_WORKSPACE_PATH = "/home/sprite/workspace";
 const DEFAULT_BATCH_SIZE = 50;
 
 /**

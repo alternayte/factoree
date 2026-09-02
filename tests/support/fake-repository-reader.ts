@@ -14,7 +14,14 @@ export interface FakeRepository {
 export class FakeRepositoryReader implements RepositoryReader {
   readonly calls: string[] = [];
 
+  /** The origins a caller supplied a credential for. A test asserts on the names, never a value. */
+  readonly credentialOrigins: string[] = [];
+
   constructor(private readonly repositories: Record<string, FakeRepository>) {}
+
+  useCredential(origin: string): void {
+    this.credentialOrigins.push(origin);
+  }
 
   private repository(url: string): FakeRepository {
     const repository = this.repositories[url];

@@ -64,6 +64,28 @@ const headingKey = (text: string): string =>
     .trim();
 
 /**
+ * The name of the section a line announces, or undefined when it announces none.
+ *
+ * A markdown heading is the plain case. A bare line that names a section is the second case, and
+ * it matters: the Linear editor stores a heading a human typed as ordinary text, so an issue that
+ * reads correctly in Linear arrives here with `## Acceptance criteria` flattened to
+ * `Acceptance criteria`. Without this, refinement finds no criteria, derives one from every
+ * sentence of the issue instead, and each derived sentence needs a human. A real Run proved it:
+ * the title alone became an assertion no validator could ever prove.
+ *
+ * A bare line qualifies only when it names a section and nothing else, so a sentence that merely
+ * mentions the words stays ordinary text. `headingKey` removes the emphasis and the trailing
+ * colon an author adds, so `**Acceptance criteria:**` names the same section.
+ */
+const sectionOf = (line: string): SectionName | undefined => {
+  const heading = HEADING.exec(line);
+  if (heading !== null) return SECTION_BY_TITLE.get(headingKey(heading[1] ?? ""));
+  const bare = line.trim();
+  if (bare === "") return undefined;
+  return SECTION_BY_TITLE.get(headingKey(bare));
+};
+
+/**
  * Splits the body into the recognised sections. Unrecognised headings stay inside their
  * section. Text before the first recognised heading is a preamble the author wrote without a
  * section marker, so this function folds it into the goal section, ahead of any `## Goal` text.
@@ -73,8 +95,7 @@ const splitSections = (body: string): Map<SectionName, string[]> => {
   const preamble: string[] = [];
   let current: SectionName | null = null;
   for (const line of body.split("\n")) {
-    const heading = HEADING.exec(line);
-    const named = heading === null ? undefined : SECTION_BY_TITLE.get(headingKey(heading[1] ?? ""));
+    const named = sectionOf(line);
     if (named !== undefined) {
       current = named;
       if (!sections.has(named)) sections.set(named, []);

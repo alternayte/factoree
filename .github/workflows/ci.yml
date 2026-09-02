@@ -18,4 +18,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      # `tests/integration/playwright-browser-driver.test.ts` drives a real browser, and the
+      # runner carries none. The integration stage never reached it before, because the unit
+      # stage failed first and `npm run verify` stops at the first failing stage. Chromium alone
+      # is enough: `src/adapters/browser/playwright/playwright-browser-driver.ts` launches it.
+      - run: npx playwright install --with-deps chromium
       - run: npm run verify

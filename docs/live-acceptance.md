@@ -150,6 +150,53 @@ this error and demands rotation, at
     already reached an agent session. SDD section 30 forbids that. Rotate the credential.
     Then add it again without the injection mark.
 
+### 3b. The other two credentials, when a Run needs them
+
+A Project secret carries a kind, and the kind decides which carrier holds the
+value. SDD section 30 fixes the rule.
+
+A paid model needs a `runner_credential` secret. The secret name becomes the
+environment variable name of the agent process.
+
+    curl -s -X PUT \
+      "$API_BASE/admin/projects/<PROJECT_ID>/secrets/OPENCODE_API_KEY?linearWorkspaceId=<LINEAR_WORKSPACE_ID>" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{"value": "<MODEL_PROVIDER_KEY>", "kind": "runner_credential"}'
+
+A private repository needs a `repository_read` secret, with Contents read only.
+Factoree uses it for the sandbox checkout and for context discovery.
+
+    curl -s -X PUT \
+      "$API_BASE/admin/projects/<PROJECT_ID>/secrets/GITHUB_READ_TOKEN?linearWorkspaceId=<LINEAR_WORKSPACE_ID>" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{"value": "<GITHUB_READ_TOKEN>", "kind": "repository_read"}'
+
+Neither secret takes the injection mark. The API refuses that combination. The
+API also refuses a `runner_credential` whose value holds a GitHub or a Linear
+credential, because SDD section 30 forbids either in an agent session.
+
+A public fixture repository needs no `repository_read` secret. A free model
+needs no `runner_credential`.
+
+### The Linear access token expires after twenty-four hours
+
+A Linear access token is valid for one day. Store the refresh token and the lifetime with the
+installation, and set `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` in `.env`. The worker then
+refreshes the token on its own. Read docs/quickstart.md section 4c.
+
+    curl -s -X PUT "$API_BASE/admin/linear-installations" \
+      -H "Authorization: Bearer <ADMIN_API_TOKEN>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "linearWorkspaceId": "<LINEAR_WORKSPACE_ID>",
+        "workspaceName": "Live acceptance workspace",
+        "accessToken": "<ACCESS_TOKEN>",
+        "refreshToken": "<REFRESH_TOKEN>",
+        "expiresIn": 86400
+      }'
+
 ### Why the GitHub token is a Project secret, not an environment variable
 
 An environment variable is process wide. The worker starts agent sessions

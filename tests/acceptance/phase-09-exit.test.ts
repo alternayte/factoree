@@ -133,6 +133,7 @@ const buildActivities = (api: GitHubFixtureApi) => {
         Promise.reject(new Error("the publish activity must not read the repository")),
       listTree: () => Promise.resolve({ entries: [], truncated: false }),
       readBlob: () => Promise.resolve(null),
+      useCredential: () => undefined,
     },
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
     gitAuthor: AUTHOR,

@@ -11,6 +11,8 @@ import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import type { SecretStore } from "~/domain/projects/secret-store.js";
+import { loadRepositoryReadToken } from "~/domain/projects/runner-credentials.js";
 
 export interface ResolveContextActivityInput {
   runId: string;
@@ -51,6 +53,7 @@ export interface ContextActivityDependencies {
   logger: Logger;
   sources: ContextSourceProvider;
   repositoryReader: RepositoryReader;
+  secrets: SecretStore;
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
@@ -64,6 +67,25 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
   async resolveContext(input: ResolveContextActivityInput): Promise<ResolveContextActivityOutput> {
     const started = Date.now();
     const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+
+    // SDD section 30. Discovery reads the repository on the worker, before a sandbox exists, so a
+    // private repository needs the read-only credential here as well as in the checkout. The
+    // credential is set per Run, because a Project can rotate its token between two Runs.
+    const repositoryCredential = await loadRepositoryReadToken(
+      dependencies.secrets,
+      input.tenantId,
+      input.projectId,
+    );
+    if (repositoryCredential !== null) {
+      try {
+        dependencies.repositoryReader.useCredential(
+          new URL(input.primaryRepository.url).origin,
+          repositoryCredential,
+        );
+      } catch {
+        // A local path carries no origin, and it needs no credential either.
+      }
+    }
 
     // SDD section 15 and controller decision 2. The `context` block governs discovery, and
     // discovery runs before the sandbox exists, so the file is read at the pinned primary SHA.

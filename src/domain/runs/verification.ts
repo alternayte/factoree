@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import type { Sandbox, SandboxRef } from "./sandbox.js";
 import type { VerificationCommand } from "./project-runtime-config.js";
 import type { Redactor } from "~/telemetry/redaction.js";
+import { buildRetainedLog, MAX_RETAINED_LOG_BYTES } from "~/domain/runs/retained-log.js";
+
+export { MAX_RETAINED_LOG_BYTES };
 
 /**
  * SDD section 35. After implementation, Factoree runs the configured commands from a clean
@@ -10,16 +13,20 @@ import type { Redactor } from "~/telemetry/redaction.js";
  */
 
 /** The largest retained log Factoree keeps for one failing command. */
-export const MAX_RETAINED_LOG_BYTES = 32 * 1024;
+
 
 /**
- * The environment of a clean shell. SDD section 35 says "clean shell", so a verification
- * command inherits nothing from the Implementer. `PATH` is needed to find an executable, `HOME`
- * is needed by most toolchains, and `LANG` keeps output deterministic.
+ * The environment of a clean shell. SDD section 35 says "clean shell", so a verification command
+ * inherits nothing of an agent session. `isolated` on the command drops the environment attached
+ * to the sandbox, which is where a runner credential lives.
+ *
+ * `PATH` and `HOME` are deliberately absent. They belong to the sandbox, and only the adapter
+ * knows the right values: a Fly Sprite keeps its toolchain in `/.sprite/bin` and runs as the
+ * `sprite` user, so a hard-coded `PATH` of the usual system directories found no `npm`, and a
+ * hard-coded `HOME` of `/root` named a directory the command cannot write. `LANG` stays, because
+ * it decides how a tool formats its output and a deterministic check needs that fixed.
  */
 const CLEAN_SHELL_ENV: Record<string, string> = {
-  PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-  HOME: "/root",
   LANG: "C.UTF-8",
 };
 
@@ -59,25 +66,6 @@ export interface RunVerificationOptions {
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 
-/** Keeps the tail of a text, because a failure appears at the end of a build log. */
-const tail = (text: string): string => {
-  if (Buffer.byteLength(text, "utf8") <= MAX_RETAINED_LOG_BYTES) return text;
-  const kept = Buffer.from(text, "utf8").subarray(-MAX_RETAINED_LOG_BYTES).toString("utf8");
-  return `[Factoree truncated this log to the last ${MAX_RETAINED_LOG_BYTES} bytes.]\n${kept}`;
-};
-
-/**
- * Builds the retained log of a failing command. SDD section 60 requires redaction before any
- * text leaves the sandbox, and the redactor must see the complete output. Truncation before
- * redaction can cut a secret value at the byte boundary, and the surviving half then matches no
- * exact secret value and no provider credential pattern. Redaction runs first, on the full text,
- * so a secret cannot be split out of its own match. Truncation runs after, on the redacted text,
- * because a redaction can change the length of the text in either direction and the byte cap
- * must still hold on what Factoree actually retains.
- */
-const buildLog = (redactor: Redactor, stdout: string, stderr: string): string =>
-  tail(redactor.redactText(`--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`));
-
 export const runVerification = async (options: RunVerificationOptions): Promise<VerificationOutcome> => {
   const now = options.now ?? (() => new Date());
   const checks: VerificationCheckResult[] = [];
@@ -98,6 +86,7 @@ export const runVerification = async (options: RunVerificationOptions): Promise<
         // SDD section 30. Only a Project test secret the operator marked for injection may
         // appear here. Nothing of the Implementer environment survives into this shell.
         env: { ...CLEAN_SHELL_ENV, ...options.environment },
+        isolated: true,
         timeoutMs: options.timeoutMs,
       });
       exitCode = result.exitCode;
@@ -125,7 +114,7 @@ export const runVerification = async (options: RunVerificationOptions): Promise<
       stderrSha256: sha256(stderr),
       // A passing command produces no log. A failing command must explain itself to a human and
       // to the repair attempt.
-      log: passed ? null : buildLog(options.redactor, stdout, stderr),
+      log: passed ? null : buildRetainedLog(options.redactor, stdout, stderr),
       timedOut,
       durationMs: durationMs === 0 ? endedAt.getTime() - startedAt.getTime() : durationMs,
       passed,

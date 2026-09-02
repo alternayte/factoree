@@ -1,8 +1,15 @@
-import type { ProjectSecretDescriptor, PutSecretOptions, SecretStore } from "~/domain/projects/secret-store.js";
+import type {
+  ProjectSecretDescriptor,
+  ProjectSecretKind,
+  PutSecretOptions,
+  SecretStore,
+} from "~/domain/projects/secret-store.js";
+import { assertSecretKindAndMark } from "~/domain/projects/secret-store.js";
 
 interface Entry {
   value: string;
   injectIntoImplementer: boolean;
+  kind?: ProjectSecretKind;
 }
 
 /**
@@ -16,11 +23,13 @@ export class MemorySecretStore implements SecretStore {
     for (const [name, value] of Object.entries(values)) {
       this.entries.set(
         name,
-        typeof value === "string" ? { value, injectIntoImplementer: false } : value,
+        typeof value === "string" ? { value, injectIntoImplementer: false, kind: "test" } : value,
       );
     }
   }
 
+  // The invalid-kind rejection arrives as a rejected promise, not as a synchronous throw.
+  // `PrismaSecretStore.put` fails that way, and a test double must fail the same way.
   put(
     _tenantId: string,
     _projectId: string,
@@ -28,7 +37,14 @@ export class MemorySecretStore implements SecretStore {
     value: string,
     options?: PutSecretOptions,
   ): Promise<void> {
-    this.entries.set(name, { value, injectIntoImplementer: options?.injectIntoImplementer ?? false });
+    const injectIntoImplementer = options?.injectIntoImplementer ?? false;
+    const kind = options?.kind ?? "test";
+    try {
+      assertSecretKindAndMark(kind, injectIntoImplementer);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    this.entries.set(name, { value, injectIntoImplementer, kind });
     return Promise.resolve();
   }
 
@@ -45,6 +61,7 @@ export class MemorySecretStore implements SecretStore {
       [...this.entries.entries()].map(([name, entry]) => ({
         name,
         injectIntoImplementer: entry.injectIntoImplementer,
+        kind: entry.kind ?? "test",
       })),
     );
   }

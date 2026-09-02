@@ -13,6 +13,7 @@ import { stopSignal } from "~/workflows/agent-run.workflow.js";
 import { FakeContextContractStore } from "../support/fake-context-contract-store.js";
 import { createWorkflowHarness, hold, waitFor } from "../workflow/support/harness.js";
 import type { ContextFixture } from "./support/context-fixture-repository.js";
+import { MemorySecretStore } from "../support/memory-secret-store.js";
 import {
   PRIMARY_SLUG,
   REFERENCE_SLUG,
@@ -70,6 +71,7 @@ beforeAll(async () => {
         ),
     },
     repositoryReader: reader,
+    secrets: new MemorySecretStore(),
   });
   harness.activities.resolveContext = (input) => contextActivities.resolveContext(input);
 

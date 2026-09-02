@@ -63,7 +63,7 @@ stubs:
     set -euo pipefail
     export PATH="{{node_path}}:$PATH"
     while IFS="=" read -r key value; do
-        [[ -z "${key}" || "${key}" == \#* ]] && continue
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
         export "${key}=${value}"
     done < .env
     trap 'kill 0' EXIT
@@ -77,10 +77,41 @@ worker:
     set -euo pipefail
     export PATH="{{node_path}}:$PATH"
     while IFS="=" read -r key value; do
-        [[ -z "${key}" || "${key}" == \#* ]] && continue
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
         export "${key}=${value}"
     done < .env
-    node --experimental-strip-types --import ./tests/live/register-loader.mjs src/bin/worker.ts
+    npm run build
+    node dist/bin/worker.js
+
+# Drive one real Fly Sprite through every sandbox step of a Run, and report each step.
+smoke *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    while IFS="=" read -r key value; do
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
+        export "${key}=${value}"
+    done < .env
+    npm run build
+    node tools/local/sandbox-smoke.mjs {{ARGS}}
+
+# Run the Linear OAuth flow once, then store the installation with its refresh token.
+linear-auth:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    while IFS="=" read -r key value; do
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
+        export "${key}=${value}"
+    done < .env
+    node tools/local/linear-auth.mjs
+
+# Register the Linear installation, the Project, the secret, and the context sources.
+bootstrap:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    ./tools/local/bootstrap.sh
 
 # Start the HTTP API with the local environment file.
 api:
@@ -88,10 +119,11 @@ api:
     set -euo pipefail
     export PATH="{{node_path}}:$PATH"
     while IFS="=" read -r key value; do
-        [[ -z "${key}" || "${key}" == \#* ]] && continue
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
         export "${key}=${value}"
     done < .env
-    node --experimental-strip-types --import ./tests/live/register-loader.mjs src/bin/api.ts
+    npm run build
+    node dist/bin/api.js
 
 # Run the full non-live verification, one stage at a time, with a real aggregate exit code.
 verify:
@@ -126,15 +158,36 @@ verify:
 
 # Run the live acceptance scenario against local infrastructure.
 live-local:
-    PATH="{{node_path}}:$PATH" npm run acceptance:live:local
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    while IFS="=" read -r key value; do
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
+        export "${key}=${value}"
+    done < .env
+    npm run acceptance:live:local
 
 # Run the live acceptance scenario against local infrastructure, plus a real Fly Sprite.
 live-sprite:
-    PATH="{{node_path}}:$PATH" npm run acceptance:live:sprite
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    while IFS="=" read -r key value; do
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
+        export "${key}=${value}"
+    done < .env
+    npm run acceptance:live:sprite
 
 # Run the live acceptance scenario against every real SDD section 66 dependency.
 live:
-    PATH="{{node_path}}:$PATH" npm run acceptance:live
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    while IFS="=" read -r key value; do
+        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
+        export "${key}=${value}"
+    done < .env
+    npm run acceptance:live
 
 # Stop the local PostgreSQL container and delete its named volume.
 nuke:

@@ -1,5 +1,6 @@
 import type { Command, CommandResult, Sandbox, SandboxRef } from "./sandbox.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
+import { credentialEnvironment } from "~/domain/security/git-credential-environment.js";
 
 export interface RepositorySpec {
   url: string;
@@ -72,7 +73,20 @@ const run = async (
   return result;
 };
 
-const clone = async (sandbox: Sandbox, ref: SandboxRef, spec: RepositorySpec, path: string): Promise<string> => {
+/**
+ * The read-only repository credential of the Run, or undefined when the repository is public.
+ * SDD section 30 forbids a GitHub write credential in an agent session, so this token must never
+ * be able to push.
+ */
+export type RepositoryCredential = string | undefined;
+
+const clone = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec,
+  path: string,
+  credential: RepositoryCredential,
+): Promise<string> => {
   // `--no-hardlinks` stops a clone of a local path from hardlinking object files into the
   // checkout. Without it, the read-only control on a reference checkout, and the permission
   // repair when the sandbox is destroyed, both change the mode of an inode the source
@@ -83,7 +97,15 @@ const clone = async (sandbox: Sandbox, ref: SandboxRef, spec: RepositorySpec, pa
   // `--no-tags` was removed. `RepositorySpec.ref` allows a tag, and a clone that fetches no
   // tag leaves the later checkout of that tag with nothing to resolve. Git then reads the tag
   // as a path and the command fails.
-  await run(sandbox, ref, { file: "git", args: ["clone", "--no-hardlinks", spec.url, path] });
+  // The credential reaches git through the environment of this one command. It is absent from
+  // the command line, so `ps` and `/proc/<pid>/cmdline` never hold it, and it is absent from
+  // `.git/config`, so the agent that works in this checkout later cannot read it. SDD section 30.
+  const credentialEnv = credentialEnvironment(spec.url, credential);
+  await run(sandbox, ref, {
+    file: "git",
+    args: ["clone", "--no-hardlinks", spec.url, path],
+    ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
+  });
   // A reference that does not exist is a configuration fault. A retry repeats it.
   await run(sandbox, ref, { file: "git", args: ["-C", path, "checkout", "--detach", spec.ref] }, true);
   // SDD section 29 denies git remote write from an agent.
@@ -106,9 +128,10 @@ export const checkoutPrimary = async (
   sandbox: Sandbox,
   ref: SandboxRef,
   spec: RepositorySpec,
+  credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository> => {
   const path = `${ref.workspacePath}/primary`;
-  const baseSha = await clone(sandbox, ref, spec, path);
+  const baseSha = await clone(sandbox, ref, spec, path, credential);
   return { url: spec.url, path, baseSha, readOnly: false };
 };
 
@@ -120,6 +143,7 @@ export const checkoutReferences = async (
   sandbox: Sandbox,
   ref: SandboxRef,
   specs: RepositorySpec[],
+  credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository[]> => {
   // Every reference name must resolve to its own directory, one level below `reference/`. This
   // check runs before the first reference clone, so a collision fails with a clear message
@@ -157,7 +181,7 @@ export const checkoutReferences = async (
   for (const spec of specs) {
     const name = namesByUrl.get(spec.url) ?? repositoryName(spec.url);
     const path = `${ref.workspacePath}/reference/${name}`;
-    const baseSha = await clone(sandbox, ref, spec, path);
+    const baseSha = await clone(sandbox, ref, spec, path, credential);
     // SDD section 29 denies writing a reference repository. This is a file mode, not a prompt.
     await run(sandbox, ref, { file: "chmod", args: ["-R", "a-w", path] });
     references.push({ url: spec.url, path, baseSha, readOnly: true });
@@ -175,9 +199,10 @@ export const checkoutOrganizationSkills = async (
   sandbox: Sandbox,
   ref: SandboxRef,
   spec: RepositorySpec,
+  credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository> => {
   const path = `${ref.workspacePath}/organization-skills`;
-  const baseSha = await clone(sandbox, ref, spec, path);
+  const baseSha = await clone(sandbox, ref, spec, path, credential);
   // SDD section 29 denies writing a repository the agent must only read. This is a file mode.
   await run(sandbox, ref, { file: "chmod", args: ["-R", "a-w", path] });
   return { url: spec.url, path, baseSha, readOnly: true };
@@ -188,9 +213,10 @@ export const checkoutRepositories = async (
   sandbox: Sandbox,
   ref: SandboxRef,
   input: CheckoutInput,
+  credential?: RepositoryCredential,
 ): Promise<CheckoutResult> => ({
-  primary: await checkoutPrimary(sandbox, ref, input.primary),
-  references: await checkoutReferences(sandbox, ref, input.references),
+  primary: await checkoutPrimary(sandbox, ref, input.primary, credential),
+  references: await checkoutReferences(sandbox, ref, input.references, credential),
 });
 
 /**

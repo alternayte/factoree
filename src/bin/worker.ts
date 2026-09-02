@@ -47,12 +47,29 @@ import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
+import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
 
 const env = loadEnv();
 const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+
+// A Linear access token lives for twenty-four hours. The provider refreshes it before it expires
+// and writes the new pair back, so a worker that runs for weeks needs no daily hand-over. Without
+// the client credentials it can only report the expiry, so the operator learns what to configure.
+const linearTokens = new LinearTokenProvider({
+  tenants,
+  oauth:
+    env.LINEAR_CLIENT_ID === undefined || env.LINEAR_CLIENT_SECRET === undefined
+      ? null
+      : createLinearOAuthClient({
+          clientId: env.LINEAR_CLIENT_ID,
+          clientSecret: env.LINEAR_CLIENT_SECRET,
+        }),
+  logger,
+});
 const runs = new PrismaRunRepository(prisma);
 
 // SDD section 31. The adapter comes from configuration. The local adapter cannot enforce an
@@ -109,9 +126,35 @@ async function call<T>(
   });
   if (!run) throw new Error(`no workspace for agent session ${sessionId}`);
   const { workspaceId } = parseWorkflowId(run.temporalWorkflowId);
-  const token = await tenants.getInstallationToken(workspaceId);
-  if (!token) throw new Error(`no Linear installation for workspace ${workspaceId}`);
-  return await body(createLinearAgentClient(token));
+  return await withLinearToken(workspaceId, (token) => body(createLinearAgentClient(token)));
+}
+
+/**
+ * Runs one Linear call with a valid access token, and retries it once with a fresh token when
+ * Linear rejects the one it received.
+ *
+ * A Linear access token lives for twenty-four hours, and it can be revoked before that. The
+ * provider refreshes an expiring token on its own, so this retry covers the second case only:
+ * a token that was still inside its window and stopped working.
+ */
+async function withLinearToken<T>(workspaceId: string, body: (token: string) => Promise<T>): Promise<T> {
+  const token = await linearTokens.tokenFor(workspaceId);
+  try {
+    return await body(token);
+  } catch (error) {
+    if (!isLinearAuthenticationError(error)) throw error;
+    logger.warn("Linear rejected the access token, refreshing it", {
+      step: "linear_token",
+      linear_workspace_id: workspaceId,
+    });
+    return await body(await linearTokens.tokenFor(workspaceId, { force: true }));
+  }
+}
+
+/** Recognizes the answer Linear gives for a token it does not accept. */
+function isLinearAuthenticationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /authentication required|not authenticated|AUTHENTICATION_ERROR|\b401\b/i.test(message);
 }
 
 // SDD section 18. The reader clones each repository into a temporary mirror, so the worker owns
@@ -173,9 +216,7 @@ const linearFileUploadApiForTenant = async (tenantId: string) => {
     select: { linearWorkspaceId: true },
   });
   if (!tenant) throw new Error(`no tenant ${tenantId} for the evidence upload`);
-  const token = await tenants.getInstallationToken(tenant.linearWorkspaceId);
-  if (!token) throw new Error(`no Linear installation for workspace ${tenant.linearWorkspaceId}`);
-  return createLinearFileUploadApi(token);
+  return createLinearFileUploadApi(await linearTokens.tokenFor(tenant.linearWorkspaceId));
 };
 
 const evidenceStorage = createEvidenceStorage({

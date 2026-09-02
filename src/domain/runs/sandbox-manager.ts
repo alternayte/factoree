@@ -22,6 +22,11 @@ export interface PrepareSandboxInput {
   environment?: Record<string, string>;
   /** SDD section 16. The organization-wide skills repository of the Project, when it has one. */
   organizationSkills?: RepositorySpec;
+  /**
+   * A read-only repository credential, for a private repository. It reaches one git command at a
+   * time and never stays inside the sandbox. SDD section 30 forbids a write credential here.
+   */
+  repositoryCredential?: string;
 }
 
 export interface PreparedSandbox {
@@ -70,6 +75,27 @@ export interface SandboxManagerOptions {
  * first policy allows exactly the repository hosts and nothing else. A local path carries no
  * host and adds nothing.
  */
+/**
+ * Wraps the bootstrap command so a failing stage of a pipeline fails the command.
+ *
+ * A shell reports the status of the last stage of a pipeline only. The common installer form
+ * `curl ... | bash` therefore exits 0 when the download fails, because the shell that reads the
+ * empty script exits 0. The Run then continues with nothing installed, and it fails much later,
+ * with an error that names a missing tool rather than the download that never happened.
+ *
+ * `pipefail` reports the first failing stage instead. A shell that does not support the option
+ * prints to stderr and returns non-zero, and `|| true` keeps such a shell on the old behaviour
+ * rather than failing every bootstrap.
+ */
+const bootstrapScript = (command: string): string =>
+  `set -o pipefail 2>/dev/null || true\n${command}`;
+
+/** The output of a failed bootstrap. An installer reports its reason on either stream. */
+const bootstrapFailureDetail = (stdout: string, stderr: string): string => {
+  const parts = [stderr.trim(), stdout.trim()].filter((part) => part.length > 0);
+  return parts.length === 0 ? "the command wrote no output" : parts.join(" | ");
+};
+
 const checkoutHosts = (specs: RepositorySpec[]): string[] => {
   const hosts = new Set<string>();
   for (const spec of specs) {
@@ -108,6 +134,10 @@ export class SandboxManager {
       ...(input.environment === undefined ? {} : { environment: input.environment }),
     });
 
+    // Both adapters deliver the environment through this call. `SandboxCreateInput.environment`
+    // alone reaches neither a Sprite exec nor a local child process.
+    sandbox.attachEnvironment(ref, input.environment ?? {});
+
     try {
       // The organization skills repository is checked out under the first policy, so its host
       // must be allowed there.
@@ -121,7 +151,10 @@ export class SandboxManager {
 
       // The workspace directory must exist before the first checkout. The caller creates it here,
       // because one adapter cannot reliably create the directory at sandbox creation time.
-      const mkdir = await sandbox.exec(ref, { file: "mkdir", args: ["-p", ref.workspacePath] });
+      // The command runs at the root, not at the default working directory. An adapter defaults
+      // the working directory to the workspace path, and that directory is what this command
+      // creates. A missing working directory fails the command before it starts.
+      const mkdir = await sandbox.exec(ref, { file: "mkdir", args: ["-p", ref.workspacePath], cwd: "/" });
       if (mkdir.exitCode !== 0) {
         throw new Error(
           `the command "mkdir -p ${ref.workspacePath}" failed with exit code ${mkdir.exitCode}: ` +
@@ -129,7 +162,7 @@ export class SandboxManager {
         );
       }
 
-      const primary = await checkoutPrimary(sandbox, ref, input.primary);
+      const primary = await checkoutPrimary(sandbox, ref, input.primary, input.repositoryCredential);
 
       // SDD section 15. The primary repository owns the configuration of the Run.
       const file = await readRepositoryConfig(sandbox, ref, primary.path);
@@ -141,13 +174,13 @@ export class SandboxManager {
         allowedDomains: [...new Set([...repositoryHosts, ...runtime.allowedDomains])].sort(),
       });
 
-      const references = await checkoutReferences(sandbox, ref, input.references);
+      const references = await checkoutReferences(sandbox, ref, input.references, input.repositoryCredential);
       const checkout: CheckoutResult = { primary, references };
 
       if (runtime.bootstrapCommand !== null) {
         const result = await sandbox.exec(ref, {
           file: "sh",
-          args: ["-c", runtime.bootstrapCommand],
+          args: ["-c", bootstrapScript(runtime.bootstrapCommand)],
           cwd: primary.path,
         });
         if (result.exitCode !== 0) {
@@ -155,7 +188,7 @@ export class SandboxManager {
           // a configuration fault. A retry runs the same command and fails again.
           throw new RunConfigurationError(
             `the bootstrap command failed with exit code ${result.exitCode}: ` +
-              withoutUrlCredentials(result.stderr.trim()),
+              withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
           );
         }
       }
@@ -167,7 +200,12 @@ export class SandboxManager {
       const organizationSkills =
         input.organizationSkills === undefined
           ? null
-          : await checkoutOrganizationSkills(sandbox, ref, input.organizationSkills);
+          : await checkoutOrganizationSkills(
+              sandbox,
+              ref,
+              input.organizationSkills,
+              input.repositoryCredential,
+            );
 
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.

@@ -125,7 +125,12 @@ const wordsOf = (key: string): Set<string> =>
 const matchesAnyWord = (words: Set<string>, predicate: WordPredicate): boolean =>
   [...words].some((word) => predicate(word));
 
-const isForbiddenName = (key: string): boolean => {
+/**
+ * Reports whether a key name matches one of the four SDD section 30 prohibitions. It is exported
+ * so the Project secret writer can refuse a misfiled credential when an operator stores it,
+ * rather than at the moment a Run needs it.
+ */
+export const isForbiddenName = (key: string): boolean => {
   const words = wordsOf(key);
 
   // A key whose entire word set is the bare GitHub provider word is ambiguous on its own. A
