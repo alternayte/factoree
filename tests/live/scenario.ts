@@ -319,20 +319,24 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
       apiBaseUrl: "https://api.github.com",
       token: env.LIVE_GITHUB_TOKEN,
     });
+    // The Proof Pack names the pull request by its URL, and SDD section 47 fixes that section as
+    // the URL alone. A URL carries the number, so the number is what this scenario confirms. An
+    // earlier version looked for a head branch in that section, and the Proof Pack never writes
+    // one, so the check reported a missing branch even when the pull request existed.
     const numberMatch = prUrlMatch[0].match(/\/pull\/(\d+)$/);
-    const headBranchMatch = pullRequestSection.match(/head branch[:\s]+`?([^\s`]+)`?/i);
-    if (numberMatch !== null && headBranchMatch !== null) {
+    const number = Number.parseInt(numberMatch?.[1] ?? "", 10);
+    if (Number.isInteger(number)) {
       try {
-        const record = await pullRequests.findByHead(env.LIVE_GITHUB_REPOSITORY, headBranchMatch[1] ?? "");
-        prConfirmed = record !== null && String(record.number) === numberMatch[1];
+        const record = await pullRequests.findByNumber(env.LIVE_GITHUB_REPOSITORY, number);
+        prConfirmed = record !== null && record.number === number;
         prDetail = prConfirmed
-          ? `GitHub confirms pull request #${record?.number ?? "?"} at ${prUrlMatch[0]}`
-          : `GitHub did not return the pull request named at ${prUrlMatch[0]}`;
+          ? `GitHub confirms pull request #${number} at ${prUrlMatch[0]}, on branch ${record?.headBranch ?? "?"}`
+          : `GitHub returned no pull request #${number} in ${env.LIVE_GITHUB_REPOSITORY}`;
       } catch (error) {
         prDetail = `the GitHub API call failed: ${error instanceof Error ? error.message : String(error)}`;
       }
     } else {
-      prDetail = `the Pull request section named ${prUrlMatch[0]}, but it did not also name a head branch to confirm`;
+      prDetail = `the Pull request section named ${prUrlMatch[0]}, and no pull request number stands in it`;
     }
   }
   facts.push({ name: "A real GitHub PR is created", holds: prConfirmed, detail: prDetail });

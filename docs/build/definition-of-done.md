@@ -162,18 +162,45 @@ SDD section 67 states every required item. This file records the evidence for ea
 
 ## Live proof
 
-SDD section 66 defines the live acceptance test and names `BLOCKED_EXTERNAL` as a legitimate recorded state, distinct from `DONE`. No live Linear workspace, GitHub fixture repository, Fly organization, or Temporal Cloud credential is available in this environment. `npm run acceptance:live` exits 78 and prints `BLOCKED_EXTERNAL`. `tests/live/scenario.ts` holds a real, complete implementation of the live scenario, but it is unexecuted here for lack of credentials. Every item below is therefore `BLOCKED_EXTERNAL`, not `PASS`, and Factoree Version 1 is not Done until an operator supplies the credentials and the command exits 0.
+SDD section 66 defines the live acceptance test and names `BLOCKED_EXTERNAL` as a legitimate recorded state, distinct from `DONE`.
+
+An operator supplied live credentials on 2026-09-02 and ran Factoree against a real Linear
+workspace, a real Fly Sprite, and the GitHub repository `alternayte/c-dash`. One Run completed and
+opened a pull request:
+
+| Fact | Value |
+| --- | --- |
+| Run | `a22a5e0a-e57c-4d96-9e95-6e3c8d6287e3` |
+| Temporal workflow | `linear:3645c3ea-e357-4ee6-81a7-72bec7dde863:493ef8f3-fc9e-4491-82cc-b6ef95e14773` |
+| Status | `READY_FOR_HUMAN` |
+| Pull request | https://github.com/alternayte/c-dash/pull/2 |
+| Head branch | `factoree/run-a22a5e0a-e57c-4d96-9e95-6e3c8d6287e3` |
+| Context Contract | `4fb1023f3a196b2f9c899b7b974438ae045934832dd08c5e31afe65aefd67959` |
+| Agent sessions | implementer, validator, reviewer, each on `opencode` |
+| Evidence rows | 4 |
+| Validation results | 2, both `PASS` |
+| Review findings | 1 |
+| Proof Pack | posted to Linear, `proofPackPostedAt` is set |
+
+The rows below record what that Run proves. Each one names the stored fact a reader can query.
+The state of each row comes from the database of that Run and from the GitHub API, not from the
+report of the scenario command.
+
+One row stays `BLOCKED_EXTERNAL`: `npm run acceptance:live` has not exited 0. It failed on a defect
+of the scenario itself, which looked for a head branch in the Proof Pack section that SDD section
+47 fixes as the URL alone. The scenario now confirms the pull request by its number. Nobody has
+run the command since that fix, so no row claims it passed.
 
 | Item | State | Evidence |
 | --- | --- | --- |
-| `npm run acceptance:live` has passed. | BLOCKED_EXTERNAL | No live Linear, GitHub, Fly, or Temporal credential exists in this environment. `npm run acceptance:live` exits 78 and prints `BLOCKED_EXTERNAL`. SDD section 66 names that state. `tests/unit/required-credentials.test.ts` proves the credential contract the command checks. |
-| Real Linear delegation reaches Factoree. | BLOCKED_EXTERNAL | Requires a live Linear workspace credential, absent here. `tests/live/scenario.ts` implements the real drive; it did not run. |
-| Real context resolution runs. | BLOCKED_EXTERNAL | Requires the live GitHub fixture repository and Backstage credential, absent here. |
-| Real Validation Contract is frozen. | BLOCKED_EXTERNAL | Depends on the same run of `tests/live/scenario.ts`, which did not execute. |
-| Real Fly Sprite performs implementation. | BLOCKED_EXTERNAL | Requires a live Fly organization credential, absent here. |
-| Deterministic verification runs. | BLOCKED_EXTERNAL | Depends on the same unexecuted live run. |
-| User-level validation runs. | BLOCKED_EXTERNAL | Depends on the same unexecuted live run. |
-| Independent review runs. | BLOCKED_EXTERNAL | Depends on the same unexecuted live run. |
-| Evidence is accessible from Linear. | BLOCKED_EXTERNAL | Requires a live Linear workspace, absent here. |
-| A real GitHub PR is created. | BLOCKED_EXTERNAL | Requires a live GitHub fixture repository credential, absent here. |
-| The Proof Pack is visible in Linear. | BLOCKED_EXTERNAL | Requires a live Linear workspace, absent here. |
+| `npm run acceptance:live` has passed. | BLOCKED_EXTERNAL | The command has not exited 0. It failed on a defect of `tests/live/scenario.ts`, which required a head branch in the Proof Pack `### Pull request` section, and SDD section 47 fixes that section as the URL alone. The scenario now confirms by number, and `.env` also named a placeholder repository in `LIVE_GITHUB_REPOSITORY`. Nobody has run the command since. |
+| Real Linear delegation reaches Factoree. | PASS | Run `a22a5e0a` carries `linearAgentSessionId`, and its workflow id names the Linear workspace `3645c3ea-e357-4ee6-81a7-72bec7dde863`. A delegation in Linear started it. |
+| Real context resolution runs. | PASS | Run `a22a5e0a` stores `contextContractVersion` `4fb1023f3a196b2f9c899b7b974438ae045934832dd08c5e31afe65aefd67959`, against the real repository `alternayte/c-dash`. |
+| Real Validation Contract is frozen. | PASS | The Validation Contract of Run `a22a5e0a` holds `VAL-CMD-001` and `VAL-TEST-001`, and both carry a stored result. |
+| Real Fly Sprite performs implementation. | PASS | The `AgentExecution` row of role `implementer` on runner `opencode` records the session, and the sandbox of the Run was a real Fly Sprite. The patch became the pull request below. |
+| Deterministic verification runs. | PASS | Two `Evidence` rows of kind `deterministic_check`, sources `verify:type-check` and `verify:test`, both from the repository configuration of `alternayte/c-dash`. |
+| User-level validation runs. | PASS | Two `ValidationAssertionResult` rows, both `PASS`, with `command-output` evidence. The `AgentExecution` row of role `validator` records the fresh session SDD section 36 requires. |
+| Independent review runs. | PASS | The `AgentExecution` row of role `reviewer` records a fresh session, and one `ReviewFinding` row stores its outcome. |
+| Evidence is accessible from Linear. | PASS | The Proof Pack of Run `a22a5e0a` is posted, `proofPackPostedAt` is set, and it carries the pull request URL and the verification evidence. |
+| A real GitHub PR is created. | PASS | https://github.com/alternayte/c-dash/pull/2, head branch `factoree/run-a22a5e0a-e57c-4d96-9e95-6e3c8d6287e3`, head SHA `cf3e98cc538d16c50d789b620a577ba14ce7c1e9`. Confirmed through the GitHub API with `GitHubPullRequests.findByNumber`. |
+| The Proof Pack is visible in Linear. | PASS | `proofPackPostedAt` of Run `a22a5e0a` is set, so Factoree posted the comment to the Linear issue of the Run. |
