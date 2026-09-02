@@ -63,6 +63,42 @@ const readSection = (proofPack: string, heading: string): string => {
   return proofPack.slice(afterHeading, boundedEnd).trim();
 };
 
+/** The file the fixture task adds. It is one file at the root, so any repository can carry it. */
+const PROOF_FILE = "factoree-live-proof.md";
+
+/**
+ * The description of the fixture issue.
+ *
+ * The acceptance criteria are written as commands on purpose. `methodFor` in
+ * `src/domain/validation/validation-contract-builder.ts` reads the wording of a criterion and
+ * chooses the validation method from it, and it falls back to `manual` when it recognises
+ * nothing. SDD section 36 forbids an L3 Run from completing with a manual assertion, so a prose
+ * criterion ends every Run at user validation and no path can ever reach a pull request. The
+ * words "command" and "exits with code" select the `command` method, which the User Validator
+ * proves by itself.
+ *
+ * The task names one new file at the repository root, so the scenario runs against any fixture
+ * repository without assuming a toolchain, a test runner, or a directory layout.
+ */
+export const fixtureDescription = (token: string): string =>
+  [
+    `Add a file named \`${PROOF_FILE}\` at the root of the repository.`,
+    `Its only line must be the token ${token}.`,
+    "Change no other file.",
+    "",
+    // The heading must be a markdown heading. `SECTION_BY_TITLE` in
+    // `src/domain/refinement/work-item.ts` recognises a section by its heading line, and a plain
+    // "Acceptance criteria:" line names no section. Refinement then derives a criterion from
+    // every sentence of the issue, including its title, and each derived sentence reads as
+    // `manual`, which ends the Run at user validation.
+    "## Acceptance criteria",
+    "",
+    // `cat`, not `test -f`: the word "test" selects the `test` method, which sends the User
+    // Validator to the test suite of the repository instead of to this file.
+    `- The command \`cat ${PROOF_FILE}\` exits with code 0.`,
+    `- The command \`grep -qxF '${token}' ${PROOF_FILE}\` exits with code 0.`,
+  ].join("\n");
+
 /**
  * Creates the fixture issue and delegates it to Factoree. Returns the issue identifier the rest
  * of the scenario polls.
@@ -80,12 +116,13 @@ const delegateFixtureIssue = async (
         "Install the Factoree Linear app on the test workspace before this scenario runs.",
     );
   }
+  // One token per Run, so the file the Run writes cannot be confused with the file of an
+  // earlier Run that the fixture repository still carries.
+  const token = `factoree-live-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const created = await linear.createIssue({
     teamId,
-    title: `Factoree live acceptance fixture ${new Date().toISOString()}`,
-    description:
-      "This issue is the SDD section 66 live acceptance fixture. Factoree must implement a " +
-      "trivial, reversible change in the fixture repository and open a pull request.",
+    title: `Factoree live acceptance fixture ${token}`,
+    description: fixtureDescription(token),
     assigneeId: factoreeUser.id,
   });
   const issue = await created.issue;
@@ -171,7 +208,15 @@ const checkContextSources = async (env: NodeJS.ProcessEnv): Promise<LiveFact> =>
 };
 
 export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number> => {
-  const linear = new LinearClient({ accessToken: env.LIVE_LINEAR_API_KEY ?? "" });
+  // A personal API key goes in `apiKey`. The SDK sends an `accessToken` with a `Bearer`
+  // prefix, and Linear rejects a personal API key that carries that prefix. An OAuth token
+  // still works through `accessToken`, so the scenario selects the field by the key shape.
+  const linearCredential = env.LIVE_LINEAR_API_KEY ?? "";
+  const linear = new LinearClient(
+    linearCredential.startsWith("lin_api_")
+      ? { apiKey: linearCredential }
+      : { accessToken: linearCredential },
+  );
   const teamId = env.LIVE_LINEAR_TEAM_ID ?? "";
   const facts: LiveFact[] = [];
   facts.push(await checkContextSources(env));

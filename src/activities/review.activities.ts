@@ -25,6 +25,7 @@ import {
 } from "~/domain/review/review-report.js";
 import { decideReview, failureLine } from "~/domain/review/blocking.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
+import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
 
 /**
  * SDD section 40. The Reviewer runs in a fresh session, against the goal, the frozen Validation
@@ -165,6 +166,15 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       const actionPolicy = buildActionPolicy({ role: "reviewer" });
 
       const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+      // SDD section 30. The runner credential is attached again here, because the attachment lives
+      // in the worker process that made it, and another worker can run this activity.
+      await attachRunnerEnvironment(
+        dependencies.sandbox,
+        ref,
+        dependencies.secrets,
+        input.tenantId,
+        input.projectId,
+      );
       const reviewDirectory = `${input.workspacePath}/review`;
 
       // Step 4. The scratch directory the reviewer session works from. It is never the primary
@@ -203,7 +213,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
       const projectTestSecrets: Record<string, string> = {};
       for (const descriptor of descriptors) {
-        if (!descriptor.injectIntoImplementer) continue;
+        // A credential of another kind reaches its carrier by its own path, never this map.
+        if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
         const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
@@ -300,6 +311,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           sandbox: dependencies.sandbox,
           ref,
           workingDirectory: reviewDirectory,
+          // The session reads its model and its provider timeouts from the repository.
+          repositoryPath: input.primaryPath,
           prompt: reviewerInput.prompt,
           promptVersion: reviewerInput.promptVersion,
           environment: reviewerInput.environment,

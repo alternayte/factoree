@@ -25,6 +25,8 @@ export class FakeSandbox implements Sandbox {
   readonly name = "fake";
   readonly calls: string[] = [];
   readonly commands: Command[] = [];
+  /** The environment of the last `attachEnvironment` or `create` call. A test asserts on it. */
+  attachedEnvironment: Record<string, string> = {};
   readonly policies: NetworkPolicy[] = [];
   /** Every policy passed to `applyNetworkPolicy`, in order. */
   readonly networkPolicies: NetworkPolicy[] = [];
@@ -53,6 +55,13 @@ export class FakeSandbox implements Sandbox {
     this.scripted.push({ matcher, result });
   }
 
+  /** Updates a process that keeps running. A test uses it to model output over time. */
+  updateProcess(id: string, snapshot: Partial<ProcessSnapshot>): void {
+    const current = this.processes.get(id);
+    if (current === undefined) throw new Error(`unknown process ${id}`);
+    this.processes.set(id, { ...current, ...snapshot });
+  }
+
   finishProcess(id: string, snapshot: Partial<ProcessSnapshot>): void {
     const current = this.processes.get(id);
     if (current === undefined) throw new Error(`unknown process ${id}`);
@@ -62,6 +71,7 @@ export class FakeSandbox implements Sandbox {
   create(input: SandboxCreateInput): Promise<SandboxRef> {
     this.calls.push("create");
     this.counter += 1;
+    if (input.environment !== undefined) this.attachedEnvironment = { ...input.environment };
     return Promise.resolve({
       id: `fake-${input.runId}-${this.counter}`,
       adapter: this.name,
@@ -69,10 +79,24 @@ export class FakeSandbox implements Sandbox {
     });
   }
 
+  attachEnvironment(_ref: SandboxRef, environment: Record<string, string>): void {
+    this.calls.push("attachEnvironment");
+    this.attachedEnvironment = { ...environment };
+  }
+
   applyNetworkPolicy(_ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
     this.calls.push("applyNetworkPolicy");
     this.networkPolicies.push(policy);
     this.policies.push(policy);
+    return Promise.resolve();
+  }
+
+  /** The files written into the sandbox, by path. A prompt lands here. */
+  readonly files = new Map<string, string>();
+
+  writeFile(_ref: SandboxRef, path: string, content: string): Promise<void> {
+    this.calls.push("writeFile");
+    this.files.set(path, content);
     return Promise.resolve();
   }
 

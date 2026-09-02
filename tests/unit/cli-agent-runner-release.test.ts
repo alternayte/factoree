@@ -44,7 +44,7 @@ const startOneRun = async (
     actionPolicy: buildActionPolicy(),
     timeoutMs: 5_000,
   });
-  await waitUntil(() => sandbox.commands.length > commandsBefore && sandbox.commands.at(-1)?.file === "opencode");
+  await waitUntil(() => sandbox.commands.length > commandsBefore && sandbox.commands.at(-1)?.file === "sh");
   // A fresh sandbox spends one counter tick on `create`, so its first `startProcess` yields
   // "process-2". Reusing a sandbox's ref across Runs spends no further `create` tick, so each
   // further `startProcess` id is one past the number of commands already recorded.

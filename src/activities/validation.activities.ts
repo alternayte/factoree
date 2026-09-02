@@ -24,6 +24,7 @@ import { buildUserValidatorInput } from "~/domain/validation/user-validator-inpu
 import { runUserValidation } from "~/domain/validation/user-validator.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
+import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
 
 export interface BuildValidationContractActivityInput {
   runId: string;
@@ -303,6 +304,15 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const actionPolicy = buildActionPolicy({ role: "validator" });
 
       const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+      // SDD section 30. The runner credential is attached again here, because the attachment lives
+      // in the worker process that made it, and another worker can run this activity.
+      await attachRunnerEnvironment(
+        uv.sandbox,
+        ref,
+        uv.secrets,
+        input.tenantId,
+        input.projectId,
+      );
       const validationDirectory = `${input.workspacePath}/validation`;
 
       // Step 4. The scratch directory the validator session works from. It is never the
@@ -343,7 +353,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const descriptors = await uv.secrets.list(input.tenantId, input.projectId);
       const projectTestSecrets: Record<string, string> = {};
       for (const descriptor of descriptors) {
-        if (!descriptor.injectIntoImplementer) continue;
+        // A credential of another kind reaches its carrier by its own path, never this map.
+        if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
         const value = await uv.secrets.get(input.tenantId, input.projectId, descriptor.name);
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
@@ -432,6 +443,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           sandbox: uv.sandbox,
           ref,
           workingDirectory: validationDirectory,
+          // The session reads its model and its provider timeouts from the repository.
+          repositoryPath: input.primaryPath,
           prompt: validatorInput.prompt,
           promptVersion: validatorInput.promptVersion,
           environment: validatorInput.environment,
@@ -465,10 +478,29 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       });
 
       // Step 8. A missing or unreadable plan gives `planText = null`.
-      const planResult = await uv.sandbox.exec(ref, {
-        file: "cat",
-        args: [planPath],
-      });
+      let planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
+
+      // A session that answers without writing its plan blocks every automated assertion, and
+      // the Run then proves nothing although the change may be correct. A measured session wrote
+      // the file on one pass and not on the next, from the same prompt. One reminder costs a few
+      // seconds and recovers the pass, so the session is asked once more before the Run gives up.
+      if (planResult.exitCode !== 0) {
+        dependencies.logger.warn("the validator wrote no plan, asking once more", {
+          tenant_id: input.tenantId,
+          project_id: input.projectId,
+          run_id: input.runId,
+          step: "user_validate",
+        });
+        const reminder = await runner.resume(sessionResult.session, {
+          prompt:
+            `You wrote no Validation Plan. Write the plan now, as one JSON document, to ${planPath}. ` +
+            "Write the file and nothing else. Do not answer with the plan in a message.",
+          timeoutMs: input.timeoutMs,
+        });
+        void reminder;
+        planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
+      }
+
       const planText = planResult.exitCode === 0 ? planResult.stdout : null;
 
       // Step 9. Executes the plan against the frozen contract. `ValidationContract.version`

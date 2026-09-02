@@ -84,6 +84,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
+    evidence: dependencies.evidence,
   }),
   ...createRefinementActivities({
     refinement: dependencies.refinement,
@@ -96,6 +97,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     sources: dependencies.contextSources,
     repositoryReader: dependencies.repositoryReader,
+    secrets: dependencies.secrets,
   }),
   ...createValidationActivities({
     contracts: dependencies.validationContracts,

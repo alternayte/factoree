@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { chmod, cp, lstat, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type {
   CheckpointRef,
   Command,
@@ -103,14 +103,21 @@ const INHERITED_ENVIRONMENT_NAMES = [
   "SYSTEMROOT",
 ] as const;
 
-/** Builds the environment of one child process from the allow list and the command. */
-const buildChildEnvironment = (commandEnvironment?: Record<string, string>): NodeJS.ProcessEnv => {
+/**
+ * Builds the environment of one child process from the allow list, the environment attached to
+ * the sandbox, and the command. The allow list stays the outermost control: it decides which of
+ * the worker's own variables a child may read, and SDD section 30 depends on that.
+ */
+const buildChildEnvironment = (
+  attachedEnvironment: Record<string, string>,
+  commandEnvironment?: Record<string, string>,
+): NodeJS.ProcessEnv => {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of INHERITED_ENVIRONMENT_NAMES) {
     const value = process.env[name];
     if (value !== undefined) environment[name] = value;
   }
-  return { ...environment, ...commandEnvironment };
+  return { ...environment, ...attachedEnvironment, ...commandEnvironment };
 };
 
 export class LocalProcessSandbox implements Sandbox {
@@ -122,6 +129,8 @@ export class LocalProcessSandbox implements Sandbox {
   };
 
   private readonly live = new Set<string>();
+  /** The environment attached to each sandbox, by sandbox id. It lives in this process only. */
+  private readonly attached = new Map<string, Record<string, string>>();
   private readonly processes = new Map<string, RunningProcess>();
 
   constructor(private readonly options: LocalProcessSandboxOptions) {}
@@ -131,7 +140,14 @@ export class LocalProcessSandbox implements Sandbox {
     const workspacePath = join(this.options.rootDirectory, id, "workspace");
     await mkdir(workspacePath, { recursive: true });
     this.live.add(id);
+    // This adapter reads no environment at creation time, so the value is held here instead. The
+    // two adapters then behave the same for the caller.
+    if (input.environment !== undefined) this.attached.set(id, { ...input.environment });
     return { id, adapter: this.name, workspacePath };
+  }
+
+  attachEnvironment(ref: SandboxRef, environment: Record<string, string>): void {
+    this.attached.set(ref.id, { ...environment });
   }
 
   applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
@@ -140,6 +156,13 @@ export class LocalProcessSandbox implements Sandbox {
     void policy;
     this.assertLive(ref);
     return Promise.resolve();
+  }
+
+  async writeFile(ref: SandboxRef, path: string, content: string): Promise<void> {
+    this.assertLive(ref);
+    const target = isAbsolute(path) ? path : join(ref.workspacePath, path);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content, "utf8");
   }
 
   async exec(ref: SandboxRef, command: Command): Promise<CommandResult> {
@@ -151,7 +174,7 @@ export class LocalProcessSandbox implements Sandbox {
       let timedOut = false;
       const child = spawn(command.file, command.args, {
         cwd: this.resolveCwd(ref, command.cwd),
-        env: buildChildEnvironment(command.env),
+        env: buildChildEnvironment(command.isolated === true ? {} : (this.attached.get(ref.id) ?? {}), command.env),
       });
       const timer =
         command.timeoutMs === undefined
@@ -181,7 +204,7 @@ export class LocalProcessSandbox implements Sandbox {
     const id = `process-${randomUUID().slice(0, 8)}`;
     const child = spawn(command.file, command.args, {
       cwd: this.resolveCwd(ref, command.cwd),
-      env: buildChildEnvironment(command.env),
+      env: buildChildEnvironment(command.isolated === true ? {} : (this.attached.get(ref.id) ?? {}), command.env),
     });
     const record: RunningProcess = {
       stdout: "",
@@ -241,6 +264,7 @@ export class LocalProcessSandbox implements Sandbox {
   async destroy(ref: SandboxRef): Promise<void> {
     // An unknown sandbox is not an error to destroy. Destruction is idempotent.
     this.live.delete(ref.id);
+    this.attached.delete(ref.id);
     const path = join(this.options.rootDirectory, ref.id);
     // Every reference checkout is read-only, and the baseline checkpoint holds a read-only copy
     // of it. The owner must hold write permission on a directory before the platform removes an

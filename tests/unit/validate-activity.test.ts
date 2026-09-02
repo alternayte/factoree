@@ -400,3 +400,51 @@ describe("the userValidate activity", () => {
     await expect(promise).rejects.toThrow(/opencode/);
   });
 });
+
+describe("the userValidate activity, a session that wrote no plan", () => {
+  // A measured session wrote the plan on one pass and not on the next, from the same prompt.
+  // Without a reminder every automated assertion is BLOCKED, and the Run proves nothing.
+  it("asks the session once more, then reads the plan it wrote", async () => {
+    const sandbox = new FakeSandbox();
+    let reads = 0;
+    sandbox.onExec = (command) => {
+      if (command.file !== "cat") return { exitCode: 0, stdout: "", stderr: "" };
+      reads += 1;
+      // The first read finds nothing. The reminder makes the session write the plan.
+      return reads === 1
+        ? { exitCode: 1, stdout: "", stderr: "No such file" }
+        : { exitCode: 0, stdout: planText, stderr: "" };
+    };
+    const runner = new FakeRunner();
+    const { activities, results } = build(runner, sandbox);
+
+    const output: UserValidateActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      input,
+    );
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.resumes[0]?.input.prompt).toContain("You wrote no Validation Plan");
+    // The plan of the second read decides the outcome, so the assertions are answered.
+    expect(results.rows.every((row) => row.result !== "BLOCKED")).toBe(true);
+    expect(output.results.length).toBeGreaterThan(0);
+  });
+
+  it("blocks the assertions when the reminder produces no plan either", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.onExec = (command) =>
+      command.file === "cat"
+        ? { exitCode: 1, stdout: "", stderr: "No such file" }
+        : { exitCode: 0, stdout: "", stderr: "" };
+    const runner = new FakeRunner();
+    const { activities } = build(runner, sandbox);
+
+    const output: UserValidateActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      input,
+    );
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(output.results.every((result) => result.result === "BLOCKED")).toBe(true);
+  });
+});

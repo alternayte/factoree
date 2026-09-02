@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutOrganizationSkills, checkoutRepositories } from "~/domain/runs/checkout.js";
+import { checkoutOrganizationSkills, checkoutPrimary, checkoutRepositories } from "~/domain/runs/checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
@@ -221,5 +221,50 @@ describe("checkoutOrganizationSkills", () => {
     expect(
       sandbox.commands.some((command) => command.file === "chmod" && command.args.includes(checked.path)),
     ).toBe(true);
+  });
+});
+
+describe("the read-only repository credential", () => {
+  it("reaches the clone command alone, and never the command line", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    sandbox.onExec = (command) =>
+      command.args.includes("rev-parse")
+        ? { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" }
+        : { exitCode: 0, stdout: "", stderr: "" };
+
+    await checkoutPrimary(
+      sandbox,
+      ref,
+      { url: "https://github.test/acme/app.git", ref: "main" },
+      "read-only-token",
+    );
+
+    const clone = sandbox.commands.find((command) => command.args.includes("clone"));
+    expect(clone?.env?.GIT_CONFIG_COUNT).toBe("1");
+    expect(clone?.env?.GIT_CONFIG_KEY_0).toBe("http.https://github.test/.extraheader");
+    // The credential must never sit where `ps` or `/proc/<pid>/cmdline` can show it.
+    for (const command of sandbox.commands) {
+      expect([command.file, ...command.args].join(" ")).not.toContain("read-only-token");
+    }
+    // Every command after the clone runs without the credential, so nothing writes it into the
+    // checkout, and the origin URL stays bare.
+    for (const command of sandbox.commands.filter((entry) => !entry.args.includes("clone"))) {
+      expect(command.env?.GIT_CONFIG_VALUE_0).toBeUndefined();
+    }
+  });
+
+  it("sends no credential environment for a public repository", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    sandbox.onExec = (command) =>
+      command.args.includes("rev-parse")
+        ? { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" }
+        : { exitCode: 0, stdout: "", stderr: "" };
+
+    await checkoutPrimary(sandbox, ref, { url: "https://github.test/acme/app.git", ref: "main" });
+
+    const clone = sandbox.commands.find((command) => command.args.includes("clone"));
+    expect(clone?.env).toBeUndefined();
   });
 });

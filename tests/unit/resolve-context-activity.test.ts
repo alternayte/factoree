@@ -11,11 +11,12 @@ import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
+import { MemorySecretStore } from "../support/memory-secret-store.js";
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
 const SHA_A = "a".repeat(40);
 
-const build = (files: Record<string, string>) => {
+const build = (files: Record<string, string>, secrets = new MemorySecretStore()) => {
   const reader = new FakeRepositoryReader({ [PRIMARY_URL]: { sha: SHA_A, files } });
   const contracts = new FakeContextContractStore();
   const versions: Array<{ tenantId: string; runId: string; version: string }> = [];
@@ -40,8 +41,9 @@ const build = (files: Record<string, string>) => {
         ),
     },
     repositoryReader: reader,
+    secrets,
   });
-  return { activities, contracts, versions };
+  return { activities, contracts, versions, reader };
 };
 
 const input = (over: Partial<ResolveContextActivityInput> = {}): ResolveContextActivityInput => ({
@@ -226,5 +228,26 @@ describe("resolveContext activity", () => {
     expect(versions).toEqual([
       { tenantId: "tenant-1", runId: "run-1", version: settled.sha256 },
     ]);
+  });
+});
+
+describe("resolveContext, the private repository credential", () => {
+  it("gives the reader the credential for the primary repository origin", async () => {
+    const secrets = new MemorySecretStore({
+      GITHUB_READ_TOKEN: { value: "read-value", injectIntoImplementer: false, kind: "repository_read" },
+    });
+    const { activities, reader } = build({}, secrets);
+
+    await activities.resolveContext(input());
+
+    expect(reader.credentialOrigins).toEqual(["https://git"]);
+  });
+
+  it("gives the reader no credential when the Project holds none", async () => {
+    const { activities, reader } = build({});
+
+    await activities.resolveContext(input());
+
+    expect(reader.credentialOrigins).toEqual([]);
   });
 });

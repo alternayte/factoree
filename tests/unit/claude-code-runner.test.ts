@@ -45,7 +45,11 @@ describe("ClaudeCodeRunner", () => {
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
     const command = sandbox.commands.at(-1);
     expect(command?.args.join(" ")).not.toContain("a secret goal sentence");
-    expect(command?.env?.["FACTOREE_PROMPT"]).toBe("a secret goal sentence");
+    // The prompt travels in a file, not in the environment: Linux carries at most 131072 bytes
+    // in one environment value, and a real Reviewer prompt measured 202351 bytes.
+    const promptFile = command?.env?.["FACTOREE_PROMPT_FILE"] ?? "";
+    expect(promptFile).toMatch(/\.factoree\/prompt\/.*\.txt$/);
+    expect(sandbox.files.get(promptFile)).toBe("a secret goal sentence");
     sandbox.finishProcess("process-2", {
       exitCode: 0,
       stdout: '{"type":"result","result":"ok","session_id":"s"}',

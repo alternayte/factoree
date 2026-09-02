@@ -4,11 +4,12 @@ import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sand
 import { SandboxError } from "~/domain/runs/sandbox.js";
 import type { SpritesGateway, SpritesSpriteHandle } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
 
-const WORKSPACE = "/workspace";
+const WORKSPACE = "/home/sprite/workspace";
 
 const procDir = (id: string): string => posix.join(WORKSPACE, ".factoree", "proc", id);
 
 const handle = (overrides: Partial<SpritesSpriteHandle> = {}): SpritesSpriteHandle => ({
+  writeFile: vi.fn().mockResolvedValue(undefined),
   execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
   startDetached: vi.fn().mockResolvedValue(undefined),
   createCheckpoint: vi.fn().mockResolvedValue({ id: "v1" }),
@@ -266,5 +267,151 @@ describe("FlySpriteSandbox", () => {
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
     await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(SandboxError);
     await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(/8080/);
+  });
+});
+
+describe("FlySpriteSandbox.applyNetworkPolicy, the propagation of the policy", () => {
+  it("waits until the sandbox resolves every allowed name", async () => {
+    // A measured Sprite refused a newly allowed domain until 442 ms after the API call returned.
+    let probes = 0;
+    const sprite = handle({
+      execFile: vi.fn().mockImplementation(() => {
+        probes += 1;
+        return Promise.resolve({ exitCode: probes < 3 ? 2 : 0, stdout: "", stderr: "" });
+      }),
+    });
+    const sandbox = new FlySpriteSandbox({
+      gateway: gateway(sprite),
+      networkPolicyAttempts: 5,
+      networkPolicyDelayMs: 0,
+    });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+
+    await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["opencode.ai", "github.com"] });
+
+    expect(probes).toBe(3);
+    const script = String(vi.mocked(sprite.execFile).mock.calls[0]?.[1]?.[1]);
+    expect(script).toContain("getent hosts 'opencode.ai'");
+    expect(script).toContain("getent hosts 'github.com'");
+  });
+
+  it("returns after the last attempt, so the next command reports the real problem", async () => {
+    const sprite = handle({
+      execFile: vi.fn().mockResolvedValue({ exitCode: 2, stdout: "", stderr: "" }),
+    });
+    const sandbox = new FlySpriteSandbox({
+      gateway: gateway(sprite),
+      networkPolicyAttempts: 3,
+      networkPolicyDelayMs: 0,
+    });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+
+    await expect(sandbox.applyNetworkPolicy(ref, { allowedDomains: ["opencode.ai"] })).resolves.toBeUndefined();
+    expect(vi.mocked(sprite.execFile)).toHaveBeenCalledTimes(3);
+  });
+
+  it("probes nothing when the policy denies everything", async () => {
+    const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+
+    await sandbox.applyNetworkPolicy(ref, { allowedDomains: [] });
+
+    expect(vi.mocked(sprite.execFile)).not.toHaveBeenCalled();
+  });
+
+  it("probes no wildcard entry, because it names no host to resolve", async () => {
+    const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite), networkPolicyDelayMs: 0 });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+
+    await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["*.example.com", "opencode.ai"] });
+
+    const script = String(vi.mocked(sprite.execFile).mock.calls[0]?.[1]?.[1]);
+    expect(script).toContain("opencode.ai");
+    expect(script).not.toContain("example.com");
+  });
+});
+
+describe("FlySpriteSandbox, an isolated command", () => {
+  it("runs without the environment attached to the sandbox, and keeps the base environment", async () => {
+    const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    sandbox.attachEnvironment(ref, { OPENCODE_API_KEY: "runner-credential" });
+
+    await sandbox.exec(ref, { file: "sh", args: ["-c", "npm test"], isolated: true, env: { LANG: "C.UTF-8" } });
+
+    const env = vi.mocked(sprite.execFile).mock.calls.at(-1)?.[2]?.env ?? {};
+    // SDD section 30. A verification command must not hold the credential of an agent session.
+    expect(env["OPENCODE_API_KEY"]).toBeUndefined();
+    expect(env["LANG"]).toBe("C.UTF-8");
+    // The toolchain of a Sprite lives in /.sprite/bin, so the base PATH must survive.
+    expect(env["PATH"]).toContain("/.sprite/bin");
+    expect(env["HOME"]).toBe("/home/sprite");
+  });
+
+  it("gives an ordinary command the attached environment", async () => {
+    const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    sandbox.attachEnvironment(ref, { OPENCODE_API_KEY: "runner-credential" });
+
+    await sandbox.exec(ref, { file: "sh", args: ["-c", "opencode run"] });
+
+    const env = vi.mocked(sprite.execFile).mock.calls.at(-1)?.[2]?.env ?? {};
+    expect(env["OPENCODE_API_KEY"]).toBe("runner-credential");
+  });
+});
+
+describe("FlySpriteSandbox.startProcess, a large environment", () => {
+  // The exec API puts every environment value in the query string of the WebSocket URL, and the
+  // server refuses a URL beyond roughly fifty kilobytes. A Reviewer prompt carries the diff and
+  // the Validation Contract, so it crossed that limit and the connection failed with a bare
+  // TypeError. Two Runs died there, after implementation, verification, and user validation had
+  // all passed.
+  it("sends a large environment as a file the wrapper reads", async () => {
+    const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const prompt = "x".repeat(40 * 1024);
+
+    await sandbox.startProcess(ref, { file: "sh", args: ["-c", "true"], env: { FACTOREE_PROMPT: prompt } });
+
+    const [path, content] = vi.mocked(sprite.writeFile).mock.calls[0] ?? [];
+    expect(String(path)).toMatch(/\/env$/);
+    expect(String(content)).toContain("export FACTOREE_PROMPT=");
+    // The URL carries the base environment only, so it stays far below the limit of the server.
+    const sent = vi.mocked(sprite.startDetached).mock.calls[0]?.[2]?.env ?? {};
+    expect(sent["FACTOREE_PROMPT"]).toBeUndefined();
+    expect(sent["PATH"]).toContain("/.sprite/bin");
+    // The wrapper reads the file before it starts the command.
+    const wrapper = String(vi.mocked(sprite.startDetached).mock.calls[0]?.[1]?.[1]);
+    expect(wrapper).toContain("/env'");
+  });
+
+  it("keeps a small environment in the call, which needs no extra write", async () => {
+    const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+
+    await sandbox.startProcess(ref, { file: "sh", args: ["-c", "true"], env: { FACTOREE_PROMPT: "small" } });
+
+    expect(vi.mocked(sprite.writeFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sprite.startDetached).mock.calls[0]?.[2]?.env?.["FACTOREE_PROMPT"]).toBe("small");
+  });
+
+  it("names a value the kernel cannot carry, rather than letting the shell fail", async () => {
+    const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+
+    await expect(
+      sandbox.startProcess(ref, {
+        file: "sh",
+        args: ["-c", "true"],
+        env: { FACTOREE_PROMPT: "x".repeat(200 * 1024) },
+      }),
+    ).rejects.toThrow(/FACTOREE_PROMPT.*Argument list too long/s);
   });
 });

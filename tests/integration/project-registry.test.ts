@@ -75,7 +75,7 @@ describe("project registry", () => {
     expect(await secrets.listNames(tenant.id, project.id)).toEqual(["GITHUB_TOKEN"]);
     // SDD section 30. A secret carries no injection mark unless the operator sets one.
     expect(await secrets.list(tenant.id, project.id)).toEqual([
-      { name: "GITHUB_TOKEN", injectIntoImplementer: false },
+      { name: "GITHUB_TOKEN", injectIntoImplementer: false, kind: "test" },
     ]);
   });
 
@@ -92,8 +92,8 @@ describe("project registry", () => {
     });
     await secrets.put(tenant.id, project.id, "GITHUB_TOKEN", "ghp_value_for_test_1234567890");
     expect(await secrets.list(tenant.id, project.id)).toEqual([
-      { name: "FIXTURE_URL", injectIntoImplementer: true },
-      { name: "GITHUB_TOKEN", injectIntoImplementer: false },
+      { name: "FIXTURE_URL", injectIntoImplementer: true, kind: "test" },
+      { name: "GITHUB_TOKEN", injectIntoImplementer: false, kind: "test" },
     ]);
   });
 

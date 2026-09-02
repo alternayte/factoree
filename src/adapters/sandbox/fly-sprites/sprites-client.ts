@@ -23,6 +23,11 @@ export interface SpritesExecResult {
 // flags a method signature read off an object, because a method can depend on its receiver. A
 // function-typed property carries no such risk, so the rule leaves it alone.
 export interface SpritesSpriteHandle {
+  /**
+   * Writes one file inside the sprite. The content travels in the body of the request, so a
+   * large value never reaches a URL. See `SpritesSpriteHandle.startDetached`.
+   */
+  writeFile: (path: string, content: string) => Promise<void>;
   execFile: (file: string, args: string[], options: SpritesExecOptions) => Promise<SpritesExecResult>;
   /**
    * Starts a detachable session that stays alive after this call returns, and after the
@@ -76,10 +81,22 @@ const normalizeExecFailure = (error: unknown): unknown => {
   if (!(error instanceof Error)) return error;
   const candidate = error as { exitCode?: unknown; stdout?: unknown; stderr?: unknown };
   if (typeof candidate.exitCode === "number") {
-    return Object.assign(error, {
-      stdout: stringifyExecOutput(candidate.stdout),
-      stderr: stringifyExecOutput(candidate.stderr),
-    });
+    const stdout = stringifyExecOutput(candidate.stdout);
+    const stderr = stringifyExecOutput(candidate.stderr);
+    // The SDK defines `stdout` and `stderr` as getters with no setter, so a plain assignment
+    // throws a TypeError and hides the real command failure. `defineProperty` replaces a
+    // configurable accessor with a data property. A non-configurable accessor still refuses,
+    // so the fallback below carries the same values on a new error instead.
+    try {
+      Object.defineProperty(error, "stdout", { value: stdout, writable: true, configurable: true });
+      Object.defineProperty(error, "stderr", { value: stderr, writable: true, configurable: true });
+      return error;
+    } catch {
+      const replacement = new Error(error.message);
+      replacement.name = error.name;
+      if (error.stack !== undefined) replacement.stack = error.stack;
+      return Object.assign(replacement, { exitCode: candidate.exitCode, stdout, stderr });
+    }
   }
   if (error.name !== "AbortError" && /^Command timed out after/.test(error.message)) {
     error.name = "TimeoutError";
@@ -96,7 +113,14 @@ const pickLatestCheckpoint = (checkpoints: Checkpoint[], comment: string): Check
   );
 };
 
-const wrap = (sprite: Sprite): SpritesSpriteHandle => ({
+/**
+ * Wraps one SDK sprite as the narrow handle above. It is exported so a test can drive it with a
+ * fake sprite, which is the only way to reproduce the event behaviour of a broken connection.
+ */
+export const wrapSprite = (sprite: Sprite): SpritesSpriteHandle => ({
+  writeFile: async (path, content) => {
+    await sprite.filesystem("/").writeFile(path, content);
+  },
   execFile: async (file, args, execOptions) => {
     try {
       const result = await sprite.execFile(file, args, {
@@ -115,11 +139,38 @@ const wrap = (sprite: Sprite): SpritesSpriteHandle => ({
     // side of the connection. The session itself, and the command it runs, stays alive on the
     // sprite.
     const command = sprite.createSession(file, args, { cwd: execOptions.cwd, env: execOptions.env });
-    await new Promise<void>((resolve, reject) => {
-      command.once("spawn", () => resolve());
-      command.once("error", (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))));
+
+    // The listener stays attached for the life of the command, and it is not a `once` listener.
+    // A `SpriteCommand` reports a broken connection as an `error` event, and it reports the
+    // socket closing as a second one. A `once` listener answers the first and leaves the second
+    // with no listener at all, and an `EventEmitter` with no listener for `error` throws. That
+    // throw reached no caller: it ended the worker process, in the middle of a Run that had
+    // already passed implementation, verification, and user validation.
+    let settled = false;
+    let failure: Error | null = null;
+    command.on("error", (error: unknown) => {
+      const asError = error instanceof Error ? error : new Error(String(error));
+      // The first error decides the outcome. A later one is the same fault reported again, and
+      // this listener exists to absorb it.
+      failure ??= asError;
+      settled = true;
     });
-    command.close();
+
+    await new Promise<void>((resolve, reject) => {
+      if (settled) {
+        reject(failure ?? new Error("the sprite session failed to start"));
+        return;
+      }
+      command.once("spawn", () => resolve());
+      command.on("error", () => reject(failure ?? new Error("the sprite session failed to start")));
+    });
+
+    // A close of a connection that already failed throws nothing a caller can act on.
+    try {
+      command.close();
+    } catch {
+      // The session runs on the sprite. This client's side of the connection is already gone.
+    }
   },
   createCheckpoint: async (comment) => {
     const stream = await sprite.createCheckpoint(comment);
@@ -155,8 +206,8 @@ export const createSpritesGateway = (options: SpritesGatewayOptions): SpritesGat
         ...(createOptions.environment === undefined ? {} : { environment: createOptions.environment }),
         waitForCapacity: true,
       });
-      return { name: sprite.name, handle: wrap(sprite) };
+      return { name: sprite.name, handle: wrapSprite(sprite) };
     },
-    sprite: (name) => wrap(client.sprite(name)),
+    sprite: (name) => wrapSprite(client.sprite(name)),
   };
 };

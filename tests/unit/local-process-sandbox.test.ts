@@ -101,3 +101,26 @@ describe("LocalProcessSandbox and the host environment", () => {
   });
 });
 
+
+describe("LocalProcessSandbox, an isolated command", () => {
+  it("runs without the environment attached to the sandbox", async () => {
+    const root = await mkdtemp(join(tmpdir(), "factoree-isolated-"));
+    const sandbox = new LocalProcessSandbox({ rootDirectory: root });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    sandbox.attachEnvironment(ref, { OPENCODE_API_KEY: "runner-credential" });
+
+    const withCredential = await sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", "printf %s \"${OPENCODE_API_KEY:-absent}\""],
+    });
+    const isolated = await sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", "printf %s \"${OPENCODE_API_KEY:-absent}\""],
+      isolated: true,
+    });
+
+    expect(withCredential.stdout).toBe("runner-credential");
+    expect(isolated.stdout).toBe("absent");
+    await rm(root, { recursive: true, force: true });
+  });
+});

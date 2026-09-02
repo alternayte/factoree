@@ -8,7 +8,7 @@ const store = (values: Record<string, string>): SecretStore => ({
   put: () => Promise.resolve(),
   get: (_t, _p, name) => Promise.resolve(values[name] ?? null),
   listNames: () => Promise.resolve(Object.keys(values)),
-  list: () => Promise.resolve(Object.keys(values).map((name) => ({ name, injectIntoImplementer: false }))),
+  list: () => Promise.resolve(Object.keys(values).map((name) => ({ name, injectIntoImplementer: false, kind: "test" as const }))),
   remove: () => Promise.resolve(true),
 });
 

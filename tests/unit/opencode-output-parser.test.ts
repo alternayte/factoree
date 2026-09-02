@@ -74,3 +74,37 @@ describe("parseOpenCodeOutput", () => {
     expect(result.summary).toBe("done");
   });
 });
+
+describe("parseOpenCodeOutput, an error event", () => {
+  it("reads the nested message of an error event", () => {
+    // The shape a real Run produced: the CLI writes the error, then an ordinary shutdown line.
+    const text = [
+      '{"type":"session.start","session":{"id":"ses_1"}}',
+      '{"type":"error","error":{"name":"APIError","data":{"message":"Insufficient balance."}}}',
+      'timestamp=2026-08-27T14:13:31.415Z level=INFO message="disposing instance"',
+    ].join("\n");
+
+    const parsed = parseOpenCodeOutput(text);
+
+    expect(parsed.errorMessage).toBe("Insufficient balance.");
+    expect(parsed.sessionId).toBe("ses_1");
+  });
+
+  it("reads a flat message and a string error", () => {
+    expect(parseOpenCodeOutput('{"type":"error","error":{"message":"boom"}}').errorMessage).toBe("boom");
+    expect(parseOpenCodeOutput('{"type":"error","error":"plain"}').errorMessage).toBe("plain");
+  });
+
+  it("keeps the last error when the agent retried", () => {
+    const text = [
+      '{"type":"error","error":{"data":{"message":"first"}}}',
+      '{"type":"error","error":{"data":{"message":"second"}}}',
+    ].join("\n");
+
+    expect(parseOpenCodeOutput(text).errorMessage).toBe("second");
+  });
+
+  it("names no error when the stream carries none", () => {
+    expect(parseOpenCodeOutput('{"type":"message","text":"done"}').errorMessage).toBeUndefined();
+  });
+});

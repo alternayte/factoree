@@ -7,6 +7,9 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { buildImplementerInput } from "~/domain/runs/implementer-input.js";
+import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import type { EvidenceStore } from "~/domain/evidence/evidence.js";
+import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
@@ -17,6 +20,7 @@ export interface AgentActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   logger: Logger;
+  evidence: EvidenceStore;
 }
 
 export interface ImplementActivityInput {
@@ -118,7 +122,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
     const projectTestSecrets: Record<string, string> = {};
     for (const descriptor of descriptors) {
-      if (!descriptor.injectIntoImplementer) continue;
+      // A credential of another kind reaches its carrier by its own path, never this map.
+      if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
       const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
       if (value !== null) projectTestSecrets[descriptor.name] = value;
     }
@@ -138,6 +143,17 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       repairFindings: input.repairFindings,
       projectTestSecrets,
     });
+
+    // SDD section 30. The runner credential is attached again here, because the attachment lives
+    // in the worker process that made it, and another worker can run this activity. It reaches
+    // the agent process environment, never the prompt and never `ImplementerInput`.
+    await attachRunnerEnvironment(
+      dependencies.sandbox,
+      { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
+      dependencies.secrets,
+      input.tenantId,
+      input.projectId,
+    );
 
     const runner = dependencies.runners.get(input.runnerName);
     const context = Context.current();
@@ -213,6 +229,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         sandbox: dependencies.sandbox,
         ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
         workingDirectory: input.primaryPath,
+        repositoryPath: input.primaryPath,
         prompt: implementerInput.prompt,
         promptVersion: implementerInput.promptVersion,
         environment: implementerInput.environment,
@@ -248,6 +265,42 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       // row.
       idempotencyKey: `run:${input.runId}:implementer:${input.attempt}`,
     });
+
+    // SDD section 39. An implementation that did not finish leaves one immutable artifact, so the
+    // reason outlives the sandbox. SDD section 51 destroys the sandbox after its retention window,
+    // and the process files of the agent go with it. A finished implementation writes no row: its
+    // outcome is the patch, and the verification evidence covers the rest.
+    if (!result.completed && result.failureLog !== null) {
+      await dependencies.evidence.record({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        validationAssertionId: null,
+        kind: "command-output",
+        source: `implement:${runner.name}`,
+        sha256: canonicalEvidenceHash({
+          runner: runner.name,
+          attempt: input.attempt,
+          exitCode: result.exitCode,
+          summary: result.summary,
+          log: result.failureLog,
+        }),
+        metadata: {
+          runner: runner.name,
+          attempt: input.attempt,
+          exitCode: result.exitCode,
+          cancelled: result.cancelled,
+          durationMs: result.durationMs,
+          sessionRef: result.session.sessionId,
+          summary: result.summary,
+          // The retained, redacted log of SDD section 61. It is bounded and it is never a full
+          // transcript.
+          log: result.failureLog,
+        },
+        // A Temporal retry of this activity writes nothing new, and a repair attempt carries its
+        // own ordinal and writes its own row.
+        idempotencyKey: `run:${input.runId}:implement:${input.attempt}`,
+      });
+    }
 
     metrics.implementationDuration.observe(
       { tenant_id: input.tenantId, project_id: input.projectId, runner: runner.name },

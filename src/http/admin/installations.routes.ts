@@ -9,6 +9,12 @@ const schema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
   scopes: z.array(z.string()).default([]),
+  /**
+   * The lifetime Linear returned with the token, in seconds. A Linear access token lives for
+   * twenty-four hours, and the worker refreshes it shortly before this moment. Without the value
+   * the token is treated as unexpiring, and only a rejected call triggers a refresh.
+   */
+  expiresIn: z.number().int().positive().optional(),
 });
 
 export const registerInstallationRoutes = (
@@ -23,6 +29,9 @@ export const registerInstallationRoutes = (
       workspaceName: parsed.data.workspaceName,
       accessToken: parsed.data.accessToken,
       scopes: parsed.data.scopes,
+      ...(parsed.data.expiresIn === undefined
+        ? {}
+        : { expiresAt: new Date(Date.now() + parsed.data.expiresIn * 1_000) }),
       ...(parsed.data.appUserId === undefined ? {} : { appUserId: parsed.data.appUserId }),
       ...(parsed.data.refreshToken === undefined ? {} : { refreshToken: parsed.data.refreshToken }),
     });

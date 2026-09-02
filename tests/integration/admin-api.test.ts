@@ -182,6 +182,92 @@ describe("administration API", () => {
     );
   });
 
+  it("stores a runner credential and a repository read token by kind", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: "ws-kind",
+        workspaceName: "Kind",
+        key: "kind",
+        name: "Kind",
+        primaryRepository: "acme/kind",
+      },
+    });
+    const project = created.json<{ id: string }>();
+    const query = `?linearWorkspaceId=ws-kind`;
+
+    const runner = await app.inject({
+      method: "PUT",
+      url: `/admin/projects/${project.id}/secrets/OPENCODE_API_KEY${query}`,
+      headers: auth,
+      payload: { value: "zen-value-0123456789", kind: "runner_credential" },
+    });
+    expect(runner.statusCode).toBe(204);
+
+    const read = await app.inject({
+      method: "PUT",
+      url: `/admin/projects/${project.id}/secrets/GITHUB_READ_TOKEN${query}`,
+      headers: auth,
+      payload: { value: "read-value-0123456789", kind: "repository_read" },
+    });
+    expect(read.statusCode).toBe(204);
+
+    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    const stored = await prisma.projectSecret.findFirstOrThrow({
+      where: { projectId: project.id, name: "OPENCODE_API_KEY" },
+    });
+    const descriptors = await secrets.list(stored.tenantId, project.id);
+    expect(descriptors).toEqual(
+      expect.arrayContaining([
+        { name: "OPENCODE_API_KEY", injectIntoImplementer: false, kind: "runner_credential" },
+        { name: "GITHUB_READ_TOKEN", injectIntoImplementer: false, kind: "repository_read" },
+      ]),
+    );
+  });
+
+  it("refuses a credential that carries the injection mark, and one that holds a GitHub token", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/projects",
+      headers: auth,
+      payload: {
+        linearWorkspaceId: "ws-refuse",
+        workspaceName: "Refuse",
+        key: "refuse",
+        name: "Refuse",
+        primaryRepository: "acme/refuse",
+      },
+    });
+    const project = created.json<{ id: string }>();
+    const query = `?linearWorkspaceId=ws-refuse`;
+
+    const marked = await app.inject({
+      method: "PUT",
+      url: `/admin/projects/${project.id}/secrets/OPENCODE_API_KEY${query}`,
+      headers: auth,
+      payload: { value: "zen-value", kind: "runner_credential", injectIntoImplementer: true },
+    });
+    expect(marked.statusCode).toBe(400);
+    expect(marked.body).toContain("injection mark");
+
+    const misfiled = await app.inject({
+      method: "PUT",
+      url: `/admin/projects/${project.id}/secrets/MODEL_KEY${query}`,
+      headers: auth,
+      payload: { value: `ghp_${"a".repeat(36)}`, kind: "runner_credential" },
+    });
+    expect(misfiled.statusCode).toBe(400);
+    expect(misfiled.body).toContain("GitHub or a Linear credential");
+    // The message must name the secret and never its value. SDD section 60.
+    expect(misfiled.body).not.toContain("a".repeat(36));
+
+    await expect(
+      prisma.projectSecret.findFirst({ where: { projectId: project.id } }),
+    ).resolves.toBeNull();
+  });
+
   it("does not return a project of another tenant", async () => {
     const created = await app.inject({
       method: "POST",

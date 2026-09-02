@@ -32,6 +32,7 @@ export class FakeRunner implements AgentRunner {
       summary: "The change is applied.",
       durationMs: 10,
       cancelled: false,
+      failureLog: null,
       ...result,
     };
   }

@@ -87,7 +87,13 @@ describe("runVerification", () => {
     expect(command?.args).toEqual(["-c", "npm test"]);
     expect(command?.cwd).toBe("/w/primary");
     expect(command?.timeoutMs).toBe(42_000);
-    expect(Object.keys(command?.env ?? {}).sort()).toEqual(["FIXTURE_TOKEN", "HOME", "LANG", "PATH"]);
+    // `PATH` and `HOME` belong to the sandbox: only the adapter knows where the toolchain of a
+    // sandbox lives and which user runs the command. A hard-coded pair here found no `npm` on a
+    // Fly Sprite and named a home directory the command could not write.
+    expect(Object.keys(command?.env ?? {}).sort()).toEqual(["FIXTURE_TOKEN", "LANG"]);
+    // SDD sections 30 and 35. The command must not see the environment attached to the sandbox,
+    // because a runner credential lives there.
+    expect(command?.isolated).toBe(true);
   });
 
   it("hashes the raw output and redacts the retained log", async () => {
@@ -132,7 +138,9 @@ describe("runVerification", () => {
     expect(Buffer.byteLength(log, "utf8")).toBeLessThanOrEqual(MAX_RETAINED_LOG_BYTES + 200);
     expect(log).toContain("truncated");
     expect(outcome.checks[0]?.stdoutSha256).toBe(sha(big));
-  });
+    // A 33 kilobyte log runs through the redactor and every credential pattern, which takes
+    // longer than the default budget of a test on a loaded machine.
+  }, 20_000);
 
   it("redacts a secret before truncation, even when the secret straddles the old cut point", async () => {
     // Builds output large enough that the retained log must be truncated, with a secret placed

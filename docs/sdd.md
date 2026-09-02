@@ -1043,6 +1043,33 @@ Secrets MUST:
 - never be committed;
 - be redacted from evidence.
 
+### Secret kinds
+
+Every Project secret carries a kind. The kind states what the secret is for, and it decides
+which carrier may hold the value.
+
+| Kind | Purpose | Carrier |
+| --- | --- | --- |
+| `test` | A non-production test secret. | The agent process environment, and only with the explicit injection mark. |
+| `runner_credential` | The model provider credential of a coding agent. | The sandbox environment. |
+| `repository_read` | A read-only repository credential. | One git command of the checkout, and the repository reader of context discovery. |
+| `publish` | The GitHub write credential of the publication. | The trusted checkout, on the worker. |
+
+A secret of a kind other than `test` MUST NOT carry the injection mark.
+
+A runner credential is none of the four forbidden things above. It MUST:
+
+- reach the process environment of the agent, and never a prompt;
+- never appear in the Implementer input, the User Validator input, or the Reviewer input;
+- never cross a workflow boundary, so no workflow history holds its value;
+- be refused when its value holds a GitHub or a Linear credential.
+
+A repository read credential is not a GitHub write credential. It MUST:
+
+- reach one git command at a time, through the environment of that command;
+- never appear on a command line, and never persist in the checkout;
+- never be able to push.
+
 ---
 
 ## 31. Sandbox abstraction

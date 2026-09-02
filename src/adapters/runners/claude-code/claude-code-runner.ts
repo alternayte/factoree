@@ -13,11 +13,11 @@ export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
  * listing. See SDD section 30 and controller decision 10.
  */
 const START_SCRIPT =
-  'printf %s "$FACTOREE_PROMPT" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose';
+  'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose';
 
 /** The same script. It continues the session the environment names. */
 const RESUME_SCRIPT =
-  'printf %s "$FACTOREE_PROMPT" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose ' +
+  'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose ' +
   '--resume "$FACTOREE_CLAUDE_SESSION"';
 
 /**
@@ -38,20 +38,20 @@ export class ClaudeCodeRunner extends CliAgentRunner {
     this.executable = options.executable ?? "claude";
   }
 
-  protected startCommand(prompt: string): CliAgentCommand {
+  protected startCommand(promptFile: string): CliAgentCommand {
     return {
       file: "sh",
       args: ["-c", START_SCRIPT],
-      env: { FACTOREE_PROMPT: prompt, FACTOREE_CLAUDE_BIN: this.executable },
+      env: { FACTOREE_PROMPT_FILE: promptFile, FACTOREE_CLAUDE_BIN: this.executable },
     };
   }
 
-  protected resumeCommand(sessionId: string, prompt: string): CliAgentCommand {
+  protected resumeCommand(sessionId: string, promptFile: string): CliAgentCommand {
     return {
       file: "sh",
       args: ["-c", RESUME_SCRIPT],
       env: {
-        FACTOREE_PROMPT: prompt,
+        FACTOREE_PROMPT_FILE: promptFile,
         FACTOREE_CLAUDE_BIN: this.executable,
         FACTOREE_CLAUDE_SESSION: sessionId,
       },

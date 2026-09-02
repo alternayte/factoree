@@ -52,6 +52,7 @@ class ScriptedReviewerRunner implements AgentRunner {
       cancelled: false,
       summary: "The independent review is complete.",
       durationMs: 5,
+      failureLog: null,
     };
   }
 

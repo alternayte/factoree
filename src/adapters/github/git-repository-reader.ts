@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
+import { credentialEnvironment } from "~/domain/security/git-credential-environment.js";
 
 const run = promisify(execFile);
 
@@ -52,6 +53,13 @@ export interface RepositoryReader {
   resolveRef(url: string, ref: string): Promise<string>;
   listTree(url: string, sha: string): Promise<TreeListing>;
   readBlob(url: string, sha: string, path: string): Promise<string | null>;
+  /**
+   * Holds a read-only credential for one origin, so a private repository resolves. Context
+   * discovery runs before the sandbox exists, on the worker, so the sandbox credential path
+   * cannot serve it. A caller sets the credential again for each Run, because a Project can
+   * rotate its token between two Runs.
+   */
+  useCredential(origin: string, token: string): void;
 }
 
 /**
@@ -98,6 +106,8 @@ export interface GitRepositoryReaderOptions {
 export class GitRepositoryReader implements RepositoryReader {
   private root: string | null = null;
   private readonly mirrors = new Map<string, Promise<string>>();
+  /** The git environment that carries the credential of one origin, by origin. */
+  private readonly credentials = new Map<string, Record<string, string>>();
   private readonly maxTreeEntries: number;
 
   constructor(options: GitRepositoryReaderOptions = {}) {
@@ -109,7 +119,32 @@ export class GitRepositoryReader implements RepositoryReader {
     return this.root;
   }
 
-  private async git(cwd: string | null, args: string[], subject: string): Promise<string> {
+  useCredential(origin: string, token: string): void {
+    // The value is stored as the git environment it produces, so no other part of this class ever
+    // holds the raw token. The URL of a repository stays bare: it reaches the Context Contract and
+    // the Proof Pack, and SDD section 60 forbids a credential there.
+    this.credentials.set(origin, credentialEnvironment(`${origin}/`, token));
+  }
+
+  /**
+   * The credential environment for one repository URL, or an empty environment when the origin
+   * has none. Only one origin is ever in play for one command, so `GIT_CONFIG_COUNT` stays at
+   * one and no merge of two config sources is needed.
+   */
+  private credentialFor(url: string): Record<string, string> {
+    try {
+      return this.credentials.get(new URL(url).origin) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  private async git(
+    cwd: string | null,
+    args: string[],
+    subject: string,
+    url?: string,
+  ): Promise<string> {
     try {
       const { stdout } = await run("git", args, {
         ...(cwd === null ? {} : { cwd }),
@@ -118,7 +153,13 @@ export class GitRepositoryReader implements RepositoryReader {
         encoding: "utf8",
         // A private repository must fail immediately instead of a wait for a password. No
         // interactive helper runs.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_ASKPASS: "true",
+          GCM_INTERACTIVE: "never",
+          ...(url === undefined ? {} : this.credentialFor(url)),
+        },
       });
       return stdout;
     } catch (error) {
@@ -141,6 +182,7 @@ export class GitRepositoryReader implements RepositoryReader {
     args: string[],
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     try {
+      // This form reads the local mirror only, so it reaches no remote and needs no credential.
       const { stdout } = await run("git", args, {
         cwd,
         timeout: GIT_READ_TIMEOUT_MS,
@@ -173,6 +215,7 @@ export class GitRepositoryReader implements RepositoryReader {
       null,
       ["clone", "--bare", "--filter=blob:none", "--no-tags", url, path],
       `the mirror of ${withoutUrlCredentials(url)} could not be created`,
+      url,
     ).then(() => path);
     // A failed clone must not stay in the cache, so a later call can try again.
     creating.catch(() => this.mirrors.delete(url));
@@ -187,6 +230,7 @@ export class GitRepositoryReader implements RepositoryReader {
       null,
       ["ls-remote", url, ref],
       `the ref "${ref}" of ${withoutUrlCredentials(url)} could not be resolved`,
+      url,
     );
     const first = stdout.split("\n").find((line) => line.trim() !== "");
     const sha = first?.split(/\s+/)[0]?.trim() ?? "";
