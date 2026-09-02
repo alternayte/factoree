@@ -230,13 +230,18 @@ export class LocalProcessSandbox implements Sandbox {
     const child = spawn(command.file, command.args, {
       cwd: this.resolveCwd(ref, command.cwd),
       env: buildChildEnvironment(command.isolated === true ? {} : (this.attached.get(ref.id) ?? {}), command.env),
+      // The process runs in a group of its own, so a cancel can end the whole tree. A shell
+      // forks its command on Linux, and a cancel of the shell alone left the command running:
+      // a stopped preview still answered on its port, and the next validation read the old
+      // application.
+      detached: true,
     });
     const record: RunningProcess = {
       stdout: "",
       stderr: "",
       running: true,
       exitCode: null,
-      kill: () => child.kill("SIGKILL"),
+      kill: () => killTree(child),
     };
     child.stdout.on("data", (chunk: Buffer) => (record.stdout += chunk.toString("utf8")));
     child.stderr.on("data", (chunk: Buffer) => (record.stderr += chunk.toString("utf8")));

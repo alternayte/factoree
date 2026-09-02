@@ -150,3 +150,38 @@ describe("LocalProcessSandbox, a timeout of a command that forked", () => {
     await rm(root, { recursive: true, force: true });
   }, 15_000);
 });
+
+describe("LocalProcessSandbox, a cancel of a process that forked", () => {
+  it("ends the whole process tree, so a stopped preview holds its port no longer", async () => {
+    // A shell forks its command on Linux, and a cancel of the shell alone left the command
+    // running. CI proved the cost twice: a stopped preview still answered 200 on its port, and
+    // the user validation after it read the old application.
+    const root = await mkdtemp(join(tmpdir(), "factoree-cancel-tree-"));
+    const sandbox = new LocalProcessSandbox({ rootDirectory: root });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const pidFile = join(root, "grandchild.pid");
+
+    const process1 = await sandbox.startProcess(ref, {
+      file: "sh",
+      args: ["-c", `sleep 30 & echo $! > ${pidFile}; wait`],
+      cwd: "/",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const pid = Number((await readFile(pidFile, "utf8")).trim());
+    expect(Number.isInteger(pid)).toBe(true);
+
+    await sandbox.cancelProcess(ref, process1);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const alive = (): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(alive()).toBe(false);
+    await rm(root, { recursive: true, force: true });
+  }, 15_000);
+});
