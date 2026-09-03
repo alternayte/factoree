@@ -1,3 +1,6 @@
+-- The column changes meaning, not only name. It held a Project id. It must hold a Product id.
+-- A rename would carry values the new foreign key rejects. The drop is deliberate.
+
 /*
   Warnings:
 

@@ -16,12 +16,12 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   async createRun(input: CreateRunInput): Promise<{ runId: string; created: boolean }> {
     const { run, created } = await dependencies.runs.createIfAbsent(input);
     if (created) {
-      metrics.runsStarted.inc({ tenant_id: input.tenantId, project_id: input.productId });
-      metrics.activeRuns.inc({ tenant_id: input.tenantId, project_id: input.productId });
+      metrics.runsStarted.inc({ tenant_id: input.tenantId, product_id: input.productId });
+      metrics.activeRuns.inc({ tenant_id: input.tenantId, product_id: input.productId });
     }
     dependencies.logger.info("run received", {
       tenant_id: run.tenantId,
-      project_id: run.productId,
+      product_id: run.productId,
       run_id: run.id,
       workflow_id: run.temporalWorkflowId,
       step: "receive",
@@ -51,7 +51,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       // workflow must stay deterministic.
       metrics.repairs.inc({
         tenant_id: run.tenantId,
-        project_id: run.productId,
+        product_id: run.productId,
         reason: input.repairReason ?? "VERIFICATION",
       });
     }
@@ -86,7 +86,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       ...(failureCategory === undefined ? {} : { failureCategory }),
       completedAt: new Date(input.completedAt),
     });
-    const labels = { tenant_id: run.tenantId, project_id: run.productId };
+    const labels = { tenant_id: run.tenantId, product_id: run.productId };
     const completedAt = run.completedAt ?? new Date(input.completedAt);
     // An activity retry after a successful write must not count the terminal state twice.
     if (!alreadyTerminal) {
@@ -106,7 +106,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     for (const runner of dependencies.runners.all()) runner.releaseRun?.(input.runId);
     dependencies.logger.info("run completed", {
       tenant_id: run.tenantId,
-      project_id: run.productId,
+      product_id: run.productId,
       run_id: run.id,
       step: "complete",
       status: input.status,

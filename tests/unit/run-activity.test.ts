@@ -66,7 +66,7 @@ const repairCount = async (reason = "VERIFICATION"): Promise<number> => {
   const sample = metric.values.find(
     (value) =>
       value.labels.tenant_id === "tenant-1" &&
-      value.labels.project_id === "product-1" &&
+      value.labels.product_id === "product-1" &&
       value.labels.reason === reason,
   );
   return sample?.value ?? 0;
