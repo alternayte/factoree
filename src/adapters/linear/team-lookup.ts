@@ -16,7 +16,7 @@ interface LinearTeamSummary {
   key: string;
 }
 
-export interface LinearApi {
+export interface LinearTeamsApi {
   teams(variables: { filter: { key: { eq: string } } }): Promise<{ nodes: LinearTeamSummary[] }>;
   team(id: string): Promise<LinearTeamSummary | null>;
 }
@@ -27,7 +27,7 @@ export interface LinearApi {
  * token by tenant without a change to this interface.
  */
 export class LinearTeamLookupClient implements LinearTeamLookup {
-  constructor(private readonly client: LinearApi) {}
+  constructor(private readonly client: LinearTeamsApi) {}
 
   async resolveTeamKey(_tenantId: string, teamKey: string): Promise<{ id: string; key: string } | null> {
     const result = await this.client.teams({ filter: { key: { eq: teamKey } } });

@@ -8,6 +8,7 @@ import type {
 } from "~/domain/products/repository-registry.js";
 import type { RepositoryConfigFile, RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
+import type { Logger, LogFields } from "~/telemetry/logger.js";
 
 /** Builds a valid `.factoree/config.yaml` document naming one Product slug and one team key. */
 const configFor = (slug: string, teamKey: string): string =>
@@ -134,6 +135,25 @@ class FakeDiscoveryClient implements RepositoryDiscoveryClient {
   }
 }
 
+/** A Logger fake that records each call. It writes nothing to a stream. */
+class FakeLogger implements Logger {
+  readonly warnCalls: Array<{ message: string; fields?: LogFields }> = [];
+
+  debug(): void {}
+
+  info(): void {}
+
+  warn(message: string, fields?: LogFields): void {
+    this.warnCalls.push(fields === undefined ? { message } : { message, fields });
+  }
+
+  error(): void {}
+
+  child(): Logger {
+    return this;
+  }
+}
+
 /** A Linear team lookup fake. `teamKeyNow` lets a test simulate a rename in Linear. */
 class FakeLinearTeamLookup implements LinearTeamLookup {
   teamKeyNow = "PAY";
@@ -159,10 +179,11 @@ const build = (options: BuildOptions) => {
   const products = new FakeProductRegistry();
   const repositories = new FakeRepositoryRegistry();
   const linear = new FakeLinearTeamLookup();
+  const logger = new FakeLogger();
   const configByRepository = options.configByRepository ?? { "acme/api": options.config ?? null };
   const discoveryClient = new FakeDiscoveryClient(configByRepository);
-  const service = new DiscoveryService(discoveryClient, products, repositories, linear);
-  return { service, products, repositories, linear };
+  const service = new DiscoveryService(discoveryClient, products, repositories, linear, logger);
+  return { service, products, repositories, linear, logger };
 };
 
 describe("DiscoveryService.syncRepository", () => {
@@ -193,7 +214,7 @@ describe("DiscoveryService.syncRepository", () => {
   });
 
   it("refuses a second Product that claims a team another Product already claims", async () => {
-    const { service } = build({
+    const { service, products, repositories } = build({
       configByRepository: {
         "acme/api": configFor("checkout-platform", "PAY"),
         "acme/other": configFor("other-platform", "PAY"),
@@ -204,6 +225,11 @@ describe("DiscoveryService.syncRepository", () => {
     const outcome = await service.syncRepository("tenant-1", "acme/other", "main");
 
     expect(outcome.kind).toBe("conflict");
+    // The refusal must write no row. A regression that writes one and still returns "conflict"
+    // defeats the routing rule of specification section 9.
+    const allProducts = await products.list("tenant-1");
+    expect(allProducts.find((product) => product.slug === "other-platform")).toBeUndefined();
+    expect(await repositories.findByFullName("tenant-1", "acme/other")).toBeNull();
   });
 
   it("keeps the binding, and records the drift, when the team key is renamed", async () => {

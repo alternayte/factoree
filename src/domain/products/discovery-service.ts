@@ -3,6 +3,7 @@ import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import { FactoreeConfigPrivilegeError, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { ProductRecord, ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
+import type { Logger } from "~/telemetry/logger.js";
 
 export type DiscoveryOutcome =
   | {
@@ -28,6 +29,7 @@ export class DiscoveryService {
     private readonly products: ProductRegistry,
     private readonly repositories: RepositoryRegistry,
     private readonly linearTeamLookup: LinearTeamLookup,
+    private readonly logger: Logger,
   ) {}
 
   async syncRepository(tenantId: string, fullName: string, defaultBranch: string): Promise<DiscoveryOutcome> {
@@ -88,9 +90,11 @@ export class DiscoveryService {
     if (product.linearTeamKey !== team.key) {
       const renamed = await this.products.renameLinearTeamKey(tenantId, product.id, team.key);
       if (renamed !== null) product = renamed;
-      console.warn(
-        `Linear renamed the team of Product "${product.slug}" from ${config.identity.linear.teamKey} to ${team.key}. The binding survives, because the team id is stable.`,
-      );
+      this.logger.warn("Linear renamed a Product team key. The binding survives.", {
+        product_id: product.id,
+        previous_team_key: config.identity.linear.teamKey,
+        current_team_key: team.key,
+      });
       drift = "linear_team_key_renamed";
     }
 
