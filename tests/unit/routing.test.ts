@@ -1,40 +1,42 @@
 import { describe, expect, it } from "vitest";
+import type { ProductRecord } from "~/domain/products/product-registry.js";
+import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { selectTarget } from "~/domain/routing/select-targets.js";
 
-const product = (id: string, linearTeamId: string) =>
-  ({
-    id,
-    tenantId: "tenant-1",
-    slug: id,
-    name: id,
-    status: "active" as const,
-    linearTeamKey: "PAY",
-    linearTeamId,
-    defaultAutonomy: "L3",
-    maxRunMinutes: 90,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
+const product = (id: string, linearTeamId: string): ProductRecord => ({
+  id,
+  tenantId: "tenant-1",
+  slug: id,
+  name: id,
+  status: "active" as const,
+  linearTeamKey: "PAY",
+  linearTeamId,
+  defaultAutonomy: "L3",
+  maxRunMinutes: 90,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
 
-const repository = (fullName: string) =>
-  ({
-    id: fullName,
-    tenantId: "tenant-1",
-    productId: "checkout",
-    fullName,
-    defaultBranch: "main",
-    configSha: "aaa",
-    requestedSecretNames: [],
-    discoveredAt: new Date(),
-    lastSeenAt: new Date(),
-    absentSince: null,
-  });
+const repository = (fullName: string): RepositoryRecord => ({
+  id: fullName,
+  tenantId: "tenant-1",
+  productId: "checkout",
+  fullName,
+  defaultBranch: "main",
+  configSha: "aaa",
+  requestedSecretNames: [],
+  discoveredAt: new Date(),
+  lastSeenAt: new Date(),
+  absentSince: null,
+});
 
 describe("resolveProduct", () => {
   it("routes to the one Product that claims the team", () => {
     const outcome = resolveProduct([product("checkout", "team-pay")], "team-pay");
-    expect(outcome).toEqual({ kind: "routed", product: expect.objectContaining({ id: "checkout" }) });
+    expect(outcome.kind).toBe("routed");
+    if (outcome.kind !== "routed") throw new Error("unreachable: asserted above");
+    expect(outcome.product.id).toBe("checkout");
   });
 
   it("refuses when no Product claims the team", () => {
@@ -56,12 +58,9 @@ describe("resolveProduct", () => {
 describe("selectTarget", () => {
   it("selects the sole member with no proposal and no notice", () => {
     const outcome = selectTarget([repository("acme/api")], null);
-    expect(outcome).toEqual({
-      kind: "selected",
-      repository: expect.objectContaining({ fullName: "acme/api" }),
-      reason: "sole member",
-      notify: false,
-    });
+    expect(outcome).toMatchObject({ kind: "selected", reason: "sole member", notify: false });
+    if (outcome.kind !== "selected") throw new Error("unreachable: asserted above");
+    expect(outcome.repository.fullName).toBe("acme/api");
   });
 
   it("selects a confident proposal, and asks for a notice", () => {

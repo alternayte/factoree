@@ -260,6 +260,7 @@ describe("DiscoveryService.syncRepository", () => {
     const outcome = await service.syncRepository("tenant-1", "acme/api", "main");
 
     expect(outcome.kind).toBe("conflict");
-    expect(outcome).toMatchObject({ reason: expect.stringContaining("policy") });
+    if (outcome.kind !== "conflict") throw new Error("unreachable: asserted above");
+    expect(outcome.reason).toEqual(expect.stringContaining("policy"));
   });
 });
