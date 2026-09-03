@@ -67,10 +67,13 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     this.fetchImpl = options.fetch ?? fetch;
   }
 
+  /**
+   * GitHub scopes this endpoint by the installation access token. The caller must supply a token
+   * that belongs to `installationId`. The identifier selects that token. It never reaches the URL.
+   */
   async listInstallationRepositories(installationId: string): Promise<DiscoveredRepository[]> {
     const discovered: DiscoveredRepository[] = [];
-    let url: string | null =
-      `${this.base}/installation/repositories?per_page=100&installation_id=${encodeURIComponent(installationId)}`;
+    let url: string | null = `${this.base}/installation/repositories?per_page=100`;
     while (url !== null) {
       const response = await this.request(url);
       const text = await response.text();
