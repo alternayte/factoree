@@ -1,6 +1,6 @@
 import { isGithubOrLinearCredentialValue } from "~/domain/security/credential-formats.js";
 import { isForbiddenName } from "~/domain/runs/implementer-input.js";
-import type { ProjectSecretKind, SecretStore } from "~/domain/projects/secret-store.js";
+import type { ProjectSecretKind, SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 

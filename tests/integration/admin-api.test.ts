@@ -3,11 +3,8 @@ import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
-import {
-  PrismaProjectRegistry,
-  PrismaSecretStore,
-  PrismaTenantRegistry,
-} from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -146,128 +143,6 @@ describe("administration API", () => {
     expect(removed.statusCode).toBe(204);
   });
 
-  it("stores a project secret as ciphertext and reads it back through the secret store", async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/admin/projects",
-      headers: auth,
-      payload: {
-        linearWorkspaceId: "ws-secret",
-        workspaceName: "Secret",
-        key: "s",
-        name: "S",
-        primaryRepository: "acme/s",
-      },
-    });
-    const project = created.json<{ id: string }>();
-    const put = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${project.id}/secrets/GITHUB_TOKEN?linearWorkspaceId=ws-secret`,
-      headers: auth,
-      payload: { value: "ghp_super_secret_value_12345678" },
-    });
-    expect(put.statusCode).toBe(204);
-    const read = await app.inject({
-      method: "GET",
-      url: `/admin/projects/${project.id}?linearWorkspaceId=ws-secret`,
-      headers: auth,
-    });
-    expect(read.body).not.toContain("ghp_super_secret_value_12345678");
-
-    const stored = await prisma.projectSecret.findFirstOrThrow({ where: { projectId: project.id } });
-    expect(JSON.stringify(stored)).not.toContain("ghp_super_secret_value_12345678");
-    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
-    expect(await secrets.get(stored.tenantId, project.id, "GITHUB_TOKEN")).toBe(
-      "ghp_super_secret_value_12345678",
-    );
-  });
-
-  it("stores a runner credential and a repository read token by kind", async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/admin/projects",
-      headers: auth,
-      payload: {
-        linearWorkspaceId: "ws-kind",
-        workspaceName: "Kind",
-        key: "kind",
-        name: "Kind",
-        primaryRepository: "acme/kind",
-      },
-    });
-    const project = created.json<{ id: string }>();
-    const query = `?linearWorkspaceId=ws-kind`;
-
-    const runner = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${project.id}/secrets/OPENCODE_API_KEY${query}`,
-      headers: auth,
-      payload: { value: "zen-value-0123456789", kind: "runner_credential" },
-    });
-    expect(runner.statusCode).toBe(204);
-
-    const read = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${project.id}/secrets/GITHUB_READ_TOKEN${query}`,
-      headers: auth,
-      payload: { value: "read-value-0123456789", kind: "repository_read" },
-    });
-    expect(read.statusCode).toBe(204);
-
-    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
-    const stored = await prisma.projectSecret.findFirstOrThrow({
-      where: { projectId: project.id, name: "OPENCODE_API_KEY" },
-    });
-    const descriptors = await secrets.list(stored.tenantId, project.id);
-    expect(descriptors).toEqual(
-      expect.arrayContaining([
-        { name: "OPENCODE_API_KEY", injectIntoImplementer: false, kind: "runner_credential" },
-        { name: "GITHUB_READ_TOKEN", injectIntoImplementer: false, kind: "repository_read" },
-      ]),
-    );
-  });
-
-  it("refuses a credential that carries the injection mark, and one that holds a GitHub token", async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/admin/projects",
-      headers: auth,
-      payload: {
-        linearWorkspaceId: "ws-refuse",
-        workspaceName: "Refuse",
-        key: "refuse",
-        name: "Refuse",
-        primaryRepository: "acme/refuse",
-      },
-    });
-    const project = created.json<{ id: string }>();
-    const query = `?linearWorkspaceId=ws-refuse`;
-
-    const marked = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${project.id}/secrets/OPENCODE_API_KEY${query}`,
-      headers: auth,
-      payload: { value: "zen-value", kind: "runner_credential", injectIntoImplementer: true },
-    });
-    expect(marked.statusCode).toBe(400);
-    expect(marked.body).toContain("injection mark");
-
-    const misfiled = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${project.id}/secrets/MODEL_KEY${query}`,
-      headers: auth,
-      payload: { value: `ghp_${"a".repeat(36)}`, kind: "runner_credential" },
-    });
-    expect(misfiled.statusCode).toBe(400);
-    expect(misfiled.body).toContain("GitHub or a Linear credential");
-    // The message must name the secret and never its value. SDD section 60.
-    expect(misfiled.body).not.toContain("a".repeat(36));
-
-    await expect(
-      prisma.projectSecret.findFirst({ where: { projectId: project.id } }),
-    ).resolves.toBeNull();
-  });
-
   it("does not return a project of another tenant", async () => {
     const created = await app.inject({
       method: "POST",
@@ -390,58 +265,6 @@ describe("the context source endpoints of SDD section 59", () => {
     expect(refused.statusCode).toBe(400);
     expect(refused.body).toContain("user name or a password");
     expect(refused.body).not.toContain("catalog-token");
-  });
-
-  it("creates, lists, and deletes one source", async () => {
-    // The secret exists with a real value, so the assertion below has something to find.
-    const secretWritten = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${projectId}/secrets/BACKSTAGE_TOKEN?linearWorkspaceId=${contextWorkspace}`,
-      headers: auth,
-      payload: { value: "bs_super_secret_value_87654321" },
-    });
-    expect(secretWritten.statusCode).toBe(204);
-
-    const created = await app.inject({
-      method: "POST",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
-      headers: auth,
-      payload: {
-        sourceId: "backstage",
-        kind: "backstage",
-        endpoint: "https://backstage.example.test",
-        secretName: "BACKSTAGE_TOKEN",
-        settings: { maxEntities: 10 },
-      },
-    });
-    expect(created.statusCode).toBe(201);
-    expect(created.json<{ sourceId: string }>().sourceId).toBe("backstage");
-    // SDD section 60. The response names the secret and never carries its value.
-    expect(created.body).toContain("BACKSTAGE_TOKEN");
-    expect(created.body).not.toContain("bs_super_secret_value_87654321");
-
-    const listed = await app.inject({
-      method: "GET",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
-      headers: auth,
-    });
-    expect(listed.statusCode).toBe(200);
-    expect(listed.body).not.toContain("bs_super_secret_value_87654321");
-    expect(listed.json<{ sourceId: string }[]>().map((row) => row.sourceId)).toEqual(["backstage"]);
-
-    const deleted = await app.inject({
-      method: "DELETE",
-      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
-      headers: auth,
-    });
-    expect(deleted.statusCode).toBe(204);
-
-    const deletedAgain = await app.inject({
-      method: "DELETE",
-      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
-      headers: auth,
-    });
-    expect(deletedAgain.statusCode).toBe(404);
   });
 
   it("refuses an invalid setting with 400 and names the key", async () => {

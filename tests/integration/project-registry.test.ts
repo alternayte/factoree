@@ -1,18 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
-import {
-  PrismaProjectRegistry,
-  PrismaSecretStore,
-  PrismaTenantRegistry,
-} from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
 
 const key = "b".repeat(64);
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let tenants: PrismaTenantRegistry;
 let projects: PrismaProjectRegistry;
-let secrets: PrismaSecretStore;
 
 beforeAll(async () => {
   const database = await startDatabase();
@@ -20,7 +15,6 @@ beforeAll(async () => {
   prisma = createPrismaClient(database.url);
   tenants = new PrismaTenantRegistry(prisma, key);
   projects = new PrismaProjectRegistry(prisma);
-  secrets = new PrismaSecretStore(prisma, key);
 });
 
 afterAll(async () => {
@@ -58,57 +52,6 @@ describe("project registry", () => {
     expect(await projects.list(second.id)).toHaveLength(0);
     expect(await projects.update(second.id, project.id, { name: "Stolen" })).toBeNull();
     expect(await projects.remove(second.id, project.id)).toBe(false);
-  });
-
-  it("stores a secret encrypted and reads it back", async () => {
-    const tenant = await tenants.ensureTenant("ws-4", "Workspace Four");
-    const project = await projects.create({
-      tenantId: tenant.id,
-      key: "secrets",
-      name: "Secrets",
-      primaryRepository: "acme/secrets",
-    });
-    await secrets.put(tenant.id, project.id, "GITHUB_TOKEN", "ghp_value_for_test_1234567890");
-    const stored = await prisma.projectSecret.findFirstOrThrow({ where: { projectId: project.id } });
-    expect(stored.valueCipher).not.toContain("ghp_value_for_test_1234567890");
-    expect(await secrets.get(tenant.id, project.id, "GITHUB_TOKEN")).toBe("ghp_value_for_test_1234567890");
-    expect(await secrets.listNames(tenant.id, project.id)).toEqual(["GITHUB_TOKEN"]);
-    // SDD section 30. A secret carries no injection mark unless the operator sets one.
-    expect(await secrets.list(tenant.id, project.id)).toEqual([
-      { name: "GITHUB_TOKEN", injectIntoImplementer: false, kind: "test" },
-    ]);
-  });
-
-  it("keeps the injection mark of a secret the operator marked", async () => {
-    const tenant = await tenants.ensureTenant("ws-4b", "Workspace Four B");
-    const project = await projects.create({
-      tenantId: tenant.id,
-      key: "injected",
-      name: "Injected",
-      primaryRepository: "acme/injected",
-    });
-    await secrets.put(tenant.id, project.id, "FIXTURE_URL", "http://localhost:9999", {
-      injectIntoImplementer: true,
-    });
-    await secrets.put(tenant.id, project.id, "GITHUB_TOKEN", "ghp_value_for_test_1234567890");
-    expect(await secrets.list(tenant.id, project.id)).toEqual([
-      { name: "FIXTURE_URL", injectIntoImplementer: true, kind: "test" },
-      { name: "GITHUB_TOKEN", injectIntoImplementer: false, kind: "test" },
-    ]);
-  });
-
-  it("does not return a secret to another tenant", async () => {
-    const owner = await tenants.ensureTenant("ws-5", "Workspace Five");
-    const other = await tenants.ensureTenant("ws-6", "Workspace Six");
-    const project = await projects.create({
-      tenantId: owner.id,
-      key: "guard",
-      name: "Guard",
-      primaryRepository: "acme/guard",
-    });
-    await secrets.put(owner.id, project.id, "TOKEN", "value-1234567890");
-    expect(await secrets.get(other.id, project.id, "TOKEN")).toBeNull();
-    expect(await secrets.listNames(other.id, project.id)).toEqual([]);
   });
 
   it("stores the installation access token encrypted", async () => {

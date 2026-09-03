@@ -9,11 +9,8 @@ import { startTemporal } from "./support/temporal.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
-import {
-  PrismaProjectRegistry,
-  PrismaSecretStore,
-  PrismaTenantRegistry,
-} from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";

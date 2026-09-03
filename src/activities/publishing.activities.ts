@@ -3,7 +3,7 @@ import type { RepositoryReader } from "~/adapters/github/git-repository-reader.j
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import {
   assertSameChangedFiles,
   capturePatch as captureVerifiedPatch,

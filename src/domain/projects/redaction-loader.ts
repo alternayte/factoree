@@ -1,6 +1,6 @@
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Logger } from "~/telemetry/logger.js";
-import type { SecretStore } from "./secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 
 /**
  * A Project secret this short still passes the redaction floor. A common word or a short

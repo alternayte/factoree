@@ -3,8 +3,8 @@ import type {
   ProjectSecretKind,
   PutSecretOptions,
   SecretStore,
-} from "~/domain/projects/secret-store.js";
-import { assertSecretKindAndMark } from "~/domain/projects/secret-store.js";
+} from "~/domain/products/secret-store.js";
+import { assertSecretKindAndMark } from "~/domain/products/secret-store.js";
 
 interface Entry {
   value: string;

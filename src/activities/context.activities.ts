@@ -11,7 +11,7 @@ import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import { loadRepositoryReadToken } from "~/domain/projects/runner-credentials.js";
 
 export interface ResolveContextActivityInput {

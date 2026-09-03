@@ -10,21 +10,6 @@ import type {
   TenantRegistry,
   UpdateProjectInput,
 } from "~/domain/projects/project-registry.js";
-import type {
-  ProjectSecretDescriptor,
-  ProjectSecretKind,
-  PutSecretOptions,
-  SecretStore,
-} from "~/domain/projects/secret-store.js";
-import { assertSecretKindAndMark, PROJECT_SECRET_KINDS } from "~/domain/projects/secret-store.js";
-
-/**
- * The column holds free text, so a row written by an older release, or by hand, can name a kind
- * this release does not know. Such a row reads as `test`, the most restricted kind: it reaches an
- * agent session only with the injection mark, and the guard inspects it there.
- */
-const asSecretKind = (value: string): ProjectSecretKind =>
-  (PROJECT_SECRET_KINDS as readonly string[]).includes(value) ? (value as ProjectSecretKind) : "test";
 
 type ProjectRow = {
   id: string;
@@ -112,66 +97,6 @@ export class PrismaProjectRegistry implements ProjectRegistry {
     const existing = await this.findById(tenantId, id);
     if (!existing) return false;
     await this.prisma.project.delete({ where: { id } });
-    return true;
-  }
-}
-
-export class PrismaSecretStore implements SecretStore {
-  constructor(private readonly prisma: FactoreePrismaClient, private readonly keyHex: string) {}
-
-  async put(
-    tenantId: string,
-    projectId: string,
-    name: string,
-    value: string,
-    options?: PutSecretOptions,
-  ): Promise<void> {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, tenantId } });
-    if (!project) throw new Error("project not found for tenant");
-    const valueCipher = encryptSecret(value, this.keyHex);
-    // The mark defaults to false. A secret an operator does not mark never reaches the
-    // Implementer environment. SDD section 30 requires the injection to be explicit.
-    const injectIntoImplementer = options?.injectIntoImplementer ?? false;
-    const kind = options?.kind ?? "test";
-    // The store is the last gate before the row exists. A credential that carries the injection
-    // mark would reach the Implementer environment, and SDD section 30 forbids that.
-    assertSecretKindAndMark(kind, injectIntoImplementer);
-    await this.prisma.projectSecret.upsert({
-      where: { projectId_name: { projectId, name } },
-      create: { tenantId, projectId, name, valueCipher, injectIntoImplementer, kind },
-      update: { valueCipher, injectIntoImplementer, kind },
-    });
-  }
-
-  async get(tenantId: string, projectId: string, name: string): Promise<string | null> {
-    const row = await this.prisma.projectSecret.findFirst({ where: { tenantId, projectId, name } });
-    return row ? decryptSecret(row.valueCipher, this.keyHex) : null;
-  }
-
-  async listNames(tenantId: string, projectId: string): Promise<string[]> {
-    const rows = await this.prisma.projectSecret.findMany({
-      where: { tenantId, projectId },
-      orderBy: { name: "asc" },
-    });
-    return rows.map((row) => row.name);
-  }
-
-  async list(tenantId: string, projectId: string): Promise<ProjectSecretDescriptor[]> {
-    const rows = await this.prisma.projectSecret.findMany({
-      where: { tenantId, projectId },
-      orderBy: { name: "asc" },
-    });
-    return rows.map((row) => ({
-      name: row.name,
-      injectIntoImplementer: row.injectIntoImplementer,
-      kind: asSecretKind(row.kind),
-    }));
-  }
-
-  async remove(tenantId: string, projectId: string, name: string): Promise<boolean> {
-    const row = await this.prisma.projectSecret.findFirst({ where: { tenantId, projectId, name } });
-    if (!row) return false;
-    await this.prisma.projectSecret.delete({ where: { id: row.id } });
     return true;
   }
 }

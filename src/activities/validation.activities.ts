@@ -12,7 +12,7 @@ import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";

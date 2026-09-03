@@ -1,7 +1,7 @@
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.js";
 import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";

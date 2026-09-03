@@ -10,7 +10,7 @@ import type {
   VerificationCommand,
 } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import { loadRepositoryReadToken, loadRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";

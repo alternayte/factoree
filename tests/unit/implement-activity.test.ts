@@ -10,7 +10,7 @@ import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 
 const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore()) => {
   const sandbox = new FakeSandbox();

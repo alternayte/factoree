@@ -58,14 +58,38 @@ export const assertSecretKindAndMark = (kind: ProjectSecretKind, injectIntoImple
 export interface SecretStore {
   put(
     tenantId: string,
-    projectId: string,
+    productId: string,
     name: string,
     value: string,
     options?: PutSecretOptions,
   ): Promise<void>;
-  get(tenantId: string, projectId: string, name: string): Promise<string | null>;
-  listNames(tenantId: string, projectId: string): Promise<string[]>;
-  /** Every secret of the Project, with its injection mark and its kind. The value never appears here. */
-  list(tenantId: string, projectId: string): Promise<ProjectSecretDescriptor[]>;
-  remove(tenantId: string, projectId: string, name: string): Promise<boolean>;
+  get(tenantId: string, productId: string, name: string): Promise<string | null>;
+  listNames(tenantId: string, productId: string): Promise<string[]>;
+  /** Every secret of the Product, with its injection mark and its kind. The value never appears here. */
+  list(tenantId: string, productId: string): Promise<ProjectSecretDescriptor[]>;
+  remove(tenantId: string, productId: string, name: string): Promise<boolean>;
 }
+
+/**
+ * Thrown when a repository requests a secret the Product secret store does not hold. The message
+ * names every absent secret, not only the first, because an operator can then repair every gap
+ * before the next Run. A repository can only name a secret in `.factoree/config.yaml`. It can
+ * never supply a value. An unmatched name must fail the Run, rather than run silently.
+ */
+export class MissingSecretError extends Error {
+  constructor(readonly missingNames: string[]) {
+    super(`The Product secret store is missing the following requested secret name(s): ${missingNames.join(", ")}.`);
+    this.name = "MissingSecretError";
+  }
+}
+
+/**
+ * Checks that every name a repository requests exists in the Product secret store. `requested`
+ * holds names parsed from `.factoree/config.yaml`. `available` holds the names the Product
+ * secret store actually holds. A name absent from `available` fails the whole check.
+ */
+export const assertRequestedSecretsExist = (requested: string[], available: string[]): void => {
+  const availableNames = new Set(available);
+  const missingNames = requested.filter((name) => !availableNames.has(name));
+  if (missingNames.length > 0) throw new MissingSecretError(missingNames);
+};

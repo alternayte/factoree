@@ -6,7 +6,7 @@ import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";

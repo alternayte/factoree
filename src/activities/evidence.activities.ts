@@ -9,7 +9,7 @@ import type { ContextContractStore } from "~/domain/context/context-contract-sto
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import {

@@ -2,7 +2,7 @@ import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";

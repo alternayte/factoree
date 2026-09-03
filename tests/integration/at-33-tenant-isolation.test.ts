@@ -2,11 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
-import {
-  PrismaProjectRegistry,
-  PrismaSecretStore,
-  PrismaTenantRegistry,
-} from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaProductRegistry, PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
 
 const key = "e".repeat(64);
 let prisma: FactoreePrismaClient;
@@ -27,6 +24,7 @@ describe("AT-33 tenant isolation", () => {
   it("keeps projects, secrets, and runs inside their own tenant", async () => {
     const tenants = new PrismaTenantRegistry(prisma, key);
     const projects = new PrismaProjectRegistry(prisma);
+    const products = new PrismaProductRegistry(prisma);
     const secrets = new PrismaSecretStore(prisma, key);
     const runs = new PrismaRunRepository(prisma);
 
@@ -39,7 +37,14 @@ describe("AT-33 tenant isolation", () => {
       name: "A",
       primaryRepository: "acme/a",
     });
-    await secrets.put(a.id, projectA.id, "TOKEN", "secret-value-of-tenant-a");
+    const productA = await products.create({
+      tenantId: a.id,
+      slug: "a",
+      name: "A",
+      linearTeamKey: "AT33",
+      linearTeamId: "team-at33-a",
+    });
+    await secrets.put(a.id, productA.id, "TOKEN", "secret-value-of-tenant-a");
     const run = await runs.createIfAbsent({
       tenantId: a.id,
       projectId: projectA.id,
@@ -51,8 +56,8 @@ describe("AT-33 tenant isolation", () => {
 
     expect(await projects.list(b.id)).toHaveLength(0);
     expect(await projects.findById(b.id, projectA.id)).toBeNull();
-    expect(await secrets.get(b.id, projectA.id, "TOKEN")).toBeNull();
-    expect(await secrets.listNames(b.id, projectA.id)).toEqual([]);
+    expect(await secrets.get(b.id, productA.id, "TOKEN")).toBeNull();
+    expect(await secrets.listNames(b.id, productA.id)).toEqual([]);
     expect(await runs.findById(b.id, run.run.id)).toBeNull();
     expect(await runs.findByAgentSession(b.id, "session-at33")).toBeNull();
 
