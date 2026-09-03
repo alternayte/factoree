@@ -12,10 +12,24 @@ model Tenant {
   name              String
   createdAt         DateTime            @default(now())
   installations     LinearInstallation[]
+  githubInstallations GitHubInstallation[]
   projects          Project[]
   products          Product[]
   runs              Run[]
   webhooks          ProcessedWebhook[]
+}
+
+model GitHubInstallation {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // The numeric installation identifier GitHub sends. It is stable across an account rename.
+  githubInstallationId String   @unique
+  // The account login, for an operator to read. Never resolve on it, because it can change.
+  accountLogin         String
+  createdAt            DateTime @default(now())
+
+  @@index([tenantId])
 }
 
 model LinearInstallation {

@@ -6,6 +6,7 @@ import type { ProjectRegistry, TenantRegistry } from "~/domain/projects/project-
 import type { SecretStore } from "~/domain/projects/secret-store.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { DelegationService } from "~/domain/runs/delegation-service.js";
+import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { createAdminGuard } from "./admin/auth.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProjectRoutes } from "./admin/projects.routes.js";
@@ -13,6 +14,7 @@ import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
+import { registerGitHubWebhookRoutes } from "./webhooks/github.routes.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 
 declare module "fastify" {
@@ -30,6 +32,12 @@ export interface ServerDependencies {
   secrets: SecretStore;
   runs: RunRepository;
   delegation: DelegationService;
+  /**
+   * The GitHub webhook route mounts only when both are present. Production wiring waits on a
+   * per-installation GitHub App token source, a gap Task 6 already carried forward.
+   */
+  discovery?: DiscoveryService;
+  verifyGitHubSignature?: (raw: string, signature: string) => boolean;
 }
 
 export const buildServer = (dependencies: ServerDependencies): FastifyInstance => {
@@ -51,6 +59,14 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     delegation: dependencies.delegation,
     logger: dependencies.logger,
   });
+  if (dependencies.discovery && dependencies.verifyGitHubSignature) {
+    registerGitHubWebhookRoutes(app, {
+      discovery: dependencies.discovery,
+      tenants: dependencies.tenants,
+      verifySignature: dependencies.verifyGitHubSignature,
+      logger: dependencies.logger,
+    });
+  }
 
   void app.register((admin) => {
     admin.addHook("onRequest", createAdminGuard(dependencies.env.ADMIN_API_TOKEN));

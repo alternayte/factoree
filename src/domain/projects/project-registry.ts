@@ -79,4 +79,9 @@ export interface TenantRegistry {
   getInstallationToken(linearWorkspaceId: string): Promise<string | null>;
   /** The whole installation. `LinearTokenProvider` needs the refresh token and the expiry. */
   getInstallation(linearWorkspaceId: string): Promise<InstallationRecord | null>;
+  /**
+   * Resolves a tenant from a GitHub App installation id. The id is stable across an account
+   * rename, so a lookup never resolves by the account login.
+   */
+  findByGitHubInstallation(githubInstallationId: string): Promise<TenantRecord | null>;
 }

@@ -242,4 +242,12 @@ export class PrismaTenantRegistry implements TenantRegistry {
       scopes: row.scopes,
     };
   }
+
+  async findByGitHubInstallation(githubInstallationId: string): Promise<TenantRecord | null> {
+    const row = await this.prisma.gitHubInstallation.findUnique({
+      where: { githubInstallationId },
+      include: { tenant: true },
+    });
+    return row ? { id: row.tenant.id, linearWorkspaceId: row.tenant.linearWorkspaceId, name: row.tenant.name } : null;
+  }
 }
