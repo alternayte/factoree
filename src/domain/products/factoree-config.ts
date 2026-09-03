@@ -39,9 +39,9 @@ export class FactoreeConfigPrivilegeError extends RunConfigurationError {
 }
 
 /**
- * Walks the raw parsed YAML for a privilege key before the zod parse runs. It must run first,
- * so the error names the offending key rather than a generic unknown-key failure it would
- * otherwise report.
+ * Walks the raw parsed YAML for a privilege key before the zod parse runs.
+ * The guard runs before the schema parse. The error then names the offending key. A generic
+ * unknown-key failure from the parse does not name it.
  */
 const assertNoPrivilegeKey = (raw: unknown): void => {
   if (typeof raw !== "object" || raw === null) return;
