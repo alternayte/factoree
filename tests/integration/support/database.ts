@@ -41,14 +41,12 @@ export const withDatabase = async (
  * Creates a Tenant, a Product, and a Run in one call, for a test that needs a valid Run to
  * attach a related record to and does not care about the Run's other field values.
  *
- * The returned key stays `projectId` for now, so it drops into the many callers that pass it
- * straight through to `AgentRunWorkflowInput.projectId`, a field this task did not rename. The
- * value underneath is the seeded Product's id, because `Run.productId` carries a real foreign
- * key to `Product` and no longer accepts a `Project` id.
+ * The returned key names the seeded Product's id `productId`, because `Run.productId` carries a
+ * real foreign key to `Product`, and no longer accepts a `Project` id.
  */
 export const seedTenantProjectAndRun = async (
   prisma: FactoreePrismaClient,
-): Promise<{ tenantId: string; projectId: string; runId: string }> => {
+): Promise<{ tenantId: string; productId: string; runId: string }> => {
   const suffix = randomUUID();
   const tenant = await prisma.tenant.create({
     data: { linearWorkspaceId: `ws-${suffix}`, name: `Tenant ${suffix}` },
@@ -72,5 +70,5 @@ export const seedTenantProjectAndRun = async (
       autonomyLevel: "L2",
     },
   });
-  return { tenantId: tenant.id, projectId: product.id, runId: run.id };
+  return { tenantId: tenant.id, productId: product.id, runId: run.id };
 };

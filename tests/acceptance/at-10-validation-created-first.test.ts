@@ -39,7 +39,7 @@ afterAll(async () => {
  */
 describe("AT-10 — validation created first", () => {
   it("freezes a contract with a creation time and a hash, and the Run row carries that hash", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
     const contracts = new PrismaValidationContractStore(prisma);
     const runs = new PrismaRunRepository(prisma);
     const executions = new PrismaAgentExecutionRepository(prisma);
@@ -48,7 +48,7 @@ describe("AT-10 — validation created first", () => {
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId,
+      projectId: productId,
       workItem: "ENG-200",
       goal: "A signed-in user can rename a project.",
       acceptanceCriteria: [
