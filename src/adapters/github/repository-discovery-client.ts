@@ -1,3 +1,5 @@
+import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
+
 /** One GitHub call must not hang the discovery service. */
 const GITHUB_API_TIMEOUT_MS = 30_000;
 
@@ -19,9 +21,9 @@ export interface RepositoryConfigFile {
 
 /**
  * The read side of repository discovery. The next task, the discovery service, consumes this
- * interface, and it treats a null answer from `readConfig` as "this repository does not
- * participate", and a throw as an operational error worth a retry. An implementation must never
- * collapse the two.
+ * interface. It treats a null answer from `readConfig` as "this repository does not
+ * participate". It treats a throw as an operational error worth a retry. An implementation must
+ * never collapse the two.
  */
 export interface RepositoryDiscoveryClient {
   listInstallationRepositories(installationId: string): Promise<DiscoveredRepository[]>;
@@ -51,10 +53,10 @@ interface GitHubRepositorySummary {
 }
 
 /**
- * Reads the repositories a GitHub App installation grants, and reads the Factoree configuration
- * file from one of them. It follows the adapter style of `GitHubPullRequests`: the caller
- * supplies the token, `fetch` is injectable for a test, and every failure carries the HTTP
- * status and the repository name.
+ * Reads the repositories a GitHub App installation grants. It also reads the Factoree
+ * configuration file from one of them. It follows the adapter style of `GitHubPullRequests`.
+ * The caller supplies the token. `fetch` is injectable for a test. Every failure carries
+ * the HTTP status and the repository name.
  */
 export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClient {
   private readonly base: string;
@@ -78,8 +80,9 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
       const response = await this.request(url);
       const text = await response.text();
       if (!response.ok) {
-        throw new Error(
+        throw new GitHubApiError(
           `the GitHub API answered ${String(response.status)} while it listed the repositories of installation ${installationId}`,
+          response.status,
         );
       }
       const body = (text === "" ? {} : JSON.parse(text)) as GitHubInstallationRepositoriesResponse;
@@ -99,8 +102,9 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     if (response.status === 404) return null;
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(
+      throw new GitHubApiError(
         `the GitHub API answered ${String(response.status)} while it read the configuration of ${fullName} at ${ref}`,
+        response.status,
       );
     }
     const body = (text === "" ? {} : JSON.parse(text)) as GitHubContentsResponse;
