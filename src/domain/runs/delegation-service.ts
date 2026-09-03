@@ -127,6 +127,7 @@ export class DelegationService {
         id: repository.id,
         fullName: repository.fullName,
         defaultBranch: repository.defaultBranch,
+        absentSince: repository.absentSince === null ? null : repository.absentSince.toISOString(),
       })),
       repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
@@ -157,13 +158,16 @@ export class DelegationService {
         {
           tenantId,
           workspaceId: event.organizationId,
-          projectId: product.id,
+          productId: product.id,
           linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
           agentSessionId: event.agentSession.id,
           autonomyLevel: product.defaultAutonomy,
           maxRunMinutes: product.maxRunMinutes,
           workItem,
           product: workflowProduct,
+          // Specification section 10. No proposal producer exists yet, so every delegated Run
+          // asks a human when the Product holds several repositories.
+          repositoryProposal: null,
         },
       ],
     });

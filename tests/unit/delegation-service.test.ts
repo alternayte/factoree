@@ -117,7 +117,7 @@ describe("DelegationService", () => {
     expect(call.workflowId).toBe("linear:workspace-123:session-1");
     expect(call.args[0]).toMatchObject({
       tenantId: "tenant-1",
-      projectId: "product-acme",
+      productId: "product-acme",
       workspaceId: "workspace-123",
       agentSessionId: "session-1",
       linearIssueId: "issue-1",
@@ -211,7 +211,9 @@ describe("DelegationService", () => {
     expect(started.args[0]?.product).toEqual({
       productId: "product-app",
       productSlug: "app",
-      repositories: [{ id: "repository-acme/app", fullName: "acme/app", defaultBranch: "release" }],
+      repositories: [
+        { id: "repository-acme/app", fullName: "acme/app", defaultBranch: "release", absentSince: null },
+      ],
       repositoryBaseUrl: "https://github.com",
       stagingRead: false,
       spriteRetentionHours: 24,

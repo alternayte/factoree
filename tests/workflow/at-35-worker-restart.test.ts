@@ -26,6 +26,10 @@ const activities = {
   },
   setRunStatus: async () => undefined,
   setRunAutonomyLevel: async () => undefined,
+  // Specification section 10. This Run holds one repository, so `selectTarget` never gates it,
+  // and the double only needs to return a target id.
+  recordRunTarget: async () => "target-fake",
+  postTargetNotice: async () => undefined,
   completeRun: async (input: { runId: string; status: string; failureReason?: string }) => {
     completions.push(input.runId);
     terminalStatuses.push({ status: input.status, failureReason: input.failureReason });
@@ -200,7 +204,7 @@ describe("AT-35 worker restart", () => {
         {
           tenantId: "tenant-1",
           workspaceId: "workspace-123",
-          projectId: "project-1",
+          productId: "product-1",
           linearIssueId: "issue-1",
           agentSessionId: "session-at35",
           autonomyLevel: "L2",
@@ -215,13 +219,14 @@ describe("AT-35 worker restart", () => {
           product: {
             productId: "product-1",
             productSlug: "acme",
-            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main" }],
+            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null }],
             repositoryBaseUrl: "https://example.invalid",
             stagingRead: false,
             spriteRetentionHours: 24,
             defaultAutonomy: "L2",
             organizationSkillsRepository: null,
           },
+          repositoryProposal: null,
         },
       ],
     });

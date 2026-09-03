@@ -112,10 +112,18 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
         product: {
           ...harness.productInput,
           repositories: [
-            { id: "repository-primary", fullName: PRIMARY_SLUG, defaultBranch: "main" },
-            { id: "repository-reference", fullName: REFERENCE_SLUG, defaultBranch: "main" },
+            { id: "repository-primary", fullName: PRIMARY_SLUG, defaultBranch: "main", absentSince: null },
+            { id: "repository-reference", fullName: REFERENCE_SLUG, defaultBranch: "main", absentSince: null },
           ],
           repositoryBaseUrl: fixture.root,
+        },
+        // Specification section 10. Two repositories exist, so `selectTarget` needs a confident
+        // proposal, or it blocks. This exit condition exercises context resolution, not target
+        // selection, so it states the proposal directly.
+        repositoryProposal: {
+          fullName: PRIMARY_SLUG,
+          reason: "the notification retry code lives in the primary repository",
+          confident: true,
         },
       });
       // This Run clones two real repositories through git, so it needs more than the default

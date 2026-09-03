@@ -97,6 +97,7 @@ const build = (
     setProofPack: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the Proof Pack facts'),
     ),
+    createRunTarget: vi.fn().mockResolvedValue({ id: "target-1" }),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({

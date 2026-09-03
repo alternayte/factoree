@@ -235,6 +235,21 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const proofPackOutcomes = new Map<string, () => PublishProofPackActivityOutput>();
   /** A run id in this map holds `publishProofPack` until the promise resolves. */
   const heldProofPacks = new Map<string, Promise<void>>();
+  /** Every recorded `recordRunTarget` call, in order. */
+  const recordRunTargetCalls: Array<{
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    selectionReason: string;
+    mergeOrder: number;
+  }> = [];
+  /** Every recorded `postTargetNotice` call, in order. */
+  const postTargetNoticeCalls: Array<{
+    tenantId: string;
+    runId: string;
+    fullName: string;
+    reason: string;
+  }> = [];
   /** A run id in this map holds the publication open until the test resolves the promise. */
   const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
@@ -701,6 +716,24 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         postedAt: "2026-01-01T03:00:00.000Z",
       };
     },
+    recordRunTarget: async (input: {
+      tenantId: string;
+      runId: string;
+      repositoryId: string;
+      selectionReason: string;
+      mergeOrder: number;
+    }) => {
+      recordRunTargetCalls.push(input);
+      return `target-${input.runId}-${input.repositoryId}`;
+    },
+    postTargetNotice: async (input: {
+      tenantId: string;
+      runId: string;
+      fullName: string;
+      reason: string;
+    }) => {
+      postTargetNoticeCalls.push(input);
+    },
   };
 
   /**
@@ -719,7 +752,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const productInput = {
     productId: "product-1",
     productSlug: "acme",
-    repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main" }],
+    repositories: [
+      { id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null },
+    ],
     repositoryBaseUrl: "https://example.invalid",
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
     spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
@@ -730,13 +765,14 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const input = (sessionId: string, maxRunMinutes = 90): AgentRunWorkflowInput => ({
     tenantId: "tenant-1",
     workspaceId: "workspace-123",
-    projectId: "product-1",
+    productId: "product-1",
     linearIssueId: "issue-1",
     agentSessionId: sessionId,
     autonomyLevel: "L2",
     maxRunMinutes,
     workItem: workItemInput,
     product: productInput,
+    repositoryProposal: null,
   });
 
   /** Starts one Run of the default fixture Project, with the given overrides. */
@@ -807,6 +843,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     proofPackCalls,
     proofPackOutcomes,
     heldProofPacks,
+    recordRunTargetCalls,
+    postTargetNoticeCalls,
     activityOrder,
     workItemLabels,
     failingLabelReads,

@@ -56,7 +56,19 @@ const build = () => {
   const runners = {
     all: () => [{ name: "fake", releaseRun: (runId: string) => released.push(runId) }],
   } as unknown as AgentRunnerRegistry;
-  const activities = createRunActivities({ runs, logger: createLogger({ level: "error", redactor }), runners });
+  const agentSession = {
+    acknowledge: () => Promise.resolve(),
+    progress: () => Promise.resolve(),
+    elicit: () => Promise.resolve(),
+    respond: () => Promise.resolve(),
+    fail: () => Promise.resolve(),
+  };
+  const activities = createRunActivities({
+    runs,
+    logger: createLogger({ level: "error", redactor }),
+    runners,
+    agentSession,
+  });
   return { activities, calls, released };
 };
 

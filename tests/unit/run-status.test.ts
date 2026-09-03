@@ -27,12 +27,24 @@ describe("run status", () => {
       "FAILED",
       "FAILED_REVIEW",
       "CANCELLED",
+      "BLOCKED_ROUTING",
+      "BLOCKED_TARGET",
+      "BLOCKED_STALE_SET",
     ]);
   });
 
   it("declares every SDD section 48 terminal state", () => {
     expect([...TERMINAL_RUN_STATUSES].sort()).toEqual(
-      ["CANCELLED", "FAILED", "FAILED_CONFIGURATION", "FAILED_REVIEW", "READY_FOR_HUMAN", "STALE_BASE"].sort(),
+      [
+        "CANCELLED",
+        "FAILED",
+        "FAILED_CONFIGURATION",
+        "FAILED_REVIEW",
+        "READY_FOR_HUMAN",
+        "STALE_BASE",
+        "BLOCKED_ROUTING",
+        "BLOCKED_STALE_SET",
+      ].sort(),
     );
   });
 

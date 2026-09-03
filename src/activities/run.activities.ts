@@ -2,6 +2,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import type { AgentSessionPort } from "~/domain/runs/ports.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 import { failureCategoryOf } from "~/domain/runs/failure-category.js";
@@ -10,6 +11,7 @@ export interface RunActivityDependencies {
   runs: RunRepository;
   logger: Logger;
   runners: AgentRunnerRegistry;
+  agentSession: AgentSessionPort;
 }
 
 export const createRunActivities = (dependencies: RunActivityDependencies) => ({
@@ -111,5 +113,44 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       step: "complete",
       status: input.status,
     });
+  },
+
+  /**
+   * Specification section 10. Records the repository target selection the workflow decided.
+   * `mergeOrder` starts at one, because Task 10 selects one target only.
+   */
+  async recordRunTarget(input: {
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    selectionReason: string;
+    mergeOrder: number;
+  }): Promise<string> {
+    const target = await dependencies.runs.createRunTarget(input);
+    dependencies.logger.info("run target recorded", {
+      tenant_id: input.tenantId,
+      run_id: input.runId,
+      step: "target_selection",
+    });
+    return target.id;
+  },
+
+  /**
+   * Specification section 10. Posts the Linear notice that names the confident target and its
+   * reason. The notice reaches the Run's own agent session. The activity resolves the session
+   * id from the Run record.
+   */
+  async postTargetNotice(input: {
+    tenantId: string;
+    runId: string;
+    fullName: string;
+    reason: string;
+  }): Promise<void> {
+    const run = await dependencies.runs.findById(input.tenantId, input.runId);
+    if (run === null) return;
+    await dependencies.agentSession.progress(
+      run.linearAgentSessionId,
+      `Factoree selected "${input.fullName}" as the target repository, because ${input.reason}.`,
+    );
   },
 });

@@ -89,6 +89,15 @@ export interface ExpiredSandboxRun {
   adapter: string;
 }
 
+/** Specification section 10. The write `recordRunTarget` sends to the `RunTarget` row. */
+export interface CreateRunTargetInput {
+  tenantId: string;
+  runId: string;
+  repositoryId: string;
+  selectionReason: string;
+  mergeOrder: number;
+}
+
 export interface RunRepository {
   createIfAbsent(input: CreateRunInput): Promise<{ run: RunRecord; created: boolean }>;
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
@@ -142,6 +151,11 @@ export interface RunRepository {
   setAutonomyLevel(tenantId: string, runId: string, level: string): Promise<void>;
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
   listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
+  /**
+   * Specification section 10. Records the repository target selection decided this task. A
+   * single-target Run writes one row, so `mergeOrder` starts at one.
+   */
+  createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }>;
 }
 
 export interface WebhookLog {

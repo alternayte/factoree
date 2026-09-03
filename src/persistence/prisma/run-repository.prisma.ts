@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type {
   CreateRunInput,
+  CreateRunTargetInput,
   ExpiredSandboxRun,
   RunSandboxPatch,
   SupersededSandbox,
@@ -231,6 +232,19 @@ export class PrismaRunRepository implements RunRepository {
     if (updated.count === 0) {
       throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the autonomy level`);
     }
+  }
+
+  async createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }> {
+    const row = await this.prisma.runTarget.create({
+      data: {
+        tenantId: input.tenantId,
+        runId: input.runId,
+        repositoryId: input.repositoryId,
+        selectionReason: input.selectionReason,
+        mergeOrder: input.mergeOrder,
+      },
+    });
+    return { id: row.id };
   }
 
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {
