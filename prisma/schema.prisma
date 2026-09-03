@@ -426,6 +426,7 @@ model ProductSecret {
 
 model RunTarget {
   id              String     @id @default(uuid())
+  tenantId        String
   runId           String
   run             Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
   repositoryId    String
@@ -442,4 +443,5 @@ model RunTarget {
 
   @@unique([runId, repositoryId])
   @@index([runId])
+  @@index([tenantId])
 }

@@ -96,14 +96,21 @@ describe("AT-33 tenant isolation", () => {
         // tenant-owned as well.
         "ContextSourceConfiguration",
         "Evidence",
+        // The multi-repo-tenancy branch added GitHubInstallation, Product, ProductSecret,
+        // Repository, and RunTarget. Each one is tenant-owned.
+        "GitHubInstallation",
         "LinearInstallation",
         "ProcessedWebhook",
+        "Product",
+        "ProductSecret",
         "Project",
         "ProjectSecret",
+        "Repository",
         // SDD section 53 and SDD section 52. Phase 8 added the ReviewFinding table, and it is
         // tenant-owned as well.
         "ReviewFinding",
         "Run",
+        "RunTarget",
         // SDD section 24 and SDD section 52. Phase 6 added the Validation Contract tables, and
         // each one is tenant-owned.
         "ValidationAssertion",
