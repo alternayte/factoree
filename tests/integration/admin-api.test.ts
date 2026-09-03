@@ -4,7 +4,7 @@ import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/pri
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
-import { PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
+import { PrismaProductRegistry, PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -265,6 +265,64 @@ describe("the context source endpoints of SDD section 59", () => {
     expect(refused.statusCode).toBe(400);
     expect(refused.body).toContain("user name or a password");
     expect(refused.body).not.toContain("catalog-token");
+  });
+
+  it("creates, lists, and deletes one source", async () => {
+    // The secret exists with a real value, so the assertion below has something to find. The
+    // Product secret administration route does not exist yet, so this seeds the row directly
+    // through the same PrismaSecretStore the rest of this file already constructs.
+    const tenant = await prisma.tenant.findFirstOrThrow({ where: { linearWorkspaceId: contextWorkspace } });
+    const products = new PrismaProductRegistry(prisma);
+    const product = await products.create({
+      tenantId: tenant.id,
+      slug: "context-secrets",
+      name: "Context Secrets",
+      linearTeamKey: "CTXS",
+      linearTeamId: "team-context-secrets",
+    });
+    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    await secrets.put(tenant.id, product.id, "BACKSTAGE_TOKEN", "bs_super_secret_value_87654321");
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: {
+        sourceId: "backstage",
+        kind: "backstage",
+        endpoint: "https://backstage.example.test",
+        secretName: "BACKSTAGE_TOKEN",
+        settings: { maxEntities: 10 },
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<{ sourceId: string }>().sourceId).toBe("backstage");
+    // SDD section 60. The response names the secret and never carries its value.
+    expect(created.body).toContain("BACKSTAGE_TOKEN");
+    expect(created.body).not.toContain("bs_super_secret_value_87654321");
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.body).not.toContain("bs_super_secret_value_87654321");
+    expect(listed.json<{ sourceId: string }[]>().map((row) => row.sourceId)).toEqual(["backstage"]);
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(204);
+
+    const deletedAgain = await app.inject({
+      method: "DELETE",
+      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+    });
+    expect(deletedAgain.statusCode).toBe(404);
   });
 
   it("refuses an invalid setting with 400 and names the key", async () => {
