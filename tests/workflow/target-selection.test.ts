@@ -14,6 +14,10 @@ const {
   runStatusQuery,
   start,
   runWorker,
+  targetIdentityOutcomes,
+  targetIdentityCalls,
+  postedErrors,
+  completions,
 } = harness;
 
 beforeAll(async () => {
@@ -27,6 +31,8 @@ afterAll(async () => {
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const targetsOf = (runId: string) => recordRunTargetCalls.filter((entry) => entry.runId === runId);
 const noticesOf = (runId: string) => postTargetNoticeCalls.filter((entry) => entry.runId === runId);
+const identityCallsOf = (runId: string) => targetIdentityCalls.filter((entry) => entry.runId === runId);
+const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 
 /** Specification section 10. Two present repositories of one Product, for the ambiguous cases. */
 const twoRepositories = [
@@ -114,3 +120,46 @@ describe("target selection and the RunTarget row", () => {
     });
   });
 });
+
+describe("routing identity at the base commit", () => {
+  it("checks the identity block of the target repository and continues on a match", async () => {
+    await runWorker(async () => {
+      const handle = await start("ses-identity-match");
+      await waitFor(
+        () => implementsOf("run-ses-identity-match").length === 1,
+        "the Implementer of identity-match",
+      );
+
+      expect(identityCallsOf("run-ses-identity-match")).toEqual([
+        expect.objectContaining({ productSlug: "acme" }),
+      ]);
+
+      await handle.signal(stopSignal);
+      const result = await handle.result();
+      expect(result.status).not.toBe("BLOCKED_ROUTING");
+    });
+  });
+
+  it("stops with BLOCKED_ROUTING when the identity block names another Product", async () => {
+    targetIdentityOutcomes.set("run-ses-identity-mismatch", () => ({
+      configSha: "1".repeat(64),
+      matched: false,
+      declaredProduct: "other-product",
+    }));
+
+    const result = await runWorker(async () => {
+      const handle = await start("ses-identity-mismatch");
+      return handle.result();
+    });
+
+    expect(result.status).toBe("BLOCKED_ROUTING");
+    expect(implementsOf("run-ses-identity-mismatch")).toEqual([]);
+    expect(completionsOf("run-ses-identity-mismatch").at(-1)?.status).toBe("BLOCKED_ROUTING");
+    const message = postedErrors.at(-1) ?? "";
+    expect(message).toContain("acme");
+    expect(message).toContain("other-product");
+
+    targetIdentityOutcomes.delete("run-ses-identity-mismatch");
+  });
+});
+

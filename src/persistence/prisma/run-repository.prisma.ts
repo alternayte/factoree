@@ -39,6 +39,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   contextContractVersion: row.contextContractVersion,
   validationContractVersion: row.validationContractVersion,
   organizationSkillsSha: row.organizationSkillsSha ?? null,
+  configSha: row.configSha ?? null,
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   repairCount: row.repairCount,
@@ -245,6 +246,19 @@ export class PrismaRunRepository implements RunRepository {
       },
     });
     return { id: row.id };
+  }
+
+  async setConfigSha(tenantId: string, runId: string, sha: string): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { configSha: sha },
+    });
+    // A write that reaches no row must not report success. This value names the exact identity
+    // file the Run checked. A wrong Run or a wrong tenant is a caller defect.
+    if (updated.count === 0) {
+      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the config SHA`);
+    }
   }
 
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {

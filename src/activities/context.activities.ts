@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
@@ -13,6 +14,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { loadRepositoryReadToken } from "~/domain/projects/runner-credentials.js";
+import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 
 export interface ResolveContextActivityInput {
   runId: string;
@@ -57,6 +59,30 @@ export interface ContextActivityDependencies {
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
+
+/**
+ * Specification section 8. The cached routing table can drift from the file at the commit a Run
+ * actually builds from. This input names the repository, the base commit, and the routed
+ * Product.
+ */
+export interface VerifyTargetIdentityActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  /** The Product slug delegation routed this Run to. */
+  productSlug: string;
+  repositoryUrl: string;
+  baseSha: string;
+}
+
+export interface VerifyTargetIdentityActivityOutput {
+  /** The SHA-256 of the file content, or null when the target carries no config file. */
+  configSha: string | null;
+  /** True when the file agrees with routing, or carries no claim to check. */
+  matched: boolean;
+  /** The Product slug the file declares, or null when it carries no file. */
+  declaredProduct: string | null;
+}
 
 /** A human reads the summary in Linear, so the noun agrees with the count. */
 const count = (total: number, singular: string, plural: string): string =>
@@ -208,5 +234,59 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       conflictCount: resolved.contract.conflicts.length,
       summary,
     };
+  },
+
+  /**
+   * Specification section 8. Reads `.factoree/config.yaml` from the target repository, at the
+   * Run's base commit. It records the file's SHA-256 on the Run. It reports whether the
+   * identity block agrees with the Product routing used.
+   */
+  async verifyTargetIdentity(
+    input: VerifyTargetIdentityActivityInput,
+  ): Promise<VerifyTargetIdentityActivityOutput> {
+    const repositoryCredential = await loadRepositoryReadToken(
+      dependencies.secrets,
+      input.tenantId,
+      input.productId,
+    );
+    if (repositoryCredential !== null) {
+      try {
+        dependencies.repositoryReader.useCredential(new URL(input.repositoryUrl).origin, repositoryCredential);
+      } catch {
+        // A local path carries no origin, and it needs no credential either.
+      }
+    }
+
+    const text = await dependencies.repositoryReader.readBlob(
+      input.repositoryUrl,
+      input.baseSha,
+      FACTOREE_CONFIG_PATH,
+    );
+
+    // A repository that carries no file, or an unparsable file, makes no claim about its
+    // Product. Section 15 already enforces the file's validity elsewhere, so this check only
+    // compares a claim it can read.
+    if (text === null) {
+      return { configSha: null, matched: true, declaredProduct: null };
+    }
+
+    const configSha = createHash("sha256").update(text, "utf8").digest("hex");
+    await dependencies.runs.setConfigSha(input.tenantId, input.runId, configSha);
+
+    let declaredProduct: string | null;
+    try {
+      declaredProduct = parseFactoreeConfig(text).identity.product;
+    } catch {
+      return { configSha, matched: true, declaredProduct: null };
+    }
+
+    dependencies.logger.info("target identity checked", {
+      tenant_id: input.tenantId,
+      run_id: input.runId,
+      step: "verify_target_identity",
+      matched: declaredProduct === input.productSlug,
+    });
+
+    return { configSha, matched: declaredProduct === input.productSlug, declaredProduct };
   },
 });

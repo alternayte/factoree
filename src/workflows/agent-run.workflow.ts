@@ -506,6 +506,35 @@ export async function agentRunWorkflow(
     return { runId: id, status };
   };
 
+  /**
+   * Specification section 8 and section 17. The routing table used a cached repository row.
+   * A repository that claims a different Product at the base commit is a binding problem. Only
+   * an operator can settle it. The Run ends here. This status is terminal.
+   */
+  const endRoutingMismatch = async (
+    routedProductSlug: string,
+    declaredProductSlug: string,
+  ): Promise<AgentRunWorkflowResult> => {
+    status = "BLOCKED_ROUTING";
+    await activities.completeRun({
+      tenantId: input.tenantId,
+      runId: id,
+      status,
+      completedAt: new Date(Date.now()).toISOString(),
+    });
+    await notify(() =>
+      activities.postError({
+        sessionId: input.agentSessionId,
+        message:
+          "Factoree stopped, because the target repository names a different Product at its " +
+          `base commit. Routing used "${routedProductSlug}". The repository names ` +
+          `"${declaredProductSlug}". An operator must resolve this binding. Factoree published ` +
+          "nothing.",
+      }),
+    );
+    return { runId: id, status };
+  };
+
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
 
   /**
@@ -1033,6 +1062,25 @@ export async function agentRunWorkflow(
       // A stop that arrived during the context work must prevent preparation.
       if (stopRequested) return await cancelRun();
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+      // Specification section 8. The routing table used a cached repository row. The base
+      // commit is the ground truth. Factoree reads the identity block there. It checks that
+      // block against the Product routing used.
+      const identity = await activities.verifyTargetIdentity({
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        productSlug: input.product.productSlug,
+        repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
+        baseSha: resolvedContext.primary.sha,
+      });
+      if (stopRequested) return await cancelRun();
+      if (!identity.matched) {
+        return await endRoutingMismatch(
+          input.product.productSlug,
+          identity.declaredProduct ?? "an unknown Product",
+        );
+      }
 
       // SDD section 49 places the Validation Contract between context resolution and sandbox
       // preparation. SDD section 24 requires the contract to freeze before implementation starts.

@@ -31,6 +31,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   contextContractVersion: null,
   validationContractVersion: null,
   organizationSkillsSha: null,
+  configSha: null,
   proofPackSha256: null,
   proofPackPostedAt: null,
   repairCount,

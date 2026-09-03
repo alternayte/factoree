@@ -133,6 +133,9 @@ model Run {
   spriteRetainUntil        DateTime?
   baseSha                  String?
   organizationSkillsSha    String?
+  // Specification section 8. The SHA-256 of .factoree/config.yaml, read from the target
+  // repository at the Run's base commit. Null until context resolution pins that commit.
+  configSha                 String?
   patchSha256              String?
   commitSha                String?
   pullRequestUrl           String?

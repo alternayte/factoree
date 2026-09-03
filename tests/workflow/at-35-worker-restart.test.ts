@@ -65,6 +65,8 @@ const activities = {
     conflictCount: 0,
     summary: "Factoree resolved the context of this Run.",
   }),
+  // Specification section 8. The fixture repository makes no identity claim to check.
+  verifyTargetIdentity: async () => ({ configSha: null, matched: true, declaredProduct: null }),
   buildValidationContract: async () => ({
     status: "ready",
     sha256: "c".repeat(64),

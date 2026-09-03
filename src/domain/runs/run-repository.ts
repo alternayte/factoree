@@ -29,6 +29,8 @@ export interface RunRecord {
    * Project configures no organization skills repository, or the Run recorded no sandbox yet.
    */
   organizationSkillsSha: string | null;
+  /** Specification section 8. The SHA-256 of the identity file at the Run's base commit. */
+  configSha: string | null;
   /** SDD section 47. The SHA-256 of the Proof Pack this Run posted, or null while none exists. */
   proofPackSha256: string | null;
   proofPackPostedAt: Date | null;
@@ -156,6 +158,12 @@ export interface RunRepository {
    * single-target Run writes one row, so `mergeOrder` starts at one.
    */
   createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }>;
+  /**
+   * Specification section 8. Records the SHA-256 of `.factoree/config.yaml` as read at the
+   * Run's base commit. The method throws when it reaches no Run of that tenant, because a
+   * silent success hides a caller defect.
+   */
+  setConfigSha(tenantId: string, runId: string, sha: string): Promise<void>;
 }
 
 export interface WebhookLog {

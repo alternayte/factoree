@@ -235,6 +235,22 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const proofPackOutcomes = new Map<string, () => PublishProofPackActivityOutput>();
   /** A run id in this map holds `publishProofPack` until the promise resolves. */
   const heldProofPacks = new Map<string, Promise<void>>();
+  /**
+   * A run id in this map replaces the `verifyTargetIdentity` result. The default reports a
+   * match, so a test that does not care about section 8 sees no gate.
+   */
+  const targetIdentityOutcomes = new Map<
+    string,
+    () => { configSha: string; matched: boolean; declaredProduct: string | null }
+  >();
+  /** Every recorded `verifyTargetIdentity` call, in order. */
+  const targetIdentityCalls: Array<{
+    tenantId: string;
+    runId: string;
+    productSlug: string;
+    repositoryUrl: string;
+    baseSha: string;
+  }> = [];
   /** Every recorded `recordRunTarget` call, in order. */
   const recordRunTargetCalls: Array<{
     tenantId: string;
@@ -716,6 +732,19 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         postedAt: "2026-01-01T03:00:00.000Z",
       };
     },
+    verifyTargetIdentity: async (input: {
+      tenantId: string;
+      runId: string;
+      productSlug: string;
+      repositoryUrl: string;
+      baseSha: string;
+    }) => {
+      activityOrder.push("verifyTargetIdentity");
+      targetIdentityCalls.push(input);
+      const outcome = targetIdentityOutcomes.get(input.runId);
+      if (outcome !== undefined) return outcome();
+      return { configSha: "f".repeat(64), matched: true, declaredProduct: input.productSlug };
+    },
     recordRunTarget: async (input: {
       tenantId: string;
       runId: string;
@@ -845,6 +874,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldProofPacks,
     recordRunTargetCalls,
     postTargetNoticeCalls,
+    targetIdentityOutcomes,
+    targetIdentityCalls,
     activityOrder,
     workItemLabels,
     failingLabelReads,
