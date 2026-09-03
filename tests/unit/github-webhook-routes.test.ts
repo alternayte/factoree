@@ -132,6 +132,22 @@ describe("GitHub webhook route", () => {
     expect(synced).toEqual([["acme/api", "main"]]);
   });
 
+  it("ignores a push to a branch other than the repository default, even when it touches the configuration file", async () => {
+    const { app, synced } = build({});
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "push" },
+      payload: {
+        ref: "refs/heads/feature-x",
+        installation: { id: 42 },
+        repository: { full_name: "acme/api", default_branch: "main" },
+        commits: [{ modified: [".factoree/config.yaml"], added: [], removed: [] }],
+      },
+    });
+    expect(synced).toEqual([]);
+  });
+
   it("marks a repository absent when a push removes the configuration file", async () => {
     const { app, synced, absent } = build({});
     await app.inject({
@@ -143,6 +159,23 @@ describe("GitHub webhook route", () => {
         installation: { id: 42 },
         repository: { full_name: "acme/api", default_branch: "main" },
         commits: [{ modified: [], added: [], removed: [".factoree/config.yaml"] }],
+      },
+    });
+    expect(absent).toEqual(["acme/api"]);
+    expect(synced).toEqual([]);
+  });
+
+  it("marks a repository absent when an installation revokes access to it", async () => {
+    const { app, synced, absent } = build({});
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation_repositories" },
+      payload: {
+        action: "removed",
+        installation: { id: 42, account: { login: "acme" } },
+        repositories_added: [],
+        repositories_removed: [{ full_name: "acme/api" }],
       },
     });
     expect(absent).toEqual(["acme/api"]);
@@ -165,5 +198,9 @@ describe("GitHub webhook route", () => {
     expect(synced).toEqual([]);
     expect(absent).toEqual([]);
     expect(logger.warnCalls).toHaveLength(1);
+    expect(logger.warnCalls[0]?.fields).toMatchObject({
+      installation_id: "42",
+      account_login: "acme",
+    });
   });
 });

@@ -27,8 +27,8 @@ const resolveTenantId = async (
 ): Promise<string | null> => {
   const tenant = await dependencies.tenants.findByGitHubInstallation(String(installationId));
   if (tenant !== null) return tenant.id;
-  // No operator has bound this installation to a tenant yet. This is not an error: the event
-  // carries no work Factoree can do, and GitHub must not redeliver it.
+  // No operator has bound this installation to a tenant yet. This is not an error. The event
+  // carries no work Factoree can do. GitHub must not redeliver it.
   dependencies.logger.warn("ignored a GitHub event for an unbound installation", {
     installation_id: String(installationId),
     ...(accountLogin === undefined ? {} : { account_login: accountLogin }),
