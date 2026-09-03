@@ -4,7 +4,11 @@ import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/pri
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
-import { PrismaProductRegistry, PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
+import {
+  PrismaProductRegistry,
+  PrismaRepositoryRegistry,
+  PrismaSecretStore,
+} from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -51,7 +55,8 @@ beforeAll(async () => {
     runs: new PrismaRunRepository(prisma),
     delegation: new DelegationService({
       tenants,
-      projects: new PrismaProjectRegistry(prisma),
+      products: new PrismaProductRegistry(prisma),
+      repositories: new PrismaRepositoryRegistry(prisma),
       webhookLog: new PrismaWebhookLog(prisma),
       starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),

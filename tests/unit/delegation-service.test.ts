@@ -5,30 +5,56 @@ import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
+import type { ProductRecord } from "~/domain/products/product-registry.js";
+import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 
 const event = (name: string) =>
   agentSessionEventSchema.parse(JSON.parse(readFileSync(`tests/fixtures/linear/${name}.json`, "utf8")));
 
 const logger = createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined });
 
-const project = {
-  id: "project-1",
+const productFor = (slug: string): ProductRecord => ({
+  id: `product-${slug}`,
   tenantId: "tenant-1",
-  key: "demo",
-  name: "Demo",
-  primaryRepository: "acme/demo",
-  referenceRepositories: [],
-  organizationSkillsRepository: null,
+  slug,
+  name: slug,
+  status: "active",
+  linearTeamKey: "TEAM",
   linearTeamId: "team-1",
   defaultAutonomy: "L2",
   maxRunMinutes: 90,
-  defaultBranch: "main",
   createdAt: new Date(),
   updatedAt: new Date(),
-};
+});
+
+const defaultProduct = productFor("acme");
+
+const repositoryFor = (productId: string, fullName: string, defaultBranch = "main"): RepositoryRecord => ({
+  id: `repository-${fullName}`,
+  tenantId: "tenant-1",
+  productId,
+  fullName,
+  defaultBranch,
+  configSha: "a".repeat(40),
+  requestedSecretNames: [],
+  discoveredAt: new Date(),
+  lastSeenAt: new Date(),
+  absentSince: null,
+});
+
+const defaultRepositories = [
+  repositoryFor(defaultProduct.id, "acme/api"),
+  repositoryFor(defaultProduct.id, "acme/web"),
+];
 
 const build = (
-  overrides: Partial<{ isNewDelivery: boolean; tenant: unknown; project: unknown; startFails: boolean }> = {},
+  overrides: Partial<{
+    isNewDelivery: boolean;
+    tenant: unknown;
+    products: ProductRecord[];
+    repositories: RepositoryRecord[];
+    startFails: boolean;
+  }> = {},
 ) => {
   const recorded = new Set<string>();
   const starter = {
@@ -50,9 +76,12 @@ const build = (
       putInstallation: () => Promise.resolve({ id: "tenant-1", linearWorkspaceId: "workspace-123", name: "A" }),
       getInstallationToken: () => Promise.resolve("token"),
     } as never,
-    projects: {
-      findByLinearTeam: () => Promise.resolve(overrides.project === undefined ? project : overrides.project),
-      findDefaultForTenant: () => Promise.resolve(overrides.project === undefined ? project : overrides.project),
+    products: {
+      list: () => Promise.resolve(overrides.products ?? [defaultProduct]),
+    } as never,
+    repositories: {
+      listByProduct: (productId: string) =>
+        Promise.resolve(overrides.repositories ?? defaultRepositories.filter((r) => r.productId === productId)),
     } as never,
     webhookLog: {
       recordIfNew: (input: { deliveryId: string }) => {
@@ -87,7 +116,7 @@ describe("DelegationService", () => {
     expect(call.workflowId).toBe("linear:workspace-123:session-1");
     expect(call.args[0]).toMatchObject({
       tenantId: "tenant-1",
-      projectId: "project-1",
+      projectId: "product-acme",
       workspaceId: "workspace-123",
       agentSessionId: "session-1",
       linearIssueId: "issue-1",
@@ -139,21 +168,32 @@ describe("DelegationService", () => {
     expect(starter.start).not.toHaveBeenCalled();
   });
 
-  it("reports a missing project instead of starting work", async () => {
-    const { service, starter } = build({ project: null });
+  it("blocks routing when no Product claims the team", async () => {
+    const { service, starter } = build({ products: [] });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-4");
-    expect(outcome.kind).toBe("unconfigured");
+    expect(outcome).toMatchObject({ kind: "blocked_routing" });
     expect(starter.start).not.toHaveBeenCalled();
   });
 
-  it("gives the workflow the Work Item and the Project record", async () => {
+  it("blocks routing when two Products claim the team", async () => {
+    const { service, starter } = build({ products: [productFor("a"), productFor("b")] });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-13");
+    expect(outcome).toMatchObject({ kind: "blocked_routing" });
+    expect(starter.start).not.toHaveBeenCalled();
+  });
+
+  it("passes every member repository to the workflow", async () => {
+    const { service, starter } = build({});
+    await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-14");
+    const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
+    const product = started.args[0]?.product as { repositories: Array<{ fullName: string }> };
+    expect(product.repositories.map((entry) => entry.fullName)).toEqual(["acme/api", "acme/web"]);
+  });
+
+  it("gives the workflow the Work Item and the Product record", async () => {
     const { service, starter } = build({
-      project: {
-        ...project,
-        primaryRepository: "acme/app",
-        referenceRepositories: ["acme/lib"],
-        defaultBranch: "release",
-      },
+      products: [productFor("app")],
+      repositories: [repositoryFor("product-app", "acme/app", "release")],
     });
     const raw = event("agent-session-created");
     raw.agentSession.issue = {
@@ -167,10 +207,10 @@ describe("DelegationService", () => {
     const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
     // Phase 4 refines the Work Item inside the workflow, and the workflow derives the sandbox
     // from the pinned SHAs. The Work Item text therefore travels as the author wrote it.
-    expect(started.args[0]?.project).toEqual({
-      primaryRepository: "acme/app",
-      referenceRepositories: ["acme/lib"],
-      defaultBranch: "release",
+    expect(started.args[0]?.product).toEqual({
+      productId: "product-app",
+      productSlug: "app",
+      repositories: [{ id: "repository-acme/app", fullName: "acme/app", defaultBranch: "release" }],
       repositoryBaseUrl: "https://github.com",
       stagingRead: false,
       spriteRetentionHours: 24,
@@ -194,9 +234,9 @@ describe("DelegationService", () => {
     expect(started.args[0]?.workItem).toMatchObject({ title: "Fix the header", description: "" });
   });
 
-  it("does not start a workflow when the repository slug is unusable", async () => {
+  it("does not start a workflow when a member repository slug is unusable", async () => {
     const { service, starter } = build({
-      project: { ...project, primaryRepository: "not-a-slug" },
+      repositories: [repositoryFor(defaultProduct.id, "not-a-slug")],
     });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
     expect(outcome.kind).toBe("unconfigured");
@@ -207,9 +247,9 @@ describe("DelegationService", () => {
     expect(redelivery.kind).not.toBe("duplicate");
   });
 
-  it("does not start a workflow when a reference repository slug is unusable", async () => {
+  it("does not start a workflow when a second member repository slug is unusable", async () => {
     const { service, starter } = build({
-      project: { ...project, referenceRepositories: ["not-a-slug"] },
+      repositories: [repositoryFor(defaultProduct.id, "acme/api"), repositoryFor(defaultProduct.id, "not-a-slug")],
     });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-10");
     expect(outcome.kind).toBe("unconfigured");
@@ -222,22 +262,11 @@ describe("DelegationService", () => {
 });
 
 describe("the delegation service and the organization skills repository", () => {
-  it("carries the organization skills repository slug into the workflow input", async () => {
-    const { service, starter } = build({
-      project: { ...project, organizationSkillsRepository: "acme/skills" },
-    });
+  it("carries no organization skills repository, because the Product record does not own one yet", async () => {
+    const { service, starter } = build();
     await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-11");
     const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
-    const workflowProject = started.args[0]?.project as Record<string, unknown>;
-    expect(workflowProject["organizationSkillsRepository"]).toBe("acme/skills");
-  });
-
-  it("does not start a workflow when the organization skills slug is unusable", async () => {
-    const { service, starter } = build({
-      project: { ...project, organizationSkillsRepository: "not-a-slug" },
-    });
-    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-12");
-    expect(outcome.kind).toBe("unconfigured");
-    expect(starter.start).not.toHaveBeenCalled();
+    const workflowProduct = started.args[0]?.product as Record<string, unknown>;
+    expect(workflowProduct["organizationSkillsRepository"]).toBeNull();
   });
 });

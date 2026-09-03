@@ -5,7 +5,11 @@ import { createPrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
-import { PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
+import {
+  PrismaProductRegistry,
+  PrismaRepositoryRegistry,
+  PrismaSecretStore,
+} from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
 import { buildServer } from "~/http/server.js";
@@ -16,13 +20,16 @@ const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
 const projects = new PrismaProjectRegistry(prisma);
+const products = new PrismaProductRegistry(prisma);
+const repositories = new PrismaRepositoryRegistry(prisma);
 const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
 const runs = new PrismaRunRepository(prisma);
 const client = await createTemporalClient(env);
 
 const delegation = new DelegationService({
   tenants,
-  projects,
+  products,
+  repositories,
   webhookLog: new PrismaWebhookLog(prisma),
   starter: createTemporalWorkflowStarter(client, env.TEMPORAL_TASK_QUEUE),
   logger,

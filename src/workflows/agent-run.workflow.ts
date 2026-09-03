@@ -41,21 +41,32 @@ import { renderRisks } from "../domain/refinement/risk.js";
 // `~/` alias either.
 import { completionInvariantFailures } from "../domain/runs/completion-invariant.js";
 
-export interface AgentRunProjectInput {
-  primaryRepository: string;
-  referenceRepositories: string[];
+/** One member repository of a Product, as the workflow needs to see it. */
+export interface AgentRunProductRepositoryInput {
+  id: string;
+  fullName: string;
   defaultBranch: string;
+}
+
+export interface AgentRunProductInput {
+  productId: string;
+  productSlug: string;
+  defaultAutonomy: string;
+  /**
+   * Every repository the Product owns. Task 10 selects the target repository of the Run from
+   * this list. Until then, the workflow treats the first entry as the target.
+   */
+  repositories: AgentRunProductRepositoryInput[];
   /** Turns an `owner/repo` slug into a clone URL until the Phase 9 GitHub adapter exists. */
   repositoryBaseUrl: string;
   /**
    * SDD section 15 and SDD section 57. The runtime configuration comes from
-   * `.factoree/config.yaml` in the primary repository. The Project owns these two values, and a
+   * `.factoree/config.yaml` in the target repository. The Product owns these two values, and a
    * repository must not widen them.
    */
   stagingRead: boolean;
   spriteRetentionHours: number;
-  defaultAutonomy: string;
-  /** SDD section 16. The organization skills repository slug of the Project, or null. */
+  /** SDD section 16. The organization skills repository slug of the Product, or null. */
   organizationSkillsRepository: string | null;
 }
 
@@ -77,7 +88,7 @@ export interface AgentRunWorkflowInput {
   autonomyLevel: string;
   maxRunMinutes: number;
   workItem: AgentRunWorkItemInput;
-  project: AgentRunProjectInput;
+  product: AgentRunProductInput;
 }
 
 export interface AgentRunWorkflowResult {
@@ -350,6 +361,17 @@ export async function agentRunWorkflow(
   let contextContractVersion: string | null = null;
   let validationContractVersion: string | null = null;
   let questionRounds = 0;
+
+  // Task 10 selects the target repository of the Run from `input.product.repositories`. Until
+  // then, the workflow treats the first member repository as the sole target, and every other
+  // member repository as a reference repository.
+  const targetRepositories = input.product.repositories;
+  const primaryRepositorySlug = targetRepositories[0]?.fullName ?? "";
+  const referenceRepositorySlugs = targetRepositories.slice(1).map((repository) => repository.fullName);
+  const defaultBranchForSlug = (slug: string) =>
+    targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ??
+    targetRepositories[0]?.defaultBranch ??
+    "main";
 
   setHandler(stopSignal, () => {
     stopRequested = true;
@@ -781,9 +803,9 @@ export async function agentRunWorkflow(
         projectId: input.projectId,
         source: { ...input.workItem, labels },
         project: {
-          primaryRepository: input.project.primaryRepository,
-          referenceRepositories: input.project.referenceRepositories,
-          defaultAutonomy: input.project.defaultAutonomy,
+          primaryRepository: primaryRepositorySlug,
+          referenceRepositories: referenceRepositorySlugs,
+          defaultAutonomy: input.product.defaultAutonomy,
         },
         decisions,
       });
@@ -836,8 +858,8 @@ export async function agentRunWorkflow(
       // discovery starts from. The checkout later uses the pinned SHA.
       const repositoryRef = (slug: string) => ({
         slug,
-        url: buildRepositoryUrl(input.project.repositoryBaseUrl, slug),
-        ref: input.project.defaultBranch,
+        url: buildRepositoryUrl(input.product.repositoryBaseUrl, slug),
+        ref: defaultBranchForSlug(slug),
       });
 
       // SDD section 23. A conflict without an authority winner blocks the Run. The bounded
@@ -987,31 +1009,31 @@ export async function agentRunWorkflow(
       // primary repository. Only the values a repository must not own travel from here.
       const sandbox = {
         primary: {
-          url: buildRepositoryUrl(input.project.repositoryBaseUrl, resolvedContext.primary.slug),
+          url: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
           // SDD section 20. The checkout lands on the SHA discovery pinned. A branch name can
           // point to a new commit at any time, so the workflow must not use one here. The Run
           // and the Context Contract then read one state of the repository.
           ref: resolvedContext.primary.sha,
         },
         references: resolvedContext.references.map((repository) => ({
-          url: buildRepositoryUrl(input.project.repositoryBaseUrl, repository.slug),
+          url: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.slug),
           ref: repository.sha,
         })),
         defaults: {
-          stagingRead: input.project.stagingRead,
-          spriteRetentionHours: input.project.spriteRetentionHours,
+          stagingRead: input.product.stagingRead,
+          spriteRetentionHours: input.product.spriteRetentionHours,
         },
         organizationSkills:
-          input.project.organizationSkillsRepository === null
+          input.product.organizationSkillsRepository === null
             ? null
             : {
                 url: buildRepositoryUrl(
-                  input.project.repositoryBaseUrl,
-                  input.project.organizationSkillsRepository,
+                  input.product.repositoryBaseUrl,
+                  input.product.organizationSkillsRepository,
                 ),
-                // No discovery step resolves a skills repository, so the Project default branch
-                // is the only defined ref. See controller decision 3.
-                ref: input.project.defaultBranch,
+                // No discovery step resolves a skills repository, so the target repository default
+                // branch is the only defined ref. See controller decision 3.
+                ref: defaultBranchForSlug(primaryRepositorySlug),
               },
         goal: refined.goal,
       };
@@ -1404,8 +1426,8 @@ export async function agentRunWorkflow(
         workspacePath: preparedSandbox.workspacePath,
         primaryPath: preparedSandbox.primaryPath,
         repositorySlug: resolvedContext.primary.slug,
-        repositoryBaseUrl: input.project.repositoryBaseUrl,
-        baseBranch: input.project.defaultBranch,
+        repositoryBaseUrl: input.product.repositoryBaseUrl,
+        baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),
         baseSha: preparedSandbox.baseSha,
         reviewedChangedFiles: publishedChangedFiles,
         reviewedWorktreeSha: publishedWorktreeSha,

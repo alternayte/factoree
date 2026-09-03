@@ -715,11 +715,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     labels: [],
   };
 
-  /** The Project of a Run. SDD section 15: only the Project defaults travel from here. */
-  const projectInput = {
-    primaryRepository: "acme/primary",
-    referenceRepositories: [],
-    defaultBranch: "main",
+  /** The Product of a Run. SDD section 15: only the Product defaults travel from here. */
+  const productInput = {
+    productId: "product-1",
+    productSlug: "acme",
+    repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main" }],
     repositoryBaseUrl: "https://example.invalid",
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
     spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
@@ -730,13 +730,13 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const input = (sessionId: string, maxRunMinutes = 90): AgentRunWorkflowInput => ({
     tenantId: "tenant-1",
     workspaceId: "workspace-123",
-    projectId: "project-1",
+    projectId: "product-1",
     linearIssueId: "issue-1",
     agentSessionId: sessionId,
     autonomyLevel: "L2",
     maxRunMinutes,
     workItem: workItemInput,
-    project: projectInput,
+    product: productInput,
   });
 
   /** Starts one Run of the default fixture Project, with the given overrides. */
@@ -816,7 +816,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     contextConflicts,
     missingBranches,
     workItemInput,
-    projectInput,
+    productInput,
     PRIMARY_SHA,
     input,
     start,

@@ -109,11 +109,12 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
           url: null,
           labels: [],
         },
-        project: {
-          ...harness.projectInput,
-          primaryRepository: PRIMARY_SLUG,
-          referenceRepositories: [REFERENCE_SLUG],
-          defaultBranch: "main",
+        product: {
+          ...harness.productInput,
+          repositories: [
+            { id: "repository-primary", fullName: PRIMARY_SLUG, defaultBranch: "main" },
+            { id: "repository-reference", fullName: REFERENCE_SLUG, defaultBranch: "main" },
+          ],
           repositoryBaseUrl: fixture.root,
         },
       });

@@ -1,15 +1,18 @@
 import { metrics } from "~/telemetry/metrics.js";
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
 import type { Logger } from "~/telemetry/logger.js";
-import type { ProjectRegistry, TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
 import type { AgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import { classifyAgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import type {
-  AgentRunProjectInput,
+  AgentRunProductInput,
   AgentRunWorkItemInput,
   AgentRunWorkflowInput,
 } from "~/workflows/agent-run.workflow.js";
+import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { assertRepositorySlug } from "~/domain/projects/repository-url.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 
@@ -27,11 +30,13 @@ export type DelegationOutcome =
   | { kind: "prompt_forwarded"; workflowId: string }
   | { kind: "not_running"; workflowId: string }
   | { kind: "ignored"; reason: string }
-  | { kind: "unconfigured"; reason: string };
+  | { kind: "unconfigured"; reason: string }
+  | { kind: "blocked_routing"; reason: string };
 
 export interface DelegationDependencies {
   tenants: TenantRegistry;
-  projects: ProjectRegistry;
+  products: ProductRegistry;
+  repositories: RepositoryRegistry;
   webhookLog: WebhookLog;
   starter: WorkflowStarter;
   logger: Logger;
@@ -91,14 +96,15 @@ export class DelegationService {
       return signalled ? { kind: "prompt_forwarded", workflowId } : { kind: "not_running", workflowId };
     }
 
-    const teamId = event.agentSession.issue?.teamId;
-    const project = teamId
-      ? await this.dependencies.projects.findByLinearTeam(tenantId, teamId)
-      : await this.dependencies.projects.findDefaultForTenant(tenantId);
-    if (!project) {
+    const teamId = event.agentSession.issue?.teamId ?? null;
+    const outcome = resolveProduct(await this.dependencies.products.list(tenantId), teamId);
+    if (outcome.kind === "refused") {
       await this.dependencies.webhookLog.remove(deliveryId);
-      return { kind: "unconfigured", reason: `no project for Linear team ${teamId ?? "unknown"}` };
+      // Specification section 9. A refusal never guesses, and it names what an operator must fix.
+      return { kind: "blocked_routing", reason: outcome.reason };
     }
+    const product = outcome.product;
+    const repositories = await this.dependencies.repositories.listByProduct(product.id);
 
     // SDD section 7 and SDD section 8. The Work Item text travels as the author wrote it. The
     // workflow refines it, resolves the context, and derives the sandbox from the pinned SHAs.
@@ -110,34 +116,36 @@ export class DelegationService {
       labels: [],
     };
 
-    // SDD section 15. The Project owns the two default values. Every other runtime value comes
-    // from `.factoree/config.yaml` inside the primary repository, so nothing here reads it.
-    const workflowProject: AgentRunProjectInput = {
-      primaryRepository: project.primaryRepository,
-      referenceRepositories: project.referenceRepositories,
-      defaultBranch: project.defaultBranch,
+    // SDD section 15. The Product owns the default autonomy level. Every other runtime value
+    // comes from `.factoree/config.yaml` inside the target repository, so nothing here reads it.
+    // The Product record carries no organization skills repository yet, so the value is null
+    // until a later task adds it.
+    const workflowProduct: AgentRunProductInput = {
+      productId: product.id,
+      productSlug: product.slug,
+      defaultAutonomy: product.defaultAutonomy,
+      repositories: repositories.map((repository) => ({
+        id: repository.id,
+        fullName: repository.fullName,
+        defaultBranch: repository.defaultBranch,
+      })),
       repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
       spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
-      defaultAutonomy: project.defaultAutonomy,
-      organizationSkillsRepository: project.organizationSkillsRepository,
+      organizationSkillsRepository: null,
     };
 
     // An unusable slug must stop the Run here, and not inside the workflow, where the operator
     // sees only a failed Run. The workflow builds the real clone URL later.
     try {
-      assertRepositorySlug(project.primaryRepository);
-      for (const slug of project.referenceRepositories) {
-        assertRepositorySlug(slug);
-      }
-      if (project.organizationSkillsRepository !== null) {
-        assertRepositorySlug(project.organizationSkillsRepository);
+      for (const repository of repositories) {
+        assertRepositorySlug(repository.fullName);
       }
     } catch (error) {
       await this.dependencies.webhookLog.remove(deliveryId);
       return {
         kind: "unconfigured",
-        reason: `project ${project.key} has an unusable repository: ${String(error)}`,
+        reason: `product ${product.slug} has an unusable repository: ${String(error)}`,
       };
     }
 
@@ -147,13 +155,13 @@ export class DelegationService {
         {
           tenantId,
           workspaceId: event.organizationId,
-          projectId: project.id,
+          projectId: product.id,
           linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
           agentSessionId: event.agentSession.id,
-          autonomyLevel: project.defaultAutonomy,
-          maxRunMinutes: project.maxRunMinutes,
+          autonomyLevel: product.defaultAutonomy,
+          maxRunMinutes: product.maxRunMinutes,
           workItem,
-          project: workflowProject,
+          product: workflowProduct,
         },
       ],
     });

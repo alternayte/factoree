@@ -10,7 +10,11 @@ import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/pri
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
-import { PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
+import {
+  PrismaProductRegistry,
+  PrismaRepositoryRegistry,
+  PrismaSecretStore,
+} from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
@@ -110,13 +114,23 @@ beforeAll(async () => {
 
   const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
   const projects = new PrismaProjectRegistry(prisma);
+  const products = new PrismaProductRegistry(prisma);
+  const repositories = new PrismaRepositoryRegistry(prisma);
   const tenant = await tenants.ensureTenant("workspace-123", "Acme");
-  await projects.create({
+  const product = await products.create({
     tenantId: tenant.id,
-    key: "demo",
+    slug: "demo",
     name: "Demo",
-    primaryRepository: "acme/demo",
+    linearTeamKey: "TEAM",
     linearTeamId: "team-1",
+  });
+  await repositories.upsert({
+    tenantId: tenant.id,
+    productId: product.id,
+    fullName: "acme/demo",
+    defaultBranch: "main",
+    configSha: "a".repeat(40),
+    requestedSecretNames: [],
   });
 
   const runs = new PrismaRunRepository(prisma);
@@ -175,7 +189,8 @@ beforeAll(async () => {
     runs: new PrismaRunRepository(prisma),
     delegation: new DelegationService({
       tenants,
-      projects,
+      products,
+      repositories,
       webhookLog: new PrismaWebhookLog(prisma),
       starter: createTemporalWorkflowStarter(environment.client, env.TEMPORAL_TASK_QUEUE),
       logger,

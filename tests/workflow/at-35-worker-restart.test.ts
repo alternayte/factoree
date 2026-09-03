@@ -212,10 +212,10 @@ describe("AT-35 worker restart", () => {
             url: null,
             labels: [],
           },
-          project: {
-            primaryRepository: "acme/primary",
-            referenceRepositories: [],
-            defaultBranch: "main",
+          product: {
+            productId: "product-1",
+            productSlug: "acme",
+            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main" }],
             repositoryBaseUrl: "https://example.invalid",
             stagingRead: false,
             spriteRetentionHours: 24,
