@@ -807,7 +807,15 @@ git commit -m "feat(github): read the repository configuration and list installa
 
 ```typescript
 type DiscoveryOutcome =
-  | { kind: "registered"; repositoryId: string; productId: string; productCreated: boolean }
+  | {
+      kind: "registered";
+      repositoryId: string;
+      productId: string;
+      productCreated: boolean;
+      // Set when the stored Linear team key no longer matches Linear. The binding survives,
+      // because the team id is stable. Specification section 9 requires a warning, not a failure.
+      drift?: "linear_team_key_renamed";
+    }
   | { kind: "skipped"; reason: string }
   | { kind: "conflict"; reason: string };
 ```
@@ -852,6 +860,21 @@ it("refuses a second Product that claims a team another Product already claims",
   expect(outcome.kind).toBe("conflict");
 });
 
+it("keeps the binding, and records the drift, when the team key is renamed", async () => {
+  const { service, products } = build({ config: configFor("checkout-platform", "PAY") });
+  await service.syncRepository("tenant-1", "acme/api", "main");
+  const before = await products.findBySlug("tenant-1", "checkout-platform");
+
+  // The Linear stub now answers "PAYMENTS" for the same team id, and the repository file still
+  // names the old key. The id is stable, so the binding must survive.
+  const outcome = await service.syncRepository("tenant-1", "acme/api", "main", { teamKeyNow: "PAYMENTS" });
+
+  expect(outcome).toMatchObject({ kind: "registered", drift: "linear_team_key_renamed" });
+  const after = await products.findBySlug("tenant-1", "checkout-platform");
+  expect(after?.id).toBe(before?.id);
+  expect(after?.linearTeamKey).toBe("PAYMENTS");
+});
+
 it("skips a repository whose configuration file is absent", async () => {
   const { service } = build({ config: null });
 
@@ -883,12 +906,17 @@ Expected: FAIL. `DiscoveryService` does not exist.
 - If no `Product` with the slug exists, and no other `Product` claims that team, create it pending at L0, then upsert.
 - If another `Product` already claims that team, return `conflict` naming both slugs, and write no row. This keeps the routing rule of specification section 9 satisfiable.
 
+Resolution of the team key to an id runs through the Linear client on every sync. When the id
+matches a stored `Product` but the key differs, call `renameLinearTeamKey`, log a warning, and
+return `drift: "linear_team_key_renamed"`. The binding never breaks, because the id is stable.
+A repository file that still names the old key therefore keeps working.
+
 `markAbsent` sets `absentSince` and leaves the row in place.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/unit/discovery-service.test.ts --config vitest.config.ts`
-Expected: PASS, five tests.
+Expected: PASS, six tests.
 
 - [ ] **Step 5: Commit**
 
