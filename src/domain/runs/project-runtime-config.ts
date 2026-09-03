@@ -27,7 +27,7 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   spriteRetentionHours: 24,
 };
 
-import type { FactoreeConfig } from "~/domain/projects/factoree-config.js";
+import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
 import { normalizeNetworkPolicy } from "./sandbox.js";
 
 /** SDD section 35. One configured deterministic verification command. */

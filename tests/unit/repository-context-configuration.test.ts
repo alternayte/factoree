@@ -7,6 +7,11 @@ import {
 
 const VALID = `version: 1
 
+identity:
+  product: checkout-platform
+  linear:
+    teamKey: PAY
+
 verify:
   commands:
     - name: check

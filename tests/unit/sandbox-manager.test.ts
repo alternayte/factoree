@@ -9,11 +9,11 @@ import type { Logger, LogFields } from "~/telemetry/logger.js";
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
 const DEFAULT_CONFIG_YAML =
-  "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
+  "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
   "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n";
 
 const BOOTSTRAP_CONFIG_YAML =
-  "version: 1\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
+  "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
   "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n";
 
 interface Scripted {
@@ -241,7 +241,7 @@ describe("SandboxManager.prepare", () => {
 
 describe("repository configuration and staged network policy", () => {
   const configYaml =
-    "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
+    "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
     "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n";
 
   const sandboxServing = (yaml: string | null): FakeSandbox => {
@@ -326,7 +326,7 @@ describe("repository configuration and staged network policy", () => {
     // reference checkouts can reach the configured allow list, and before the Implementer runs
     // under the narrowed final policy.
     const bootstrapConfigYaml =
-      "version: 1\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
+      "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n" +
       "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n";
     const sandbox = sandboxServing(bootstrapConfigYaml);
     await prepare(sandbox);

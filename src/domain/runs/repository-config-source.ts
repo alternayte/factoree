@@ -1,7 +1,7 @@
 import type { Sandbox, SandboxRef } from "./sandbox.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
-import type { FactoreeConfig } from "~/domain/projects/factoree-config.js";
-import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/projects/factoree-config.js";
+import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
+import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 
 /**
  * SDD section 15. The primary repository owns `.factoree/config.yaml`, so the only honest source

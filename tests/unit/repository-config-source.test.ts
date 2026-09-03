@@ -7,7 +7,7 @@ import {
 } from "~/domain/runs/repository-config-source.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 
-const minimum = "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+const minimum = "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
 
 const withFiles = async (files: Record<string, string>) => {
   const sandbox = new FakeSandbox();

@@ -22,9 +22,9 @@ const stubRunner = (name: string): AgentRunner => ({
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
-const DEFAULT_CONFIG_YAML = "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+const DEFAULT_CONFIG_YAML = "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
 const BOOTSTRAP_CONFIG_YAML =
-  "version: 1\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+  "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
 
 interface Scripted {
   matcher: RegExp;
@@ -205,7 +205,7 @@ describe("the prepareSandbox activity and SDD section 60", () => {
 
 describe("the prepareSandbox activity and the preview configuration", () => {
   const PREVIEW_CONFIG_YAML =
-    "version: 1\n" +
+    "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\n" +
     "verify:\n  commands:\n    - name: test\n      run: npm test\n" +
     "preview:\n" +
     "  enabled: true\n" +

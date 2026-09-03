@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { parseFactoreeConfig } from "~/domain/projects/factoree-config.js";
+import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import { DEFAULT_PROJECT_DEFAULTS, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 
-const minimum = "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+const IDENTITY = "identity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\n";
+
+const minimum = `version: 1\n${IDENTITY}verify:\n  commands:\n    - name: test\n      run: npm test\n`;
 
 describe("toProjectRuntimeConfig", () => {
   it("maps the repository file onto the runtime configuration", () => {
     const config = parseFactoreeConfig(
       "version: 1\n" +
+        IDENTITY +
         "bootstrap:\n  command: npm ci\n" +
         "verify:\n  commands:\n    - name: lint\n      run: npm run lint\n" +
         "agents:\n  implementer: claude\n  validator: opencode\n  reviewer: opencode\n" +
@@ -52,6 +55,10 @@ describe("toProjectRuntimeConfig", () => {
     const config = parseFactoreeConfig(
       [
         "version: 1",
+        "identity:",
+        "  product: checkout-platform",
+        "  linear:",
+        "    teamKey: PAY",
         "verify:",
         "  commands:",
         "    - name: unit",
@@ -76,7 +83,17 @@ describe("toProjectRuntimeConfig", () => {
 
   it("reports no preview when the repository configures none", () => {
     const config = parseFactoreeConfig(
-      ["version: 1", "verify:", "  commands:", "    - name: unit", "      run: npm test"].join("\n"),
+      [
+        "version: 1",
+        "identity:",
+        "  product: checkout-platform",
+        "  linear:",
+        "    teamKey: PAY",
+        "verify:",
+        "  commands:",
+        "    - name: unit",
+        "      run: npm test",
+      ].join("\n"),
     );
 
     expect(toProjectRuntimeConfig(config, DEFAULT_PROJECT_DEFAULTS).preview).toBeNull();
