@@ -39,6 +39,11 @@ export const LARGE_FILE_BYTES = 200 * 1024;
  */
 export const CONTEXT_FIXTURE_CONFIG = `version: 1
 
+identity:
+  product: context-fixture
+  linear:
+    teamKey: CTX
+
 verify:
   commands:
     - name: check
@@ -51,6 +56,11 @@ verify:
  * of the resolver are both exercised end to end.
  */
 export const CONTEXT_FIXTURE_CONFIG_WITH_TOPOLOGY = `version: 1
+
+identity:
+  product: context-fixture
+  linear:
+    teamKey: CTX
 
 verify:
   commands:
