@@ -5,24 +5,20 @@ export type TargetOutcome =
   | { kind: "ambiguous"; candidates: RepositoryRecord[] };
 
 /**
- * Specification section 10. A confident proposal takes priority: it selects a matching
- * repository, or it makes the result ambiguous when no member matches its name. Absent a
- * confident proposal, a sole member needs no decision. Every other case is ambiguous, and the
- * human decides.
+ * Specification section 10. A sole member needs no decision. A confident proposal proceeds and
+ * posts a notice. Every other case is ambiguous, and the human decides.
  */
 export const selectTarget = (
   repositories: RepositoryRecord[],
   proposal: { fullName: string; reason: string; confident: boolean } | null,
 ): TargetOutcome => {
   const present = repositories.filter((candidate) => candidate.absentSince === null);
-  if (proposal !== null && proposal.confident) {
-    const chosen = present.find((candidate) => candidate.fullName === proposal.fullName);
-    if (chosen === undefined) return { kind: "ambiguous", candidates: present };
-    return { kind: "selected", repository: chosen, reason: proposal.reason, notify: true };
-  }
   const sole = present[0];
   if (present.length === 1 && sole !== undefined) {
     return { kind: "selected", repository: sole, reason: "sole member", notify: false };
   }
-  return { kind: "ambiguous", candidates: present };
+  if (proposal === null || !proposal.confident) return { kind: "ambiguous", candidates: present };
+  const chosen = present.find((candidate) => candidate.fullName === proposal.fullName);
+  if (chosen === undefined) return { kind: "ambiguous", candidates: present };
+  return { kind: "selected", repository: chosen, reason: proposal.reason, notify: true };
 };

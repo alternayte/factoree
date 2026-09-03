@@ -83,7 +83,7 @@ describe("selectTarget", () => {
   });
 
   it("reports ambiguity when the proposal names a repository outside the Product", () => {
-    const outcome = selectTarget([repository("acme/api")], {
+    const outcome = selectTarget([repository("acme/api"), repository("acme/web")], {
       fullName: "acme/unknown",
       reason: "guess",
       confident: true,
