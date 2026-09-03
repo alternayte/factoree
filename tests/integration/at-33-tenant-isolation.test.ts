@@ -47,7 +47,7 @@ describe("AT-33 tenant isolation", () => {
     await secrets.put(a.id, productA.id, "TOKEN", "secret-value-of-tenant-a");
     const run = await runs.createIfAbsent({
       tenantId: a.id,
-      projectId: projectA.id,
+      productId: productA.id,
       linearIssueId: "issue-a",
       linearAgentSessionId: "session-at33",
       temporalWorkflowId: "linear:ws-at33-a:session-at33",

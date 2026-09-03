@@ -10,7 +10,7 @@ import { createLogger } from "~/telemetry/logger.js";
 const record = (status: RunStatus, repairCount: number): RunRecord => ({
   id: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "product-1",
   linearIssueId: null,
   linearAgentSessionId: "session-1",
   temporalWorkflowId: "workflow-1",
@@ -66,7 +66,7 @@ const repairCount = async (reason = "VERIFICATION"): Promise<number> => {
   const sample = metric.values.find(
     (value) =>
       value.labels.tenant_id === "tenant-1" &&
-      value.labels.project_id === "project-1" &&
+      value.labels.project_id === "product-1" &&
       value.labels.reason === reason,
   );
   return sample?.value ?? 0;

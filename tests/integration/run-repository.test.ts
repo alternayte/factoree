@@ -8,7 +8,7 @@ let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let tenantA = "";
 let tenantB = "";
-let projectA = "";
+let productA = "";
 
 beforeAll(async () => {
   const database = await startDatabase();
@@ -18,10 +18,10 @@ beforeAll(async () => {
   const b = await prisma.tenant.create({ data: { linearWorkspaceId: "ws-b", name: "B" } });
   tenantA = a.id;
   tenantB = b.id;
-  const project = await prisma.project.create({
-    data: { tenantId: tenantA, key: "demo", name: "Demo", primaryRepository: "acme/demo" },
+  const product = await prisma.product.create({
+    data: { tenantId: tenantA, slug: "demo", name: "Demo", linearTeamKey: "TEAM", linearTeamId: "team-1" },
   });
-  projectA = project.id;
+  productA = product.id;
 });
 
 afterAll(async () => {
@@ -31,7 +31,7 @@ afterAll(async () => {
 
 const input = (sessionId: string) => ({
   tenantId: tenantA,
-  projectId: projectA,
+  productId: productA,
   linearIssueId: "issue-1",
   linearAgentSessionId: sessionId,
   temporalWorkflowId: `linear:ws-a:${sessionId}`,

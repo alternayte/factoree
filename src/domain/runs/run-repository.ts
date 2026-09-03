@@ -4,7 +4,7 @@ import type { RunFailureCategory } from "./failure-category.js";
 export interface RunRecord {
   id: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   linearIssueId: string | null;
   linearAgentSessionId: string;
   temporalWorkflowId: string;
@@ -40,7 +40,7 @@ export interface RunRecord {
 
 export interface CreateRunInput {
   tenantId: string;
-  projectId: string;
+  productId: string;
   linearIssueId: string | null;
   linearAgentSessionId: string;
   temporalWorkflowId: string;

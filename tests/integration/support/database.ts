@@ -38,8 +38,13 @@ export const withDatabase = async (
 };
 
 /**
- * Creates a Tenant, a Project, and a Run in one call, for a test that needs a valid Run to
+ * Creates a Tenant, a Product, and a Run in one call, for a test that needs a valid Run to
  * attach a related record to and does not care about the Run's other field values.
+ *
+ * The returned key stays `projectId` for now, so it drops into the many callers that pass it
+ * straight through to `AgentRunWorkflowInput.projectId`, a field this task did not rename. The
+ * value underneath is the seeded Product's id, because `Run.productId` carries a real foreign
+ * key to `Product` and no longer accepts a `Project` id.
  */
 export const seedTenantProjectAndRun = async (
   prisma: FactoreePrismaClient,
@@ -48,23 +53,24 @@ export const seedTenantProjectAndRun = async (
   const tenant = await prisma.tenant.create({
     data: { linearWorkspaceId: `ws-${suffix}`, name: `Tenant ${suffix}` },
   });
-  const project = await prisma.project.create({
+  const product = await prisma.product.create({
     data: {
       tenantId: tenant.id,
-      key: `demo-${suffix}`,
+      slug: `demo-${suffix}`,
       name: `Demo ${suffix}`,
-      primaryRepository: "acme/demo",
+      linearTeamKey: `TEAM-${suffix}`,
+      linearTeamId: `team-${suffix}`,
     },
   });
   const run = await prisma.run.create({
     data: {
       tenantId: tenant.id,
-      projectId: project.id,
+      productId: product.id,
       linearAgentSessionId: `session-${suffix}`,
       temporalWorkflowId: `workflow-${suffix}`,
       status: "RECEIVED",
       autonomyLevel: "L2",
     },
   });
-  return { tenantId: tenant.id, projectId: project.id, runId: run.id };
+  return { tenantId: tenant.id, projectId: product.id, runId: run.id };
 };

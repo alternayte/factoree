@@ -114,10 +114,10 @@ model Run {
   id                       String    @id @default(uuid())
   tenantId                 String
   tenant                   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  // Task 9. Delegation routes through the Product, not the Project, so this column now carries
-  // a Product id. Specification section 9 forbids a fallback to a Project default, so no foreign
-  // key ties this column to either table any longer.
-  projectId                String
+  // Task 9. Delegation routes through the Product, not the Project, so this column carries a
+  // Product id, with a real foreign key. There is no fallback to a Project default.
+  productId                String
+  product                  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   linearIssueId            String?
   linearAgentSessionId     String    @unique
   temporalWorkflowId       String    @unique
@@ -153,7 +153,7 @@ model Run {
   targets                  RunTarget[]
 
   @@index([tenantId])
-  @@index([projectId])
+  @@index([productId])
   @@index([spriteRetainUntil])
 }
 
@@ -380,6 +380,7 @@ model Product {
   updatedAt      DateTime @updatedAt
   repositories   Repository[]
   secrets        ProductSecret[]
+  runs           Run[]
 
   @@unique([tenantId, slug])
   // One Linear team maps to at most one Product. This constraint makes the routing rule of

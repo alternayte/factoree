@@ -17,7 +17,7 @@ type RunRow = Awaited<ReturnType<FactoreePrismaClient["run"]["findFirst"]>>;
 const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   id: row.id,
   tenantId: row.tenantId,
-  projectId: row.projectId,
+  productId: row.productId,
   linearIssueId: row.linearIssueId,
   linearAgentSessionId: row.linearAgentSessionId,
   temporalWorkflowId: row.temporalWorkflowId,
@@ -54,7 +54,7 @@ export class PrismaRunRepository implements RunRepository {
       const row = await this.prisma.run.create({
         data: {
           tenantId: input.tenantId,
-          projectId: input.projectId,
+          productId: input.productId,
           linearIssueId: input.linearIssueId,
           linearAgentSessionId: input.linearAgentSessionId,
           temporalWorkflowId: input.temporalWorkflowId,

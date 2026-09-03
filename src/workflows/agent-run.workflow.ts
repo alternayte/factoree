@@ -391,7 +391,9 @@ export async function agentRunWorkflow(
 
   const created = await activities.createRun({
     tenantId: input.tenantId,
-    projectId: input.projectId,
+    // The Run row now tracks the Product this delegation routed to. `input.projectId` still
+    // carries that value. Only the persisted column and this contract renamed.
+    productId: input.projectId,
     linearIssueId: input.linearIssueId,
     linearAgentSessionId: input.agentSessionId,
     temporalWorkflowId: buildWorkflowId(input.workspaceId, input.agentSessionId),
