@@ -2,29 +2,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import {
-  PrismaProjectRegistry,
-  PrismaSecretStore,
-  PrismaTenantRegistry,
-} from "~/persistence/prisma/project-registry.prisma.js";
-import {
   PrismaProductRegistry,
   PrismaRepositoryRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 
-const key = "b".repeat(64);
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
-let tenants: PrismaTenantRegistry;
-let projects: PrismaProjectRegistry;
-let secrets: PrismaSecretStore;
 
 beforeAll(async () => {
   const database = await startDatabase();
   stop = database.stop;
   prisma = createPrismaClient(database.url);
-  tenants = new PrismaTenantRegistry(prisma, key);
-  projects = new PrismaProjectRegistry(prisma);
-  secrets = new PrismaSecretStore(prisma, key);
 });
 
 afterAll(async () => {
