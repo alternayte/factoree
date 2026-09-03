@@ -31,6 +31,7 @@ class FakeProductRegistry implements ProductRegistry {
       linearTeamId: input.linearTeamId,
       defaultAutonomy: "L0",
       maxRunMinutes: input.maxRunMinutes ?? 60,
+      organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

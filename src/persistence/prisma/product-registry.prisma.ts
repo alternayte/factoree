@@ -36,6 +36,7 @@ type ProductRow = {
   linearTeamId: string;
   defaultAutonomy: string;
   maxRunMinutes: number;
+  organizationSkillsRepository: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -72,6 +73,9 @@ export class PrismaProductRegistry implements ProductRegistry {
         linearTeamKey: input.linearTeamKey,
         linearTeamId: input.linearTeamId,
         ...(input.maxRunMinutes === undefined ? {} : { maxRunMinutes: input.maxRunMinutes }),
+        ...(input.organizationSkillsRepository === undefined
+          ? {}
+          : { organizationSkillsRepository: input.organizationSkillsRepository }),
       },
     });
     return toProduct(row);

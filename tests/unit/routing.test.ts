@@ -14,6 +14,7 @@ const product = (id: string, linearTeamId: string): ProductRecord => ({
   linearTeamId,
   defaultAutonomy: "L3",
   maxRunMinutes: 90,
+  organizationSkillsRepository: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 });

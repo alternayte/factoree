@@ -116,10 +116,9 @@ export class DelegationService {
       labels: [],
     };
 
-    // SDD section 15. The Product owns the default autonomy level. Every other runtime value
-    // comes from `.factoree/config.yaml` inside the target repository, so nothing here reads it.
-    // The Product record carries no organization skills repository yet, so the value is null
-    // until a later task adds it.
+    // SDD section 15 and section 16. The Product owns the default autonomy level and the
+    // organization skills repository. Every other runtime value comes from
+    // `.factoree/config.yaml` inside the target repository, so nothing here reads it.
     const workflowProduct: AgentRunProductInput = {
       productId: product.id,
       productSlug: product.slug,
@@ -132,7 +131,7 @@ export class DelegationService {
       repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
       spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
-      organizationSkillsRepository: null,
+      organizationSkillsRepository: product.organizationSkillsRepository,
     };
 
     // An unusable slug must stop the Run here, and not inside the workflow, where the operator
@@ -140,6 +139,9 @@ export class DelegationService {
     try {
       for (const repository of repositories) {
         assertRepositorySlug(repository.fullName);
+      }
+      if (product.organizationSkillsRepository !== null) {
+        assertRepositorySlug(product.organizationSkillsRepository);
       }
     } catch (error) {
       await this.dependencies.webhookLog.remove(deliveryId);

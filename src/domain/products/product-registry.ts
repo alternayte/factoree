@@ -8,6 +8,8 @@ export interface ProductRecord {
   linearTeamId: string;
   defaultAutonomy: string;
   maxRunMinutes: number;
+  /** Specification section 16. The organization-wide skills repository slug, or null. */
+  organizationSkillsRepository: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -19,6 +21,7 @@ export interface CreateProductInput {
   linearTeamKey: string;
   linearTeamId: string;
   maxRunMinutes?: number;
+  organizationSkillsRepository?: string | null;
 }
 
 /**

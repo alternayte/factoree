@@ -376,6 +376,9 @@ model Product {
   linearTeamId   String
   defaultAutonomy String  @default("L0")
   maxRunMinutes  Int      @default(90)
+  // SDD section 16. A Product can define one organization-wide skills repository. The value is
+  // an owner and repository slug, the same shape a Repository's `fullName` uses.
+  organizationSkillsRepository String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   repositories   Repository[]

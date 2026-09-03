@@ -13,7 +13,7 @@ const event = (name: string) =>
 
 const logger = createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined });
 
-const productFor = (slug: string): ProductRecord => ({
+const productFor = (slug: string, organizationSkillsRepository: string | null = null): ProductRecord => ({
   id: `product-${slug}`,
   tenantId: "tenant-1",
   slug,
@@ -23,6 +23,7 @@ const productFor = (slug: string): ProductRecord => ({
   linearTeamId: "team-1",
   defaultAutonomy: "L2",
   maxRunMinutes: 90,
+  organizationSkillsRepository,
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -262,11 +263,30 @@ describe("DelegationService", () => {
 });
 
 describe("the delegation service and the organization skills repository", () => {
-  it("carries no organization skills repository, because the Product record does not own one yet", async () => {
+  it("carries no organization skills repository when the Product defines none", async () => {
     const { service, starter } = build();
     await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-11");
     const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
     const workflowProduct = started.args[0]?.product as Record<string, unknown>;
     expect(workflowProduct["organizationSkillsRepository"]).toBeNull();
+  });
+
+  it("carries the organization skills repository slug into the workflow input", async () => {
+    const { service, starter } = build({
+      products: [productFor("acme", "acme/skills")],
+    });
+    await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-12");
+    const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
+    const workflowProduct = started.args[0]?.product as Record<string, unknown>;
+    expect(workflowProduct["organizationSkillsRepository"]).toBe("acme/skills");
+  });
+
+  it("does not start a workflow when the organization skills slug is unusable", async () => {
+    const { service, starter } = build({
+      products: [productFor("acme", "not-a-slug")],
+    });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-13");
+    expect(outcome.kind).toBe("unconfigured");
+    expect(starter.start).not.toHaveBeenCalled();
   });
 });
