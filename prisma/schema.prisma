@@ -13,6 +13,7 @@ model Tenant {
   createdAt         DateTime            @default(now())
   installations     LinearInstallation[]
   projects          Project[]
+  products          Product[]
   runs              Run[]
   webhooks          ProcessedWebhook[]
 }
@@ -134,6 +135,7 @@ model Run {
   validationContract       ValidationContract?
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
+  targets                  RunTarget[]
 
   @@index([tenantId])
   @@index([projectId])
@@ -345,4 +347,85 @@ model ProcessedWebhook {
   receivedAt DateTime @default(now())
 
   @@index([tenantId])
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  slug           String
+  name           String
+  // "pending" until an operator supplies secrets and activates it. A pending Product runs at L0.
+  status         String   @default("pending")
+  linearTeamKey  String
+  linearTeamId   String
+  defaultAutonomy String  @default("L0")
+  maxRunMinutes  Int      @default(90)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  repositories   Repository[]
+  secrets        ProductSecret[]
+
+  @@unique([tenantId, slug])
+  // One Linear team maps to at most one Product. This constraint makes the routing rule of
+  // specification section 9 satisfiable at the database level.
+  @@unique([tenantId, linearTeamId])
+  @@index([tenantId])
+}
+
+model Repository {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  productId            String
+  product              Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fullName             String
+  defaultBranch        String   @default("main")
+  // The commit of `.factoree/config.yaml` that discovery last read.
+  configSha            String
+  // Names only. A value never reaches this column.
+  requestedSecretNames String[] @default([])
+  discoveredAt         DateTime @default(now())
+  lastSeenAt           DateTime @default(now())
+  // Set when the configuration file disappears. The row stays, so the Run history survives.
+  absentSince          DateTime?
+  runTargets           RunTarget[]
+
+  @@unique([tenantId, fullName])
+  @@index([productId])
+}
+
+model ProductSecret {
+  id          String   @id @default(uuid())
+  tenantId    String
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String
+  valueCipher String
+  injectIntoImplementer Boolean @default(false)
+  kind        String   @default("test")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([productId, name])
+  @@index([tenantId])
+}
+
+model RunTarget {
+  id              String     @id @default(uuid())
+  runId           String
+  run             Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  repositoryId    String
+  repository      Repository @relation(fields: [repositoryId], references: [id])
+  // "primary" or "secondary". A single-target Run holds one primary row.
+  role            String     @default("primary")
+  selectionReason String
+  baseSha         String?
+  patchSha256     String?
+  commitSha       String?
+  pullRequestUrl  String?
+  mergeOrder      Int        @default(1)
+  createdAt       DateTime   @default(now())
+
+  @@unique([runId, repositoryId])
+  @@index([runId])
 }
