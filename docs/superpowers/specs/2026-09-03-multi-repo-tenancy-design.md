@@ -194,6 +194,12 @@ status `pending`, autonomy L0, no secrets, and no context sources. It can
 investigate and report, nothing more. An operator supplies secrets and sets the
 status to `active` once.
 
+Two repositories that declare a different product slug but the same team key
+must not create two Products. Discovery creates the first, then refuses the
+second, and records a binding conflict against that repository. The operator
+resolves it by correcting one repository file. This keeps section 9 satisfiable,
+because a team always maps to at most one Product.
+
 At Run start Factoree re-reads `.factoree/config.yaml` at the base commit and
 records its SHA on the Run. The Run uses that content, not the cached row. If
 the identity block at the base commit names a different `Product` than the
@@ -387,7 +393,7 @@ A repository is read-only through the API, because discovery owns it.
 | `src/domain/projects/` | Becomes `src/domain/products/`. `project-registry` splits into `product-registry` and `repository-registry`. `secret-store` re-parents to `Product`. |
 | `src/domain/routing/` | New. Team key to `Product`, target set selection, refusal rules. Pure functions, no input or output. |
 | `src/adapters/github/` | New discovery client. List installation repositories, read the config file, handle the three events. |
-| `src/domain/projects/factoree-config.ts` | Add the `identity` block and `secrets.require`. Reject a privilege key by name. |
+| `src/domain/products/factoree-config.ts` | Add the `identity` block and `secrets.require`. Reject a privilege key by name. |
 | `src/adapters/sandbox/` | One working directory per `RunTarget`. New `clone_sibling` action, gated and evidenced. |
 | `src/domain/publishing/` | Patch integrity per target. Stale-base check per target. Linked pull requests with a merge order. |
 | `src/workflows/agent-run.workflow.ts` | Routing step before refinement. Three new states. |
