@@ -31,7 +31,7 @@ export const PRIVILEGE_KEYS = [
   "secrets.values",
 ] as const;
 
-/** Thrown when `.factoree/config.yaml` sets a key that only the Product may own. */
+/** Thrown when `.factoree/config.yaml` sets a key that only the Product can own. */
 export class FactoreeConfigPrivilegeError extends RunConfigurationError {
   constructor(readonly key: string) {
     super(`.factoree/config.yaml must not set ${key}. The Product owns it.`);
@@ -40,7 +40,8 @@ export class FactoreeConfigPrivilegeError extends RunConfigurationError {
 
 /**
  * Walks the raw parsed YAML for a privilege key before the zod parse runs. It must run first,
- * so the error names the offending key rather than reporting a generic unknown-key failure.
+ * so the error names the offending key rather than a generic unknown-key failure it would
+ * otherwise report.
  */
 const assertNoPrivilegeKey = (raw: unknown): void => {
   if (typeof raw !== "object" || raw === null) return;
@@ -128,7 +129,7 @@ const schema = z
       })
       .strict()
       .default({ backstage: { enabled: false }, referenceRepositories: { automaticDiscovery: false } }),
-    // The repository may only name a secret it needs. The Product owns the value.
+    // The repository can only name a secret it needs. The Product owns the value.
     secrets: z
       .object({ require: z.array(z.string().min(1)).default([]) })
       .strict()
