@@ -154,6 +154,7 @@ export class DelegationService {
         fullName: repository.fullName,
         defaultBranch: repository.defaultBranch,
         absentSince: repository.absentSince === null ? null : repository.absentSince.toISOString(),
+        githubInstallationId: repository.githubInstallationId,
       })),
       repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,

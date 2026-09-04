@@ -222,7 +222,7 @@ describe("AT-35 worker restart", () => {
           product: {
             productId: "product-1",
             productSlug: "acme",
-            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null }],
+            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" }],
             repositoryBaseUrl: "https://example.invalid",
             stagingRead: false,
             spriteRetentionHours: 24,

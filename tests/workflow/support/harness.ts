@@ -803,7 +803,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     productId: "product-1",
     productSlug: "acme",
     repositories: [
-      { id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null },
+      { id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
     ],
     repositoryBaseUrl: "https://example.invalid",
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,

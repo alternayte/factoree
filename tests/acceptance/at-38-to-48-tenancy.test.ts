@@ -205,8 +205,8 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
   const { productInput, recordRunTargetCalls, postTargetNoticeCalls, start, runWorker, implementCalls } = harness;
 
   const twoRepositories = [
-    { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null },
-    { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+    { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
   ];
 
   beforeAll(async () => {
@@ -273,8 +273,8 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
 
 describe("AT-46 and AT-47: the gated sibling clone", () => {
   const REPOSITORIES = [
-    { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null },
-    { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+    { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
   ];
 
   const buildCloner = () => {
