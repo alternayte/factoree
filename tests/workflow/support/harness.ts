@@ -940,15 +940,37 @@ export const waitForStatus = async (
  * wide enough to absorb that contention. `testTimeout` in `vitest.workflow.config.ts` is
  * 180 seconds, so this default still fails fast well inside one test case.
  */
+/**
+ * TEMPORARY instrumentation for the flake investigation of the "keeps the Run blocked when a
+ * reply matches no candidate by whole token" case. Revert this whole commit once the
+ * investigation report is filed. The `describe` callback, when given, reports a value the
+ * timeout message can print, so a failure shows the observed state rather than only the label.
+ */
 export const waitFor = async (
   predicate: () => boolean | Promise<boolean>,
   what = "the condition",
   timeoutMs = 60_000,
+  describe?: () => unknown,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+  let lastObserved: unknown;
+  const observedSamples: unknown[] = [];
   while (!(await predicate())) {
+    pollCount += 1;
+    if (describe) {
+      lastObserved = await describe();
+      // Keep a bounded trace of the most recent 50 samples, so a long stall does not grow this
+      // array without bound while the transition point near the end stays visible.
+      observedSamples.push(lastObserved);
+      if (observedSamples.length > 50) observedSamples.shift();
+    }
     if (Date.now() > deadline) {
-      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}`);
+      const detail = describe
+        ? ` (polled ${pollCount} times; last observed value: ${JSON.stringify(lastObserved)}; ` +
+          `recent sample trace: ${JSON.stringify(observedSamples)})`
+        : ` (polled ${pollCount} times)`;
+      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}${detail}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
