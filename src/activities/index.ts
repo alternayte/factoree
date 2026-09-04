@@ -7,6 +7,8 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
+import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
@@ -36,6 +38,8 @@ import { createPublishingActivities } from "./publishing.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
+  products: ProductRegistry;
+  repositories: RepositoryRegistry;
   agentSession: AgentSessionPort;
   workItems: WorkItemPort;
   sandboxManager: SandboxManager;
@@ -147,6 +151,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
   }),
   ...createProofPackActivities({
     runs: dependencies.runs,
+    products: dependencies.products,
+    repositories: dependencies.repositories,
     contextContracts: dependencies.contextContracts,
     validationContracts: dependencies.validationContracts,
     validationResults: dependencies.validationResults,

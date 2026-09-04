@@ -5,7 +5,12 @@ import { metrics } from "~/telemetry/metrics.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createPrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
-import { PrismaSecretStore, PrismaTenantRegistry } from "~/persistence/prisma/product-registry.prisma.js";
+import {
+  PrismaSecretStore,
+  PrismaTenantRegistry,
+  PrismaProductRegistry,
+  PrismaRepositoryRegistry,
+} from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
@@ -55,6 +60,8 @@ const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, e
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+const products = new PrismaProductRegistry(prisma);
+const repositories = new PrismaRepositoryRegistry(prisma);
 
 // A Linear access token lives for twenty-four hours. The provider refreshes it before it expires
 // and writes the new pair back, so a worker that runs for weeks needs no daily hand-over. Without
@@ -245,6 +252,8 @@ const worker = await Worker.create({
   workflowsPath: new URL("../workflows/agent-run.workflow.js", import.meta.url).pathname,
   activities: createActivities({
     runs,
+    products,
+    repositories,
     agentSession,
     workItems,
     sandboxManager,

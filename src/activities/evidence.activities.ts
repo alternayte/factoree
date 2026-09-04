@@ -10,6 +10,8 @@ import type { ValidationContractStore } from "~/domain/validation/validation-con
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
+import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import {
@@ -18,6 +20,7 @@ import {
   type ProofPackAssertion,
   type ProofPackCheck,
   type ProofPackEvidenceRef,
+  type ProofPackRouting,
 } from "~/domain/evidence/proof-pack.js";
 
 export interface EvidencePersistenceDependencies {
@@ -139,6 +142,8 @@ export const createEvidencePersistence = (
 
 export interface ProofPackActivityDependencies {
   runs: RunRepository;
+  products: ProductRegistry;
+  repositories: RepositoryRegistry;
   contextContracts: ContextContractStore;
   validationContracts: ValidationContractStore;
   validationResults: ValidationResultStore;
@@ -321,6 +326,40 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         attempt: row.attempt,
       }));
 
+    // Specification section 18. The Routing section names the Product, the Linear team, every
+    // RunTarget and its merge order, and the siblings a target read. Section 14 supplies the
+    // per-target facts on the RunTarget rows; this reads them, rather than the workflow's
+    // in-flight values, because a persisted record is what the Proof Pack is built from.
+    const [product, runTargets, repositories] = await Promise.all([
+      dependencies.products.findById(input.tenantId, input.productId),
+      dependencies.runs.listRunTargets(input.tenantId, input.runId),
+      dependencies.repositories.listByProduct(input.productId),
+    ]);
+    const fullNameById = new Map(repositories.map((repository) => [repository.id, repository.fullName]));
+    const siblingReads = new Map<string, { fullName: string; commitSha: string }>();
+    for (const row of evidenceRows) {
+      if (row.kind !== "sibling_read") continue;
+      const fullName = metadataText(row.metadata, "fullName");
+      const commitSha = metadataText(row.metadata, "commitSha");
+      if (fullName === "") continue;
+      siblingReads.set(fullName, { fullName, commitSha });
+    }
+    const routing: ProofPackRouting | undefined =
+      product === null
+        ? undefined
+        : {
+            productSlug: product.slug,
+            linearTeamKey: product.linearTeamKey,
+            targets: runTargets.map((target) => ({
+              fullName: fullNameById.get(target.repositoryId) ?? target.repositoryId,
+              baseSha: target.baseSha ?? "",
+              pullRequestUrl: target.pullRequestUrl ?? "",
+              mergeOrder: target.mergeOrder,
+            })),
+            siblingsRead: [...siblingReads.values()],
+            selectionReason: runTargets[0]?.selectionReason ?? "sole member",
+          };
+
     const items = contextContract?.items ?? [];
     const body = dependencies.redactor.redactText(
       renderProofPack({
@@ -360,6 +399,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         commitSha: input.commitSha,
         repairCount: input.repairCount,
         repairLimit: input.repairLimit,
+        ...(routing === undefined ? {} : { routing }),
       }),
     );
 
