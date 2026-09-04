@@ -4,11 +4,11 @@ import { createLogger } from "~/telemetry/logger.js";
 import { createPrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
-import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
 import {
   PrismaProductRegistry,
   PrismaRepositoryRegistry,
   PrismaSecretStore,
+  PrismaTenantRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
@@ -22,7 +22,6 @@ const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, e
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
-const projects = new PrismaProjectRegistry(prisma);
 const products = new PrismaProductRegistry(prisma);
 const repositories = new PrismaRepositoryRegistry(prisma);
 const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
@@ -62,7 +61,6 @@ const app = buildServer({
   env,
   logger,
   prisma,
-  projects,
   tenants,
   products,
   repositories,

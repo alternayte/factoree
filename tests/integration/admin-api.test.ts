@@ -3,11 +3,11 @@ import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
-import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
 import {
   PrismaProductRegistry,
   PrismaRepositoryRegistry,
   PrismaSecretStore,
+  PrismaTenantRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { buildServer } from "~/http/server.js";
@@ -40,7 +40,6 @@ const env = {
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let app: ReturnType<typeof buildServer>;
-let projects: PrismaProjectRegistry;
 let tenants: PrismaTenantRegistry;
 
 // The route resolves a team key through Linear. This test double never calls the network: it
@@ -56,12 +55,10 @@ beforeAll(async () => {
   stop = database.stop;
   prisma = createPrismaClient(database.url);
   tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
-  projects = new PrismaProjectRegistry(prisma);
   app = buildServer({
     env,
     logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
     prisma,
-    projects,
     tenants,
     products: new PrismaProductRegistry(prisma),
     repositories: new PrismaRepositoryRegistry(prisma),

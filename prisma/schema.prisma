@@ -13,7 +13,6 @@ model Tenant {
   createdAt         DateTime            @default(now())
   installations     LinearInstallation[]
   githubInstallations GitHubInstallation[]
-  projects          Project[]
   products          Product[]
   runs              Run[]
   webhooks          ProcessedWebhook[]
@@ -44,49 +43,6 @@ model LinearInstallation {
   scopes              String[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
-}
-
-model Project {
-  id                 String          @id @default(uuid())
-  tenantId           String
-  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  key                String
-  name               String
-  primaryRepository  String
-  referenceRepositories String[]     @default([])
-  // SDD section 16. A Project can define one organization-wide skills repository. The value is
-  // an owner and repository slug, the same shape `primaryRepository` uses.
-  organizationSkillsRepository String?
-  linearTeamId       String?
-  defaultAutonomy    String          @default("L2")
-  maxRunMinutes      Int             @default(90)
-  defaultBranch      String          @default("main")
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  secrets            ProjectSecret[]
-
-  @@unique([tenantId, key])
-  @@index([tenantId])
-}
-
-model ProjectSecret {
-  id          String   @id @default(uuid())
-  tenantId    String
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name        String
-  valueCipher String
-  // SDD section 30. Only a secret an operator marks reaches the Implementer environment. Every
-  // secret reaches the redactor, marked or not.
-  injectIntoImplementer Boolean @default(false)
-  // SDD section 30. What the secret is for. "test" keeps the behaviour of every row written
-  // before this column existed. A kind other than "test" must never carry the injection mark.
-  kind        String   @default("test")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@unique([projectId, name])
-  @@index([tenantId])
 }
 
 model ContextSourceConfiguration {

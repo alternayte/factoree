@@ -9,11 +9,11 @@ import { startTemporal } from "./support/temporal.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
-import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
 import {
   PrismaProductRegistry,
   PrismaRepositoryRegistry,
   PrismaSecretStore,
+  PrismaTenantRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
@@ -113,7 +113,6 @@ beforeAll(async () => {
   stopTemporal = temporal.stop;
 
   const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
-  const projects = new PrismaProjectRegistry(prisma);
   const products = new PrismaProductRegistry(prisma);
   const repositories = new PrismaRepositoryRegistry(prisma);
   const tenant = await tenants.ensureTenant("workspace-123", "Acme");
@@ -183,7 +182,6 @@ beforeAll(async () => {
     env,
     logger,
     prisma,
-    projects,
     tenants,
     products,
     repositories,

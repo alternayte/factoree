@@ -2,8 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
-import { PrismaProjectRegistry, PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
-import { PrismaProductRegistry, PrismaSecretStore } from "~/persistence/prisma/product-registry.prisma.js";
+import { PrismaProductRegistry, PrismaSecretStore, PrismaTenantRegistry } from "~/persistence/prisma/product-registry.prisma.js";
 
 const key = "e".repeat(64);
 let prisma: FactoreePrismaClient;
@@ -21,9 +20,8 @@ afterAll(async () => {
 });
 
 describe("AT-33 tenant isolation", () => {
-  it("keeps projects, secrets, and runs inside their own tenant", async () => {
+  it("keeps products, secrets, and runs inside their own tenant", async () => {
     const tenants = new PrismaTenantRegistry(prisma, key);
-    const projects = new PrismaProjectRegistry(prisma);
     const products = new PrismaProductRegistry(prisma);
     const secrets = new PrismaSecretStore(prisma, key);
     const runs = new PrismaRunRepository(prisma);
@@ -31,12 +29,6 @@ describe("AT-33 tenant isolation", () => {
     const a = await tenants.ensureTenant("ws-at33-a", "A");
     const b = await tenants.ensureTenant("ws-at33-b", "B");
 
-    const projectA = await projects.create({
-      tenantId: a.id,
-      key: "a",
-      name: "A",
-      primaryRepository: "acme/a",
-    });
     const productA = await products.create({
       tenantId: a.id,
       slug: "a",
@@ -54,14 +46,14 @@ describe("AT-33 tenant isolation", () => {
       autonomyLevel: "L2",
     });
 
-    expect(await projects.list(b.id)).toHaveLength(0);
-    expect(await projects.findById(b.id, projectA.id)).toBeNull();
+    expect(await products.list(b.id)).toHaveLength(0);
+    expect(await products.findById(b.id, productA.id)).toBeNull();
     expect(await secrets.get(b.id, productA.id, "TOKEN")).toBeNull();
     expect(await secrets.listNames(b.id, productA.id)).toEqual([]);
     expect(await runs.findById(b.id, run.run.id)).toBeNull();
     expect(await runs.findByAgentSession(b.id, "session-at33")).toBeNull();
 
-    expect(await projects.findById(a.id, projectA.id)).not.toBeNull();
+    expect(await products.findById(a.id, productA.id)).not.toBeNull();
     expect(await runs.findById(a.id, run.run.id)).not.toBeNull();
   });
 
@@ -97,14 +89,13 @@ describe("AT-33 tenant isolation", () => {
         "ContextSourceConfiguration",
         "Evidence",
         // The multi-repo-tenancy branch added GitHubInstallation, Product, ProductSecret,
-        // Repository, and RunTarget. Each one is tenant-owned.
+        // Repository, and RunTarget. Each one is tenant-owned. It also removed Project and
+        // ProjectSecret, so neither name appears here any more.
         "GitHubInstallation",
         "LinearInstallation",
         "ProcessedWebhook",
         "Product",
         "ProductSecret",
-        "Project",
-        "ProjectSecret",
         "Repository",
         // SDD section 53 and SDD section 52. Phase 8 added the ReviewFinding table, and it is
         // tenant-owned as well.

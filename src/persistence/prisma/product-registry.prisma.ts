@@ -17,6 +17,12 @@ import type {
   SecretStore,
 } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS } from "~/domain/products/secret-store.js";
+import type {
+  InstallationInput,
+  InstallationRecord,
+  TenantRecord,
+  TenantRegistry,
+} from "~/domain/products/tenant-registry.js";
 
 /**
  * The column holds free text, so a row written by an older release, or by hand, can name a kind
@@ -254,5 +260,93 @@ export class PrismaSecretStore implements SecretStore {
     if (!row) return false;
     await this.prisma.productSecret.delete({ where: { id: row.id } });
     return true;
+  }
+}
+
+export class PrismaTenantRegistry implements TenantRegistry {
+  constructor(private readonly prisma: FactoreePrismaClient, private readonly keyHex: string) {}
+
+  async ensureTenant(linearWorkspaceId: string, name: string): Promise<TenantRecord> {
+    const row = await this.prisma.tenant.upsert({
+      where: { linearWorkspaceId },
+      create: { linearWorkspaceId, name },
+      update: {},
+    });
+    return { id: row.id, linearWorkspaceId: row.linearWorkspaceId, name: row.name };
+  }
+
+  async findByWorkspace(linearWorkspaceId: string): Promise<TenantRecord | null> {
+    const row = await this.prisma.tenant.findUnique({ where: { linearWorkspaceId } });
+    return row ? { id: row.id, linearWorkspaceId: row.linearWorkspaceId, name: row.name } : null;
+  }
+
+  async putInstallation(input: InstallationInput): Promise<TenantRecord> {
+    const tenant = await this.ensureTenant(input.linearWorkspaceId, input.workspaceName);
+    const accessTokenCipher = encryptSecret(input.accessToken, this.keyHex);
+    const refreshTokenCipher =
+      input.refreshToken === undefined ? null : encryptSecret(input.refreshToken, this.keyHex);
+    await this.prisma.linearInstallation.upsert({
+      where: { linearWorkspaceId: input.linearWorkspaceId },
+      create: {
+        tenantId: tenant.id,
+        linearWorkspaceId: input.linearWorkspaceId,
+        appUserId: input.appUserId ?? null,
+        accessTokenCipher,
+        refreshTokenCipher,
+        expiresAt: input.expiresAt ?? null,
+        scopes: input.scopes ?? [],
+      },
+      update: {
+        appUserId: input.appUserId ?? null,
+        accessTokenCipher,
+        refreshTokenCipher,
+        expiresAt: input.expiresAt ?? null,
+        scopes: input.scopes ?? [],
+      },
+    });
+    return tenant;
+  }
+
+  async getInstallationToken(linearWorkspaceId: string): Promise<string | null> {
+    const row = await this.prisma.linearInstallation.findUnique({ where: { linearWorkspaceId } });
+    return row ? decryptSecret(row.accessTokenCipher, this.keyHex) : null;
+  }
+
+  async getInstallation(linearWorkspaceId: string): Promise<InstallationRecord | null> {
+    const row = await this.prisma.linearInstallation.findUnique({
+      where: { linearWorkspaceId },
+      include: { tenant: true },
+    });
+    if (!row) return null;
+    return {
+      linearWorkspaceId: row.linearWorkspaceId,
+      workspaceName: row.tenant.name,
+      appUserId: row.appUserId,
+      accessToken: decryptSecret(row.accessTokenCipher, this.keyHex),
+      refreshToken:
+        row.refreshTokenCipher === null ? null : decryptSecret(row.refreshTokenCipher, this.keyHex),
+      expiresAt: row.expiresAt,
+      scopes: row.scopes,
+    };
+  }
+
+  async findByGitHubInstallation(githubInstallationId: string): Promise<TenantRecord | null> {
+    const row = await this.prisma.gitHubInstallation.findUnique({
+      where: { githubInstallationId },
+      include: { tenant: true },
+    });
+    return row ? { id: row.tenant.id, linearWorkspaceId: row.tenant.linearWorkspaceId, name: row.tenant.name } : null;
+  }
+
+  async putGitHubInstallation(
+    tenantId: string,
+    githubInstallationId: string,
+    accountLogin: string,
+  ): Promise<void> {
+    await this.prisma.gitHubInstallation.upsert({
+      where: { githubInstallationId },
+      create: { tenantId, githubInstallationId, accountLogin },
+      update: { tenantId, accountLogin },
+    });
   }
 }

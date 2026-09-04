@@ -2,7 +2,6 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Env } from "~/config/env.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
-import type { ProjectRegistry } from "~/domain/projects/project-registry.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -31,7 +30,6 @@ export interface ServerDependencies {
   env: Env;
   logger: Logger;
   prisma: FactoreePrismaClient;
-  projects: ProjectRegistry;
   tenants: TenantRegistry;
   products: ProductRegistry;
   repositories: RepositoryRegistry;

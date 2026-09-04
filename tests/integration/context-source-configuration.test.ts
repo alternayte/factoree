@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
-import { PrismaTenantRegistry } from "~/persistence/prisma/project-registry.prisma.js";
-import { PrismaProductRegistry } from "~/persistence/prisma/product-registry.prisma.js";
+import { PrismaProductRegistry, PrismaTenantRegistry } from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { TenantRecord } from "~/domain/products/tenant-registry.js";
