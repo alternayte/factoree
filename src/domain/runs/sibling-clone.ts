@@ -43,10 +43,10 @@ export interface SiblingCloner {
 /**
  * Builds the gate a session uses to read a sibling repository of the Run's Product. Task 14.
  *
- * The clone lands in `siblings/<owner>/<repo>`, outside `primary/`, so a sibling can never be
- * committed into the target repository by accident. `chmod -R a-w` denies a write to it after
- * the clone, so the read-only rule is a file mode, not a prompt. Every clone writes one immutable
- * evidence row, so the Reviewer can see which sibling the requesting role read.
+ * The clone lands in `siblings/<owner>/<repo>`, outside `primary/`. A commit to `primary/` can
+ * never include a sibling by accident. `chmod -R a-w` denies a write to the clone after it
+ * completes, so the read-only rule is a file mode, not a prompt. Every clone writes one
+ * immutable evidence row, so the Reviewer can see which sibling the requesting role read.
  */
 export const buildSiblingCloner = (options: SiblingClonerOptions): SiblingCloner => {
   const members = options.repositories.map((repository) => repository.fullName);
@@ -72,8 +72,8 @@ export const buildSiblingCloner = (options: SiblingClonerOptions): SiblingCloner
         path,
         options.credential,
       );
-      // The clone is read-only. This is a file mode, not a prompt, and it matches
-      // `checkoutReferences`.
+      // The clone is read-only. This is a file mode, not a prompt. `checkoutReferences` uses
+      // the same control on a reference repository.
       const chmod = await options.sandbox.exec(options.ref, { file: "chmod", args: ["-R", "a-w", path] });
       if (chmod.exitCode !== 0) {
         throw new Error(

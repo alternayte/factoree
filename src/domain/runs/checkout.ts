@@ -81,7 +81,7 @@ const run = async (
 export type RepositoryCredential = string | undefined;
 
 /**
- * Clones one repository at one ref, and reports the commit it landed on. `checkoutPrimary`,
+ * Clones one repository at one ref. It reports the commit it landed on. `checkoutPrimary`,
  * `checkoutReferences`, `checkoutOrganizationSkills`, and `cloneSibling` all share this
  * function, so every checkout disables the push URL and captures the base SHA the same way.
  */
