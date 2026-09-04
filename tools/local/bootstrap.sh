@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Registers the Linear installation, the Project, the GITHUB_TOKEN secret, and the two context
-# source rows. Reads every value from .env. Run it once, after `just api` starts.
+# Registers the Linear installation, the GitHub installation, the Product, the GITHUB_TOKEN
+# secret, and the two context source rows. Reads every value from .env. Run it once, after
+# `just api` starts.
+#
+# It does not create a Repository row. Discovery creates that row itself, from the
+# `.factoree/config.yaml` file of the fixture repository, once the GitHub App reports the
+# repository to Factoree. Add that file to the fixture repository, naming the same
+# SETUP_PRODUCT_SLUG and SETUP_LINEAR_TEAM_KEY as below, before you delegate a Run.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -19,8 +25,9 @@ require() {
 }
 
 for name in ADMIN_API_TOKEN SETUP_LINEAR_WORKSPACE_ID SETUP_LINEAR_ACCESS_TOKEN \
-            SETUP_PROJECT_KEY SETUP_GITHUB_REPOSITORY SETUP_GITHUB_TOKEN \
-            LIVE_LINEAR_TEAM_ID; do
+            SETUP_PRODUCT_SLUG SETUP_LINEAR_TEAM_KEY \
+            SETUP_GITHUB_INSTALLATION_ID SETUP_GITHUB_ACCOUNT_LOGIN \
+            SETUP_GITHUB_REPOSITORY SETUP_GITHUB_TOKEN; do
     require "${name}"
 done
 
@@ -52,33 +59,43 @@ api PUT "/admin/linear-installations" "$(jq -n \
      + (if $e == null then {} else {expiresIn:$e} end)')"
 echo
 
-echo "2. The Project."
-existing="$(curl -sS -f "${API_BASE}/admin/projects${query_only}" \
+echo "1b. The GitHub installation."
+# Discovery only reads a repository once its installation is bound to a tenant. An unbound
+# installation event is ignored, not an error, so this bind must happen before the fixture
+# repository is pushed to.
+api PUT "/admin/github-installations" "$(jq -n \
+    --arg w "${SETUP_LINEAR_WORKSPACE_ID}" \
+    --arg i "${SETUP_GITHUB_INSTALLATION_ID}" \
+    --arg a "${SETUP_GITHUB_ACCOUNT_LOGIN}" \
+    '{linearWorkspaceId:$w, githubInstallationId:$i, accountLogin:$a}')"
+echo
+
+echo "2. The Product."
+existing="$(curl -sS -f "${API_BASE}/admin/products${query_only}" \
     -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
-    | jq -r --arg k "${SETUP_PROJECT_KEY}" '.[] | select(.key == $k) | .id' | head -1)"
+    | jq -r --arg s "${SETUP_PRODUCT_SLUG}" '.[] | select(.slug == $s) | .id' | head -1)"
 if [[ -n "${existing}" ]]; then
-    project_id="${existing}"
-    echo "The Project already exists. The script reuses it."
-    api PUT "/admin/projects/${existing}${query_only}" "$(jq -n \
-        --arg t "${LIVE_LINEAR_TEAM_ID}" \
-        --arg repo "${SETUP_GITHUB_REPOSITORY}" \
-        '{linearTeamId:$t, primaryRepository:$repo}')" > /dev/null
+    product_id="${existing}"
+    echo "The Product already exists. The script reuses it."
 else
-    project="$(api POST "/admin/projects" "$(jq -n \
+    product="$(api POST "/admin/products" "$(jq -n \
         --arg w "${SETUP_LINEAR_WORKSPACE_ID}" \
         --arg n "${SETUP_WORKSPACE_NAME:-Factoree test workspace}" \
-        --arg k "${SETUP_PROJECT_KEY}" \
-        --arg name "${SETUP_PROJECT_NAME:-Live acceptance fixture Project}" \
-        --arg repo "${SETUP_GITHUB_REPOSITORY}" \
-        --arg team "${LIVE_LINEAR_TEAM_ID}" \
-        '{linearWorkspaceId:$w, workspaceName:$n, key:$k, name:$name, primaryRepository:$repo,
-          linearTeamId:$team}')")"
-    project_id="$(echo "${project}" | jq -r .id)"
+        --arg s "${SETUP_PRODUCT_SLUG}" \
+        --arg name "${SETUP_PRODUCT_NAME:-Live acceptance fixture Product}" \
+        --arg team "${SETUP_LINEAR_TEAM_KEY}" \
+        '{linearWorkspaceId:$w, workspaceName:$n, slug:$s, name:$name, linearTeamKey:$team}')")"
+    product_id="$(echo "${product}" | jq -r .id)"
 fi
-echo "Project id: ${project_id}"
+echo "Product id: ${product_id}"
 
-echo "3. The GITHUB_TOKEN Project secret."
-api PUT "/admin/projects/${project_id}/secrets/GITHUB_TOKEN${query_only}" "$(jq -n \
+# A new Product starts pending, at autonomy L0. Activate it, so a delegated Run can proceed past
+# refinement. Reusing an existing Product activates it again; the call is idempotent.
+api POST "/admin/products/${product_id}/activate${query_only}" "$(jq -n \
+    --arg a "${SETUP_DEFAULT_AUTONOMY:-L2}" '{defaultAutonomy:$a}')" > /dev/null
+
+echo "3. The GITHUB_TOKEN Product secret."
+api PUT "/admin/products/${product_id}/secrets/GITHUB_TOKEN${query_only}" "$(jq -n \
     --arg v "${SETUP_GITHUB_TOKEN}" '{value:$v, injectIntoImplementer:false, kind:"publish"}')"
 echo
 
@@ -86,26 +103,26 @@ echo
 # value. Neither takes the injection mark, and the API refuses that combination.
 if [[ -n "${SETUP_RUNNER_CREDENTIAL:-}" && -n "${SETUP_RUNNER_CREDENTIAL_NAME:-}" ]]; then
     echo "3b. The runner credential ${SETUP_RUNNER_CREDENTIAL_NAME}."
-    api PUT "/admin/projects/${project_id}/secrets/${SETUP_RUNNER_CREDENTIAL_NAME}${query_only}" \
+    api PUT "/admin/products/${product_id}/secrets/${SETUP_RUNNER_CREDENTIAL_NAME}${query_only}" \
         "$(jq -n --arg v "${SETUP_RUNNER_CREDENTIAL}" '{value:$v, kind:"runner_credential"}')"
     echo
 fi
 
 if [[ -n "${SETUP_GITHUB_READ_TOKEN:-}" ]]; then
     echo "3c. The read-only repository credential."
-    api PUT "/admin/projects/${project_id}/secrets/GITHUB_READ_TOKEN${query_only}" \
+    api PUT "/admin/products/${product_id}/secrets/GITHUB_READ_TOKEN${query_only}" \
         "$(jq -n --arg v "${SETUP_GITHUB_READ_TOKEN}" '{value:$v, kind:"repository_read"}')"
     echo
 fi
 
 echo "4. The Backstage context source."
-api POST "/admin/projects/${project_id}/context-sources${query_only}" "$(jq -n \
+api POST "/admin/products/${product_id}/context-sources${query_only}" "$(jq -n \
     --arg e "${BACKSTAGE_URL}" \
     '{sourceId:"backstage-catalog", kind:"backstage", endpoint:$e, enabled:true}')"
 echo
 
 echo "5. The MCP context source."
-api POST "/admin/projects/${project_id}/context-sources${query_only}" "$(jq -n \
+api POST "/admin/products/${product_id}/context-sources${query_only}" "$(jq -n \
     --arg e "${MCP_URL}" \
     --arg d "${SETUP_MCP_DISCOVER_TOOL:-search}" \
     --arg f "${SETUP_MCP_FETCH_TOOL:-fetch}" \
@@ -113,4 +130,4 @@ api POST "/admin/projects/${project_id}/context-sources${query_only}" "$(jq -n \
       settings:{kind:"mcp", discoverTool:$d, fetchTool:$f}}')"
 echo
 
-echo "Bootstrap done. Project id: ${project_id}"
+echo "Bootstrap done. Product id: ${product_id}"

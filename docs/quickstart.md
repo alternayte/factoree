@@ -33,6 +33,10 @@ holds a working local default.
 | `LIVE_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
 | `SETUP_LINEAR_WORKSPACE_ID` | The ID of the test workspace. |
 | `SETUP_LINEAR_ACCESS_TOKEN` | The access token of the installed Factoree Linear app. Factoree comments with it. |
+| `SETUP_PRODUCT_SLUG` | A short unique identifier for the bootstrap Product. |
+| `SETUP_LINEAR_TEAM_KEY` | The key of the Linear team the fixture issue belongs to. |
+| `SETUP_GITHUB_INSTALLATION_ID` | The numeric installation ID GitHub assigned to the Factoree app. |
+| `SETUP_GITHUB_ACCOUNT_LOGIN` | The GitHub account or organization the app is installed on. |
 | `SETUP_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
 | `SETUP_GITHUB_TOKEN` | The token Factoree pushes the branch and opens the pull request with. |
 
