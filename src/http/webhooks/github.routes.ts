@@ -5,7 +5,7 @@ import {
   installationRepositoriesEventSchema,
   pushEventSchema,
 } from "~/adapters/github/webhook-schemas.js";
-import type { DiscoveryService } from "~/domain/products/discovery-service.js";
+import type { DiscoveryOutcome, DiscoveryService } from "~/domain/products/discovery-service.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { Logger } from "~/telemetry/logger.js";
 
@@ -38,6 +38,26 @@ const resolveTenantId = async (
 
 const touchesConfigPath = (files: string[]): boolean => files.includes(FACTOREE_CONFIG_PATH);
 
+/**
+ * Specification section 8. A discovery conflict must not vanish. Nothing in the current model
+ * persists a binding conflict against a repository that failed to register, so this at least
+ * makes the conflict visible to an operator through the worker log, naming the repository and
+ * the reason, rather than silently discarding it as the route did before.
+ */
+const logDiscoveryOutcome = (
+  dependencies: GitHubWebhookDependencies,
+  fullName: string,
+  outcome: DiscoveryOutcome,
+): void => {
+  if (outcome.kind === "registered") return;
+  const level = outcome.kind === "conflict" ? "warn" : "info";
+  dependencies.logger[level](`repository discovery did not register ${fullName}: ${outcome.reason}`, {
+    repository: fullName,
+    outcome: outcome.kind,
+    reason: outcome.reason,
+  });
+};
+
 export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: GitHubWebhookDependencies): void => {
   app.post("/webhooks/github", async (request, reply) => {
     const rawBody = request.rawBody;
@@ -60,7 +80,12 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
       );
       if (tenantId !== null) {
         for (const repository of parsed.data.repositories_added) {
-          await dependencies.discovery.syncRepository(tenantId, repository.full_name, repository.default_branch);
+          const outcome = await dependencies.discovery.syncRepository(
+            tenantId,
+            repository.full_name,
+            repository.default_branch,
+          );
+          logDiscoveryOutcome(dependencies, repository.full_name, outcome);
         }
         for (const repository of parsed.data.repositories_removed ?? []) {
           await dependencies.discovery.markAbsent(tenantId, repository.full_name);
@@ -93,7 +118,12 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
           if (removed && !added && !modified) {
             await dependencies.discovery.markAbsent(tenantId, repository.full_name);
           } else {
-            await dependencies.discovery.syncRepository(tenantId, repository.full_name, repository.default_branch);
+            const outcome = await dependencies.discovery.syncRepository(
+              tenantId,
+              repository.full_name,
+              repository.default_branch,
+            );
+            logDiscoveryOutcome(dependencies, repository.full_name, outcome);
           }
         }
       }

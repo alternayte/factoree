@@ -50,9 +50,10 @@ class FakeTenantRegistry implements TenantRegistry {
 class FakeDiscoveryService {
   readonly synced: [string, string][] = [];
   readonly absent: string[] = [];
+  nextOutcome: DiscoveryOutcome = { kind: "registered", repositoryId: "r1", productId: "p1", productCreated: false };
   syncRepository(_tenantId: string, fullName: string, defaultBranch: string): Promise<DiscoveryOutcome> {
     this.synced.push([fullName, defaultBranch]);
-    return Promise.resolve({ kind: "registered", repositoryId: "r1", productId: "p1", productCreated: false });
+    return Promise.resolve(this.nextOutcome);
   }
   markAbsent(_tenantId: string, fullName: string): Promise<void> {
     this.absent.push(fullName);
@@ -89,7 +90,7 @@ const build = (options: { signatureValid?: boolean; bindInstallation?: boolean }
     logger,
   });
 
-  return { app, synced: discovery.synced, absent: discovery.absent, logger };
+  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery };
 };
 
 describe("GitHub webhook route", () => {
@@ -112,6 +113,30 @@ describe("GitHub webhook route", () => {
       },
     });
     expect(synced).toEqual([["acme/api", "main"]]);
+  });
+
+  it("F5: logs a discovery conflict instead of discarding it", async () => {
+    const { app, logger, discovery } = build({});
+    discovery.nextOutcome = {
+      kind: "conflict",
+      reason: 'acme/api claims the team PAY for "checkout", but Product "billing" already claims it.',
+    };
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation_repositories" },
+      payload: {
+        action: "added",
+        installation: { id: 42, account: { login: "acme" } },
+        repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+      },
+    });
+    expect(logger.warnCalls).toHaveLength(1);
+    expect(logger.warnCalls[0]?.fields).toMatchObject({
+      repository: "acme/api",
+      outcome: "conflict",
+    });
+    expect(logger.warnCalls[0]?.message).toContain("acme/api");
   });
 
   it("syncs a push that touches the configuration file, and ignores one that does not", async () => {
