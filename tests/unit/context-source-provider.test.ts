@@ -47,7 +47,7 @@ const providerOf = (
 ): ConfiguredContextSourceProvider =>
   new ConfiguredContextSourceProvider({
     configurations: storeOf(rows),
-    secrets: { read: (_tenantId, _projectId, name) => Promise.resolve(secrets[name] ?? null) },
+    secrets: { read: (_tenantId, _productId, name) => Promise.resolve(secrets[name] ?? null) },
     fixedSources: () => [stub("linear"), stub("repository")],
     factories: {
       backstage: (row) => stub(row.sourceId),
@@ -57,7 +57,7 @@ const providerOf = (
 
 const scope = (over: Partial<{ backstageEnabled: boolean; automaticReferenceDiscovery: boolean }> = {}) => ({
   tenantId: "tenant",
-  projectId: "project",
+  productId: "product",
   contextConfiguration: {
     backstageEnabled: true,
     automaticReferenceDiscovery: false,

@@ -122,7 +122,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     );
     const sources = await dependencies.sources.sourcesFor({
       tenantId: input.tenantId,
-      projectId: input.projectId,
+      productId: input.projectId,
       contextConfiguration,
     });
 

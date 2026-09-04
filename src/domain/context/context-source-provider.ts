@@ -9,7 +9,7 @@ import type { RepositoryContextConfiguration } from "./repository-context-config
 
 export interface ContextSourceScope {
   tenantId: string;
-  projectId: string;
+  productId: string;
   contextConfiguration: RepositoryContextConfiguration;
 }
 
@@ -28,7 +28,7 @@ export interface ContextSourceProvider {
 
 /** SDD section 30. A credential is read at the moment a source is built, and never stored. */
 export interface ContextSourceSecretReader {
-  read(tenantId: string, projectId: string, name: string): Promise<string | null>;
+  read(tenantId: string, productId: string, name: string): Promise<string | null>;
 }
 
 export interface ConfiguredContextSourceProviderOptions {
@@ -48,7 +48,7 @@ export class ConfiguredContextSourceProvider implements ContextSourceProvider {
 
   async sourcesFor(scope: ContextSourceScope): Promise<ContextSourceRegistry> {
     const registry = new ContextSourceRegistry(this.options.fixedSources());
-    const records = await this.options.configurations.list(scope.tenantId, scope.projectId);
+    const records = await this.options.configurations.list(scope.tenantId, scope.productId);
 
     for (const record of records) {
       if (!record.enabled) continue;
@@ -60,7 +60,7 @@ export class ConfiguredContextSourceProvider implements ContextSourceProvider {
       if (record.secretName !== null) {
         credential = await this.options.secrets.read(
           scope.tenantId,
-          scope.projectId,
+          scope.productId,
           record.secretName,
         );
         // A source that needs a credential and has none must not run without one. Leaving it out

@@ -164,9 +164,9 @@ const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
 
 // Controller decision 1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
 // the real `SecretStore` answers it directly through `get`, which already takes a tenant and a
-// Project.
+// Product.
 const contextSecrets: ContextSourceSecretReader = {
-  read: (tenantId, projectId, name) => secrets.get(tenantId, projectId, name),
+  read: (tenantId, productId, name) => secrets.get(tenantId, productId, name),
 };
 
 // Controller decision 2. Task 5 built the real Backstage source. Task 8 builds the MCP source.
