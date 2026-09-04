@@ -7,6 +7,7 @@ import {
 import { NativeConnection } from "@temporalio/worker";
 import type { Env } from "~/config/env.js";
 import { agentRunWorkflow, humanInputSignal, stopSignal } from "~/workflows/agent-run.workflow.js";
+import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/workflows/sync-installation.workflow.js";
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 
 const tlsOptions = (env: Env) => (env.TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.TEMPORAL_API_KEY });
@@ -51,3 +52,22 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
     return signalIfRunning(() => client.workflow.getHandle(workflowId).signal(humanInputSignal, body));
   },
 });
+
+/**
+ * Starts `syncInstallationWorkflow`, keyed on the installation id. A repeated `installation`
+ * webhook joins the run already in flight rather than starting a second one.
+ */
+export const createSyncInstallationStarter =
+  (client: Client, taskQueue: string) =>
+  async (input: { tenantId: string; githubInstallationId: string }): Promise<void> => {
+    try {
+      await client.workflow.start(syncInstallationWorkflow, {
+        taskQueue,
+        workflowId: buildSyncInstallationWorkflowId(input.githubInstallationId),
+        args: [{ tenantId: input.tenantId, githubInstallationId: input.githubInstallationId }],
+      });
+    } catch (error) {
+      // A repeated delivery must join the running sync, not fail the webhook.
+      if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
+    }
+  };

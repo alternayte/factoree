@@ -230,6 +230,17 @@ beforeAll(async () => {
       logger,
       repositoryBaseUrl: "https://github.com",
     }),
+    // This test drives the Phase 1 delegation path, which never exercises the GitHub webhook
+    // route. These doubles only satisfy the shape `buildServer` now requires.
+    discovery: new DiscoveryService(
+      discoveryClient,
+      products,
+      repositories,
+      { resolveTeamKey: () => Promise.reject(new Error("unused")), resolveTeamId: () => Promise.reject(new Error("unused")) },
+      logger,
+    ),
+    verifyGitHubSignature: () => false,
+    startInstallationSync: () => Promise.reject(new Error("unused")),
   });
   await app.ready();
 });

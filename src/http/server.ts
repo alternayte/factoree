@@ -37,12 +37,15 @@ export interface ServerDependencies {
   secrets: SecretStore;
   runs: RunRepository;
   delegation: DelegationService;
+  /** Registers a repository and its Product from a `.factoree/config.yaml` declaration. */
+  discovery: DiscoveryService;
+  /** Verifies the raw request body against the `X-Hub-Signature-256` header before any parse. */
+  verifyGitHubSignature: (raw: string, signature: string) => boolean;
   /**
-   * The GitHub webhook route mounts only when both are present. Production wiring waits on a
-   * per-installation GitHub App token source, a gap Task 6 already carried forward.
+   * Starts the sync of one GitHub App installation, keyed on the installation id so a repeated
+   * `installation` event joins the run already in flight rather than starting a second one.
    */
-  discovery?: DiscoveryService;
-  verifyGitHubSignature?: (raw: string, signature: string) => boolean;
+  startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
 }
 
 export const buildServer = (dependencies: ServerDependencies): FastifyInstance => {
@@ -64,14 +67,13 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     delegation: dependencies.delegation,
     logger: dependencies.logger,
   });
-  if (dependencies.discovery && dependencies.verifyGitHubSignature) {
-    registerGitHubWebhookRoutes(app, {
-      discovery: dependencies.discovery,
-      tenants: dependencies.tenants,
-      verifySignature: dependencies.verifyGitHubSignature,
-      logger: dependencies.logger,
-    });
-  }
+  registerGitHubWebhookRoutes(app, {
+    discovery: dependencies.discovery,
+    tenants: dependencies.tenants,
+    verifySignature: dependencies.verifyGitHubSignature,
+    startInstallationSync: dependencies.startInstallationSync,
+    logger: dependencies.logger,
+  });
 
   void app.register((admin) => {
     admin.addHook("onRequest", createAdminGuard(dependencies.env.ADMIN_API_TOKEN));
