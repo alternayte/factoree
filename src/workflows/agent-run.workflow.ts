@@ -370,24 +370,27 @@ const matchReplyToCandidate = <T extends { fullName: string }>(
   candidates: T[],
 ): T | null => {
   // Splits the reply on whitespace. It trims leading and trailing punctuation from each piece.
-  // A slash and a hyphen survive the trim, so `org/repo-name` stays one token.
+  // A slash and a hyphen survive the trim, so `org/repo-name` stays one token. Lower case makes
+  // the match case-insensitive, so a reply typed in the wrong case still resolves.
   const tokens = reply
     .split(/\s+/)
-    .map((token) => token.replace(/^[^\w/]+|[^\w/-]+$/g, ""))
+    .map((token) => token.replace(/^[^\w/]+|[^\w/-]+$/g, "").toLowerCase())
     .filter((token) => token.length > 0);
 
   // A bare repository name resolves only when one candidate carries it. Two candidates that
   // share a bare name make that name ambiguous, even when only one of them appears in the
-  // reply.
+  // reply. Case folding can create that same collision, so the owner count uses the folded
+  // name too.
   const bareNameOwners = new Map<string, number>();
   for (const candidate of candidates) {
-    const bareName = candidate.fullName.split("/").at(-1) ?? candidate.fullName;
+    const bareName = (candidate.fullName.split("/").at(-1) ?? candidate.fullName).toLowerCase();
     bareNameOwners.set(bareName, (bareNameOwners.get(bareName) ?? 0) + 1);
   }
 
   const matches = candidates.filter((candidate) => {
-    if (tokens.includes(candidate.fullName)) return true;
-    const bareName = candidate.fullName.split("/").at(-1) ?? candidate.fullName;
+    const fullName = candidate.fullName.toLowerCase();
+    if (tokens.includes(fullName)) return true;
+    const bareName = (candidate.fullName.split("/").at(-1) ?? candidate.fullName).toLowerCase();
     return tokens.includes(bareName) && bareNameOwners.get(bareName) === 1;
   });
 

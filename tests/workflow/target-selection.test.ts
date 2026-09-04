@@ -43,7 +43,7 @@ const twoRepositories = [
 
 /**
  * Specification section 10. Two candidates whose full names prefix one another, for the reply
- * parsing cases. A substring match would let the shorter name win a reply that names the
+ * parsing cases. A substring match lets the shorter name win a reply that names the
  * longer one.
  */
 const prefixRepositories = [
@@ -154,6 +154,24 @@ describe("target selection and the RunTarget row", () => {
     });
   });
 
+  it("matches a reply typed in a different case", async () => {
+    await runWorker(async () => {
+      const handle = await start("ses-target-case", {
+        product: { ...productInput, repositories: twoRepositories },
+        repositoryProposal: null,
+      });
+      await waitForStatus(handle, "BLOCKED_TARGET");
+
+      await handle.signal(humanInputSignal, "use ACME/WEB");
+
+      const result = await handle.result();
+      expect(result.status).not.toBe("BLOCKED_TARGET");
+      expect(targetsOf("run-ses-target-case")).toEqual([
+        expect.objectContaining({ repositoryId: "repository-web", mergeOrder: 1 }),
+      ]);
+    });
+  });
+
   it("keeps the Run blocked when a reply matches no candidate by whole token", async () => {
     await runWorker(async () => {
       const handle = await start("ses-target-unmatched", {
@@ -168,7 +186,7 @@ describe("target selection and the RunTarget row", () => {
       const questionsBefore = elicitations.length;
       await handle.signal(humanInputSignal, "I want the acme/checkout-api-gatewayyy one");
 
-      // The workflow asks again, so the Run stayed blocked and made no selection from the
+      // The workflow asks again. The Run stayed blocked. It made no selection from the
       // unmatched reply.
       await waitFor(
         () => elicitations.length === questionsBefore + 1,
