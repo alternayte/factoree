@@ -4,6 +4,7 @@ import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import {
   assertSameChangedFiles,
   capturePatch as captureVerifiedPatch,
@@ -28,8 +29,11 @@ import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
-/** The Project secret that carries the GitHub write credential. SDD section 30. */
-export const GITHUB_TOKEN_SECRET = "GITHUB_TOKEN";
+/**
+ * The scope a publish mints. SDD section 46 pushes a branch and opens a pull request, and
+ * nothing else, so the token carries no permission beyond those two calls.
+ */
+export const PUBLISH_TOKEN_SCOPE = { contents: "write", pull_requests: "write" };
 
 /**
  * The author date and the committer date of every Factoree publication commit. The value is a
@@ -78,6 +82,8 @@ export interface PublishActivityInput {
   workItemUrl: string | null;
   verificationSummary: string;
   repairCount: number;
+  /** The GitHub App installation that grants the target repository. */
+  githubInstallationId: string;
 }
 
 export interface PublishActivityOutput {
@@ -97,6 +103,8 @@ export interface PublishingActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   runs: RunRepository;
+  /** Mints the write credential of one publish. SDD section 30 keeps it off every agent session. */
+  tokens: GitHubTokenProvider;
   /**
    * `checkBase` and the base backstop of `publish` read the target branch. Each one passes the
    * plain URL, never a credential.
@@ -136,39 +144,6 @@ const assertHttpsRepositoryUrl = (plainUrl: string): void => {
         "`https:` only. Repair the repository base URL of the Project.",
     );
   }
-};
-
-/**
- * Reads the GitHub write credential of the Project. SDD section 30 forbids that credential in
- * every agent session, so an injection mark on it is a fault an operator must repair.
- */
-const readGitHubToken = async (
-  dependencies: PublishingActivityDependencies,
-  tenantId: string,
-  productId: string,
-): Promise<string> => {
-  const descriptors = await dependencies.secrets.list(tenantId, productId);
-  const descriptor = descriptors.find((entry) => entry.name === GITHUB_TOKEN_SECRET);
-  if (descriptor === undefined) {
-    throw new RunConfigurationError(
-      `The Project holds no secret named "${GITHUB_TOKEN_SECRET}". Factoree needs it to push the ` +
-        "branch and to open the pull request. Add it to the Project secrets.",
-    );
-  }
-  if (descriptor.injectIntoImplementer) {
-    throw new RunConfigurationError(
-      `The Project secret "${GITHUB_TOKEN_SECRET}" carries the injection mark, so the credential ` +
-        "already reached an agent session. SDD section 30 forbids that. Rotate the credential. " +
-        "Then add it again without the injection mark.",
-    );
-  }
-  const token = await dependencies.secrets.get(tenantId, productId, GITHUB_TOKEN_SECRET);
-  if (token === null || token.length === 0) {
-    throw new RunConfigurationError(
-      `The Project secret "${GITHUB_TOKEN_SECRET}" holds no value. Add the GitHub write credential.`,
-    );
-  }
-  return token;
 };
 
 /**
@@ -250,8 +225,13 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         dependencies.logger,
       );
 
-      // Step 2. The GitHub write credential. Controller decision 7 owns both refusals.
-      const token = await readGitHubToken(dependencies, input.tenantId, input.productId);
+      // Step 2. The GitHub write credential. Ruling 2 requires a scoped mint: this publish pushes
+      // a branch and opens a pull request, and nothing else, so the token carries exactly those
+      // two permissions and no more.
+      const token = await dependencies.tokens.tokenForInstallation(
+        input.githubInstallationId,
+        PUBLISH_TOKEN_SCOPE,
+      );
 
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
       dependencies.redactor.addSecret(token);
@@ -292,15 +272,10 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
-      // Task 6 threads the real installation id from the target Repository into this activity.
-      // Until then the port mints against the Project secret token above, which carries one
-      // credential for the whole Project, so the identifier below selects nothing and is never
-      // read by that path.
-      const legacyInstallationId = "";
 
       // Step 8. AT-35. A worker restart must not create a second pull request. This lookup runs
       // before the trusted checkout, so an existing pull request stops the push too.
-      const existing = await port.findByHead(input.repositorySlug, branch, legacyInstallationId);
+      const existing = await port.findByHead(input.repositorySlug, branch, input.githubInstallationId);
       if (existing !== null) {
         // GitHub already answered the tip commit of the head branch. Factoree therefore runs no
         // second git read here. A `git ls-remote` puts its URL on the process argument list, so
@@ -413,7 +388,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
             repairCount: input.repairCount,
           }),
         },
-        legacyInstallationId,
+        input.githubInstallationId,
       );
 
       // Step 11. The publication facts of the Run.

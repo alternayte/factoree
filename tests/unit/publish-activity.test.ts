@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { ApplicationFailure } from "@temporalio/common";
 import {
@@ -165,10 +165,28 @@ const input: PublishActivityInput = {
   workItemUrl: "https://linear.app/acme/issue/ENG-1",
   verificationSummary: "every check passed",
   repairCount: 0,
+  githubInstallationId: "install-1",
+};
+
+interface StubTokens {
+  tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string>;
+  calls: Array<{ id: string; scope: Record<string, string> | undefined }>;
+}
+
+const stubTokens = (token: string | Error = TOKEN): StubTokens => {
+  const calls: StubTokens["calls"] = [];
+  return {
+    calls,
+    tokenForInstallation: (id: string, scope?: Record<string, string>): Promise<string> => {
+      calls.push({ id, scope });
+      return token instanceof Error ? Promise.reject(token) : Promise.resolve(token);
+    },
+  };
 };
 
 const build = (options: {
   secrets?: MemorySecretStore;
+  tokens?: StubTokens;
   changedFiles?: string[];
   patchText?: string;
   existing?: PullRequestRecord | null;
@@ -181,7 +199,8 @@ const build = (options: {
 } = {}) => {
   const lines: string[] = [];
   const redactor = new Redactor([]);
-  const secrets = options.secrets ?? new MemorySecretStore({ GITHUB_TOKEN: TOKEN });
+  const secrets = options.secrets ?? new MemorySecretStore({});
+  const tokens = options.tokens ?? stubTokens();
   const pullRequests = memoryPullRequests(options.existing ?? null);
   if (options.pullRequestFailure !== undefined) {
     const failure = options.pullRequestFailure;
@@ -197,6 +216,7 @@ const build = (options: {
       patchText: options.patchText ?? PATCH_TEXT,
     }),
     secrets,
+    tokens,
     redactor,
     runs,
     repositoryReader: reader,
@@ -211,6 +231,9 @@ const build = (options: {
     runs,
     reader,
     publishToBranch,
+    tokens,
+    redactor,
+    secrets,
     lines,
   };
 };
@@ -218,18 +241,41 @@ const build = (options: {
 const environment = new MockActivityEnvironment();
 
 describe("the publish activity", () => {
-  it("refuses a Project without the GITHUB_TOKEN secret", async () => {
-    const { activities, pullRequests } = build({ secrets: new MemorySecretStore({}) });
-    await expect(environment.run((value: PublishActivityInput) => activities.publish(value), input)).rejects.toBeInstanceOf(RunConfigurationError);
-    expect(pullRequests.lookups).toEqual([]);
+  it("mints with the write scope and reads no Product secret", async () => {
+    const secrets = new MemorySecretStore({});
+    const listSpy = vi.spyOn(secrets, "list");
+    const getSpy = vi.spyOn(secrets, "get");
+    const tokens = stubTokens();
+    const { activities } = build({ secrets, tokens });
+
+    await environment.run((value: PublishActivityInput) => activities.publish(value), input);
+
+    expect(tokens.calls).toEqual([
+      { id: "install-1", scope: { contents: "write", pull_requests: "write" } },
+    ]);
+    expect(getSpy).not.toHaveBeenCalled();
+    // `registerProjectSecrets` still lists Project secrets, for the redactor of SDD section 60.
+    // It never reads one by name for the GitHub credential, which is the property this proves.
+    listSpy.mockRestore();
+    getSpy.mockRestore();
   });
 
-  it("refuses a GITHUB_TOKEN that carries the injection mark and names the rotation", async () => {
-    const secrets = new MemorySecretStore({
-      GITHUB_TOKEN: { value: TOKEN, injectIntoImplementer: true },
-    });
-    const { activities } = build({ secrets });
-    await expect(environment.run((value: PublishActivityInput) => activities.publish(value), input)).rejects.toThrow(/Rotate the credential/);
+  it("names the installation when a mint fails", async () => {
+    const tokens = stubTokens(new Error("the GitHub API answered 401 while it minted a token for installation install-1"));
+    const { activities } = build({ tokens });
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), input),
+    ).rejects.toThrow(/install-1/);
+  });
+
+  it("registers the minted token with the redactor before it is used", async () => {
+    const tokens = stubTokens("ghs_minted_secret_value");
+    const { activities, redactor } = build({ tokens });
+
+    await environment.run((value: PublishActivityInput) => activities.publish(value), input);
+
+    expect(redactor.redact("a line holding ghs_minted_secret_value")).not.toContain("ghs_minted_secret_value");
   });
 
   it("refuses a patch that names a file the review never saw, before any pull request call", async () => {

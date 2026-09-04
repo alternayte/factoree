@@ -153,7 +153,8 @@ beforeAll(async () => {
   runs = memoryRuns();
   const activities = createPublishingActivities({
     sandbox,
-    secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+    secrets: new MemorySecretStore({}),
+    tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
     redactor,
     runs,
     repositoryReader: reader,
@@ -191,6 +192,7 @@ beforeAll(async () => {
     workItemUrl: "https://linear.app/acme/issue/ENG-29",
     verificationSummary: VERIFICATION_SUMMARY,
     repairCount: 1,
+    githubInstallationId: "install-1",
   };
 
   first = await environment.run(
@@ -288,7 +290,8 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
     const runId = "at29-hostile-scheme";
     const activities = createPublishingActivities({
       sandbox,
-      secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+      secrets: new MemorySecretStore({}),
+      tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
       redactor,
       runs: memoryRuns(),
       repositoryReader: forbiddenRepositoryReader(),
