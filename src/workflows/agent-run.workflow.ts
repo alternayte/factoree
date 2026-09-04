@@ -359,6 +359,41 @@ const cancelActivities = proxyActivities<Activities>({
 // each attempt writes its own AgentExecution row.
 const FIRST_IMPLEMENTER_ATTEMPT = 1;
 
+/**
+ * Specification section 10. Matches a human reply against the ambiguous candidates by whole
+ * token, never by substring. `acme/checkout-api` must not match a reply that names
+ * `acme/checkout-api-gateway`. It returns null when no candidate matches. It also returns null
+ * when more than one candidate matches. A reply that resolves nothing must not guess.
+ */
+const matchReplyToCandidate = <T extends { fullName: string }>(
+  reply: string,
+  candidates: T[],
+): T | null => {
+  // Splits the reply on whitespace. It trims leading and trailing punctuation from each piece.
+  // A slash and a hyphen survive the trim, so `org/repo-name` stays one token.
+  const tokens = reply
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^\w/]+|[^\w/-]+$/g, ""))
+    .filter((token) => token.length > 0);
+
+  // A bare repository name resolves only when one candidate carries it. Two candidates that
+  // share a bare name make that name ambiguous, even when only one of them appears in the
+  // reply.
+  const bareNameOwners = new Map<string, number>();
+  for (const candidate of candidates) {
+    const bareName = candidate.fullName.split("/").at(-1) ?? candidate.fullName;
+    bareNameOwners.set(bareName, (bareNameOwners.get(bareName) ?? 0) + 1);
+  }
+
+  const matches = candidates.filter((candidate) => {
+    if (tokens.includes(candidate.fullName)) return true;
+    const bareName = candidate.fullName.split("/").at(-1) ?? candidate.fullName;
+    return tokens.includes(bareName) && bareNameOwners.get(bareName) === 1;
+  });
+
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+};
+
 export async function agentRunWorkflow(
   input: AgentRunWorkflowInput,
 ): Promise<AgentRunWorkflowResult> {
@@ -976,9 +1011,9 @@ export async function agentRunWorkflow(
           );
         }
         const reply = decisions[decisions.length - 1]?.answer ?? "";
-        const chosen = targetOutcome.candidates.find((candidate) => reply.includes(candidate.fullName));
+        const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
         targetOutcome =
-          chosen === undefined
+          chosen === null
             ? { kind: "ambiguous", candidates: targetOutcome.candidates }
             : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
       }

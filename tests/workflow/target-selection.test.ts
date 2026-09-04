@@ -18,6 +18,7 @@ const {
   targetIdentityCalls,
   postedErrors,
   completions,
+  elicitations,
 } = harness;
 
 beforeAll(async () => {
@@ -38,6 +39,21 @@ const completionsOf = (runId: string) => completions.filter((entry) => entry.run
 const twoRepositories = [
   { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null },
   { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+];
+
+/**
+ * Specification section 10. Two candidates whose full names prefix one another, for the reply
+ * parsing cases. A substring match would let the shorter name win a reply that names the
+ * longer one.
+ */
+const prefixRepositories = [
+  { id: "repository-checkout-api", fullName: "acme/checkout-api", defaultBranch: "main", absentSince: null },
+  {
+    id: "repository-checkout-api-gateway",
+    fullName: "acme/checkout-api-gateway",
+    defaultBranch: "main",
+    absentSince: null,
+  },
 ];
 
 describe("target selection and the RunTarget row", () => {
@@ -116,6 +132,58 @@ describe("target selection and the RunTarget row", () => {
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-ambiguous")).toEqual([
         expect.objectContaining({ repositoryId: "repository-web", mergeOrder: 1 }),
+      ]);
+    });
+  });
+
+  it("matches a reply naming the longer of two prefix-sharing candidates", async () => {
+    await runWorker(async () => {
+      const handle = await start("ses-target-prefix", {
+        product: { ...productInput, repositories: prefixRepositories },
+        repositoryProposal: null,
+      });
+      await waitForStatus(handle, "BLOCKED_TARGET");
+
+      await handle.signal(humanInputSignal, "use acme/checkout-api-gateway");
+
+      const result = await handle.result();
+      expect(result.status).not.toBe("BLOCKED_TARGET");
+      expect(targetsOf("run-ses-target-prefix")).toEqual([
+        expect.objectContaining({ repositoryId: "repository-checkout-api-gateway", mergeOrder: 1 }),
+      ]);
+    });
+  });
+
+  it("keeps the Run blocked when a reply matches no candidate by whole token", async () => {
+    await runWorker(async () => {
+      const handle = await start("ses-target-unmatched", {
+        product: { ...productInput, repositories: prefixRepositories },
+        repositoryProposal: null,
+      });
+      await waitForStatus(handle, "BLOCKED_TARGET");
+
+      // This reply names no candidate by whole token. `acme/checkout-api` is a substring of
+      // the longer name, not a token of this sentence. `acme/checkout-api-gatewayyy` is a typo
+      // that matches nothing exactly.
+      const questionsBefore = elicitations.length;
+      await handle.signal(humanInputSignal, "I want the acme/checkout-api-gatewayyy one");
+
+      // The workflow asks again, so the Run stayed blocked and made no selection from the
+      // unmatched reply.
+      await waitFor(
+        () => elicitations.length === questionsBefore + 1,
+        "the repeated target question of target-unmatched",
+      );
+      const blocked = await handle.query(runStatusQuery);
+      expect(blocked.status).toBe("BLOCKED_TARGET");
+      expect(targetsOf("run-ses-target-unmatched")).toEqual([]);
+
+      await handle.signal(humanInputSignal, "acme/checkout-api");
+
+      const result = await handle.result();
+      expect(result.status).not.toBe("BLOCKED_TARGET");
+      expect(targetsOf("run-ses-target-unmatched")).toEqual([
+        expect.objectContaining({ repositoryId: "repository-checkout-api", mergeOrder: 1 }),
       ]);
     });
   });
