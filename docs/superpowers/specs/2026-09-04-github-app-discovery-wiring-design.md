@@ -146,7 +146,30 @@ directly. Parsing is not, and this design never does it.
 ### Call sites
 
 `RepositoryDiscoveryClient`, `GitHubPullRequests`, the repository reader, and `checkout` stop
-taking a token. Each takes the provider and an installation id.
+taking a token. Each takes the provider and an installation id. The next subsection says where that id comes from.
+
+### Which installation a repository belongs to
+
+A Run holds a tenant and a target `Repository`. It does not hold an installation id, and a tenant
+can hold several `GitHubInstallation` rows. So nothing today tells `checkout` or publishing which
+installation to mint a token against.
+
+`Repository` gains one column:
+
+```prisma
+  // The installation that granted access to this repository. Discovery knows it at sync time.
+  // A clone or a push mints its token against this installation.
+  githubInstallationId String
+```
+
+Discovery sets it, because the webhook that triggers a sync names the installation. A migration
+adds the column. The product is not in production, so existing rows are removed rather than
+backfilled.
+
+This also bounds a failure. A repository whose installation is later removed keeps a column that
+names a dead installation, so the mint fails with a message naming it, rather than silently
+falling back to another installation of the same tenant. A fallback here would be the same guess
+the tenancy design exists to remove.
 
 ## 8. Webhook verification
 
