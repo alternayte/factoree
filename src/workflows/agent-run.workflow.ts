@@ -417,7 +417,13 @@ export async function agentRunWorkflow(
   // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
   // can record its per-target facts as they become known.
   let primaryRepositoryId = targetRepositories[0]?.id ?? "";
-  const referenceRepositorySlugs = targetRepositories.slice(1).map((repository) => repository.fullName);
+  // Specification section 12. A repository in the Product that is not the target is absent at
+  // start. It must reach an agent only through clone_sibling, which the Action Policy gates and
+  // which writes an evidence record. This list must therefore never take a value from Product
+  // membership. `Project.referenceRepositories` no longer exists (specification section 5,
+  // "Removed"); a legitimate reference repository now arrives as an ordinary context source
+  // (for example Backstage), a mechanism this list plays no part in.
+  const referenceRepositorySlugs: string[] = [];
   const defaultBranchForSlug = (slug: string) =>
     targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
 

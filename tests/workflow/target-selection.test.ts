@@ -19,6 +19,7 @@ const {
   postedErrors,
   completions,
   elicitations,
+  contextCalls,
 } = harness;
 
 beforeAll(async () => {
@@ -34,6 +35,7 @@ const targetsOf = (runId: string) => recordRunTargetCalls.filter((entry) => entr
 const noticesOf = (runId: string) => postTargetNoticeCalls.filter((entry) => entry.runId === runId);
 const identityCallsOf = (runId: string) => targetIdentityCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
+const contextCallsOf = (runId: string) => contextCalls.filter((entry) => entry.runId === runId);
 
 /** Specification section 10. Two present repositories of one Product, for the ambiguous cases. */
 const twoRepositories = [
@@ -108,6 +110,35 @@ describe("target selection and the RunTarget row", () => {
           reason: "the change is in the checkout form",
         }),
       ]);
+
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+  });
+
+  it("F1: passes no sibling as a referenceRepository to resolveContext at Run start", async () => {
+    // Specification section 12. A repository of the Product that is not the target is absent
+    // at start. It must reach an agent only through clone_sibling, which the Action Policy
+    // gates and which writes an evidence record. This test proves the eager path is closed: a
+    // Product with several member repositories must send resolveContext no sibling at all.
+    await runWorker(async () => {
+      const handle = await start("ses-target-no-eager-siblings", {
+        product: { ...productInput, repositories: twoRepositories },
+        repositoryProposal: {
+          fullName: "acme/web",
+          reason: "the change is in the checkout form",
+          confident: true,
+        },
+      });
+      await waitFor(
+        () => implementsOf("run-ses-target-no-eager-siblings").length === 1,
+        "the Implementer of target-no-eager-siblings",
+      );
+
+      const calls = contextCallsOf("run-ses-target-no-eager-siblings");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.referenceRepositories).toEqual([]);
+      expect(calls[0]?.primaryRepository.slug).toBe("acme/web");
 
       await handle.signal(stopSignal);
       await handle.result();
