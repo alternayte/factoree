@@ -98,8 +98,9 @@ export class SiblingActionDeniedError extends Error {
 }
 
 /**
- * Decides one sibling repository action. A clone is allowed only for a member repository of the
- * Run's Product. The membership check reads the actual member list, never a name pattern. A
+ * Decides one sibling repository action.
+ * The policy allows a clone only for a member repository of the Run's Product.
+ * The membership check reads the actual member list, never a name pattern. A
  * write to a sibling is always denied, because a sibling clone exists for read-only context
  * alone.
  */
