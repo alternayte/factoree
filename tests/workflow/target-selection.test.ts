@@ -216,39 +216,14 @@ describe("target selection and the RunTarget row", () => {
       // the longer name, not a token of this sentence. `acme/checkout-api-gatewayyy` is a typo
       // that matches nothing exactly.
       const questionsBefore = elicitations.length;
-      // TEMPORARY flake-investigation instrumentation. Revert with the rest of this commit.
-      // Records the observed length of the shared `elicitations` array on every poll, so a
-      // failure shows whether the count stalled, moved once, or jumped past the exact value
-      // the predicate names.
-      const observedLengths: Array<{ elapsedMs: number; length: number; questions: string[] }> = [];
-      const investigationStart = Date.now();
-      console.error(
-        `[flake-investigation] target-unmatched: questionsBefore=${questionsBefore}, ` +
-          `elicitations at capture=${JSON.stringify(elicitations)}`,
-      );
       await handle.signal(humanInputSignal, "I want the acme/checkout-api-gatewayyy one");
 
       // The workflow asks again. The Run stayed blocked. It made no selection from the
       // unmatched reply.
-      try {
-        await waitFor(
-          () => elicitations.length === questionsBefore + 1,
-          "the repeated target question of target-unmatched",
-          undefined,
-          () => {
-            observedLengths.push({
-              elapsedMs: Date.now() - investigationStart,
-              length: elicitations.length,
-              questions: [...elicitations],
-            });
-            return { length: elicitations.length, questions: [...elicitations] };
-          },
-        );
-      } finally {
-        console.error(
-          `[flake-investigation] target-unmatched: transitions=${JSON.stringify(observedLengths.filter((entry, index) => index === 0 || observedLengths[index - 1]?.length !== entry.length))}`,
-        );
-      }
+      await waitFor(
+        () => elicitations.length === questionsBefore + 1,
+        "the repeated target question of target-unmatched",
+      );
       const blocked = await handle.query(runStatusQuery);
       expect(blocked.status).toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-unmatched")).toEqual([]);

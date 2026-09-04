@@ -932,19 +932,13 @@ export const waitForStatus = async (
 /**
  * Polls until the predicate holds. It lets the workflow reach a step before the test signals.
  *
- * The test environment skips virtual time, but a real Temporal Worker still dispatches each
- * activity through an actual poll, execute, and report cycle over a native connection. Under
- * `npm run verify`, the workflow suite runs after the build and the integration suite, so the
- * machine can still carry load from those steps. No in-process signal reports that dispatch as
- * done sooner than the activity call itself completes. The wait needs a wall-clock budget
- * wide enough to absorb that contention. `testTimeout` in `vitest.workflow.config.ts` is
- * 180 seconds, so this default still fails fast well inside one test case.
- */
-/**
- * TEMPORARY instrumentation for the flake investigation of the "keeps the Run blocked when a
- * reply matches no candidate by whole token" case. Revert this whole commit once the
- * investigation report is filed. The `describe` callback, when given, reports a value the
- * timeout message can print, so a failure shows the observed state rather than only the label.
+ * A real Temporal Worker dispatches each activity through an actual poll, execute, and report
+ * cycle over a native connection, and that dispatch can starve entirely under CPU contention.
+ * Instrumentation confirmed this: under deliberate oversubscription, a stalled wait polled
+ * about 2200 times across its whole budget with zero movement in the watched value. Widening
+ * this budget does not fix that. A failure here points at contention on the machine, not at a
+ * defect in the workflow under test. `testTimeout` in `vitest.workflow.config.ts` is 180
+ * seconds, so this default still fails fast well inside one test case.
  */
 export const waitFor = async (
   predicate: () => boolean | Promise<boolean>,
@@ -955,20 +949,14 @@ export const waitFor = async (
   const deadline = Date.now() + timeoutMs;
   let pollCount = 0;
   let lastObserved: unknown;
-  const observedSamples: unknown[] = [];
   while (!(await predicate())) {
     pollCount += 1;
     if (describe) {
       lastObserved = await describe();
-      // Keep a bounded trace of the most recent 50 samples, so a long stall does not grow this
-      // array without bound while the transition point near the end stays visible.
-      observedSamples.push(lastObserved);
-      if (observedSamples.length > 50) observedSamples.shift();
     }
     if (Date.now() > deadline) {
       const detail = describe
-        ? ` (polled ${pollCount} times; last observed value: ${JSON.stringify(lastObserved)}; ` +
-          `recent sample trace: ${JSON.stringify(observedSamples)})`
+        ? ` (polled ${pollCount} times; last observed value: ${JSON.stringify(lastObserved)})`
         : ` (polled ${pollCount} times)`;
       throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}${detail}`);
     }
