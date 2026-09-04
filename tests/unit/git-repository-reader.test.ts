@@ -107,4 +107,24 @@ describe("GitRepositoryReader credential minting", () => {
     expect(second).toBe("x-access-token:ghs_111_2");
     expect(second).not.toBe(first);
   });
+
+  it("mints a read-only scope, never a write scope. Ruling 2 forbids a write credential here", async () => {
+    calls.length = 0;
+    const scopes: Array<Record<string, string> | undefined> = [];
+    const reader = new GitRepositoryReader();
+    reader.useCredential(
+      "https://example.test",
+      {
+        tokenForInstallation: (id: string, scope?: Record<string, string>) => {
+          scopes.push(scope);
+          return Promise.resolve(`ghs_${id}`);
+        },
+      },
+      "111",
+    );
+
+    await reader.resolveRef("https://example.test/o/r.git", "main");
+
+    expect(scopes).toEqual([{ contents: "read" }]);
+  });
 });

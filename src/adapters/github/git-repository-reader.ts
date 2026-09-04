@@ -142,7 +142,9 @@ export class GitRepositoryReader implements RepositoryReader {
     }
     const source = this.credentialSources.get(origin);
     if (source === undefined) return {};
-    const token = await source.tokens.tokenForInstallation(source.githubInstallationId);
+    // Read-only. SDD section 30 forbids a write credential here, and this class holds no write
+    // path to ask for one.
+    const token = await source.tokens.tokenForInstallation(source.githubInstallationId, { contents: "read" });
     return credentialEnvironment(`${origin}/`, token);
   }
 

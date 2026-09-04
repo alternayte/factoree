@@ -16,7 +16,13 @@ import { MemorySecretStore } from "../support/memory-secret-store.js";
 const PRIMARY_URL = "https://git/acme/webhook-service";
 const SHA_A = "a".repeat(40);
 
-const build = (files: Record<string, string>, secrets = new MemorySecretStore()) => {
+const build = (
+  files: Record<string, string>,
+  secrets = new MemorySecretStore(),
+  tokens: { tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string> } = {
+    tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
+  },
+) => {
   const reader = new FakeRepositoryReader({ [PRIMARY_URL]: { sha: SHA_A, files } });
   const contracts = new FakeContextContractStore();
   const versions: Array<{ tenantId: string; runId: string; version: string }> = [];
@@ -42,6 +48,7 @@ const build = (files: Record<string, string>, secrets = new MemorySecretStore())
     },
     repositoryReader: reader,
     secrets,
+    tokens,
   });
   return { activities, contracts, versions, reader };
 };
@@ -56,6 +63,7 @@ const input = (over: Partial<ResolveContextActivityInput> = {}): ResolveContextA
   referenceRepositories: [],
   workItemReferences: [],
   decisions: [],
+  githubInstallationId: "",
   ...over,
 });
 
@@ -233,17 +241,15 @@ describe("resolveContext activity", () => {
 
 describe("resolveContext, the private repository credential", () => {
   it("gives the reader the credential for the primary repository origin", async () => {
-    const secrets = new MemorySecretStore({
-      GITHUB_READ_TOKEN: { value: "read-value", injectIntoImplementer: false, kind: "repository_read" },
-    });
-    const { activities, reader } = build({}, secrets);
+    const tokens = { tokenForInstallation: () => Promise.resolve("ghs_context_read_token") };
+    const { activities, reader } = build({}, new MemorySecretStore(), tokens);
 
-    await activities.resolveContext(input());
+    await activities.resolveContext(input({ githubInstallationId: "install-1" }));
 
     expect(reader.credentialOrigins).toEqual(["https://git"]);
   });
 
-  it("gives the reader no credential when the Project holds none", async () => {
+  it("gives the reader no credential when the repository holds no installation", async () => {
     const { activities, reader } = build({});
 
     await activities.resolveContext(input());

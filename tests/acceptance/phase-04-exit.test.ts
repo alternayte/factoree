@@ -68,6 +68,9 @@ beforeAll(async () => {
     },
     repositoryReader: reader,
     secrets: new MemorySecretStore(),
+    tokens: {
+      tokenForInstallation: () => Promise.reject(new Error("this fixture reads a local path, so no mint runs")),
+    },
   });
   harness.activities.resolveContext = (input) => contextActivities.resolveContext(input);
 

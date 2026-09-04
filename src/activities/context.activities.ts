@@ -13,7 +13,7 @@ import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
-import { loadRepositoryReadToken } from "~/domain/projects/runner-credentials.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 
 export interface ResolveContextActivityInput {
@@ -26,6 +26,8 @@ export interface ResolveContextActivityInput {
   referenceRepositories: RepositoryRef[];
   workItemReferences: string[];
   decisions: RecordedDecision[];
+  /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface ResolveContextActivityOutput {
@@ -56,6 +58,8 @@ export interface ContextActivityDependencies {
   sources: ContextSourceProvider;
   repositoryReader: RepositoryReader;
   secrets: SecretStore;
+  /** Mints the read-only credential of the primary repository origin, scoped to `contents: read`. */
+  tokens: GitHubTokenProvider;
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
@@ -73,6 +77,8 @@ export interface VerifyTargetIdentityActivityInput {
   productSlug: string;
   repositoryUrl: string;
   baseSha: string;
+  /** The GitHub App installation that grants the target repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface VerifyTargetIdentityActivityOutput {
@@ -96,22 +102,15 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     // SDD section 30. Discovery reads the repository on the worker, before a sandbox exists, so a
     // private repository needs the read-only credential here as well as in the checkout. The
-    // credential is set per Run, because a Project can rotate its token between two Runs.
-    const repositoryCredential = await loadRepositoryReadToken(
-      dependencies.secrets,
-      input.tenantId,
-      input.productId,
-    );
-    if (repositoryCredential !== null) {
+    // installation id names the source of the credential, and a Project can move a repository
+    // between two installations between two Runs, so this activity reads the id fresh every time.
+    if (input.githubInstallationId !== "") {
       try {
-        // Task 6 threads the real per-installation `GitHubTokenProvider` here. Until then this
-        // Project secret stays the sole credential, so the installation id below selects
-        // nothing and is never read by the provider it wraps.
-        dependencies.repositoryReader.useCredential(
-          new URL(input.primaryRepository.url).origin,
-          { tokenForInstallation: () => Promise.resolve(repositoryCredential) },
-          "",
-        );
+        const origin = new URL(input.primaryRepository.url).origin;
+        // The provider mints on demand, immediately before the git command that spends the
+        // token, so no token outlives the single command. The scope stays read-only. SDD
+        // section 30 forbids a write credential here, and this path never asks for one.
+        dependencies.repositoryReader.useCredential(origin, dependencies.tokens, input.githubInstallationId);
       } catch {
         // A local path carries no origin, and it needs no credential either.
       }
@@ -248,20 +247,10 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
   async verifyTargetIdentity(
     input: VerifyTargetIdentityActivityInput,
   ): Promise<VerifyTargetIdentityActivityOutput> {
-    const repositoryCredential = await loadRepositoryReadToken(
-      dependencies.secrets,
-      input.tenantId,
-      input.productId,
-    );
-    if (repositoryCredential !== null) {
+    if (input.githubInstallationId !== "") {
       try {
-        // See the same note in resolveContext above: Task 6 supplies the real provider and
-        // installation id, and this identifier is inert until then.
-        dependencies.repositoryReader.useCredential(
-          new URL(input.repositoryUrl).origin,
-          { tokenForInstallation: () => Promise.resolve(repositoryCredential) },
-          "",
-        );
+        const origin = new URL(input.repositoryUrl).origin;
+        dependencies.repositoryReader.useCredential(origin, dependencies.tokens, input.githubInstallationId);
       } catch {
         // A local path carries no origin, and it needs no credential either.
       }
