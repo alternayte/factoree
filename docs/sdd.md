@@ -2191,9 +2191,9 @@ A configured test MCP source can supply a Context Candidate with provenance.
 
 Repository and organization skills are discovered without silent name overwrite.
 
-### AT-38 — Team routing
+### AT-38 — Team key resolution
 
-A Linear team key resolves to exactly one Product. The Product id stays inside Factoree and never reaches the caller.
+A caller supplies a Linear team key. A caller MUST NOT supply a Linear team id. Factoree resolves the key to an id once. It stores both. Routing then resolves by the stored id.
 
 ### AT-39 — Ambiguous team
 
@@ -2209,7 +2209,7 @@ A repository whose configuration names an unknown product slug creates a pending
 
 ### AT-42 — Confident target
 
-A Run with one confident repository proposal among several Product members proceeds, and Factoree posts a Linear notice that names the chosen repository.
+A Run with one confident repository proposal among several Product members proceeds. Factoree posts a Linear notice that names the chosen repository.
 
 ### AT-43 — Ambiguous target
 
@@ -2219,15 +2219,15 @@ A Run with no confident repository proposal among several Product members blocks
 
 ### AT-46 — Sibling clone
 
-The Implementer clones a sibling repository of the same Product read-only, outside the primary working tree, and Factoree writes an evidence record naming the repository, the commit, and the role.
+The Implementer clones a sibling repository of the same Product read-only, outside the primary working tree. Factoree writes an evidence record naming the repository, the commit, and the role.
 
 ### AT-47 — Sibling clone denied
 
-A clone request for a repository outside the Product is denied. Factoree clones nothing and writes no evidence record.
+A clone request for a repository outside the Product is denied. Factoree clones nothing. It writes no evidence record.
 
 ### AT-48 — Team key rename
 
-A Linear team key rename keeps the existing Product, because the team id is stable. Factoree stores the new key and reports the drift.
+A Linear team key rename keeps the existing Product, because the team id is stable. Factoree stores the new key. It reports the drift.
 
 ---
 
