@@ -60,7 +60,13 @@ import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-t
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
 
 const env = loadEnv();
-const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
+const redactor = new Redactor([
+  env.ADMIN_API_TOKEN,
+  env.LINEAR_WEBHOOK_SECRET,
+  env.FACTOREE_SECRET_KEY,
+  env.GITHUB_APP_PRIVATE_KEY,
+  env.GITHUB_WEBHOOK_SECRET,
+]);
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
