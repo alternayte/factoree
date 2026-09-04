@@ -13,10 +13,9 @@ import {
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
 import { buildServer } from "~/http/server.js";
-import { createLinearTeamLookup } from "~/adapters/linear/team-lookup.js";
-import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
+import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 
 const env = loadEnv();
 const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
@@ -52,22 +51,12 @@ const linearTokens = new LinearTokenProvider({
   logger,
 });
 
-// The Products administration route resolves a team key by tenant. A tenant id does not carry
-// its Linear workspace id. This reads the tenant row once, then builds a client with the token
-// of that workspace. `LinearTeamLookupClient` holds one token per instance, so a fresh instance
-// serves each call.
-const linearTeams: LinearTeamLookup = {
-  async resolveTeamKey(tenantId, teamKey) {
-    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
-    const token = await linearTokens.tokenFor(tenant.linearWorkspaceId);
-    return createLinearTeamLookup(token).resolveTeamKey(tenantId, teamKey);
-  },
-  async resolveTeamId(tenantId, teamId) {
-    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
-    const token = await linearTokens.tokenFor(tenant.linearWorkspaceId);
-    return createLinearTeamLookup(token).resolveTeamId(tenantId, teamId);
-  },
-};
+// The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`
+// reads the workspace id of that tenant, then asks `linearTokens` for its access token.
+const linearTeams = new TenantScopedLinearTeamLookup(
+  { linearWorkspaceIdFor: async (tenantId) => (await prisma.tenant.findUnique({ where: { id: tenantId } }))?.linearWorkspaceId ?? null },
+  linearTokens,
+);
 
 const app = buildServer({
   env,
