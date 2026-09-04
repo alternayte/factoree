@@ -7,7 +7,14 @@ const base = {
   ADMIN_API_TOKEN: "a".repeat(32),
   LINEAR_WEBHOOK_SECRET: "webhook-secret",
   SPRITES_TOKEN: "sprites-token",
+  GITHUB_APP_ID: "123456",
+  GITHUB_APP_PRIVATE_KEY: Buffer.from(
+    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  ).toString("base64"),
+  GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
 };
+
+const validEnv = () => ({ ...base });
 
 describe("loadEnv", () => {
   it("applies the documented defaults", () => {
@@ -77,5 +84,23 @@ describe("loadEnv", () => {
 
   it("rejects an unknown evidence storage adapter", () => {
     expect(() => loadEnv({ ...base, EVIDENCE_STORAGE: "s3" })).toThrow();
+  });
+
+  it("requires the three GitHub App values", () => {
+    const base = validEnv();
+    expect(() => loadEnv({ ...base, GITHUB_APP_ID: undefined })).toThrow();
+    expect(() => loadEnv({ ...base, GITHUB_APP_PRIVATE_KEY: undefined })).toThrow();
+    expect(() => loadEnv({ ...base, GITHUB_WEBHOOK_SECRET: undefined })).toThrow();
+  });
+
+  it("rejects a private key that is not base64", () => {
+    expect(() => loadEnv({ ...validEnv(), GITHUB_APP_PRIVATE_KEY: "not base64!" })).toThrow();
+  });
+
+  it("accepts a base64 private key", () => {
+    const pem = Buffer.from("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n").toString(
+      "base64",
+    );
+    expect(loadEnv({ ...validEnv(), GITHUB_APP_PRIVATE_KEY: pem }).GITHUB_APP_PRIVATE_KEY).toBe(pem);
   });
 });

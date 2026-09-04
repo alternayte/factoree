@@ -26,6 +26,17 @@ const schema = z.object({
   GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),
   FACTOREE_GIT_AUTHOR_NAME: z.string().min(1).default("Factoree"),
   FACTOREE_GIT_AUTHOR_EMAIL: z.string().email().default("factoree@users.noreply.github.com"),
+  // SDD section 30. The App identity. Factoree signs a short JWT with the private key. It
+  // exchanges that JWT for a token scoped to one installation. The token reads a repository
+  // before Factoree knows which Product the repository names.
+  GITHUB_APP_ID: z.string().min(1),
+  // A PEM holds several lines. An environment file carries one line reliably, so the value is
+  // base64. Factoree decodes it at load. Nothing reaches the filesystem.
+  GITHUB_APP_PRIVATE_KEY: z
+    .string()
+    .min(1)
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/, "must be base64 with no line break"),
+  GITHUB_WEBHOOK_SECRET: z.string().min(1),
 }).refine((value) => value.SANDBOX_ADAPTER !== "fly-sprites" || value.SPRITES_TOKEN !== undefined, {
   message: "SPRITES_TOKEN is required when SANDBOX_ADAPTER is fly-sprites",
   path: ["SPRITES_TOKEN"],

@@ -45,6 +45,11 @@ const env = {
   FACTOREE_SECRET_KEY: "d".repeat(64),
   ADMIN_API_TOKEN: "t".repeat(32),
   LINEAR_WEBHOOK_SECRET: secret,
+  GITHUB_APP_ID: "123456",
+  GITHUB_APP_PRIVATE_KEY: Buffer.from(
+    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  ).toString("base64"),
+  GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
   TEMPORAL_ADDRESS: "localhost:7233",
   TEMPORAL_NAMESPACE: "default",
   TEMPORAL_TASK_QUEUE: "factoree-at01",
