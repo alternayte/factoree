@@ -40,7 +40,7 @@ import { buildWorkflowId } from "../temporal/workflow-id.js";
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { buildRepositoryUrl } from "../domain/projects/repository-url.js";
+import { buildRepositoryUrl } from "../domain/products/repository-url.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { renderRisks } from "../domain/refinement/risk.js";

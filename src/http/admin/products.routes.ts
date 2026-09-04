@@ -8,7 +8,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS, ProjectSecretKindError } from "~/domain/products/secret-store.js";
-import { assertRunnerCredential, RunnerCredentialError } from "~/domain/projects/runner-credentials.js";
+import { assertRunnerCredential, RunnerCredentialError } from "~/domain/products/runner-credentials.js";
 
 const createSchema = z
   .object({

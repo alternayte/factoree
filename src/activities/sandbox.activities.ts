@@ -11,10 +11,10 @@ import type {
 } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
-import { loadRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import type { Redactor } from "~/telemetry/redaction.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { assertKnownRunners } from "~/domain/runs/agent-runner.js";

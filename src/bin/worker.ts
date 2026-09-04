@@ -53,7 +53,7 @@ import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
-import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";

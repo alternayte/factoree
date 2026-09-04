@@ -1,4 +1,4 @@
-import { assertRepositorySlug } from "~/domain/projects/repository-url.js";
+import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import type {
   CreatePullRequestInput,
   PullRequestPort,

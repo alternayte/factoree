@@ -1,6 +1,6 @@
 import type { LinearTeamLookup } from "./team-lookup.js";
 import { createLinearTeamLookup } from "./team-lookup.js";
-import type { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import type { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 
 /**
  * Reads the Linear workspace id of a tenant. The Products administration route holds a tenant

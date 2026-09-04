@@ -3,7 +3,7 @@ import {
   assertRunnerCredential,
   loadRunnerEnvironment,
   RunnerCredentialError,
-} from "~/domain/projects/runner-credentials.js";
+} from "~/domain/products/runner-credentials.js";
 import {
   RUN_CONFIGURATION_ERROR_TYPE,
   RunConfigurationError,

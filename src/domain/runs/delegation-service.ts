@@ -23,7 +23,7 @@ import type {
   AgentRunWorkflowInput,
 } from "~/workflows/agent-run.workflow.js";
 import { resolveProduct } from "~/domain/routing/resolve-product.js";
-import { assertRepositorySlug } from "~/domain/projects/repository-url.js";
+import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 
 export interface WorkflowStarter {

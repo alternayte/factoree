@@ -13,7 +13,7 @@ import {
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { createSyncInstallationStarter, createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
 import { buildServer } from "~/http/server.js";
-import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";

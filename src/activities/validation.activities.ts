@@ -19,12 +19,12 @@ import type { HttpValidationFetch } from "~/domain/validation/http-validation.js
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
 import { runUserValidation } from "~/domain/validation/user-validator.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
-import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 
 export interface BuildValidationContractActivityInput {
   runId: string;

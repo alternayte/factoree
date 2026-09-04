@@ -13,7 +13,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { Redactor } from "~/telemetry/redaction.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import {
   hashProofPack,
   renderProofPack,

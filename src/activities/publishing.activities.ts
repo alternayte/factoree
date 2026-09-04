@@ -2,8 +2,8 @@ import { ApplicationFailure } from "@temporalio/activity";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
-import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
+import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
 import {
