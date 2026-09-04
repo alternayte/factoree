@@ -10,6 +10,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentRunner } from "~/domain/runs/agent-runner.js";
 
@@ -255,6 +256,44 @@ describe("the prepareSandbox activity and the minted clone credential", () => {
     expect(redactor.redact("a line holding ghs_minted_clone_secret_value")).not.toContain(
       "ghs_minted_clone_secret_value",
     );
+  });
+
+  it("converts a deterministic mint failure of the clone credential into a configuration fault", async () => {
+    const tokens = {
+      tokenForInstallation: (): Promise<string> =>
+        Promise.reject(
+          new GitHubAppAuthError("the GitHub API answered 401 for installation install-1", 401, "install-1"),
+        ),
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    const error = await activities
+      .prepareSandbox({ ...input, githubInstallationId: "install-1" })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    // The workflow recognises a configuration fault only by this class, so a mint rejected at
+    // the clone must map to it, exactly as a mint rejected at publish already does.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+  });
+
+  it("keeps a 5xx mint failure of the clone credential retryable", async () => {
+    const tokens = {
+      tokenForInstallation: (): Promise<string> =>
+        Promise.reject(
+          new GitHubAppAuthError("the GitHub API answered 500 for installation install-1", 500, "install-1"),
+        ),
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    const error = await activities
+      .prepareSandbox({ ...input, githubInstallationId: "install-1" })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GitHubAppAuthError);
+    expect(error).not.toBeInstanceOf(RunConfigurationError);
   });
 });
 

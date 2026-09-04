@@ -13,6 +13,7 @@ import type { RepositorySpec } from "~/domain/runs/checkout.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
@@ -118,10 +119,22 @@ const prepare = async (
   // mints it fresh for this one preparation, scoped to `contents: read`, so the credential this
   // sandbox receives can never push. An empty installation id means the repository carries no
   // GitHub App installation. Factoree then mints no credential.
-  const repositoryCredential =
-    input.githubInstallationId === ""
-      ? null
-      : await dependencies.tokens.tokenForInstallation(input.githubInstallationId, { contents: "read" });
+  let repositoryCredential: string | null;
+  if (input.githubInstallationId === "") {
+    repositoryCredential = null;
+  } else {
+    try {
+      repositoryCredential = await dependencies.tokens.tokenForInstallation(input.githubInstallationId, {
+        contents: "read",
+      });
+    } catch (error) {
+      // A rejected mint of the clone credential is a configuration fault, not an
+      // infrastructure fault, so it must map to the same `RunConfigurationError` the publish
+      // activity produces. `~/domain/runs/github-app-auth-fault.js` holds the single conversion
+      // every mint site applies.
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
+  }
   if (repositoryCredential !== null) dependencies.redactor.addSecret(repositoryCredential);
 
   const prepared = await dependencies.sandboxManager.prepare({

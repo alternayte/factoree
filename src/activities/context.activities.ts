@@ -16,6 +16,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 
 export interface ResolveContextActivityInput {
   runId: string;
@@ -140,28 +141,40 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     // SDD section 15 and controller decision 2. The `context` block governs discovery, and
     // discovery runs before the sandbox exists, so the file is read at the pinned primary SHA.
-    const contextConfiguration = await readRepositoryContextConfiguration(
-      dependencies.repositoryReader,
-      input.primaryRepository.url,
-      input.primaryRepository.ref,
-    );
-    const sources = await dependencies.sources.sourcesFor({
-      tenantId: input.tenantId,
-      productId: input.productId,
-      contextConfiguration,
-    });
+    //
+    // Discovery reads the repository through the credential `useCredential` registered above, so
+    // a rejected mint of that credential surfaces from one of these calls, not from the mint
+    // call itself. A deterministic rejection must map to the identical `RunConfigurationError`
+    // every other mint site produces, so this block converts it here.
+    let contextConfiguration;
+    let sources;
+    let resolved;
+    try {
+      contextConfiguration = await readRepositoryContextConfiguration(
+        dependencies.repositoryReader,
+        input.primaryRepository.url,
+        input.primaryRepository.ref,
+      );
+      sources = await dependencies.sources.sourcesFor({
+        tenantId: input.tenantId,
+        productId: input.productId,
+        contextConfiguration,
+      });
 
-    const resolved = await dependencies.resolver.resolve({
-      runId: input.runId,
-      goal: input.goal,
-      acceptanceCriteria: input.acceptanceCriteria,
-      primaryRepository: input.primaryRepository,
-      referenceRepositories: input.referenceRepositories,
-      workItemReferences: input.workItemReferences,
-      decisions: input.decisions,
-      sources,
-      contextConfiguration,
-    });
+      resolved = await dependencies.resolver.resolve({
+        runId: input.runId,
+        goal: input.goal,
+        acceptanceCriteria: input.acceptanceCriteria,
+        primaryRepository: input.primaryRepository,
+        referenceRepositories: input.referenceRepositories,
+        workItemReferences: input.workItemReferences,
+        decisions: input.decisions,
+        sources,
+        contextConfiguration,
+      });
+    } catch (error) {
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
 
     // SDD section 21 freezes the Context Contract. SDD section 23 forbids a start of
     // implementation while a conflict is unresolved. A contract that still holds an unresolved
@@ -282,11 +295,19 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       }
     }
 
-    const text = await dependencies.repositoryReader.readBlob(
-      input.repositoryUrl,
-      input.baseSha,
-      FACTOREE_CONFIG_PATH,
-    );
+    // The read spends the credential `useCredential` registered above, so a rejected mint
+    // surfaces from this call. It must map to the identical `RunConfigurationError` every other
+    // mint site produces.
+    let text: string | null;
+    try {
+      text = await dependencies.repositoryReader.readBlob(
+        input.repositoryUrl,
+        input.baseSha,
+        FACTOREE_CONFIG_PATH,
+      );
+    } catch (error) {
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
 
     // A repository that carries no file, or an unparsable file, makes no claim about its
     // Product. Section 15 already enforces the file's validity elsewhere, so this check only

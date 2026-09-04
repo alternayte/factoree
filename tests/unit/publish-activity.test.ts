@@ -298,6 +298,24 @@ describe("the publish activity", () => {
     expect(String(error)).toContain("install-1");
   });
 
+  it("converts a 422 mint failure into a configuration fault naming the permission problem", async () => {
+    const tokens = stubTokens(
+      new GitHubAppAuthError("the GitHub API answered 422 for installation install-1", 422, "install-1"),
+    );
+    const { activities } = build({ tokens });
+
+    const error = await environment
+      .run((value: PublishActivityInput) => activities.publish(value), input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    // A 422 means the installation does not grant a requested permission, not that the
+    // installation is missing, so the message must point the operator at the App's permissions.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+    expect(String(error)).toMatch(/permission/i);
+  });
+
   it("keeps a 5xx mint failure retryable, because a retry can still succeed", async () => {
     const tokens = stubTokens(
       new GitHubAppAuthError("the GitHub API answered 500 for installation install-1", 500, "install-1"),

@@ -1,7 +1,6 @@
 import { ApplicationFailure } from "@temporalio/activity";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
-import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
@@ -24,6 +23,7 @@ import {
   TrustedCheckoutError,
 } from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -148,15 +148,6 @@ const assertHttpsRepositoryUrl = (plainUrl: string): void => {
 };
 
 /**
- * Reports whether a `GitHubAppAuthError` names a fault of the request itself, not a temporary
- * infrastructure fault. A 401 and a 403 mean the installation, or its grant, is wrong. A 404
- * means the installation id names nothing GitHub knows. All three repeat on every retry. A 5xx
- * and a network failure carry no such status. Both stay retryable.
- */
-const isDeterministicGitHubAppAuthError = (error: GitHubAppAuthError): boolean =>
-  error.status === 401 || error.status === 403 || error.status === 404;
-
-/**
  * SDD section 49. A semantic publication failure must not consume the Temporal retry policy. A
  * retry repeats the same fault. A network failure and a GitHub 500 stay retryable, so this
  * function converts a deterministic failure only. The message passes through the redactor first.
@@ -184,17 +175,10 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
   // A rejected mint of the write credential is a configuration fault, not an infrastructure
   // fault: an operator must repair the GitHub App installation, not wait for a retry. The class
   // is `RunConfigurationError`, so the workflow recognises it the same way it recognises every
-  // other configuration fault. The message names the installation, never the key.
-  if (error instanceof GitHubAppAuthError && isDeterministicGitHubAppAuthError(error)) {
-    return new RunConfigurationError(
-      redactor.redactText(
-        `Factoree could not mint a GitHub credential for installation ${error.githubInstallationId}: ` +
-          `the GitHub API answered ${String(error.status)}. Install the Factoree GitHub App on the ` +
-          "target repository, or repair the existing installation, then retry the Run.",
-      ),
-    );
-  }
-  return error;
+  // other configuration fault. The message names the installation, never the key. The shared
+  // module of `~/domain/runs/github-app-auth-fault.js` holds this conversion, so every mint site
+  // applies the identical rule.
+  return asRunConfigurationErrorIfDeterministic(redactor, error);
 };
 
 /** SDD section 44, section 45, and section 46. */
