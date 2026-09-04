@@ -66,14 +66,18 @@ app settings of the test workspace.
 
     just bootstrap
 
-The command reads `.env` and does five calls against the API. It registers
-the Linear installation, creates the Tenant and the Project, stores the
-`GITHUB_TOKEN` Project secret, and registers the Backstage row and the MCP
-row. It prints the new Project ID.
+The command reads `.env` and does several calls against the API. It
+registers the Linear installation, creates the Tenant and the Product, binds
+the GitHub installation, stores the `GITHUB_TOKEN` Product secret, and
+registers the Backstage row and the MCP row. It prints the new Product ID.
+
+Bootstrap does not create a Repository row. Discovery creates it from the
+`.factoree/config.yaml` file of the fixture repository, when the GitHub App
+reports the repository push to Factoree.
 
 The two context source rows point at the local stubs of `just stubs`. You
 need no real Backstage instance and no real MCP server for this path.
-`tests/live/scenario.ts` refuses to start unless the Project carries one
+`tests/live/scenario.ts` refuses to start unless the Product carries one
 enabled `backstage` row and one enabled `mcp` row, and the stubs answer both.
 To point the rows at a real catalog and a real MCP source instead, set
 `SETUP_BACKSTAGE_URL` and `SETUP_MCP_URL` in `.env`.
@@ -82,18 +86,18 @@ An `mcp` row must name two tools. `SETUP_MCP_DISCOVER_TOOL` and
 `SETUP_MCP_FETCH_TOOL` hold them, and default to `search` and `fetch`. The
 local stub answers any tool name, so the defaults work.
 
-The command is safe to run again. It reuses a Project that already carries
-the same key, and it overwrites the other four records.
+The command is safe to run again. It reuses a Product that already carries
+the same slug, and it overwrites the other records.
 
 ## 4b. Paid models and private repositories
 
-Both need a Project secret with the right kind. `just bootstrap` writes the
+Both need a Product secret with the right kind. `just bootstrap` writes the
 `GITHUB_TOKEN` secret for you. Add the other two by hand.
 
 A model provider credential, for opencode Zen, DeepSeek, or Anthropic:
 
     curl -sS -X PUT \
-      "$API_BASE/admin/projects/$PROJECT_ID/secrets/OPENCODE_API_KEY?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
+      "$API_BASE/admin/products/$PRODUCT_ID/secrets/OPENCODE_API_KEY?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
       -H "Authorization: Bearer $ADMIN_API_TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"value": "<THE KEY>", "kind": "runner_credential"}'
@@ -105,7 +109,7 @@ nothing else. It never enters a prompt.
 A read-only repository credential, for a private repository:
 
     curl -sS -X PUT \
-      "$API_BASE/admin/projects/$PROJECT_ID/secrets/GITHUB_READ_TOKEN?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
+      "$API_BASE/admin/products/$PRODUCT_ID/secrets/GITHUB_READ_TOKEN?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
       -H "Authorization: Bearer $ADMIN_API_TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"value": "<THE TOKEN>", "kind": "repository_read"}'
@@ -117,7 +121,7 @@ Do not set `injectIntoImplementer` on either secret. The API refuses the
 combination, because SDD section 30 permits the mark on a `test` secret only.
 
 Free models need no credential at all. opencode answers with its own
-`opencode/big-pickle` model when the Project holds no runner credential.
+`opencode/big-pickle` model when the Product holds no runner credential.
 
 ## 4c. Keep the Linear token alive
 
@@ -169,7 +173,7 @@ carry `Bearer <ADMIN_API_TOKEN>`. `just bootstrap` reads the value from
 
 **Publication fails with "The Project holds no secret named GITHUB_TOKEN".**
 `SETUP_GITHUB_TOKEN` was empty when you ran `just bootstrap`. Fill it and run
-the `PUT /admin/projects/:id/secrets/GITHUB_TOKEN` call again.
+the `PUT /admin/products/:id/secrets/GITHUB_TOKEN` call again.
 
 **Factoree never comments in Linear.** The Linear installation record is
 absent or carries a wrong token. Run `just bootstrap` again, or repeat the

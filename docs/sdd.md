@@ -1647,12 +1647,12 @@ Tenant boundary:
 Linear workspace
 ```
 
-A Run MUST reference one tenant and one Project.
+A Run MUST reference one tenant and one Product.
 
 Factoree MUST NOT:
 
-- reuse mutable sandboxes across Projects;
-- use another Project's secrets;
+- reuse mutable sandboxes across Products;
+- use another Product's secrets;
 - search another tenant's context sources;
 - expose another tenant's evidence.
 
@@ -1667,10 +1667,13 @@ Required entities:
 ```text
 Tenant
 LinearInstallation
-Project
-ProjectSecret
+GitHubInstallation
+Product
+Repository
+ProductSecret
 ContextSourceConfiguration
 Run
+RunTarget
 ContextContract
 ContextItem
 ContextConflict
@@ -1686,7 +1689,7 @@ Critical Run fields:
 
 ```text
 id
-project_id
+product_id
 linear_issue_id
 linear_agent_session_id
 temporal_workflow_id
@@ -1816,23 +1819,31 @@ Required endpoints:
 GET  /healthz
 GET  /readyz
 
-POST   /admin/projects
-GET    /admin/projects
-GET    /admin/projects/:id
-PUT    /admin/projects/:id
-DELETE /admin/projects/:id
+PUT /admin/linear-installations
+PUT /admin/github-installations
 
-PUT    /admin/projects/:id/secrets/:name
-DELETE /admin/projects/:id/secrets/:name
+POST /admin/products
+GET  /admin/products
+GET  /admin/products/:id
+PUT  /admin/products/:id
+POST /admin/products/:id/activate
+GET  /admin/products/:id/repositories
 
-POST   /admin/projects/:id/context-sources
-GET    /admin/projects/:id/context-sources
-DELETE /admin/projects/:id/context-sources/:sourceId
+PUT    /admin/products/:id/secrets/:name
+DELETE /admin/products/:id/secrets/:name
+
+POST   /admin/products/:id/context-sources
+GET    /admin/products/:id/context-sources
+DELETE /admin/products/:id/context-sources/:sourceId
 
 GET /admin/runs/:id
 GET /admin/runs/:id/context
 GET /admin/runs/:id/validation
 ```
+
+A repository row is not created through the administration API. Discovery
+creates it from the `.factoree/config.yaml` file of the repository itself,
+when the GitHub App reports the repository to Factoree.
 
 Version 1 MAY use a strong administration bearer token plus network restriction.
 
@@ -2179,6 +2190,44 @@ A configured test MCP source can supply a Context Candidate with provenance.
 ### AT-37 — Skills
 
 Repository and organization skills are discovered without silent name overwrite.
+
+### AT-38 — Team routing
+
+A Linear team key resolves to exactly one Product. The Product id stays inside Factoree and never reaches the caller.
+
+### AT-39 — Ambiguous team
+
+Two Products that claim the same Linear team cause a `BLOCKED_ROUTING` refusal. Factoree never guesses.
+
+### AT-40 — Repository privilege key
+
+A `.factoree/config.yaml` file that sets a privilege key, for example `policy.autonomy`, fails validation. The error names the key.
+
+### AT-41 — Unknown product slug
+
+A repository whose configuration names an unknown product slug creates a pending Product at autonomy level L0.
+
+### AT-42 — Confident target
+
+A Run with one confident repository proposal among several Product members proceeds, and Factoree posts a Linear notice that names the chosen repository.
+
+### AT-43 — Ambiguous target
+
+A Run with no confident repository proposal among several Product members blocks with `BLOCKED_TARGET`. A human reply that names a repository resumes the Run.
+
+(Change Sets, a later plan, adds AT-44 and AT-45.)
+
+### AT-46 — Sibling clone
+
+The Implementer clones a sibling repository of the same Product read-only, outside the primary working tree, and Factoree writes an evidence record naming the repository, the commit, and the role.
+
+### AT-47 — Sibling clone denied
+
+A clone request for a repository outside the Product is denied. Factoree clones nothing and writes no evidence record.
+
+### AT-48 — Team key rename
+
+A Linear team key rename keeps the existing Product, because the team id is stable. Factoree stores the new key and reports the drift.
 
 ---
 
