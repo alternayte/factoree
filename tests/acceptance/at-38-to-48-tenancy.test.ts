@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import Fastify, { type FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { agentSessionEventSchema } from "~/adapters/linear/webhook-schemas.js";
@@ -13,6 +14,10 @@ import type {
   RepositoryRegistry,
   UpsertRepositoryInput,
 } from "~/domain/products/repository-registry.js";
+import type { TenantRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
+import type { ProjectSecretDescriptor, SecretStore } from "~/domain/products/secret-store.js";
+import { registerProductRoutes } from "~/http/admin/products.routes.js";
+import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import type { RepositoryConfigFile, RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
@@ -41,19 +46,6 @@ const productFor = (slug: string, teamId = "team-1"): ProductRecord => ({
   organizationSkillsRepository: null,
   createdAt: new Date(),
   updatedAt: new Date(),
-});
-
-const repositoryFor = (productId: string, fullName: string): RepositoryRecord => ({
-  id: `repository-${fullName}`,
-  tenantId: "tenant-1",
-  productId,
-  fullName,
-  defaultBranch: "main",
-  configSha: "a".repeat(40),
-  requestedSecretNames: [],
-  discoveredAt: new Date(),
-  lastSeenAt: new Date(),
-  absentSince: null,
 });
 
 const buildDelegationService = (options: { products: ProductRecord[]; repositories: RepositoryRecord[] }) => {
@@ -91,23 +83,50 @@ const buildDelegationService = (options: { products: ProductRecord[]; repositori
 
 describe("AT-38 to AT-41 and AT-48: routing and discovery", () => {
   it("AT-38 resolves a team key to one Product, and the id never leaves Factoree", async () => {
-    const { service, started } = buildDelegationService({
-      products: [productFor("checkout", "team-1")],
-      repositories: [repositoryFor("product-checkout", "acme/api")],
+    // A human names a team by its key. Factoree resolves the key to the team id once, through
+    // Linear, and keeps the id afterward, because a key rename never changes the id.
+    const { app, products } = buildProductsApi();
+
+    // 1. A create request carrying `linearTeamKey` succeeds, and the stored record carries both
+    // the key and the id Linear resolved it to.
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: {
+        linearWorkspaceId: "ws-1",
+        slug: "checkout",
+        name: "Checkout",
+        linearTeamKey: "PAY",
+      },
     });
+    expect(created.statusCode).toBe(201);
+    const product = created.json<{ id: string; linearTeamKey: string; linearTeamId: string }>();
+    expect(product).toMatchObject({ linearTeamKey: "PAY", linearTeamId: "team-pay" });
 
-    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-at-38");
+    // 2. A create request carrying `linearTeamId` fails with 400. No caller ever supplies the
+    // id; Factoree is the only party that ever writes it.
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: {
+        linearWorkspaceId: "ws-1",
+        slug: "billing",
+        name: "Billing",
+        linearTeamKey: "BILL",
+        linearTeamId: "team-bill",
+      },
+    });
+    expect(rejected.statusCode).toBe(400);
+    // The rejected create wrote no row, so the id it tried to smuggle in never reached storage.
+    expect(await products.findBySlug("tenant-1", "billing")).toBeNull();
 
-    // The Linear issue names team-1. Routing resolves it to exactly one Product, internally,
-    // and starts the Run under that Product.
-    expect(outcome).toMatchObject({ kind: "started" });
-    expect(started).toHaveLength(1);
-    expect(started[0]?.args[0]?.productId).toBe("product-checkout");
-
-    // What reaches the caller (the outcome the webhook route relays to Linear) names only the
-    // Linear-facing identifiers: the agent session and the workflow id. The internal Product id
-    // never appears in it.
-    expect(JSON.stringify(outcome)).not.toContain("product-checkout");
+    // 3. Routing afterward resolves by the stored id, not by the key. `resolveProduct` is the
+    // function `DelegationService` calls to route a delegated Linear issue to its Product.
+    const stored = await products.list("tenant-1");
+    const outcome = resolveProduct(stored, "team-pay");
+    expect(outcome.kind).toBe("routed");
+    if (outcome.kind !== "routed") throw new Error("unreachable: asserted above");
+    expect(outcome.product.id).toBe(product.id);
   });
 
   it("AT-39 refuses with BLOCKED_ROUTING when two Products claim one team", async () => {
@@ -472,4 +491,74 @@ const buildDiscovery = (options: { config: string }) => {
   const discoveryClient = new FakeDiscoveryClient({ "acme/api": options.config });
   const service = new DiscoveryService(discoveryClient, products, repositories, linear, discoveryLogger);
   return { service, products, repositories, linear };
+};
+
+// --- The administration API app, for AT-38 -------------------------------------------------
+
+const TENANT: TenantRecord = { id: "tenant-1", linearWorkspaceId: "ws-1", name: "Acme" };
+
+class FakeTenantRegistry implements TenantRegistry {
+  ensureTenant(): Promise<TenantRecord> {
+    return Promise.resolve(TENANT);
+  }
+
+  findByWorkspace(linearWorkspaceId: string): Promise<TenantRecord | null> {
+    return Promise.resolve(linearWorkspaceId === TENANT.linearWorkspaceId ? TENANT : null);
+  }
+
+  putInstallation(): Promise<TenantRecord> {
+    throw new Error("not used by AT-38");
+  }
+
+  getInstallationToken(): Promise<string | null> {
+    throw new Error("not used by AT-38");
+  }
+
+  getInstallation(): Promise<null> {
+    throw new Error("not used by AT-38");
+  }
+
+  findByGitHubInstallation(): Promise<TenantRecord | null> {
+    throw new Error("not used by AT-38");
+  }
+
+  putGitHubInstallation(): Promise<void> {
+    throw new Error("not used by AT-38");
+  }
+}
+
+class FakeSecretStore implements SecretStore {
+  put(): Promise<void> {
+    throw new Error("not used by AT-38");
+  }
+
+  get(): Promise<string | null> {
+    throw new Error("not used by AT-38");
+  }
+
+  listNames(): Promise<string[]> {
+    throw new Error("not used by AT-38");
+  }
+
+  list(): Promise<ProjectSecretDescriptor[]> {
+    throw new Error("not used by AT-38");
+  }
+
+  remove(): Promise<boolean> {
+    throw new Error("not used by AT-38");
+  }
+}
+
+/** Builds the real `/admin/products` route, over the in-memory fakes above. */
+const buildProductsApi = (): { app: FastifyInstance; products: FakeProductRegistry } => {
+  const products = new FakeProductRegistry();
+  const repositories = new FakeRepositoryRegistry();
+  const tenants = new FakeTenantRegistry();
+  const secrets = new FakeSecretStore();
+  const linearTeams = new FakeLinearTeamLookup();
+
+  const app = Fastify({ logger: false });
+  registerProductRoutes(app, { products, repositories, tenants, secrets, linearTeams });
+
+  return { app, products };
 };
