@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MockActivityEnvironment, TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
+import { temporal } from "@temporalio/proto";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { GitHubPullRequests, GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
@@ -225,6 +226,11 @@ class FakeRepositoryDiscoveryClient implements RepositoryDiscoveryClient {
   }
 }
 
+/** The `retry-after` seconds `RateLimitedOnceDiscoveryClient` answers. Chosen away from the
+ * workflow's own default retry interval of one second, so a test can tell the two apart: a
+ * measured wait near this value proves GitHub's header drove the delay, not the default policy. */
+const RATE_LIMIT_RETRY_AFTER_SECONDS = 6;
+
 /** A `RepositoryDiscoveryClient` that answers a rate limit once, then succeeds, for AT-54. */
 class RateLimitedOnceDiscoveryClient implements RepositoryDiscoveryClient {
   listCalls = 0;
@@ -237,7 +243,7 @@ class RateLimitedOnceDiscoveryClient implements RepositoryDiscoveryClient {
       return Promise.reject(
         new GitHubApiError("the GitHub API rate-limited this installation", 403, {
           "x-ratelimit-remaining": "0",
-          "retry-after": "1",
+          "retry-after": String(RATE_LIMIT_RETRY_AFTER_SECONDS),
         }),
       );
     }
@@ -356,7 +362,19 @@ describe("AT-54: rate-limit backoff runs through the real Temporal retry policy"
         logger: new FakeLogger(),
       });
 
-      const result = await runSyncWorkflow(environment, activities);
+      const taskQueue = `at-54-${randomUUID()}`;
+      const worker = await Worker.create({
+        connection: environment.nativeConnection,
+        taskQueue,
+        workflowsPath: new URL("../../src/workflows/sync-installation.workflow.ts", import.meta.url).pathname,
+        activities,
+      });
+      const handle = await environment.client.workflow.start(syncInstallationWorkflow, {
+        taskQueue,
+        workflowId: `sync-at-54-${randomUUID()}`,
+        args: [{ tenantId: "tenant-1", githubInstallationId: "install-1" }],
+      });
+      const result = await worker.runUntil(() => handle.result());
 
       // The first `listInstallationRepositories` call hit the rate limit. The activity turned
       // it into a retryable failure carrying the `retry-after` delay, and the workflow's own
@@ -364,6 +382,41 @@ describe("AT-54: rate-limit backoff runs through the real Temporal retry policy"
       // double saw a second call and the sync still completed.
       expect(client.listCalls).toBe(2);
       expect(result).toEqual({ registered: 1, skipped: 0, conflicted: 0 });
+
+      // A doubled call count alone does not tell an honoured `retry-after` apart from an
+      // immediate retry. Temporal's worker retries an activity locally: a failed attempt writes
+      // no history event of its own, only the worker log entry already asserted below. History
+      // records one `ActivityTaskScheduled` event, when the first attempt was dispatched, and
+      // one `ActivityTaskStarted` event, when the attempt that finally ran started. Attempt 1
+      // fails in under a millisecond (`durationMs: 0` in the worker log), so the gap between
+      // those two events is, in practice, the wait before attempt 2, recorded in the simulated
+      // clock the time-skipping server advanced. This is the real evidence of the backoff, not
+      // a proxy for it.
+      const history = await handle.fetchHistory();
+      const events = history.events ?? [];
+      const eventTimeMs = (event: (typeof events)[number]): number => {
+        const timestamp = event.eventTime;
+        if (timestamp === null || timestamp === undefined) throw new Error("a history event carried no event time");
+        return Number(timestamp.seconds ?? 0) * 1000 + Math.floor(Number(timestamp.nanos ?? 0) / 1_000_000);
+      };
+      const scheduled = events.find(
+        (event) => event.eventType === temporal.api.enums.v1.EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED,
+      );
+      const started = events.find(
+        (event) => event.eventType === temporal.api.enums.v1.EventType.EVENT_TYPE_ACTIVITY_TASK_STARTED,
+      );
+      expect(scheduled).toBeDefined();
+      expect(started).toBeDefined();
+      // The `Started` event that history keeps is the attempt that ran to completion. Attempt 2
+      // ran to completion, so this event must carry attempt 2, not the failed attempt 1.
+      expect(started?.activityTaskStartedEventAttributes?.attempt).toBe(2);
+      const waitedMs = eventTimeMs(started!) - eventTimeMs(scheduled!);
+
+      // The workflow's own default retry interval is one second; `RATE_LIMIT_RETRY_AFTER_SECONDS`
+      // is six. A gap near six seconds, not near one, proves the `retry-after` header drove the
+      // delay, not the default policy that would have applied to any other retryable failure.
+      expect(waitedMs).toBeGreaterThanOrEqual(RATE_LIMIT_RETRY_AFTER_SECONDS * 1000);
+      expect(waitedMs).toBeLessThan((RATE_LIMIT_RETRY_AFTER_SECONDS + 5) * 1000);
     } finally {
       await environment.teardown();
     }
