@@ -13,9 +13,9 @@ const { calls, execFileImpl } = vi.hoisted(() => {
     recorded.push({ args, env: options.env ?? {} });
     return Promise.resolve({ stdout: `${"d".repeat(40)}\trefs/heads/main\n`, stderr: "" });
   };
-  // `promisify(execFile)` runs at module load of the reader, against this mock. Node resolves a
-  // function as already returning a Promise only when the well-known custom symbol names it
-  // explicitly. The symbol is attached here, before the reader module ever imports it.
+  // `promisify(execFile)` runs at module load of the reader, against this mock. Node needs the
+  // well-known custom symbol to name a function that already returns a Promise. The symbol is
+  // attached here, before the reader module ever imports it.
   (impl as unknown as Record<symbol, unknown>)[Symbol.for("nodejs.util.promisify.custom")] = impl;
   return { calls: recorded, execFileImpl: impl };
 });
