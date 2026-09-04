@@ -672,12 +672,38 @@ Keep the secret-kind and injection-mark machinery itself. SDD section 30 governs
 
 Remove `SETUP_GITHUB_TOKEN` from `bootstrap.sh` and from `.env.example`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Register every minted token with the Redactor**
+
+Specification section 7 requires it, and no other task covers it.
+
+A token must never reach output by design. The redactor is the guarantee that survives a later
+edit by someone who does not know the rule. Register the minted token before it is used, at both
+sites that mint one for a Run: the clone in `checkout.ts` and the publish in
+`publishing.activities.ts`.
+
+Read how a secret value reaches the redactor today. Follow that path rather than adding a second
+mechanism.
+
+Write a test that proves it:
+
+```typescript
+it("registers a minted token with the redactor before it is used", async () => {
+  const { publish, redactor } = build({
+    tokens: { tokenForInstallation: () => Promise.resolve("ghs_minted_secret_value") },
+  });
+
+  await publish(validInput());
+
+  expect(redactor.redact("a line holding ghs_minted_secret_value")).not.toContain("ghs_minted_secret_value");
+});
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run tests/unit/publishing-activities.test.ts --config vitest.config.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Run the gate and commit**
+- [ ] **Step 6: Run the gate and commit**
 
 Run: `npm run verify`
 Expected: exit 0.
