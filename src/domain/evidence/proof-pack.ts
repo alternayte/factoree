@@ -282,13 +282,13 @@ const routingSection = (routing: ProofPackRouting): string[] => {
             .join(", ")}`,
         ];
   return [
-    `Product: ${routing.productSlug}`,
-    `Linear team: ${routing.linearTeamKey}`,
+    `Product: ${cell(routing.productSlug)}`,
+    `Linear team: ${cell(routing.linearTeamKey)}`,
     "Targets:",
     ...targetLines,
     ...mergeOrderLine,
     ...siblingLines,
-    `Selection reason: ${routing.selectionReason}`,
+    `Selection reason: ${cell(routing.selectionReason)}`,
   ];
 };
 

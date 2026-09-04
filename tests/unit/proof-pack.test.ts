@@ -270,6 +270,7 @@ describe("the Proof Pack renderer", () => {
     );
 
     expect(markdown).not.toContain("Merge order:");
+    expect(markdown).toContain("Sibling repositories read: none.");
   });
 
   it("renders the Merge order line when the Run touched several targets", () => {
