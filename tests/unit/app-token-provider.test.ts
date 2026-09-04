@@ -80,4 +80,68 @@ describe("GitHubAppTokenProvider", () => {
     expect(message).not.toContain(privateKeyBase64);
     expect(message).not.toContain("PRIVATE KEY");
   });
+
+  it("de-duplicates concurrent calls for one installation into a single mint", async () => {
+    let minted = 0;
+    let releaseFetch: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: (async () => {
+        await gate;
+        minted += 1;
+        const expiresAt = new Date(3_600_000);
+        return new Response(
+          JSON.stringify({ token: `ghs_token_${String(minted)}`, expires_at: expiresAt.toISOString() }),
+          { status: 201 },
+        );
+      }),
+    });
+
+    const first = provider.tokenForInstallation("42");
+    const second = provider.tokenForInstallation("42");
+    releaseFetch?.();
+
+    const [firstToken, secondToken] = await Promise.all([first, second]);
+    expect(firstToken).toBe(secondToken);
+    expect(minted).toBe(1);
+  });
+
+  it("retries after a failed in-flight mint instead of replaying the failure", async () => {
+    let attempt = 0;
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: (() => {
+        attempt += 1;
+        if (attempt === 1) return Promise.resolve(new Response("", { status: 500 }));
+        const expiresAt = new Date(3_600_000);
+        return Promise.resolve(
+          new Response(JSON.stringify({ token: "ghs_token_recovered", expires_at: expiresAt.toISOString() }), {
+            status: 201,
+          }),
+        );
+      }),
+    });
+
+    await expect(provider.tokenForInstallation("42")).rejects.toBeInstanceOf(GitHubAppAuthError);
+    expect(await provider.tokenForInstallation("42")).toBe("ghs_token_recovered");
+    expect(attempt).toBe(2);
+  });
+
+  it("de-duplicates per installation, minting once for each", async () => {
+    const { provider } = build({ now: () => 0 });
+
+    const [first, second] = await Promise.all([
+      provider.tokenForInstallation("42"),
+      provider.tokenForInstallation("43"),
+    ]);
+
+    expect(first).not.toBe(second);
+  });
 });

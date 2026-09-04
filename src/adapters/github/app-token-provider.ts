@@ -41,6 +41,8 @@ export interface GitHubAppTokenProviderOptions {
  */
 export class GitHubAppTokenProvider implements GitHubTokenProvider {
   private readonly cache = new Map<string, CacheEntry>();
+  /** A mint in flight for one installation. A second concurrent call awaits it, rather than minting again. */
+  private readonly inflight = new Map<string, Promise<CacheEntry>>();
 
   constructor(private readonly options: GitHubAppTokenProviderOptions) {}
 
@@ -49,7 +51,18 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
     const cached = this.cache.get(githubInstallationId);
     if (cached !== undefined && cached.expiresAtMs - now > REFRESH_MARGIN_MS) return cached.token;
 
-    const minted = await this.mint(githubInstallationId, now);
+    const existing = this.inflight.get(githubInstallationId);
+    if (existing !== undefined) {
+      const minted = await existing;
+      return minted.token;
+    }
+
+    const mintPromise = this.mint(githubInstallationId, now).finally(() => {
+      this.inflight.delete(githubInstallationId);
+    });
+    this.inflight.set(githubInstallationId, mintPromise);
+
+    const minted = await mintPromise;
     this.cache.set(githubInstallationId, minted);
     return minted.token;
   }
