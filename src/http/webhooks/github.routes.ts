@@ -12,7 +12,7 @@ import type { Logger } from "~/telemetry/logger.js";
 export interface GitHubWebhookDependencies {
   discovery: DiscoveryService;
   tenants: TenantRegistry;
-  verifySignature: (raw: string, signature: string) => boolean;
+  verifySignature: (raw: Buffer, signature: string) => boolean;
   /**
    * Starts the sync of one GitHub App installation, keyed on the installation id so a repeated
    * `installation` event joins the run already in flight rather than starting a second one.
@@ -66,8 +66,7 @@ const logDiscoveryOutcome = (
 
 export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: GitHubWebhookDependencies): void => {
   app.post("/webhooks/github", async (request, reply) => {
-    const rawBody = request.rawBody;
-    const raw = rawBody ? rawBody.toString("utf8") : "";
+    const raw = request.rawBody ?? Buffer.alloc(0);
     const signature = request.headers["x-hub-signature-256"] as string | undefined;
     if (!dependencies.verifySignature(raw, signature ?? "")) {
       return reply.code(401).send({ error: "invalid_signature" });
@@ -141,8 +140,14 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
     if (event === "installation") {
       const parsed = installationEventSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
-      // GitHub sends no default branch on this event, so there is nothing here to sync directly.
-      // The sync workflow reads every granted repository of the installation instead.
+      // "created" grants a fresh installation. "unsuspend" can restore access to repositories
+      // granted while the installation was suspended. Both need a sync. "deleted" and "suspend"
+      // must not sync: the installation's token can no longer be minted, so a sync would only
+      // fail against GitHub. GitHub sends no default branch on this event, so the sync workflow
+      // reads every granted repository of the installation instead, rather than a target here.
+      if (parsed.data.action !== "created" && parsed.data.action !== "unsuspend") {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
       const tenantId = await resolveTenantId(
         dependencies,
         parsed.data.installation.id,

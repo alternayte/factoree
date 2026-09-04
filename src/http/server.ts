@@ -40,7 +40,7 @@ export interface ServerDependencies {
   /** Registers a repository and its Product from a `.factoree/config.yaml` declaration. */
   discovery: DiscoveryService;
   /** Verifies the raw request body against the `X-Hub-Signature-256` header before any parse. */
-  verifyGitHubSignature: (raw: string, signature: string) => boolean;
+  verifyGitHubSignature: (raw: Buffer, signature: string) => boolean;
   /**
    * Starts the sync of one GitHub App installation, keyed on the installation id so a repeated
    * `installation` event joins the run already in flight rather than starting a second one.

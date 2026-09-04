@@ -274,4 +274,31 @@ describe("GitHub webhook route", () => {
     expect(started).toEqual([]);
     expect(logger.warnCalls[0]?.fields).toMatchObject({ installation_id: "99" });
   });
+
+  it("starts a sync when a suspended installation is unsuspended", async () => {
+    const { app, started } = build({});
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation" },
+      payload: { action: "unsuspend", installation: { id: 42, account: { login: "acme" } } },
+    });
+
+    expect(started).toEqual([{ tenantId: "tenant-1", githubInstallationId: "42" }]);
+  });
+
+  it.each(["deleted", "suspend"])("starts no sync when an installation is %s", async (action) => {
+    const { app, started } = build({});
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation" },
+      payload: { action, installation: { id: 42, account: { login: "acme" } } },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(started).toEqual([]);
+  });
 });

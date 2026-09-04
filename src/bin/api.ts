@@ -24,7 +24,13 @@ import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 
 const env = loadEnv();
-const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
+const redactor = new Redactor([
+  env.ADMIN_API_TOKEN,
+  env.LINEAR_WEBHOOK_SECRET,
+  env.FACTOREE_SECRET_KEY,
+  env.GITHUB_APP_PRIVATE_KEY,
+  env.GITHUB_WEBHOOK_SECRET,
+]);
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
@@ -91,7 +97,7 @@ const discoveryClient = new GitHubRepositoryDiscoveryClient({
 const discovery = new DiscoveryService(discoveryClient, products, repositories, linearTeams, logger);
 
 // Verifies the raw request body against the `X-Hub-Signature-256` header, before any parse.
-const verifyGitHubWebhookSignature = (raw: string, signature: string): boolean =>
+const verifyGitHubWebhookSignature = (raw: Buffer, signature: string): boolean =>
   verifyGitHubSignature({ rawBody: raw, signature, secret: env.GITHUB_WEBHOOK_SECRET }).ok;
 
 const startInstallationSync = createSyncInstallationStarter(client, env.TEMPORAL_TASK_QUEUE);
