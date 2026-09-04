@@ -14,6 +14,7 @@ import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { Env } from "~/config/env.js";
+import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 
 const token = "t".repeat(32);
 const env = {
@@ -39,18 +40,32 @@ const env = {
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let app: ReturnType<typeof buildServer>;
+let projects: PrismaProjectRegistry;
+let tenants: PrismaTenantRegistry;
+
+// The route resolves a team key through Linear. This test double never calls the network: it
+// answers a team for a key it was told to resolve, and null for one it was told to refuse.
+const fakeLinearTeams = (refuseKeys: string[] = []): LinearTeamLookup => ({
+  resolveTeamKey: (_tenantId, teamKey) =>
+    Promise.resolve(refuseKeys.includes(teamKey) ? null : { id: `team-${teamKey.toLowerCase()}`, key: teamKey }),
+  resolveTeamId: (_tenantId, teamId) => Promise.resolve({ id: teamId, key: teamId.toUpperCase() }),
+});
 
 beforeAll(async () => {
   const database = await startDatabase();
   stop = database.stop;
   prisma = createPrismaClient(database.url);
-  const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+  tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+  projects = new PrismaProjectRegistry(prisma);
   app = buildServer({
     env,
     logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
     prisma,
-    projects: new PrismaProjectRegistry(prisma),
+    projects,
     tenants,
+    products: new PrismaProductRegistry(prisma),
+    repositories: new PrismaRepositoryRegistry(prisma),
+    linearTeams: fakeLinearTeams(["NOPE"]),
     secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
     runs: new PrismaRunRepository(prisma),
     delegation: new DelegationService({
@@ -81,21 +96,21 @@ describe("administration API", () => {
   });
 
   it("rejects an administration request without the token", async () => {
-    const response = await app.inject({ method: "GET", url: "/admin/projects?linearWorkspaceId=ws-1" });
+    const response = await app.inject({ method: "GET", url: "/admin/products?linearWorkspaceId=ws-1" });
     expect(response.statusCode).toBe(401);
   });
 
   it("rejects a wrong token of the same length and a token of a different length", async () => {
     const sameLength = await app.inject({
       method: "GET",
-      url: "/admin/projects?linearWorkspaceId=ws-1",
+      url: "/admin/products?linearWorkspaceId=ws-1",
       headers: { authorization: `Bearer ${"x".repeat(token.length)}` },
     });
     expect(sameLength.statusCode).toBe(401);
 
     const otherLength = await app.inject({
       method: "GET",
-      url: "/admin/projects?linearWorkspaceId=ws-1",
+      url: "/admin/products?linearWorkspaceId=ws-1",
       headers: { authorization: `Bearer ${token}extra` },
     });
     expect(otherLength.statusCode).toBe(401);
@@ -107,114 +122,321 @@ describe("administration API", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
-  it("creates, reads, updates, and deletes a project", async () => {
+  it("creates, reads, and activates a product by team key, and never requires a team id", async () => {
     const created = await app.inject({
       method: "POST",
-      url: "/admin/projects",
+      url: "/admin/products",
       headers: auth,
       payload: {
         linearWorkspaceId: "ws-admin",
         workspaceName: "Admin",
-        key: "demo",
+        slug: "demo",
         name: "Demo",
-        primaryRepository: "acme/demo",
-        linearTeamId: "team-1",
+        linearTeamKey: "DEMO",
       },
     });
     expect(created.statusCode).toBe(201);
-    const project = created.json<{ id: string; defaultBranch: string }>();
-    expect(project.defaultBranch).toBe("main");
+    const product = created.json<{ id: string; linearTeamKey: string; linearTeamId: string; status: string }>();
+    expect(product).toMatchObject({ linearTeamKey: "DEMO", linearTeamId: "team-demo", status: "pending" });
 
     const read = await app.inject({
       method: "GET",
-      url: `/admin/projects/${project.id}?linearWorkspaceId=ws-admin`,
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-admin`,
       headers: auth,
     });
     expect(read.statusCode).toBe(200);
 
-    const updated = await app.inject({
-      method: "PUT",
-      url: `/admin/projects/${project.id}?linearWorkspaceId=ws-admin`,
+    const activated = await app.inject({
+      method: "POST",
+      url: `/admin/products/${product.id}/activate?linearWorkspaceId=ws-admin`,
       headers: auth,
-      payload: { name: "Renamed" },
+      payload: { defaultAutonomy: "L3" },
     });
-    expect(updated.json<{ name: string }>().name).toBe("Renamed");
-
-    const removed = await app.inject({
-      method: "DELETE",
-      url: `/admin/projects/${project.id}?linearWorkspaceId=ws-admin`,
-      headers: auth,
+    expect(activated.statusCode).toBe(200);
+    expect(activated.json<{ status: string; defaultAutonomy: string }>()).toMatchObject({
+      status: "active",
+      defaultAutonomy: "L3",
     });
-    expect(removed.statusCode).toBe(204);
   });
 
-  it("does not return a project of another tenant", async () => {
+  it("answers 404, and names the key, when the team key resolves to no team", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-admin", slug: "s", name: "n", linearTeamKey: "NOPE" },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json<{ error: string }>().error).toContain("NOPE");
+  });
+
+  it("rejects a body that carries a team id", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-admin", slug: "s2", name: "n2", linearTeamKey: "TID", linearTeamId: "team-tid" },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("does not return a product of another tenant", async () => {
     const created = await app.inject({
       method: "POST",
-      url: "/admin/projects",
+      url: "/admin/products",
       headers: auth,
-      payload: {
-        linearWorkspaceId: "ws-owner",
-        workspaceName: "Owner",
-        key: "own",
-        name: "Own",
-        primaryRepository: "acme/own",
-      },
+      payload: { linearWorkspaceId: "ws-owner", slug: "own", name: "Own", linearTeamKey: "OWN" },
     });
-    const project = created.json<{ id: string }>();
+    const product = created.json<{ id: string }>();
     await app.inject({
       method: "POST",
-      url: "/admin/projects",
+      url: "/admin/products",
       headers: auth,
-      payload: {
-        linearWorkspaceId: "ws-other",
-        workspaceName: "Other",
-        key: "oth",
-        name: "Oth",
-        primaryRepository: "acme/oth",
-      },
+      payload: { linearWorkspaceId: "ws-other", slug: "oth", name: "Oth", linearTeamKey: "OTH" },
     });
     const stolen = await app.inject({
       method: "GET",
-      url: `/admin/projects/${project.id}?linearWorkspaceId=ws-other`,
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-other`,
       headers: auth,
     });
     expect(stolen.statusCode).toBe(404);
   });
 
-  it("accepts and returns the organization skills repository", async () => {
+  it("accepts and returns the organization skills repository on create, and changes it on update", async () => {
     const created = await app.inject({
       method: "POST",
-      url: "/admin/projects",
+      url: "/admin/products",
       headers: auth,
       payload: {
         linearWorkspaceId: "ws-skills",
-        key: "skills",
+        slug: "skills",
         name: "Skills",
-        primaryRepository: "acme/app",
+        linearTeamKey: "SKL",
         organizationSkillsRepository: "acme/skills",
       },
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json<{ organizationSkillsRepository: string }>().organizationSkillsRepository).toBe(
-      "acme/skills",
+    const product = created.json<{ id: string; organizationSkillsRepository: string | null }>();
+    expect(product.organizationSkillsRepository).toBe("acme/skills");
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-skills`,
+      headers: auth,
+      payload: { organizationSkillsRepository: "acme/other-skills" },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json<{ organizationSkillsRepository: string }>().organizationSkillsRepository).toBe(
+      "acme/other-skills",
     );
   });
 
   it("refuses an organization skills repository that is not an owner and repository slug", async () => {
     const created = await app.inject({
       method: "POST",
-      url: "/admin/projects",
+      url: "/admin/products",
       headers: auth,
       payload: {
         linearWorkspaceId: "ws-bad-skills",
-        key: "bad-skills",
+        slug: "bad-skills",
         name: "Bad skills",
-        primaryRepository: "acme/app",
+        linearTeamKey: "BAD",
         organizationSkillsRepository: "not-a-slug",
       },
     });
     expect(created.statusCode).toBe(400);
+  });
+
+  it("exposes repositories of a product read only, with no route to create, update, or delete one", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-repos", slug: "repos", name: "Repos", linearTeamKey: "REP" },
+    });
+    const product = created.json<{ id: string }>();
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/admin/products/${product.id}/repositories?linearWorkspaceId=ws-repos`,
+      headers: auth,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual([]);
+
+    const posted = await app.inject({
+      method: "POST",
+      url: `/admin/products/${product.id}/repositories`,
+      headers: auth,
+      payload: {},
+    });
+    expect(posted.statusCode).toBe(404);
+  });
+
+  it("stores a Product secret as ciphertext and reads it back through the secret store", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-secret", slug: "s-secret", name: "S", linearTeamKey: "SEC1" },
+    });
+    const product = created.json<{ id: string }>();
+    const put = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}/secrets/GITHUB_TOKEN?linearWorkspaceId=ws-secret`,
+      headers: auth,
+      payload: { value: "ghp_super_secret_value_12345678" },
+    });
+    expect(put.statusCode).toBe(204);
+    const read = await app.inject({
+      method: "GET",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-secret`,
+      headers: auth,
+    });
+    expect(read.body).not.toContain("ghp_super_secret_value_12345678");
+
+    const stored = await prisma.productSecret.findFirstOrThrow({ where: { productId: product.id } });
+    expect(JSON.stringify(stored)).not.toContain("ghp_super_secret_value_12345678");
+    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    expect(await secrets.get(stored.tenantId, product.id, "GITHUB_TOKEN")).toBe(
+      "ghp_super_secret_value_12345678",
+    );
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}/secrets/GITHUB_TOKEN?linearWorkspaceId=ws-secret`,
+      headers: auth,
+    });
+    expect(removed.statusCode).toBe(204);
+    const removedAgain = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}/secrets/GITHUB_TOKEN?linearWorkspaceId=ws-secret`,
+      headers: auth,
+    });
+    expect(removedAgain.statusCode).toBe(404);
+  });
+
+  it("stores a runner credential and a repository read token by kind", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-kind", slug: "kind", name: "Kind", linearTeamKey: "KIND" },
+    });
+    const product = created.json<{ id: string }>();
+    const query = `?linearWorkspaceId=ws-kind`;
+
+    const runner = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}/secrets/OPENCODE_API_KEY${query}`,
+      headers: auth,
+      payload: { value: "zen-value-0123456789", kind: "runner_credential" },
+    });
+    expect(runner.statusCode).toBe(204);
+
+    const read = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}/secrets/GITHUB_READ_TOKEN${query}`,
+      headers: auth,
+      payload: { value: "read-value-0123456789", kind: "repository_read" },
+    });
+    expect(read.statusCode).toBe(204);
+
+    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    const stored = await prisma.productSecret.findFirstOrThrow({
+      where: { productId: product.id, name: "OPENCODE_API_KEY" },
+    });
+    const descriptors = await secrets.list(stored.tenantId, product.id);
+    expect(descriptors).toEqual(
+      expect.arrayContaining([
+        { name: "OPENCODE_API_KEY", injectIntoImplementer: false, kind: "runner_credential" },
+        { name: "GITHUB_READ_TOKEN", injectIntoImplementer: false, kind: "repository_read" },
+      ]),
+    );
+  });
+
+  it("refuses a credential that carries the injection mark, and one that holds a GitHub token", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-refuse", slug: "refuse", name: "Refuse", linearTeamKey: "REFU" },
+    });
+    const product = created.json<{ id: string }>();
+    const query = `?linearWorkspaceId=ws-refuse`;
+
+    const marked = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}/secrets/OPENCODE_API_KEY${query}`,
+      headers: auth,
+      payload: { value: "zen-value", kind: "runner_credential", injectIntoImplementer: true },
+    });
+    expect(marked.statusCode).toBe(400);
+    expect(marked.body).toContain("injection mark");
+
+    const misfiled = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}/secrets/MODEL_KEY${query}`,
+      headers: auth,
+      payload: { value: `ghp_${"a".repeat(36)}`, kind: "runner_credential" },
+    });
+    expect(misfiled.statusCode).toBe(400);
+    expect(misfiled.body).toContain("GitHub or a Linear credential");
+    // The message must name the secret and never its value. SDD section 60.
+    expect(misfiled.body).not.toContain("a".repeat(36));
+
+    await expect(
+      prisma.productSecret.findFirst({ where: { productId: product.id } }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("the GitHub installation binding endpoint", () => {
+  it("binds an installation to a tenant, keyed by the numeric installation id", async () => {
+    await tenants.ensureTenant("ws-github-bind", "GitHub Bind");
+
+    const bound = await app.inject({
+      method: "PUT",
+      url: "/admin/github-installations",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-github-bind", githubInstallationId: "9001", accountLogin: "acme" },
+    });
+    expect(bound.statusCode).toBe(200);
+
+    const row = await prisma.gitHubInstallation.findUniqueOrThrow({ where: { githubInstallationId: "9001" } });
+    expect(row.accountLogin).toBe("acme");
+
+    // A rename of the account never breaks the binding: the numeric id is the key.
+    const rebound = await app.inject({
+      method: "PUT",
+      url: "/admin/github-installations",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-github-bind", githubInstallationId: "9001", accountLogin: "acme-renamed" },
+    });
+    expect(rebound.statusCode).toBe(200);
+    const renamedRow = await prisma.gitHubInstallation.findUniqueOrThrow({
+      where: { githubInstallationId: "9001" },
+    });
+    expect(renamedRow.accountLogin).toBe("acme-renamed");
+  });
+
+  it("answers 404 for a tenant that does not exist", async () => {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/admin/github-installations",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-no-such-tenant", githubInstallationId: "9002", accountLogin: "nobody" },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("rejects a request without the administration token", async () => {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/admin/github-installations",
+      payload: { linearWorkspaceId: "ws-github-bind", githubInstallationId: "9003", accountLogin: "acme" },
+    });
+    expect(response.statusCode).toBe(401);
   });
 });
 
@@ -225,33 +447,26 @@ describe("the context source endpoints of SDD section 59", () => {
   let otherTenantProjectId: string;
 
   beforeAll(async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/admin/projects",
-      headers: auth,
-      payload: {
-        linearWorkspaceId: contextWorkspace,
-        workspaceName: "Context",
-        key: "ctx",
-        name: "Context",
-        primaryRepository: "acme/ctx",
-      },
+    // The Project administration route no longer exists: discovery, not an operator, owns
+    // Repository rows, and the old CRUD route left with Project. A Project row still exists for
+    // this suite, seeded directly through the registry these routes still use.
+    const tenant = await tenants.ensureTenant(contextWorkspace, "Context");
+    const project = await projects.create({
+      tenantId: tenant.id,
+      key: "ctx",
+      name: "Context",
+      primaryRepository: "acme/ctx",
     });
-    projectId = created.json<{ id: string }>().id;
+    projectId = project.id;
 
-    const otherCreated = await app.inject({
-      method: "POST",
-      url: "/admin/projects",
-      headers: auth,
-      payload: {
-        linearWorkspaceId: otherContextWorkspace,
-        workspaceName: "Context Other",
-        key: "ctxo",
-        name: "Context Other",
-        primaryRepository: "acme/ctxo",
-      },
+    const otherTenant = await tenants.ensureTenant(otherContextWorkspace, "Context Other");
+    const otherProject = await projects.create({
+      tenantId: otherTenant.id,
+      key: "ctxo",
+      name: "Context Other",
+      primaryRepository: "acme/ctxo",
     });
-    otherTenantProjectId = otherCreated.json<{ id: string }>().id;
+    otherTenantProjectId = otherProject.id;
   });
 
   it("refuses an endpoint that carries a credential", async () => {
@@ -273,9 +488,8 @@ describe("the context source endpoints of SDD section 59", () => {
   });
 
   it("creates, lists, and deletes one source", async () => {
-    // The secret exists with a real value, so the assertion below has something to find. The
-    // Product secret administration route does not exist yet, so this seeds the row directly
-    // through the same PrismaSecretStore the rest of this file already constructs.
+    // The secret exists with a real value, so the assertion below has something to find. This
+    // seeds the row through the Product administration secret route.
     const tenant = await prisma.tenant.findFirstOrThrow({ where: { linearWorkspaceId: contextWorkspace } });
     const products = new PrismaProductRegistry(prisma);
     const product = await products.create({
@@ -285,8 +499,13 @@ describe("the context source endpoints of SDD section 59", () => {
       linearTeamKey: "CTXS",
       linearTeamId: "team-context-secrets",
     });
-    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
-    await secrets.put(tenant.id, product.id, "BACKSTAGE_TOKEN", "bs_super_secret_value_87654321");
+    const secretPut = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}/secrets/BACKSTAGE_TOKEN?linearWorkspaceId=${contextWorkspace}`,
+      headers: auth,
+      payload: { value: "bs_super_secret_value_87654321" },
+    });
+    expect(secretPut.statusCode).toBe(204);
 
     const created = await app.inject({
       method: "POST",
