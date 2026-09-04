@@ -104,9 +104,13 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     );
     if (repositoryCredential !== null) {
       try {
+        // Task 6 threads the real per-installation `GitHubTokenProvider` here. Until then this
+        // Project secret stays the sole credential, so the installation id below selects
+        // nothing and is never read by the provider it wraps.
         dependencies.repositoryReader.useCredential(
           new URL(input.primaryRepository.url).origin,
-          repositoryCredential,
+          { tokenForInstallation: () => Promise.resolve(repositoryCredential) },
+          "",
         );
       } catch {
         // A local path carries no origin, and it needs no credential either.
@@ -251,7 +255,13 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     );
     if (repositoryCredential !== null) {
       try {
-        dependencies.repositoryReader.useCredential(new URL(input.repositoryUrl).origin, repositoryCredential);
+        // See the same note in resolveContext above: Task 6 supplies the real provider and
+        // installation id, and this identifier is inert until then.
+        dependencies.repositoryReader.useCredential(
+          new URL(input.repositoryUrl).origin,
+          { tokenForInstallation: () => Promise.resolve(repositoryCredential) },
+          "",
+        );
       } catch {
         // A local path carries no origin, and it needs no credential either.
       }

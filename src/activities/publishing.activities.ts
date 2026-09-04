@@ -292,10 +292,15 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
+      // Task 6 threads the real installation id from the target Repository into this activity.
+      // Until then the port mints against the Project secret token above, which carries one
+      // credential for the whole Project, so the identifier below selects nothing and is never
+      // read by that path.
+      const legacyInstallationId = "";
 
       // Step 8. AT-35. A worker restart must not create a second pull request. This lookup runs
       // before the trusted checkout, so an existing pull request stops the push too.
-      const existing = await port.findByHead(input.repositorySlug, branch);
+      const existing = await port.findByHead(input.repositorySlug, branch, legacyInstallationId);
       if (existing !== null) {
         // GitHub already answered the tip commit of the head branch. Factoree therefore runs no
         // second git read here. A `git ls-remote` puts its URL on the process argument list, so
@@ -391,22 +396,25 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       });
 
       // Step 10. SDD section 46 step 9.
-      const created = await port.create({
-        slug: input.repositorySlug,
-        headBranch: branch,
-        baseBranch: input.baseBranch,
-        title,
-        body: buildPullRequestBody({
-          workItemTitle: input.workItemTitle,
-          workItemUrl: input.workItemUrl,
-          runId: input.runId,
-          baseSha: input.baseSha,
-          patchSha256: patch.patchSha256,
-          verificationSummary: input.verificationSummary,
-          changedFileCount: patch.changedFiles.length,
-          repairCount: input.repairCount,
-        }),
-      });
+      const created = await port.create(
+        {
+          slug: input.repositorySlug,
+          headBranch: branch,
+          baseBranch: input.baseBranch,
+          title,
+          body: buildPullRequestBody({
+            workItemTitle: input.workItemTitle,
+            workItemUrl: input.workItemUrl,
+            runId: input.runId,
+            baseSha: input.baseSha,
+            patchSha256: patch.patchSha256,
+            verificationSummary: input.verificationSummary,
+            changedFileCount: patch.changedFiles.length,
+            repairCount: input.repairCount,
+          }),
+        },
+        legacyInstallationId,
+      );
 
       // Step 11. The publication facts of the Run.
       await dependencies.runs.setPublication(input.tenantId, input.runId, {

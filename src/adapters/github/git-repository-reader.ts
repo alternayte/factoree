@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
 import { credentialEnvironment } from "~/domain/security/git-credential-environment.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 
 const run = promisify(execFile);
 
@@ -54,12 +55,13 @@ export interface RepositoryReader {
   listTree(url: string, sha: string): Promise<TreeListing>;
   readBlob(url: string, sha: string, path: string): Promise<string | null>;
   /**
-   * Holds a read-only credential for one origin, so a private repository resolves. Context
-   * discovery runs before the sandbox exists, on the worker, so the sandbox credential path
-   * cannot serve it. A caller sets the credential again for each Run, because a Project can
-   * rotate its token between two Runs.
+   * Holds a read-only credential source for one origin, so a private repository resolves.
+   * Context discovery runs before the sandbox exists, on the worker, so the sandbox credential
+   * path cannot serve it. The reader stores the provider and the installation id, never a token,
+   * and mints a token immediately before the git command that needs it. A caller sets this again
+   * for each Run, because a Project can rotate the installation between two Runs.
    */
-  useCredential(origin: string, token: string): void;
+  useCredential(origin: string, tokens: GitHubTokenProvider, githubInstallationId: string): void;
 }
 
 /**
@@ -106,8 +108,8 @@ export interface GitRepositoryReaderOptions {
 export class GitRepositoryReader implements RepositoryReader {
   private root: string | null = null;
   private readonly mirrors = new Map<string, Promise<string>>();
-  /** The git environment that carries the credential of one origin, by origin. */
-  private readonly credentials = new Map<string, Record<string, string>>();
+  /** The token provider and the installation id to mint against, by origin. Never a token. */
+  private readonly credentialSources = new Map<string, { tokens: GitHubTokenProvider; githubInstallationId: string }>();
   private readonly maxTreeEntries: number;
 
   constructor(options: GitRepositoryReaderOptions = {}) {
@@ -119,24 +121,29 @@ export class GitRepositoryReader implements RepositoryReader {
     return this.root;
   }
 
-  useCredential(origin: string, token: string): void {
-    // The value is stored as the git environment it produces, so no other part of this class ever
-    // holds the raw token. The URL of a repository stays bare: it reaches the Context Contract and
-    // the Proof Pack, and SDD section 60 forbids a credential there.
-    this.credentials.set(origin, credentialEnvironment(`${origin}/`, token));
+  useCredential(origin: string, tokens: GitHubTokenProvider, githubInstallationId: string): void {
+    // Only the provider and the installation id are stored. Neither is a credential, so this
+    // class holds no token at any point outside the single command that mints and spends one.
+    this.credentialSources.set(origin, { tokens, githubInstallationId });
   }
 
   /**
    * The credential environment for one repository URL, or an empty environment when the origin
-   * has none. Only one origin is ever in play for one command, so `GIT_CONFIG_COUNT` stays at
-   * one and no merge of two config sources is needed.
+   * has none. Mints a fresh token immediately before the git command that consumes it, so no
+   * token outlives the single command it authenticates. Only one origin is ever in play for one
+   * command, so `GIT_CONFIG_COUNT` stays at one and no merge of two config sources is needed.
    */
-  private credentialFor(url: string): Record<string, string> {
+  private async credentialFor(url: string): Promise<Record<string, string>> {
+    let origin: string;
     try {
-      return this.credentials.get(new URL(url).origin) ?? {};
+      origin = new URL(url).origin;
     } catch {
       return {};
     }
+    const source = this.credentialSources.get(origin);
+    if (source === undefined) return {};
+    const token = await source.tokens.tokenForInstallation(source.githubInstallationId);
+    return credentialEnvironment(`${origin}/`, token);
   }
 
   private async git(
@@ -146,6 +153,7 @@ export class GitRepositoryReader implements RepositoryReader {
     url?: string,
   ): Promise<string> {
     try {
+      const credentialEnv = url === undefined ? {} : await this.credentialFor(url);
       const { stdout } = await run("git", args, {
         ...(cwd === null ? {} : { cwd }),
         timeout: GIT_READ_TIMEOUT_MS,
@@ -158,7 +166,7 @@ export class GitRepositoryReader implements RepositoryReader {
           GIT_TERMINAL_PROMPT: "0",
           GIT_ASKPASS: "true",
           GCM_INTERACTIVE: "never",
-          ...(url === undefined ? {} : this.credentialFor(url)),
+          ...credentialEnv,
         },
       });
       return stdout;

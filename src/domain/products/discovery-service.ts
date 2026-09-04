@@ -38,7 +38,7 @@ export class DiscoveryService {
     defaultBranch: string,
     githubInstallationId: string,
   ): Promise<DiscoveryOutcome> {
-    const file = await this.discoveryClient.readConfig(fullName, defaultBranch);
+    const file = await this.discoveryClient.readConfig(fullName, defaultBranch, githubInstallationId);
     if (file === null) {
       return { kind: "skipped", reason: `${fullName} carries no .factoree/config.yaml at ${defaultBranch}.` };
     }

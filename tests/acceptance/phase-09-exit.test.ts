@@ -135,7 +135,7 @@ const buildActivities = (api: GitHubFixtureApi) => {
       readBlob: () => Promise.resolve(null),
       useCredential: () => undefined,
     },
-    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
+    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
     gitAuthor: AUTHOR,
     logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
     publishToBranch: (value: TrustedCheckoutInput) => {

@@ -276,7 +276,13 @@ const worker = await Worker.create({
     evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
     reviewFindings: new PrismaReviewFindingStore(prisma),
-    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: env.GITHUB_API_BASE_URL, token }),
+    // Task 6 replaces this single Project token with a real per-installation `GitHubTokenProvider`.
+    // Until then, the adapter mints against the one Project secret regardless of installation id.
+    pullRequests: (token: string) =>
+      new GitHubPullRequests({
+        apiBaseUrl: env.GITHUB_API_BASE_URL,
+        tokens: { tokenForInstallation: () => Promise.resolve(token) },
+      }),
     gitAuthor: { name: env.FACTOREE_GIT_AUTHOR_NAME, email: env.FACTOREE_GIT_AUTHOR_EMAIL },
     logger,
   }),

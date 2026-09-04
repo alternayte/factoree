@@ -4,6 +4,7 @@ import type {
   PullRequestPort,
   PullRequestRecord,
 } from "~/domain/publishing/pull-request.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 
 /** One GitHub call must not hang a Run. */
 const GITHUB_API_TIMEOUT_MS = 30_000;
@@ -42,31 +43,36 @@ export class GitHubApiError extends Error {
 
 export interface GitHubPullRequestsOptions {
   apiBaseUrl: string;
-  /** The GitHub write credential. SDD section 30 keeps it on the control plane only. */
-  token: string;
+  /** Mints the GitHub write credential. SDD section 30 keeps it on the control plane only. */
+  tokens: GitHubTokenProvider;
   fetch?: typeof fetch;
 }
 
 /**
  * SDD section 46 step 9. The only implementation of `PullRequestPort`. It runs on the control
- * plane, never inside a sandbox, and no agent session reaches it.
+ * plane, never inside a sandbox, and no agent session reaches it. It holds no token: every
+ * method mints one against the installation id the caller supplies, immediately before the call.
  */
 export class GitHubPullRequests implements PullRequestPort {
   private readonly base: string;
-  private readonly token: string;
+  private readonly tokens: GitHubTokenProvider;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: GitHubPullRequestsOptions) {
     this.base = options.apiBaseUrl.replace(/\/+$/, "");
-    this.token = options.token;
+    this.tokens = options.tokens;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  async findByHead(slug: string, headBranch: string): Promise<PullRequestRecord | null> {
+  async findByHead(slug: string, headBranch: string, githubInstallationId: string): Promise<PullRequestRecord | null> {
     assertRepositorySlug(slug);
     const owner = slug.split("/")[0] ?? "";
     const query = new URLSearchParams({ head: `${owner}:${headBranch}`, state: "all", per_page: "1" });
-    const body = await this.call(`${this.base}/repos/${slug}/pulls?${query.toString()}`, { method: "GET" });
+    const body = await this.call(
+      `${this.base}/repos/${slug}/pulls?${query.toString()}`,
+      { method: "GET" },
+      githubInstallationId,
+    );
     if (!Array.isArray(body) || body.length === 0) return null;
     return this.toRecord(body[0] as GitHubPullRequestBody, headBranch);
   }
@@ -79,11 +85,19 @@ export class GitHubPullRequests implements PullRequestPort {
    * confirmation by number reads what the Proof Pack actually holds. The port names this method
    * not at all, because no part of a Run needs it: the publication already holds its own record.
    */
-  async findByNumber(slug: string, number: number): Promise<PullRequestRecord | null> {
+  async findByNumber(
+    slug: string,
+    number: number,
+    githubInstallationId: string,
+  ): Promise<PullRequestRecord | null> {
     assertRepositorySlug(slug);
     let body: unknown;
     try {
-      body = await this.call(`${this.base}/repos/${slug}/pulls/${number}`, { method: "GET" });
+      body = await this.call(
+        `${this.base}/repos/${slug}/pulls/${number}`,
+        { method: "GET" },
+        githubInstallationId,
+      );
     } catch (error) {
       // A pull request that does not exist is an answer, not a fault.
       if (error instanceof GitHubApiError && error.status === 404) return null;
@@ -95,17 +109,21 @@ export class GitHubPullRequests implements PullRequestPort {
     return this.toRecord(parsed, headBranch);
   }
 
-  async create(input: CreatePullRequestInput): Promise<PullRequestRecord> {
+  async create(input: CreatePullRequestInput, githubInstallationId: string): Promise<PullRequestRecord> {
     assertRepositorySlug(input.slug);
-    const body = await this.call(`${this.base}/repos/${input.slug}/pulls`, {
-      method: "POST",
-      body: JSON.stringify({
-        title: input.title,
-        body: input.body,
-        head: input.headBranch,
-        base: input.baseBranch,
-      }),
-    });
+    const body = await this.call(
+      `${this.base}/repos/${input.slug}/pulls`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          title: input.title,
+          body: input.body,
+          head: input.headBranch,
+          base: input.baseBranch,
+        }),
+      },
+      githubInstallationId,
+    );
     return this.toRecord(body as GitHubPullRequestBody, input.headBranch);
   }
 
@@ -124,7 +142,8 @@ export class GitHubPullRequests implements PullRequestPort {
     return { number, url, headBranch, headSha };
   }
 
-  private async call(url: string, init: RequestInit): Promise<unknown> {
+  private async call(url: string, init: RequestInit, githubInstallationId: string): Promise<unknown> {
+    const token = await this.tokens.tokenForInstallation(githubInstallationId);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GITHUB_API_TIMEOUT_MS);
     timer.unref();
@@ -138,8 +157,9 @@ export class GitHubPullRequests implements PullRequestPort {
           "content-type": "application/json",
           "x-github-api-version": "2022-11-28",
           "user-agent": "factoree",
-          // The credential appears here and nowhere else. It never reaches a message below.
-          authorization: `Bearer ${this.token}`,
+          // The token is minted for this request and held nowhere else. It never reaches a
+          // message below.
+          authorization: `Bearer ${token}`,
         },
       });
     } finally {

@@ -1,4 +1,5 @@
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 
 /** One GitHub call must not hang the discovery service. */
 const GITHUB_API_TIMEOUT_MS = 30_000;
@@ -27,13 +28,13 @@ export interface RepositoryConfigFile {
  */
 export interface RepositoryDiscoveryClient {
   listInstallationRepositories(installationId: string): Promise<DiscoveredRepository[]>;
-  readConfig(fullName: string, ref: string): Promise<RepositoryConfigFile | null>;
+  readConfig(fullName: string, ref: string, githubInstallationId: string): Promise<RepositoryConfigFile | null>;
 }
 
 export interface GitHubRepositoryDiscoveryClientOptions {
   apiBaseUrl?: string;
-  /** The GitHub App installation token. */
-  token: string;
+  /** Mints the GitHub App installation token. The client holds no token of its own. */
+  tokens: GitHubTokenProvider;
   fetch?: typeof fetch;
 }
 
@@ -60,24 +61,25 @@ interface GitHubRepositorySummary {
  */
 export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClient {
   private readonly base: string;
-  private readonly token: string;
+  private readonly tokens: GitHubTokenProvider;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: GitHubRepositoryDiscoveryClientOptions) {
     this.base = (options.apiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
-    this.token = options.token;
+    this.tokens = options.tokens;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
   /**
-   * GitHub scopes this endpoint by the installation access token. The caller must supply a token
-   * that belongs to `installationId`. The identifier selects that token. It never reaches the URL.
+   * GitHub scopes this endpoint by the installation access token. The client mints a token for
+   * `installationId` on every request, so it never holds a token that can serve the wrong
+   * installation. The identifier never reaches the URL.
    */
   async listInstallationRepositories(installationId: string): Promise<DiscoveredRepository[]> {
     const discovered: DiscoveredRepository[] = [];
     let url: string | null = `${this.base}/installation/repositories?per_page=100`;
     while (url !== null) {
-      const response = await this.request(url);
+      const response = await this.request(url, installationId);
       const text = await response.text();
       if (!response.ok) {
         throw new GitHubApiError(
@@ -95,10 +97,14 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     return discovered;
   }
 
-  async readConfig(fullName: string, ref: string): Promise<RepositoryConfigFile | null> {
+  async readConfig(
+    fullName: string,
+    ref: string,
+    githubInstallationId: string,
+  ): Promise<RepositoryConfigFile | null> {
     const query = new URLSearchParams({ ref });
     const url = `${this.base}/repos/${fullName}/contents/${CONFIG_PATH}?${query.toString()}`;
-    const response = await this.request(url);
+    const response = await this.request(url, githubInstallationId);
     if (response.status === 404) return null;
     const text = await response.text();
     if (!response.ok) {
@@ -153,7 +159,8 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     return null;
   }
 
-  private async request(url: string): Promise<Response> {
+  private async request(url: string, githubInstallationId: string): Promise<Response> {
+    const token = await this.tokens.tokenForInstallation(githubInstallationId);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GITHUB_API_TIMEOUT_MS);
     timer.unref();
@@ -165,8 +172,9 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
           accept: "application/vnd.github+json",
           "x-github-api-version": "2022-11-28",
           "user-agent": "factoree",
-          // The credential appears here and nowhere else. It never reaches a message below.
-          authorization: `Bearer ${this.token}`,
+          // The token is minted for this request and held nowhere else. It never reaches a
+          // message below, because a later call can mint against a different installation.
+          authorization: `Bearer ${token}`,
         },
       });
     } finally {
