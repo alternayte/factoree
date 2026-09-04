@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { registerGitHubWebhookRoutes } from "~/http/webhooks/github.routes.js";
 import type { DiscoveryOutcome } from "~/domain/products/discovery-service.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
-import type { TenantRecord, TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { Logger, LogFields } from "~/telemetry/logger.js";
 
 /** Records a warning per call, and no-ops every other level, so a test can assert on it. */
@@ -40,6 +40,9 @@ class FakeTenantRegistry implements TenantRegistry {
   }
   findByGitHubInstallation(githubInstallationId: string): Promise<TenantRecord | null> {
     return Promise.resolve(this.installationsById.get(githubInstallationId) ?? null);
+  }
+  putGitHubInstallation(): Promise<void> {
+    throw new Error("not used by this route");
   }
 }
 

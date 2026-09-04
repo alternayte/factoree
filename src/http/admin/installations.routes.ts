@@ -1,6 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
+
+const gitHubInstallationSchema = z
+  .object({
+    linearWorkspaceId: z.string().min(1),
+    githubInstallationId: z.string().min(1),
+    // Stored for display only. A route must never resolve a tenant by this value. An account
+    // rename never breaks the binding, because the numeric installation id is the key.
+    accountLogin: z.string().min(1),
+  })
+  .strict();
 
 const schema = z.object({
   linearWorkspaceId: z.string().min(1),
@@ -36,5 +46,21 @@ export const registerInstallationRoutes = (
       ...(parsed.data.refreshToken === undefined ? {} : { refreshToken: parsed.data.refreshToken }),
     });
     return reply.code(200).send({ tenantId: tenant.id, linearWorkspaceId: tenant.linearWorkspaceId });
+  });
+
+  // Task 7 added the GitHubInstallation model. No route wrote a row, so an unbound installation
+  // only logged a warning. This route binds one to a tenant, by the numeric installation id
+  // GitHub sends. It never resolves anything from the account login.
+  app.put("/admin/github-installations", async (request, reply) => {
+    const parsed = gitHubInstallationSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const tenant = await dependencies.tenants.findByWorkspace(parsed.data.linearWorkspaceId);
+    if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    await dependencies.tenants.putGitHubInstallation(
+      tenant.id,
+      parsed.data.githubInstallationId,
+      parsed.data.accountLogin,
+    );
+    return reply.code(200).send({ tenantId: tenant.id, githubInstallationId: parsed.data.githubInstallationId });
   });
 };

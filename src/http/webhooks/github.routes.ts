@@ -6,7 +6,7 @@ import {
   pushEventSchema,
 } from "~/adapters/github/webhook-schemas.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
-import type { TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { Logger } from "~/telemetry/logger.js";
 
 export interface GitHubWebhookDependencies {

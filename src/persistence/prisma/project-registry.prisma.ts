@@ -2,14 +2,16 @@ import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
 import type {
   CreateProjectInput,
-  InstallationInput,
-  InstallationRecord,
   ProjectRecord,
   ProjectRegistry,
-  TenantRecord,
-  TenantRegistry,
   UpdateProjectInput,
 } from "~/domain/projects/project-registry.js";
+import type {
+  InstallationInput,
+  InstallationRecord,
+  TenantRecord,
+  TenantRegistry,
+} from "~/domain/products/tenant-registry.js";
 
 type ProjectRow = {
   id: string;
@@ -174,5 +176,17 @@ export class PrismaTenantRegistry implements TenantRegistry {
       include: { tenant: true },
     });
     return row ? { id: row.tenant.id, linearWorkspaceId: row.tenant.linearWorkspaceId, name: row.tenant.name } : null;
+  }
+
+  async putGitHubInstallation(
+    tenantId: string,
+    githubInstallationId: string,
+    accountLogin: string,
+  ): Promise<void> {
+    await this.prisma.gitHubInstallation.upsert({
+      where: { githubInstallationId },
+      create: { tenantId, githubInstallationId, accountLogin },
+      update: { tenantId, accountLogin },
+    });
   }
 }

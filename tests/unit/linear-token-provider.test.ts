@@ -3,7 +3,7 @@ import {
   LinearInstallationError,
   LinearTokenProvider,
 } from "~/domain/projects/linear-token-provider.js";
-import type { InstallationInput, InstallationRecord, TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { InstallationInput, InstallationRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 

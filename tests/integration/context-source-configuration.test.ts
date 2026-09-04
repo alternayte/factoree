@@ -6,7 +6,8 @@ import {
   PrismaTenantRegistry,
 } from "~/persistence/prisma/project-registry.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
-import type { ProjectRecord, TenantRecord } from "~/domain/projects/project-registry.js";
+import type { ProjectRecord } from "~/domain/projects/project-registry.js";
+import type { TenantRecord } from "~/domain/products/tenant-registry.js";
 
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;

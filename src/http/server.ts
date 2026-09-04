@@ -2,14 +2,18 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Env } from "~/config/env.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
-import type { ProjectRegistry, TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { ProjectRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
+import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
+import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { DelegationService } from "~/domain/runs/delegation-service.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { createAdminGuard } from "./admin/auth.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
-import { registerProjectRoutes } from "./admin/projects.routes.js";
+import { registerProductRoutes } from "./admin/products.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
@@ -29,6 +33,9 @@ export interface ServerDependencies {
   prisma: FactoreePrismaClient;
   projects: ProjectRegistry;
   tenants: TenantRegistry;
+  products: ProductRegistry;
+  repositories: RepositoryRegistry;
+  linearTeams: LinearTeamLookup;
   secrets: SecretStore;
   runs: RunRepository;
   delegation: DelegationService;
@@ -70,9 +77,12 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
 
   void app.register((admin) => {
     admin.addHook("onRequest", createAdminGuard(dependencies.env.ADMIN_API_TOKEN));
-    registerProjectRoutes(admin, {
-      projects: dependencies.projects,
+    registerProductRoutes(admin, {
+      products: dependencies.products,
+      repositories: dependencies.repositories,
       tenants: dependencies.tenants,
+      secrets: dependencies.secrets,
+      linearTeams: dependencies.linearTeams,
     });
     registerRunRoutes(admin, { runs: dependencies.runs, tenants: dependencies.tenants });
     registerInstallationRoutes(admin, { tenants: dependencies.tenants });

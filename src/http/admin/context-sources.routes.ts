@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { ProjectRegistry, TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { ProjectRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ContextSourceConfigurationStore } from "~/domain/context/context-source-configuration.js";
 import { CONTEXT_SOURCE_KINDS, ContextSourceConfigurationError } from "~/domain/context/context-source-configuration.js";
 

@@ -1,5 +1,5 @@
 import type { Logger } from "~/telemetry/logger.js";
-import type { InstallationRecord, TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { InstallationRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
 
 /**
  * The result of one refresh against the Linear token endpoint.

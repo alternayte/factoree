@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
-import type { TenantRegistry } from "~/domain/projects/project-registry.js";
+import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 
 const querySchema = z.object({ linearWorkspaceId: z.string().min(1) });
 
