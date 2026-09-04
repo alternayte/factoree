@@ -71,6 +71,7 @@ describe("product and repository schema", () => {
         fullName: "acme/checkout-api",
         defaultBranch: "main",
         configSha: "4f21c9e",
+        githubInstallationId: "install-1",
       },
     });
     await prisma.repository.create({
@@ -80,6 +81,7 @@ describe("product and repository schema", () => {
         fullName: "acme/checkout-web",
         defaultBranch: "main",
         configSha: "88a0f2b",
+        githubInstallationId: "install-1",
       },
     });
 
@@ -142,6 +144,7 @@ describe("PrismaProductRegistry", () => {
       defaultBranch: "main",
       configSha: "aaa",
       requestedSecretNames: ["STRIPE_TEST_KEY"],
+      githubInstallationId: "install-1",
     });
     const second = await repositories.upsert({
       tenantId: tenant.id,
@@ -150,10 +153,36 @@ describe("PrismaProductRegistry", () => {
       defaultBranch: "main",
       configSha: "bbb",
       requestedSecretNames: [],
+      githubInstallationId: "install-1",
     });
 
     expect(second.configSha).toBe("bbb");
     expect(await repositories.listByProduct(product.id)).toHaveLength(1);
+  });
+
+  it("records the installation that granted access to a repository", async () => {
+    const tenant = await prisma.tenant.create({ data: { linearWorkspaceId: "ws-inst", name: "Acme" } });
+    const products = new PrismaProductRegistry(prisma);
+    const repositories = new PrismaRepositoryRegistry(prisma);
+    const product = await products.create({
+      tenantId: tenant.id,
+      slug: "checkout",
+      name: "Checkout",
+      linearTeamKey: "CHI",
+      linearTeamId: "team-chi",
+    });
+
+    const row = await repositories.upsert({
+      tenantId: tenant.id,
+      productId: product.id,
+      fullName: "acme/api",
+      defaultBranch: "main",
+      configSha: "aaa",
+      requestedSecretNames: [],
+      githubInstallationId: "42",
+    });
+
+    expect(row.githubInstallationId).toBe("42");
   });
 });
 

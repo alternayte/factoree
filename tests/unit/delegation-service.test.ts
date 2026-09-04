@@ -41,6 +41,7 @@ const repositoryFor = (productId: string, fullName: string, defaultBranch = "mai
   discoveredAt: new Date(),
   lastSeenAt: new Date(),
   absentSince: null,
+  githubInstallationId: "install-1",
 });
 
 const defaultRepositories = [

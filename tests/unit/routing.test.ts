@@ -30,6 +30,7 @@ const repository = (fullName: string): RepositoryRecord => ({
   discoveredAt: new Date(),
   lastSeenAt: new Date(),
   absentSince: null,
+  githubInstallationId: "install-1",
 });
 
 describe("resolveProduct", () => {

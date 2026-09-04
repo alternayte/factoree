@@ -959,6 +959,9 @@ export async function agentRunWorkflow(
         discoveredAt: EPOCH,
         lastSeenAt: EPOCH,
         absentSince: repository.absentSince === null ? null : new Date(repository.absentSince),
+        // `selectTarget` never reads this field. `AgentRunProductRepositoryInput` does not carry
+        // it, so this placeholder matches the pattern already set for `configSha` above.
+        githubInstallationId: "",
       }));
 
       /**

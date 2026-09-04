@@ -104,6 +104,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       existing.defaultBranch = input.defaultBranch;
       existing.configSha = input.configSha;
       existing.requestedSecretNames = input.requestedSecretNames;
+      existing.githubInstallationId = input.githubInstallationId;
       existing.lastSeenAt = new Date();
       existing.absentSince = null;
       return Promise.resolve(existing);
@@ -117,6 +118,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       defaultBranch: input.defaultBranch,
       configSha: input.configSha,
       requestedSecretNames: input.requestedSecretNames,
+      githubInstallationId: input.githubInstallationId,
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,
@@ -210,7 +212,7 @@ describe("DiscoveryService.syncRepository", () => {
   it("creates a pending Product at L0 for an unknown slug", async () => {
     const { service, products } = build({ config: configFor("checkout-platform", "PAY") });
 
-    const outcome = await service.syncRepository("tenant-1", "acme/api", "main");
+    const outcome = await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
 
     expect(outcome).toMatchObject({ kind: "registered", productCreated: true });
     const product = await products.findBySlug("tenant-1", "checkout-platform");
@@ -226,8 +228,8 @@ describe("DiscoveryService.syncRepository", () => {
       },
     });
 
-    await service.syncRepository("tenant-1", "acme/api", "main");
-    const outcome = await service.syncRepository("tenant-1", "acme/web", "main");
+    await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
+    const outcome = await service.syncRepository("tenant-1", "acme/web", "main", "install-1");
 
     expect(outcome).toMatchObject({ kind: "registered", productCreated: false });
     expect(await repositories.findByFullName("tenant-1", "acme/web")).not.toBeNull();
@@ -241,8 +243,8 @@ describe("DiscoveryService.syncRepository", () => {
       },
     });
 
-    await service.syncRepository("tenant-1", "acme/api", "main");
-    const outcome = await service.syncRepository("tenant-1", "acme/other", "main");
+    await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
+    const outcome = await service.syncRepository("tenant-1", "acme/other", "main", "install-1");
 
     expect(outcome.kind).toBe("conflict");
     // The refusal must write no row. A regression that writes one and still returns "conflict"
@@ -254,13 +256,13 @@ describe("DiscoveryService.syncRepository", () => {
 
   it("keeps the binding, and records the drift, when the team key is renamed", async () => {
     const { service, products, linear } = build({ config: configFor("checkout-platform", "PAY") });
-    await service.syncRepository("tenant-1", "acme/api", "main");
+    await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
     const before = await products.findBySlug("tenant-1", "checkout-platform");
 
     // The Linear stub now answers "PAYMENTS" for the same team id, and the repository file still
     // names the old key. The id is stable, so the binding must survive.
     linear.teamKeyNow = "PAYMENTS";
-    const outcome = await service.syncRepository("tenant-1", "acme/api", "main");
+    const outcome = await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
 
     expect(outcome).toMatchObject({ kind: "registered", drift: "linear_team_key_renamed" });
     const after = await products.findBySlug("tenant-1", "checkout-platform");
@@ -271,16 +273,25 @@ describe("DiscoveryService.syncRepository", () => {
   it("skips a repository whose configuration file is absent", async () => {
     const { service } = build({ config: null });
 
-    expect(await service.syncRepository("tenant-1", "acme/api", "main")).toMatchObject({ kind: "skipped" });
+    expect(await service.syncRepository("tenant-1", "acme/api", "main", "install-1")).toMatchObject({ kind: "skipped" });
   });
 
   it("reports a conflict when the file sets a privilege key", async () => {
     const { service } = build({ config: "version: 1\npolicy:\n  defaultAutonomy: L4\n" });
 
-    const outcome = await service.syncRepository("tenant-1", "acme/api", "main");
+    const outcome = await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
 
     expect(outcome.kind).toBe("conflict");
     if (outcome.kind !== "conflict") throw new Error("unreachable: asserted above");
     expect(outcome.reason).toEqual(expect.stringContaining("policy"));
+  });
+
+  it("stores the installation that triggered the sync", async () => {
+    const { service, repositories } = build({ config: configFor("checkout-platform", "PAY") });
+
+    await service.syncRepository("tenant-1", "acme/api", "main", "42");
+
+    const row = await repositories.findByFullName("tenant-1", "acme/api");
+    expect(row?.githubInstallationId).toBe("42");
   });
 });

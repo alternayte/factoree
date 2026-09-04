@@ -87,6 +87,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
             tenantId,
             repository.full_name,
             repository.default_branch,
+            String(parsed.data.installation.id),
           );
           logDiscoveryOutcome(dependencies, repository.full_name, outcome);
         }
@@ -125,6 +126,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
               tenantId,
               repository.full_name,
               repository.default_branch,
+              String(installation.id),
             );
             logDiscoveryOutcome(dependencies, repository.full_name, outcome);
           }

@@ -135,6 +135,7 @@ beforeAll(async () => {
     defaultBranch: "main",
     configSha: "a".repeat(40),
     requestedSecretNames: [],
+    githubInstallationId: "install-1",
   });
 
   const runs = new PrismaRunRepository(prisma);

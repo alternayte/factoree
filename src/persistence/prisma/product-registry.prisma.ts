@@ -63,6 +63,7 @@ type RepositoryRow = {
   discoveredAt: Date;
   lastSeenAt: Date;
   absentSince: Date | null;
+  githubInstallationId: string;
 };
 
 const toRepository = (row: RepositoryRow): RepositoryRecord => ({ ...row });
@@ -190,12 +191,14 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry {
         defaultBranch: input.defaultBranch,
         configSha: input.configSha,
         requestedSecretNames: input.requestedSecretNames,
+        githubInstallationId: input.githubInstallationId,
       },
       update: {
         productId: input.productId,
         defaultBranch: input.defaultBranch,
         configSha: input.configSha,
         requestedSecretNames: input.requestedSecretNames,
+        githubInstallationId: input.githubInstallationId,
         lastSeenAt: new Date(),
         absentSince: null,
       },

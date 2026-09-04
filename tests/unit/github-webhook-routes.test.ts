@@ -48,11 +48,16 @@ class FakeTenantRegistry implements TenantRegistry {
 
 /** Records every call the route makes, without touching a real DiscoveryService. */
 class FakeDiscoveryService {
-  readonly synced: [string, string][] = [];
+  readonly synced: [string, string, string][] = [];
   readonly absent: string[] = [];
   nextOutcome: DiscoveryOutcome = { kind: "registered", repositoryId: "r1", productId: "p1", productCreated: false };
-  syncRepository(_tenantId: string, fullName: string, defaultBranch: string): Promise<DiscoveryOutcome> {
-    this.synced.push([fullName, defaultBranch]);
+  syncRepository(
+    _tenantId: string,
+    fullName: string,
+    defaultBranch: string,
+    githubInstallationId: string,
+  ): Promise<DiscoveryOutcome> {
+    this.synced.push([fullName, defaultBranch, githubInstallationId]);
     return Promise.resolve(this.nextOutcome);
   }
   markAbsent(_tenantId: string, fullName: string): Promise<void> {
@@ -112,7 +117,7 @@ describe("GitHub webhook route", () => {
         repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
       },
     });
-    expect(synced).toEqual([["acme/api", "main"]]);
+    expect(synced).toEqual([["acme/api", "main", "42"]]);
   });
 
   it("F5: logs a discovery conflict instead of discarding it", async () => {
@@ -162,7 +167,7 @@ describe("GitHub webhook route", () => {
     expect(synced).toEqual([]);
 
     await app.inject(push([".factoree/config.yaml"]));
-    expect(synced).toEqual([["acme/api", "main"]]);
+    expect(synced).toEqual([["acme/api", "main", "42"]]);
   });
 
   it("ignores a push to a branch other than the repository default, even when it touches the configuration file", async () => {
