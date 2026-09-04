@@ -115,6 +115,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     repositoryReader: dependencies.repositoryReader,
     secrets: dependencies.secrets,
     tokens: dependencies.tokens,
+    redactor: dependencies.redactor,
   }),
   ...createValidationActivities({
     contracts: dependencies.validationContracts,

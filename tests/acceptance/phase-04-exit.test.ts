@@ -71,6 +71,7 @@ beforeAll(async () => {
     tokens: {
       tokenForInstallation: () => Promise.reject(new Error("this fixture reads a local path, so no mint runs")),
     },
+    redactor: new Redactor(),
   });
   harness.activities.resolveContext = (input) => contextActivities.resolveContext(input);
 

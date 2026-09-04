@@ -22,6 +22,7 @@ const build = (
   tokens: { tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string> } = {
     tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
   },
+  redactor = new Redactor(),
 ) => {
   const reader = new FakeRepositoryReader({ [PRIMARY_URL]: { sha: SHA_A, files } });
   const contracts = new FakeContextContractStore();
@@ -49,6 +50,7 @@ const build = (
     repositoryReader: reader,
     secrets,
     tokens,
+    redactor,
   });
   return { activities, contracts, versions, reader };
 };
@@ -255,5 +257,18 @@ describe("resolveContext, the private repository credential", () => {
     await activities.resolveContext(input());
 
     expect(reader.credentialOrigins).toEqual([]);
+  });
+
+  it("registers the minted discovery-read token with the redactor before it is used", async () => {
+    const tokens = { tokenForInstallation: () => Promise.resolve("ghs_discovery_read_secret_value") };
+    const redactor = new Redactor();
+    const { activities, reader } = build({}, new MemorySecretStore(), tokens, redactor);
+
+    await activities.resolveContext(input({ githubInstallationId: "install-1" }));
+
+    expect(reader.mintedTokens).toEqual(["ghs_discovery_read_secret_value"]);
+    expect(redactor.redact("a line holding ghs_discovery_read_secret_value")).not.toContain(
+      "ghs_discovery_read_secret_value",
+    );
   });
 });

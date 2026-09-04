@@ -14,6 +14,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { Redactor } from "~/telemetry/redaction.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 
 export interface ResolveContextActivityInput {
@@ -60,9 +61,26 @@ export interface ContextActivityDependencies {
   secrets: SecretStore;
   /** Mints the read-only credential of the primary repository origin, scoped to `contents: read`. */
   tokens: GitHubTokenProvider;
+  /** Every minted token reaches this before a git command spends it. SDD section 7. */
+  redactor: Redactor;
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
+
+/**
+ * Wraps a `GitHubTokenProvider` so every token it mints reaches the redactor before the caller
+ * can spend it. `GitRepositoryReader` mints immediately before the git command that uses the
+ * token, so this wrapper is the only point between the mint and that command. A token must never
+ * reach output by design, and the redactor is the guarantee that survives a later edit by someone
+ * who does not know the rule.
+ */
+const redactingTokens = (tokens: GitHubTokenProvider, redactor: Redactor): GitHubTokenProvider => ({
+  tokenForInstallation: async (githubInstallationId, scope) => {
+    const token = await tokens.tokenForInstallation(githubInstallationId, scope);
+    redactor.addSecret(token);
+    return token;
+  },
+});
 
 /**
  * Specification section 8. The cached routing table can drift from the file at the commit a Run
@@ -110,7 +128,11 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
         // The provider mints on demand, immediately before the git command that spends the
         // token, so no token outlives the single command. The scope stays read-only. SDD
         // section 30 forbids a write credential here, and this path never asks for one.
-        dependencies.repositoryReader.useCredential(origin, dependencies.tokens, input.githubInstallationId);
+        dependencies.repositoryReader.useCredential(
+          origin,
+          redactingTokens(dependencies.tokens, dependencies.redactor),
+          input.githubInstallationId,
+        );
       } catch {
         // A local path carries no origin, and it needs no credential either.
       }
@@ -250,7 +272,11 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     if (input.githubInstallationId !== "") {
       try {
         const origin = new URL(input.repositoryUrl).origin;
-        dependencies.repositoryReader.useCredential(origin, dependencies.tokens, input.githubInstallationId);
+        dependencies.repositoryReader.useCredential(
+          origin,
+          redactingTokens(dependencies.tokens, dependencies.redactor),
+          input.githubInstallationId,
+        );
       } catch {
         // A local path carries no origin, and it needs no credential either.
       }
