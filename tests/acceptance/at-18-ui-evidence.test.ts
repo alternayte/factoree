@@ -88,7 +88,7 @@ describe("AT-18 — browser evidence matches the frozen assertion's required kin
     const port = await pickPort();
     sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at18-sandbox-"));
     sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId: "at18-run", tenantId: "at18-tenant", projectId: "at18-project" });
+    const ref = await sandbox.create({ runId: "at18-run", tenantId: "at18-tenant", productId: "at18-project" });
     root = ref.workspacePath;
     await writePreviewFixtureApp({ root, persistName: true });
 
@@ -138,7 +138,7 @@ describe("AT-18 — browser evidence matches the frozen assertion's required kin
     const port = await pickPort();
     sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at18-neg-sandbox-"));
     sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId: "at18-neg-run", tenantId: "at18-tenant", projectId: "at18-project" });
+    const ref = await sandbox.create({ runId: "at18-neg-run", tenantId: "at18-tenant", productId: "at18-project" });
     root = ref.workspacePath;
     await writePreviewFixtureApp({ root, persistName: true });
 

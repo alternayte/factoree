@@ -12,7 +12,7 @@ describe("checkoutRepositories", () => {
   it("clones the primary repository and captures its base SHA", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const result = await checkoutRepositories(sandbox, ref, input);
     expect(result.primary.baseSha).toBe("aaaabbbbccccddddeeeeffff0000111122223333");
     expect(result.primary.path).toBe("/workspace/primary");
@@ -24,7 +24,7 @@ describe("checkoutRepositories", () => {
     // shares, and a sandbox must never change anything outside itself.
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await checkoutRepositories(sandbox, ref, input);
     const clones = sandbox.commands.filter((command) => command.args.includes("clone"));
     expect(clones).toHaveLength(2);
@@ -36,7 +36,7 @@ describe("checkoutRepositories", () => {
     // nothing to resolve, and git then reads the tag as a path and fails.
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await checkoutRepositories(sandbox, ref, input);
     const clones = sandbox.commands.filter((command) => command.args.includes("clone"));
     for (const clone of clones) expect(clone.args).not.toContain("--no-tags");
@@ -49,7 +49,7 @@ describe("checkoutRepositories", () => {
       exitCode: 128,
       stderr: "fatal: could not read from https://x-access-token:ghp_realtokenvalue000000000@github.com/acme/app.git",
     });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const withToken = {
       primary: { url: "https://x-access-token:ghp_realtokenvalue000000000@github.com/acme/app.git", ref: "main" },
       references: [],
@@ -64,14 +64,14 @@ describe("checkoutRepositories", () => {
   it("reports a ref that git cannot resolve as a configuration fault", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/checkout --detach/, { exitCode: 128, stderr: "fatal: invalid reference: v9" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await expect(checkoutRepositories(sandbox, ref, input)).rejects.toBeInstanceOf(RunConfigurationError);
   });
 
   it("clones every reference repository under its own directory", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const result = await checkoutRepositories(sandbox, ref, input);
     expect(result.references).toHaveLength(1);
     expect(result.references[0]?.path).toBe("/workspace/reference/design");
@@ -80,7 +80,7 @@ describe("checkoutRepositories", () => {
   it("removes the push URL of the primary repository, because SDD section 29 denies git remote write", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await checkoutRepositories(sandbox, ref, input);
     const lines = sandbox.commands.map((command) => [command.file, ...command.args].join(" "));
     expect(lines.some((line) => line.includes("remote set-url --push origin DISABLED_BY_FACTOREE"))).toBe(true);
@@ -89,7 +89,7 @@ describe("checkoutRepositories", () => {
   it("makes every reference repository read-only", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await checkoutRepositories(sandbox, ref, input);
     const lines = sandbox.commands.map((command) => [command.file, ...command.args].join(" "));
     expect(lines).toContain("chmod -R a-w /workspace/reference/design");
@@ -98,7 +98,7 @@ describe("checkoutRepositories", () => {
   it("clones the primary repository before it clones a reference repository", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await checkoutRepositories(sandbox, ref, input);
     const lines = sandbox.commands.map((command) => [command.file, ...command.args].join(" "));
     const primaryIndex = lines.findIndex((line) => line.includes("acme/app.git"));
@@ -110,14 +110,14 @@ describe("checkoutRepositories", () => {
   it("fails when the clone of the primary repository fails", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/clone/, { exitCode: 128, stderr: "repository not found" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await expect(checkoutRepositories(sandbox, ref, input)).rejects.toThrow(/repository not found/);
   });
 
   it("rejects a base SHA that is not forty hexadecimal characters", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "not-a-sha\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await expect(checkoutRepositories(sandbox, ref, input)).rejects.toThrow(/base SHA/);
   });
 });
@@ -126,7 +126,7 @@ describe("checkoutRepositories path safety", () => {
   it("rejects a reference repository URL whose derived name is the parent directory", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const badInput = {
       primary: { url: "https://github.com/acme/app.git", ref: "main" },
       references: [{ url: "https://github.com/acme/..", ref: "main" }],
@@ -137,7 +137,7 @@ describe("checkoutRepositories path safety", () => {
   it("rejects a reference repository URL whose derived name is the current directory", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const badInput = {
       primary: { url: "https://github.com/acme/app.git", ref: "main" },
       references: [{ url: "https://github.com/acme/.", ref: "main" }],
@@ -148,7 +148,7 @@ describe("checkoutRepositories path safety", () => {
   it("rejects a URL that ends in a trailing slash, because the derived name is empty", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const badInput = {
       primary: { url: "https://github.com/acme/app.git", ref: "main" },
       references: [{ url: "https://github.com/acme/design/", ref: "main" }],
@@ -159,7 +159,7 @@ describe("checkoutRepositories path safety", () => {
   it("derives a usable directory name from an SSH-style URL", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const sshInput = {
       primary: { url: "https://github.com/acme/app.git", ref: "main" },
       references: [{ url: "git@github.com:acme/design.git", ref: "main" }],
@@ -173,7 +173,7 @@ describe("checkoutRepositories path safety", () => {
     // message names nothing an operator can act on.
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const duplicateInput = {
       primary: { url: "https://github.com/acme/app.git", ref: "main" },
       references: [
@@ -191,7 +191,7 @@ describe("checkoutRepositories path safety", () => {
   it("fails before any clone when two reference repositories derive the same directory name", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const collidingInput = {
       primary: { url: "https://github.com/acme/app.git", ref: "main" },
       references: [
@@ -211,7 +211,7 @@ describe("checkoutOrganizationSkills", () => {
   it("checks out the organization skills repository read-only into its own directory", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(/rev-parse HEAD/, { stdout: "aaaabbbbccccddddeeeeffff0000111122223333\n" });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const checked = await checkoutOrganizationSkills(sandbox, ref, {
       url: "https://git/acme/skills.git",
       ref: "main",
@@ -227,7 +227,7 @@ describe("checkoutOrganizationSkills", () => {
 describe("the read-only repository credential", () => {
   it("reaches the clone command alone, and never the command line", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     sandbox.onExec = (command) =>
       command.args.includes("rev-parse")
         ? { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" }
@@ -256,7 +256,7 @@ describe("the read-only repository credential", () => {
 
   it("sends no credential environment for a public repository", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     sandbox.onExec = (command) =>
       command.args.includes("rev-parse")
         ? { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" }

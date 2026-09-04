@@ -2,7 +2,7 @@ import type { Redactor } from "./redaction.js";
 
 export type LogFields = {
   tenant_id?: string;
-  project_id?: string;
+  product_id?: string;
   run_id?: string;
   linear_issue?: string;
   workflow_id?: string;

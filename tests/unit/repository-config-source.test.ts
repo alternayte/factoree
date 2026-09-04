@@ -17,7 +17,7 @@ const withFiles = async (files: Record<string, string>) => {
     if (body === undefined) return { exitCode: 1, stdout: "", stderr: `cat: ${path}: No such file` };
     return { exitCode: 0, stdout: body, stderr: "" };
   };
-  const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+  const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
   return { sandbox, ref };
 };
 

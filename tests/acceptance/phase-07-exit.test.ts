@@ -102,11 +102,11 @@ interface Rig {
   root: string;
 }
 
-const buildRig = async (name: string, tenantId: string, projectId: string, runId: string): Promise<Rig> => {
+const buildRig = async (name: string, tenantId: string, productId: string, runId: string): Promise<Rig> => {
   const port = await pickPort();
   sandboxRoot = await mkdtemp(join(tmpdir(), `factoree-phase07-${name}-`));
   const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  const ref = await sandbox.create({ runId, tenantId, projectId });
+  const ref = await sandbox.create({ runId, tenantId, productId });
   return { sandbox, ref, port, root: ref.workspacePath };
 };
 

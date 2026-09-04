@@ -22,7 +22,7 @@ describe("LocalProcessSandbox", () => {
   it("removes the workspace directory on destroy", async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-destroy-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await sandbox.exec(ref, { file: "sh", args: ["-c", "printf x > marker"] });
     await sandbox.destroy(ref);
     await expect(sandbox.exec(ref, { file: "sh", args: ["-c", "true"] })).rejects.toThrow(/destroyed/);
@@ -35,7 +35,7 @@ describe("LocalProcessSandbox", () => {
     // write permission first. Without that step this test fails with EACCES.
     const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-readonly-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const created = await sandbox.exec(ref, {
       file: "sh",
       args: ["-c", "mkdir -p reference/design/.git && printf x > reference/design/.git/config && chmod -R a-w reference/design"],
@@ -53,7 +53,7 @@ describe("LocalProcessSandbox", () => {
   it("copies the workspace into a checkpoint directory", async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-checkpoint-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     await sandbox.exec(ref, { file: "sh", args: ["-c", "printf baseline > marker"] });
     const checkpoint = await sandbox.checkpoint(ref, "baseline");
     await sandbox.exec(ref, { file: "sh", args: ["-c", "printf changed > marker"] });
@@ -71,7 +71,7 @@ describe("LocalProcessSandbox and the host environment", () => {
     process.env.ADMIN_API_TOKEN = "admin-token-fixture";
     try {
       const sandbox = new LocalProcessSandbox({ rootDirectory });
-      const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+      const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
       const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "printenv"] });
       expect(result.stdout).not.toContain("admin-token-fixture");
       expect(result.stdout).toContain("PATH=");
@@ -87,7 +87,7 @@ describe("LocalProcessSandbox and the host environment", () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), "factoree-env-"));
     try {
       const sandbox = new LocalProcessSandbox({ rootDirectory });
-      const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+      const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
       const result = await sandbox.exec(ref, {
         file: "sh",
         args: ["-c", "printf %s \"$FIXTURE\""],
@@ -106,7 +106,7 @@ describe("LocalProcessSandbox, an isolated command", () => {
   it("runs without the environment attached to the sandbox", async () => {
     const root = await mkdtemp(join(tmpdir(), "factoree-isolated-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory: root });
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     sandbox.attachEnvironment(ref, { OPENCODE_API_KEY: "runner-credential" });
 
     const withCredential = await sandbox.exec(ref, {
@@ -133,7 +133,7 @@ describe("LocalProcessSandbox, a timeout of a command that forked", () => {
     // thirty seconds of the `sleep` and failed at the five second budget of the test.
     const root = await mkdtemp(join(tmpdir(), "factoree-kill-tree-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory: root });
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
 
     const startedAt = Date.now();
     const result = await sandbox.exec(ref, {
@@ -158,7 +158,7 @@ describe("LocalProcessSandbox, a cancel of a process that forked", () => {
     // the user validation after it read the old application.
     const root = await mkdtemp(join(tmpdir(), "factoree-cancel-tree-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory: root });
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const pidFile = join(root, "grandchild.pid");
 
     const process1 = await sandbox.startProcess(ref, {

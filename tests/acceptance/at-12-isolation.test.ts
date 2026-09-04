@@ -39,7 +39,7 @@ describe("AT-12 — isolation", () => {
         manager.prepare({
           runId,
           tenantId: "tenant-1",
-          projectId: "project-1",
+          productId: "project-1",
           primary: { url: repository, ref: "main" },
           references: [],
           defaults: DEFAULT_PROJECT_DEFAULTS,

@@ -239,7 +239,7 @@ const build = (
 const input: PublishProofPackActivityInput = {
   runId: "run-1",
   tenantId: "t1",
-  projectId: "p1",
+  productId: "p1",
   sessionId: "session-1",
   workItem: { title: "Add the health endpoint", url: null },
   pullRequestUrl: "https://github.com/acme/fixture/pull/1",

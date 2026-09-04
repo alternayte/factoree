@@ -83,7 +83,7 @@ beforeAll(async () => {
 
   sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-phase09-sandbox-"));
   sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  ref = await sandbox.create({ runId: "phase09", tenantId: "tenant-1", projectId: "project-1" });
+  ref = await sandbox.create({ runId: "phase09", tenantId: "tenant-1", productId: "project-1" });
   primaryPath = `${ref.workspacePath}/primary`;
 
   const prepared = await sandbox.exec(ref, {
@@ -150,7 +150,7 @@ const buildActivities = (api: GitHubFixtureApi) => {
 const publishInputFor = (runId: string, reviewedChangedFiles: string[]): PublishActivityInput => ({
   runId,
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   spriteId: ref.id,
   adapter: ref.adapter,
   workspacePath: ref.workspacePath,

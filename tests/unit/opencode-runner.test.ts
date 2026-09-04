@@ -39,7 +39,7 @@ describe("OpenCodeRunner", () => {
 
   it("starts the opencode executable in the working directory", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -53,7 +53,7 @@ describe("OpenCodeRunner", () => {
 
   it("passes the prompt through a file, not through the command line", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -70,7 +70,7 @@ describe("OpenCodeRunner", () => {
 
   it("returns the session reference and the summary when the process exits zero", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -89,7 +89,7 @@ describe("OpenCodeRunner", () => {
 
   it("reports completed false when the process exits non-zero", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -101,7 +101,7 @@ describe("OpenCodeRunner", () => {
 
   it("redacts a Project secret from the summary (SDD section 60)", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const redactor = new Redactor(["super-secret-value"]);
     const runner = new OpenCodeRunner({ redactor, pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
@@ -117,7 +117,7 @@ describe("OpenCodeRunner", () => {
 
   it("cancels the sandbox process for a session and reports the outcome", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => runner.activeSession("run-1") !== undefined);
@@ -140,7 +140,7 @@ describe("OpenCodeRunner", () => {
 
   it("resumes a session with the opencode session flag", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const first = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -161,7 +161,7 @@ describe("OpenCodeRunner", () => {
     // original arguments unchanged, so a retry presents the same AgentSessionRef as the first
     // attempt. The runner must not have deleted the entry that reference points to.
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const first = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -191,7 +191,7 @@ describe("OpenCodeRunner", () => {
 
   it("cancels the process and reports a timeout when the process outlives its budget", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const result = await runner.run({ ...runInput(sandbox, ref), timeoutMs: 5 });
     expect(result.completed).toBe(false);
@@ -202,7 +202,7 @@ describe("OpenCodeRunner", () => {
 describe("OpenCodeRunner, the summary of a failed run", () => {
   it("reports the error of the agent, not its shutdown line", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -223,7 +223,7 @@ describe("OpenCodeRunner, the summary of a failed run", () => {
 
   it("keeps the answer of the agent when the run finished", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -246,7 +246,7 @@ describe("OpenCodeRunner, the summary of a failed run", () => {
 describe("CliAgentRunner, the idle deadline of a session", () => {
   it("ends a session that stopped writing, before the budget ends", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({
       redactor: new Redactor(),
       pollIntervalMs: 1,
@@ -275,7 +275,7 @@ describe("CliAgentRunner, the idle deadline of a session", () => {
 
   it("keeps a session alive while it still writes", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({
       redactor: new Redactor(),
       pollIntervalMs: 1,
@@ -308,7 +308,7 @@ describe("OpenCodeRunner, the permission to read across the workspace", () => {
 
   it("allows a read outside the working directory on a new session", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -321,7 +321,7 @@ describe("OpenCodeRunner, the permission to read across the workspace", () => {
 
   it("allows it on a resumed session too", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -350,7 +350,7 @@ describe("OpenCodeRunner, the repository the session configures itself from", ()
 
   it("names the repository with --dir when the caller gives one", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run({
       ...runInput(sandbox, ref),
@@ -372,7 +372,7 @@ describe("OpenCodeRunner, the repository the session configures itself from", ()
 
   it("adds no --dir when the caller names no repository", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -385,7 +385,7 @@ describe("OpenCodeRunner, the repository the session configures itself from", ()
 
   it("keeps the repository on a resumed session", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run({ ...runInput(sandbox, ref), repositoryPath: "/workspace/primary" });
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -408,7 +408,7 @@ describe("CliAgentRunner, a prompt larger than an environment value can hold", (
   // carry such a prompt, whatever the transport underneath. Two Runs failed at review with it.
   it("carries a two hundred kilobyte prompt", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const prompt = `START${"x".repeat(200_000)}END`;
 

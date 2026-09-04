@@ -48,7 +48,7 @@ describe("AT-10 — validation created first", () => {
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       workItem: "ENG-200",
       goal: "A signed-in user can rename a project.",
       acceptanceCriteria: [

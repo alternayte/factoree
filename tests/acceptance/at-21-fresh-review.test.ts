@@ -124,7 +124,7 @@ describe("AT-21 — the Reviewer session is fresh", () => {
 
     sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at21-sandbox-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId, tenantId, projectId: productId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
 
     const contract: ValidationContract = {
       version: 1,
@@ -183,7 +183,7 @@ describe("AT-21 — the Reviewer session is fresh", () => {
     const input: ReviewActivityInput = {
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       runnerName: "opencode",
       spriteId: ref.id,
       adapter: ref.adapter,

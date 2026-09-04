@@ -311,7 +311,7 @@ const seedProvedRun = async (
   const input: PublishProofPackActivityInput = {
     runId,
     tenantId,
-    projectId: "unused",
+    productId: "unused",
     sessionId: "session-1",
     workItem: { title: "Add the health endpoint", url: "https://linear.app/acme/issue/ENG-143" },
     pullRequestUrl: "https://github.com/acme/fixture/pull/1",

@@ -709,7 +709,7 @@ export async function agentRunWorkflow(
       implementActivities.implement({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.productId,
+        productId: input.productId,
         runnerName: attemptInput.prepared.runtime.implementerRunner,
         spriteId: attemptInput.prepared.spriteId,
         adapter: attemptInput.prepared.adapter,
@@ -760,7 +760,7 @@ export async function agentRunWorkflow(
       userValidateActivities.userValidate({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.productId,
+        productId: input.productId,
         runnerName: attemptInput.prepared.runtime.validatorRunner,
         spriteId: attemptInput.prepared.spriteId,
         adapter: attemptInput.prepared.adapter,
@@ -793,7 +793,7 @@ export async function agentRunWorkflow(
       reviewActivities.review({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.productId,
+        productId: input.productId,
         runnerName: attemptInput.prepared.runtime.reviewerRunner,
         spriteId: attemptInput.prepared.spriteId,
         adapter: attemptInput.prepared.adapter,
@@ -889,7 +889,7 @@ export async function agentRunWorkflow(
       const refinementInput = () => ({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.productId,
+        productId: input.productId,
         source: { ...input.workItem, labels },
         project: {
           primaryRepository: primaryRepositorySlug,
@@ -1043,7 +1043,7 @@ export async function agentRunWorkflow(
           resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
             runId: id,
             tenantId: input.tenantId,
-            projectId: input.productId,
+            productId: input.productId,
             goal: refined.goal,
             acceptanceCriteria: refined.acceptanceCriteria,
             primaryRepository: repositoryRef(refined.primaryRepository),
@@ -1134,7 +1134,7 @@ export async function agentRunWorkflow(
         validation = await validationActivities.buildValidationContract({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.productId,
+          productId: input.productId,
           workItem: input.workItem.issueId ?? id,
           goal: refined.goal,
           acceptanceCriteria: refined.criteria,
@@ -1239,7 +1239,7 @@ export async function agentRunWorkflow(
         preparedSandbox = await sandboxActivities.prepareSandbox({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.productId,
+          productId: input.productId,
           primary: sandbox.primary,
           references: sandbox.references,
           defaults: sandbox.defaults,
@@ -1351,7 +1351,7 @@ export async function agentRunWorkflow(
           verification = await verifyActivities.verify({
             runId: id,
             tenantId: input.tenantId,
-            projectId: input.productId,
+            productId: input.productId,
             spriteId: preparedSandbox.spriteId,
             adapter: preparedSandbox.adapter,
             workspacePath: preparedSandbox.workspacePath,
@@ -1607,7 +1607,7 @@ export async function agentRunWorkflow(
       const publishInput = {
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.productId,
+        productId: input.productId,
         spriteId: preparedSandbox.spriteId,
         adapter: preparedSandbox.adapter,
         workspacePath: preparedSandbox.workspacePath,
@@ -1633,7 +1633,7 @@ export async function agentRunWorkflow(
         baseCheck = await publishingActivities.checkBase({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.productId,
+          productId: input.productId,
           repositorySlug: publishInput.repositorySlug,
           repositoryBaseUrl: publishInput.repositoryBaseUrl,
           branch: publishInput.baseBranch,
@@ -1709,7 +1709,7 @@ export async function agentRunWorkflow(
         proofPack = await proofPackActivities.publishProofPack({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.productId,
+          productId: input.productId,
           sessionId: input.agentSessionId,
           workItem: { title: input.workItem.title, url: input.workItem.url },
           pullRequestUrl: publication.pullRequestUrl,

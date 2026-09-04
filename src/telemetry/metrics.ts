@@ -3,11 +3,9 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry });
 
-const labelNames = ["tenant_id", "project_id"] as const;
+const labelNames = ["tenant_id", "product_id"] as const;
 
-// Task 9 fix round 2. `run.activities.ts` reads these seven metrics off a `Run` row. A `Run` now
-// carries a Product id. The label must name that, not the `project_id` label every other
-// activity still emits for a Project-scoped value.
+// Every metric now carries a Product id, because the Project entity no longer exists.
 const runLabelNames = ["tenant_id", "product_id"] as const;
 
 export const metrics = {

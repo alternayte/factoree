@@ -49,7 +49,7 @@ const build = (files: Record<string, string>, secrets = new MemorySecretStore())
 const input = (over: Partial<ResolveContextActivityInput> = {}): ResolveContextActivityInput => ({
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   goal: "Retry a failed notification delivery.",
   acceptanceCriteria: ["A failed notification is retried."],
   primaryRepository: { slug: "acme/webhook-service", url: PRIMARY_URL, ref: "main" },

@@ -37,7 +37,7 @@ import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js
 export interface ReviewActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   runnerName: string;
   spriteId: string;
   adapter: string;
@@ -139,7 +139,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
    */
   async review(input: ReviewActivityInput): Promise<ReviewActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       // Step 1. SDD section 60: every Project secret reaches the redactor before any output is
@@ -148,7 +148,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         dependencies.redactor,
         dependencies.secrets,
         input.tenantId,
-        input.projectId,
+        input.productId,
         dependencies.logger,
       );
 
@@ -173,7 +173,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         ref,
         dependencies.secrets,
         input.tenantId,
-        input.projectId,
+        input.productId,
       );
       const reviewDirectory = `${input.workspacePath}/review`;
 
@@ -210,12 +210,12 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
       // Step 7. The Project test secrets marked for injection. Same rule as the Implementer,
       // SDD section 30.
-      const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
+      const descriptors = await dependencies.secrets.list(input.tenantId, input.productId);
       const projectTestSecrets: Record<string, string> = {};
       for (const descriptor of descriptors) {
         // A credential of another kind reaches its carrier by its own path, never this map.
         if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
-        const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
+        const value = await dependencies.secrets.get(input.tenantId, input.productId, descriptor.name);
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
 
@@ -492,7 +492,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // Step 17.
       dependencies.logger.info("review finished", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "review",
         verdict: report.verdict,

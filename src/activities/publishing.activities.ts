@@ -44,7 +44,7 @@ export const publishBranchName = (runId: string): string => `factoree/run-${runI
 export interface CheckBaseActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   repositorySlug: string;
   repositoryBaseUrl: string;
   branch: string;
@@ -59,7 +59,7 @@ export interface CheckBaseActivityOutput {
 export interface PublishActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   spriteId: string;
   adapter: string;
   workspacePath: string;
@@ -145,9 +145,9 @@ const assertHttpsRepositoryUrl = (plainUrl: string): void => {
 const readGitHubToken = async (
   dependencies: PublishingActivityDependencies,
   tenantId: string,
-  projectId: string,
+  productId: string,
 ): Promise<string> => {
-  const descriptors = await dependencies.secrets.list(tenantId, projectId);
+  const descriptors = await dependencies.secrets.list(tenantId, productId);
   const descriptor = descriptors.find((entry) => entry.name === GITHUB_TOKEN_SECRET);
   if (descriptor === undefined) {
     throw new RunConfigurationError(
@@ -162,7 +162,7 @@ const readGitHubToken = async (
         "Then add it again without the injection mark.",
     );
   }
-  const token = await dependencies.secrets.get(tenantId, projectId, GITHUB_TOKEN_SECRET);
+  const token = await dependencies.secrets.get(tenantId, productId, GITHUB_TOKEN_SECRET);
   if (token === null || token.length === 0) {
     throw new RunConfigurationError(
       `The Project secret "${GITHUB_TOKEN_SECRET}" holds no value. Add the GitHub write credential.`,
@@ -207,7 +207,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
    */
   async checkBase(input: CheckBaseActivityInput): Promise<CheckBaseActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       const url = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
@@ -219,7 +219,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       dependencies.logger.info("base freshness checked", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "publish",
         fresh: result.fresh,
@@ -238,7 +238,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
    */
   async publish(input: PublishActivityInput): Promise<PublishActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       // Step 1. SDD section 60. Every Project secret reaches the redactor first.
@@ -246,12 +246,12 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         dependencies.redactor,
         dependencies.secrets,
         input.tenantId,
-        input.projectId,
+        input.productId,
         dependencies.logger,
       );
 
       // Step 2. The GitHub write credential. Controller decision 7 owns both refusals.
-      const token = await readGitHubToken(dependencies, input.tenantId, input.projectId);
+      const token = await readGitHubToken(dependencies, input.tenantId, input.productId);
 
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
       dependencies.redactor.addSecret(token);
@@ -309,7 +309,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         });
         dependencies.logger.info("the pull request of this Run already exists", {
           tenant_id: input.tenantId,
-          project_id: input.projectId,
+          product_id: input.productId,
           run_id: input.runId,
           step: "publish",
           branch,
@@ -382,7 +382,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         onCleanupFailure: (error: unknown) => {
           dependencies.logger.error("the trusted checkout directory was not removed", {
             tenant_id: input.tenantId,
-            project_id: input.projectId,
+            product_id: input.productId,
             run_id: input.runId,
             step: "publish",
             error: dependencies.redactor.redactText(String(error)),
@@ -417,7 +417,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       dependencies.logger.info("the pull request was created", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "publish",
         branch,

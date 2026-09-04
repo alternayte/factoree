@@ -117,7 +117,7 @@ const build = (
 const input = {
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   primary: { url: "https://github.com/acme/app.git", ref: "main" },
   references: [],
   defaults: DEFAULT_PROJECT_DEFAULTS,

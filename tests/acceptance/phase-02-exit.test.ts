@@ -46,7 +46,7 @@ describe("Phase 2 exit condition — an isolated fixture change without publishi
     const prepared = await manager.prepare({
       runId: "run-exit",
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
       primary: { url: repository, ref: "main" },
       references: [],
       defaults: DEFAULT_PROJECT_DEFAULTS,

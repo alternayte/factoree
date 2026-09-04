@@ -29,7 +29,7 @@ const startOneRun = async (
 ) => {
   const runner = shared.runner ?? new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
   const sandbox = shared.sandbox ?? new FakeSandbox();
-  const ref = shared.ref ?? (await sandbox.create({ runId, tenantId: "tenant-1", projectId: "project-1" }));
+  const ref = shared.ref ?? (await sandbox.create({ runId, tenantId: "tenant-1", productId: "project-1" }));
   const commandsBefore = sandbox.commands.length;
   const started = runner.run({
     runId,

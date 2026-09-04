@@ -62,7 +62,7 @@ describe("startPreview and stopPreview against a real local process", () => {
 
   it("starts a real preview process and reaches it on the exposed URL", async () => {
     const port = await pickPort();
-    const ref = await sandbox.create({ runId: "preview-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "preview-1", tenantId: "t", productId: "p" });
     worktree = ref.workspacePath;
     await writeFile(join(worktree, "server.cjs"), SERVER_SOURCE, "utf8");
 

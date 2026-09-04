@@ -87,12 +87,12 @@ export class DelegationService {
     if (command.kind === "ignore") return { kind: "ignored", reason: command.reason };
     if (command.kind === "stop") {
       const signalled = await this.dependencies.starter.signalStop(workflowId);
-      metrics.humanInterventions.inc({ tenant_id: tenantId, project_id: "" });
+      metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
       return signalled ? { kind: "stopped", workflowId } : { kind: "not_running", workflowId };
     }
     if (command.kind === "prompt") {
       const signalled = await this.dependencies.starter.signalHumanInput(workflowId, command.body);
-      metrics.humanInterventions.inc({ tenant_id: tenantId, project_id: "" });
+      metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
       return signalled ? { kind: "prompt_forwarded", workflowId } : { kind: "not_running", workflowId };
     }
 

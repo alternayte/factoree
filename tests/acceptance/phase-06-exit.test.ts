@@ -71,7 +71,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       workItem: "ENG-300",
       goal: refined.goal,
       acceptanceCriteria: refined.proposedAcceptanceCriteria,
@@ -151,7 +151,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       workItem: "ENG-301",
       goal: refined.goal,
       acceptanceCriteria: [],
@@ -181,7 +181,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       workItem: "ENG-302",
       goal: "A signed-in editor can archive a report.",
       acceptanceCriteria: [

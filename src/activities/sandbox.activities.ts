@@ -32,7 +32,7 @@ export interface SandboxActivityDependencies {
 export interface PrepareSandboxActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   primary: RepositorySpec;
   references: RepositorySpec[];
   defaults: ProjectDefaults;
@@ -105,7 +105,7 @@ const prepare = async (
   const runnerEnvironment = await loadRunnerEnvironment(
     dependencies.secrets,
     input.tenantId,
-    input.projectId,
+    input.productId,
   );
 
   // SDD section 30. A private repository needs a read-only credential for the checkout. It never
@@ -113,13 +113,13 @@ const prepare = async (
   const repositoryCredential = await loadRepositoryReadToken(
     dependencies.secrets,
     input.tenantId,
-    input.projectId,
+    input.productId,
   );
 
   const prepared = await dependencies.sandboxManager.prepare({
     runId: input.runId,
     tenantId: input.tenantId,
-    projectId: input.projectId,
+    productId: input.productId,
     primary: input.primary,
     references: input.references,
     defaults: input.defaults,
@@ -191,12 +191,12 @@ const prepare = async (
 
   metrics.sandboxesCreated.inc({
     tenant_id: input.tenantId,
-    project_id: input.projectId,
+    product_id: input.productId,
     adapter: prepared.ref.adapter,
   });
   dependencies.logger.info("sandbox prepared", {
     tenant_id: input.tenantId,
-    project_id: input.projectId,
+    product_id: input.productId,
     run_id: input.runId,
     sprite_id: prepared.ref.id,
     base_sha: prepared.checkout.primary.baseSha,
@@ -234,7 +234,7 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
       dependencies.redactor,
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
       dependencies.logger,
     );
 

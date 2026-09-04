@@ -162,7 +162,7 @@ const logger = {
 };
 
 const verifyInputFor = (
-  base: Pick<VerifyActivityInput, "runId" | "tenantId" | "projectId" | "spriteId" | "adapter" | "workspacePath" | "primaryPath">,
+  base: Pick<VerifyActivityInput, "runId" | "tenantId" | "productId" | "spriteId" | "adapter" | "workspacePath" | "primaryPath">,
   attempt: number,
 ): VerifyActivityInput => ({
   ...base,
@@ -187,7 +187,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
     const port = await pickPort();
     sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at20-sandbox-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId, tenantId, projectId: productId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
     const root = ref.workspacePath;
 
     // The implementation builds every time; the bug is behavioral only. Attempt 1 runs against
@@ -255,7 +255,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
     const validateInputFor = (attempt: number): UserValidateActivityInput => ({
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       runnerName: "opencode",
       spriteId: ref.id,
       adapter: ref.adapter,
@@ -273,7 +273,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
       // Point 1. Deterministic verification passes on the first attempt.
       const verify1: VerifyActivityOutput = await activityEnvironment().run(
         (input: VerifyActivityInput) => verification.verify(input),
-        verifyInputFor({ runId, tenantId, projectId: productId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 1),
+        verifyInputFor({ runId, tenantId, productId: productId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 1),
       );
       expect(verify1.passed).toBe(true);
 
@@ -300,7 +300,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
       // the repaired fixture, so the database evidence below reflects a real second attempt.
       const verify2: VerifyActivityOutput = await activityEnvironment().run(
         (input: VerifyActivityInput) => verification.verify(input),
-        verifyInputFor({ runId, tenantId, projectId: productId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 2),
+        verifyInputFor({ runId, tenantId, productId: productId, spriteId: ref.id, adapter: ref.adapter, workspacePath: ref.workspacePath, primaryPath: root }, 2),
       );
       expect(verify2.passed).toBe(true);
 

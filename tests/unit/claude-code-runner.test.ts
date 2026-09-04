@@ -39,7 +39,7 @@ describe("ClaudeCodeRunner", () => {
 
   it("never places the prompt on the command line", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref, "a secret goal sentence"));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -59,7 +59,7 @@ describe("ClaudeCodeRunner", () => {
 
   it("starts the CLI in non-interactive mode with the stream-json format", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref, "goal"));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -75,7 +75,7 @@ describe("ClaudeCodeRunner", () => {
 
   it("resumes the named session and keeps the identifier out of the command line", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref, "goal"));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -97,7 +97,7 @@ describe("ClaudeCodeRunner", () => {
 
   it("reports a non-zero exit as an incomplete run", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref, "goal"));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
@@ -109,7 +109,7 @@ describe("ClaudeCodeRunner", () => {
 
   it("redacts a Project secret the agent printed", async () => {
     const sandbox = new FakeSandbox();
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new ClaudeCodeRunner({ redactor: new Redactor(["s3cr3t-value"]), pollIntervalMs: 1 });
     const started = runner.run(runInput(sandbox, ref, "goal"));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");

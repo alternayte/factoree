@@ -19,7 +19,7 @@ import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/fac
 export interface ResolveContextActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   goal: string;
   acceptanceCriteria: string[];
   primaryRepository: RepositoryRef;
@@ -92,7 +92,7 @@ const count = (total: number, singular: string, plural: string): string =>
 export const createContextActivities = (dependencies: ContextActivityDependencies) => ({
   async resolveContext(input: ResolveContextActivityInput): Promise<ResolveContextActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     // SDD section 30. Discovery reads the repository on the worker, before a sandbox exists, so a
     // private repository needs the read-only credential here as well as in the checkout. The
@@ -100,7 +100,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     const repositoryCredential = await loadRepositoryReadToken(
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
     );
     if (repositoryCredential !== null) {
       try {
@@ -122,7 +122,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     );
     const sources = await dependencies.sources.sourcesFor({
       tenantId: input.tenantId,
-      productId: input.projectId,
+      productId: input.productId,
       contextConfiguration,
     });
 
@@ -181,7 +181,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     dependencies.logger.info("context resolved", {
       tenant_id: input.tenantId,
-      project_id: input.projectId,
+      product_id: input.productId,
       run_id: input.runId,
       step: "resolve_context",
       context_contract_version: stored?.sha256 ?? null,

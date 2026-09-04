@@ -23,7 +23,7 @@ export interface VerificationActivityDependencies {
 export interface VerifyActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   spriteId: string;
   adapter: string;
   workspacePath: string;
@@ -71,18 +71,18 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
       dependencies.redactor,
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
       dependencies.logger,
     );
 
     // SDD section 30: a non-production test secret reaches a command only when the operator
     // marked it. Every other Project secret stays out of the shell.
-    const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
+    const descriptors = await dependencies.secrets.list(input.tenantId, input.productId);
     const environment: Record<string, string> = {};
     for (const descriptor of descriptors) {
       // A credential of another kind reaches its carrier by its own path, never this map.
       if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
-      const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
+      const value = await dependencies.secrets.get(input.tenantId, input.productId, descriptor.name);
       if (value !== null) environment[descriptor.name] = value;
     }
 
@@ -93,7 +93,7 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
       { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
     );
 
     // SDD section 30. The implementer, the user validator, and the reviewer all reject forbidden
@@ -150,7 +150,7 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
     }
 
     metrics.verificationDuration.observe(
-      { tenant_id: input.tenantId, project_id: input.projectId },
+      { tenant_id: input.tenantId, product_id: input.productId },
       (Date.now() - startedAt) / 1000,
     );
 
@@ -162,7 +162,7 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
 
     dependencies.logger.info("verification finished", {
       tenant_id: input.tenantId,
-      project_id: input.projectId,
+      product_id: input.productId,
       run_id: input.runId,
       passed: outcome.passed,
       checks: outcome.checks.length,

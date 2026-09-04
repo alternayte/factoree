@@ -77,7 +77,7 @@ const withSkillFiles = (
 const input = {
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   primary: { url: "https://github.com/acme/app.git", ref: "main" },
   references: [],
   defaults: DEFAULT_PROJECT_DEFAULTS,
@@ -266,7 +266,7 @@ describe("repository configuration and staged network policy", () => {
     new SandboxManager({ sandbox }).prepare({
       runId: "run-1",
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
       primary: { url: "https://git.test/owner/app.git", ref: "main" },
       references: [],
       defaults: { stagingRead: false, spriteRetentionHours: 24 },
@@ -350,7 +350,7 @@ describe("repository configuration and staged network policy", () => {
     await new SandboxManager({ sandbox }).prepare({
       runId: "run-1",
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
       primary: { url: "https://git.test/owner/app.git", ref: "main" },
       references: [{ url: "https://other.test/owner/design.git", ref: "main" }],
       defaults: { stagingRead: false, spriteRetentionHours: 24 },

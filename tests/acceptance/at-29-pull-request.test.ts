@@ -129,7 +129,7 @@ beforeAll(async () => {
   // reads it.
   sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at29-sandbox-"));
   sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  ref = await sandbox.create({ runId: RUN_ID, tenantId: "tenant-1", projectId: "project-1" });
+  ref = await sandbox.create({ runId: RUN_ID, tenantId: "tenant-1", productId: "project-1" });
   primaryPath = `${ref.workspacePath}/primary`;
   const clone = await sandbox.exec(ref, {
     file: "sh",
@@ -176,7 +176,7 @@ beforeAll(async () => {
   input = {
     runId: RUN_ID,
     tenantId: "tenant-1",
-    projectId: "project-1",
+    productId: "project-1",
     spriteId: ref.id,
     adapter: ref.adapter,
     workspacePath: ref.workspacePath,

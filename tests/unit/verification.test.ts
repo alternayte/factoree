@@ -10,7 +10,7 @@ const prepare = async (results: Record<string, { exitCode: number; stdout: strin
   const sandbox = new FakeSandbox();
   sandbox.onExec = (command) =>
     results[command.args[command.args.length - 1] ?? ""] ?? { exitCode: 0, stdout: "", stderr: "" };
-  const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+  const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
   return { sandbox, ref };
 };
 
@@ -186,7 +186,7 @@ describe("runVerification", () => {
     sandbox.onExec = () => {
       throw new Error("the sandbox is gone");
     };
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const outcome = await runVerification({
       ...base,
       sandbox,
@@ -202,7 +202,7 @@ describe("runVerification", () => {
   it("reports a timeout as a failure", async () => {
     const sandbox = new FakeSandbox();
     sandbox.onExec = () => ({ exitCode: 124, stdout: "", stderr: "", timedOut: true });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const outcome = await runVerification({
       ...base,
       sandbox,

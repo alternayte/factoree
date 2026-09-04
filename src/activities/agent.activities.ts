@@ -26,7 +26,7 @@ export interface AgentActivityDependencies {
 export interface ImplementActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   runnerName: string;
   spriteId: string;
   adapter: string;
@@ -111,7 +111,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       dependencies.redactor,
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
       dependencies.logger,
     );
 
@@ -119,12 +119,12 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     // operator injects it explicitly. The mark on the secret is that explicit act. Every other
     // Project secret stays out of the sandbox, and the redactor above still holds its value.
     // `buildImplementerInput` keeps its own rejection of forbidden material as the last control.
-    const descriptors = await dependencies.secrets.list(input.tenantId, input.projectId);
+    const descriptors = await dependencies.secrets.list(input.tenantId, input.productId);
     const projectTestSecrets: Record<string, string> = {};
     for (const descriptor of descriptors) {
       // A credential of another kind reaches its carrier by its own path, never this map.
       if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
-      const value = await dependencies.secrets.get(input.tenantId, input.projectId, descriptor.name);
+      const value = await dependencies.secrets.get(input.tenantId, input.productId, descriptor.name);
       if (value !== null) projectTestSecrets[descriptor.name] = value;
     }
 
@@ -152,7 +152,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
     );
 
     const runner = dependencies.runners.get(input.runnerName);
@@ -303,12 +303,12 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     }
 
     metrics.implementationDuration.observe(
-      { tenant_id: input.tenantId, project_id: input.projectId, runner: runner.name },
+      { tenant_id: input.tenantId, product_id: input.productId, runner: runner.name },
       result.durationMs / 1000,
     );
     dependencies.logger.info("implementation finished", {
       tenant_id: input.tenantId,
-      project_id: input.projectId,
+      product_id: input.productId,
       run_id: input.runId,
       runner: runner.name,
       completed: result.completed,

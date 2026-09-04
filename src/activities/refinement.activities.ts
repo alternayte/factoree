@@ -11,7 +11,7 @@ import type { WorkItemSource } from "~/domain/refinement/work-item.js";
 export interface RefineActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   source: WorkItemSource;
   project: RefinementProject;
   decisions: RecordedDecision[];
@@ -60,12 +60,12 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     });
     // A Temporal workflow must stay deterministic, so the metric belongs here.
     metrics.refinementDuration.observe(
-      { tenant_id: input.tenantId, project_id: input.projectId },
+      { tenant_id: input.tenantId, product_id: input.productId },
       (Date.now() - started) / 1000,
     );
     dependencies.logger.info("run refined", {
       tenant_id: input.tenantId,
-      project_id: input.projectId,
+      product_id: input.productId,
       run_id: input.runId,
       step: "refine",
       status: output.status,

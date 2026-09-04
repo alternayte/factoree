@@ -51,13 +51,13 @@ export const assertRunnerCredential = (name: string, value: string): void => {
 export const loadRunnerEnvironment = async (
   secrets: SecretStore,
   tenantId: string,
-  projectId: string,
+  productId: string,
 ): Promise<Record<string, string>> => {
-  const descriptors = await secrets.list(tenantId, projectId);
+  const descriptors = await secrets.list(tenantId, productId);
   const environment: Record<string, string> = {};
   for (const descriptor of descriptors) {
     if (descriptor.kind !== ("runner_credential" satisfies ProjectSecretKind)) continue;
-    const value = await secrets.get(tenantId, projectId, descriptor.name);
+    const value = await secrets.get(tenantId, productId, descriptor.name);
     if (value === null || value === "") continue;
     assertRunnerCredential(descriptor.name, value);
     environment[descriptor.name] = value;
@@ -77,9 +77,9 @@ export const attachRunnerEnvironment = async (
   ref: SandboxRef,
   secrets: SecretStore,
   tenantId: string,
-  projectId: string,
+  productId: string,
 ): Promise<void> => {
-  sandbox.attachEnvironment(ref, await loadRunnerEnvironment(secrets, tenantId, projectId));
+  sandbox.attachEnvironment(ref, await loadRunnerEnvironment(secrets, tenantId, productId));
 };
 
 /**
@@ -90,11 +90,11 @@ export const attachRunnerEnvironment = async (
 export const loadRepositoryReadToken = async (
   secrets: SecretStore,
   tenantId: string,
-  projectId: string,
+  productId: string,
 ): Promise<string | null> => {
-  const descriptors = await secrets.list(tenantId, projectId);
+  const descriptors = await secrets.list(tenantId, productId);
   const descriptor = descriptors.find((entry) => entry.kind === "repository_read");
   if (descriptor === undefined) return null;
-  const value = await secrets.get(tenantId, projectId, descriptor.name);
+  const value = await secrets.get(tenantId, productId, descriptor.name);
   return value === null || value === "" ? null : value;
 };

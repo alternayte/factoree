@@ -42,7 +42,7 @@ const runsStub = () => ({
 const input = () => ({
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   workItem: "ENG-143",
   goal: "A signed-in editor can rename a project.",
   acceptanceCriteria: [

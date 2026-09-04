@@ -78,8 +78,8 @@ describe("FlySpriteSandbox", () => {
     const sprite = handle();
     const api = gateway(sprite);
     const sandbox = new FlySpriteSandbox({ gateway: api });
-    const first = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
-    const second = await sandbox.create({ runId: "run-b", tenantId: "t", projectId: "p" });
+    const first = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
+    const second = await sandbox.create({ runId: "run-b", tenantId: "t", productId: "p" });
     expect(first.id).not.toBe(second.id);
     expect(first.id).toContain("run-a");
     expect(api.createSprite).toHaveBeenCalledTimes(2);
@@ -88,7 +88,7 @@ describe("FlySpriteSandbox", () => {
   it("sends a deny-by-default network policy", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["registry.npmjs.org"] });
     expect(sprite.updateNetworkPolicy).toHaveBeenCalledWith({
       rules: [
@@ -105,7 +105,7 @@ describe("FlySpriteSandbox", () => {
       ),
     });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "exit 2"] });
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("out");
@@ -115,7 +115,7 @@ describe("FlySpriteSandbox", () => {
   it("runs a command in the workspace path by default", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await sandbox.exec(ref, { file: "git", args: ["status"] });
     expect(sprite.execFile).toHaveBeenCalledWith(
       "git",
@@ -127,7 +127,7 @@ describe("FlySpriteSandbox", () => {
   it("passes a command's timeout to exec as the gateway's timeout option", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await sandbox.exec(ref, { file: "git", args: ["status"], timeoutMs: 5000 });
     expect(sprite.execFile).toHaveBeenCalledWith("git", ["status"], expect.objectContaining({ timeout: 5000 }));
   });
@@ -135,7 +135,7 @@ describe("FlySpriteSandbox", () => {
   it("starts a process with a Factoree-generated identifier and creates its directory first", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const started = await sandbox.startProcess(ref, { file: "opencode", args: ["run"] });
     expect(started.id).toMatch(/^proc-[0-9a-f]{8}$/);
     expect(sprite.execFile).toHaveBeenCalledWith("mkdir", ["-p", procDir(started.id)], expect.anything());
@@ -151,7 +151,7 @@ describe("FlySpriteSandbox", () => {
   it("does not pass a command's timeout to startProcess, since startProcess ignores it", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await sandbox.startProcess(ref, { file: "opencode", args: ["run"], timeoutMs: 5000 });
     const call = vi.mocked(sprite.startDetached).mock.calls[0];
     expect(call?.[2]).not.toHaveProperty("timeout");
@@ -160,7 +160,7 @@ describe("FlySpriteSandbox", () => {
   it("reports a running process when the exit file is absent", async () => {
     const { handle: sprite, files } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const dir = procDir("proc-aaaaaaaa");
     files.set(dir, "");
     files.set(posix.join(dir, "out"), "partial output");
@@ -173,7 +173,7 @@ describe("FlySpriteSandbox", () => {
   it("reports a finished process with a zero exit code", async () => {
     const { handle: sprite, files } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const dir = procDir("proc-aaaaaaaa");
     files.set(dir, "");
     files.set(posix.join(dir, "exit"), "0\n");
@@ -187,7 +187,7 @@ describe("FlySpriteSandbox", () => {
   it("reports a finished process with a non-zero exit code", async () => {
     const { handle: sprite, files } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const dir = procDir("proc-aaaaaaaa");
     files.set(dir, "");
     files.set(posix.join(dir, "exit"), "17\n");
@@ -201,7 +201,7 @@ describe("FlySpriteSandbox", () => {
   it("throws for a process identifier that was never issued, instead of polling forever", async () => {
     const { handle: sprite } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await expect(sandbox.readProcess(ref, { id: "proc-unknown" })).rejects.toThrow(SandboxError);
     await expect(sandbox.readProcess(ref, { id: "proc-unknown" })).rejects.toThrow(/proc-unknown/);
   });
@@ -209,7 +209,7 @@ describe("FlySpriteSandbox", () => {
   it("cancels a running process by its pid file and terminates the process group", async () => {
     const { handle: sprite, files, killScripts } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const dir = procDir("proc-aaaaaaaa");
     files.set(dir, "");
     files.set(posix.join(dir, "pid"), "4242");
@@ -224,7 +224,7 @@ describe("FlySpriteSandbox", () => {
   it("still terminates a process that starts during the cancel window, rather than reporting success silently", async () => {
     const { handle: sprite, files, killScripts } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const dir = procDir("proc-aaaaaaaa");
     const pidFile = posix.join(dir, "pid");
     files.set(dir, "");
@@ -240,7 +240,7 @@ describe("FlySpriteSandbox", () => {
   it("does not throw when it cancels an identifier that was never issued, and signals nothing", async () => {
     const { handle: sprite, killScripts } = virtualSprite();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await expect(sandbox.cancelProcess(ref, { id: "gone" })).resolves.toBeUndefined();
     expect(killScripts).toHaveLength(0);
   });
@@ -248,14 +248,14 @@ describe("FlySpriteSandbox", () => {
   it("does not throw when it destroys a sprite that has already gone", async () => {
     const sprite = handle({ delete: vi.fn().mockRejectedValue(new Error("404 not found")) });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await expect(sandbox.destroy(ref)).resolves.toBeUndefined();
   });
 
   it("creates a named checkpoint", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const checkpoint = await sandbox.checkpoint(ref, "baseline");
     expect(sprite.createCheckpoint).toHaveBeenCalledWith("baseline");
     expect(checkpoint).toEqual({ id: "v1", name: "baseline" });
@@ -264,7 +264,7 @@ describe("FlySpriteSandbox", () => {
   it("rejects exposeService with a SandboxError, regardless of the gateway", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(SandboxError);
     await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(/8080/);
   });
@@ -285,7 +285,7 @@ describe("FlySpriteSandbox.applyNetworkPolicy, the propagation of the policy", (
       networkPolicyAttempts: 5,
       networkPolicyDelayMs: 0,
     });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
 
     await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["opencode.ai", "github.com"] });
 
@@ -304,7 +304,7 @@ describe("FlySpriteSandbox.applyNetworkPolicy, the propagation of the policy", (
       networkPolicyAttempts: 3,
       networkPolicyDelayMs: 0,
     });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
 
     await expect(sandbox.applyNetworkPolicy(ref, { allowedDomains: ["opencode.ai"] })).resolves.toBeUndefined();
     expect(vi.mocked(sprite.execFile)).toHaveBeenCalledTimes(3);
@@ -313,7 +313,7 @@ describe("FlySpriteSandbox.applyNetworkPolicy, the propagation of the policy", (
   it("probes nothing when the policy denies everything", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
 
     await sandbox.applyNetworkPolicy(ref, { allowedDomains: [] });
 
@@ -323,7 +323,7 @@ describe("FlySpriteSandbox.applyNetworkPolicy, the propagation of the policy", (
   it("probes no wildcard entry, because it names no host to resolve", async () => {
     const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite), networkPolicyDelayMs: 0 });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
 
     await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["*.example.com", "opencode.ai"] });
 
@@ -337,7 +337,7 @@ describe("FlySpriteSandbox, an isolated command", () => {
   it("runs without the environment attached to the sandbox, and keeps the base environment", async () => {
     const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     sandbox.attachEnvironment(ref, { OPENCODE_API_KEY: "runner-credential" });
 
     await sandbox.exec(ref, { file: "sh", args: ["-c", "npm test"], isolated: true, env: { LANG: "C.UTF-8" } });
@@ -354,7 +354,7 @@ describe("FlySpriteSandbox, an isolated command", () => {
   it("gives an ordinary command the attached environment", async () => {
     const sprite = handle({ execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     sandbox.attachEnvironment(ref, { OPENCODE_API_KEY: "runner-credential" });
 
     await sandbox.exec(ref, { file: "sh", args: ["-c", "opencode run"] });
@@ -373,7 +373,7 @@ describe("FlySpriteSandbox.startProcess, a large environment", () => {
   it("sends a large environment as a file the wrapper reads", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     const prompt = "x".repeat(40 * 1024);
 
     await sandbox.startProcess(ref, { file: "sh", args: ["-c", "true"], env: { FACTOREE_PROMPT: prompt } });
@@ -393,7 +393,7 @@ describe("FlySpriteSandbox.startProcess, a large environment", () => {
   it("keeps a small environment in the call, which needs no extra write", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
 
     await sandbox.startProcess(ref, { file: "sh", args: ["-c", "true"], env: { FACTOREE_PROMPT: "small" } });
 
@@ -404,7 +404,7 @@ describe("FlySpriteSandbox.startProcess, a large environment", () => {
   it("names a value the kernel cannot carry, rather than letting the shell fail", async () => {
     const sprite = handle();
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
-    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
 
     await expect(
       sandbox.startProcess(ref, {

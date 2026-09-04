@@ -12,7 +12,7 @@ export interface SandboxCreateInput {
   /** The Run that owns the sandbox. One Run owns exactly one sandbox. */
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   /** Memory in megabytes. The adapter chooses a default when this is absent. */
   memoryMb?: number;
   cpus?: number;

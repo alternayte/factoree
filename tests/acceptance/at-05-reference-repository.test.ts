@@ -57,7 +57,7 @@ describe("AT-05 — a reference repository is pinned and read-only", () => {
     const prepared = await manager.prepare({
       runId: "run-at-05",
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
       primary: { url: fixture.primaryUrl, ref: "main" },
       references: [{ url: fixture.referenceUrl, ref: referenceSha }],
       defaults: DEFAULT_PROJECT_DEFAULTS,

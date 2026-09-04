@@ -153,7 +153,7 @@ export interface ProofPackActivityDependencies {
 export interface PublishProofPackActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   sessionId: string;
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
@@ -206,7 +206,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       dependencies.redactor,
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
       dependencies.logger,
     );
 

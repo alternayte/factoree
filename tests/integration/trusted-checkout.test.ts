@@ -246,7 +246,7 @@ describe("the review name query and the publication name query", () => {
     const ref = await sandbox.create({
       runId: "run-rename",
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
     });
     const primaryPath = `${ref.workspacePath}/primary`;
     try {

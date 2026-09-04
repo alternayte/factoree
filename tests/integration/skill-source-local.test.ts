@@ -14,7 +14,7 @@ describe("discoverSkills against a real sandbox", () => {
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "factoree-skills-"));
     sandbox = new LocalProcessSandbox({ rootDirectory: root });
-    ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
   });
 
   afterEach(async () => {

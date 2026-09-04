@@ -368,7 +368,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
   const sandboxRoot = await mkdtemp(join(tmpdir(), `factoree-phase08-${name}-`));
   temporaryRoots.push(sandboxRoot);
   const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  const ref = await sandbox.create({ runId, tenantId, projectId: productId });
+  const ref = await sandbox.create({ runId, tenantId, productId: productId });
   const { appPath, baseSha } = await createFixtureBase(ref.workspacePath);
 
   const contracts = new PrismaValidationContractStore(prisma);
@@ -724,7 +724,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
     const sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-phase08-liar-"));
     temporaryRoots.push(sandboxRoot);
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId, tenantId, projectId: productId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
     const { appPath, baseSha } = await createFixtureBase(ref.workspacePath);
     await writeReviewFixtureApp({ root: appPath, requireEditor: false });
 
@@ -756,7 +756,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
         {
           runId,
           tenantId,
-          projectId: productId,
+          productId: productId,
           runnerName: "claude",
           spriteId: ref.id,
           adapter: ref.adapter,

@@ -144,11 +144,11 @@ describe("AT-17 — the User Validator session is fresh", () => {
       },
     });
 
-    const ref = await sandbox.create({ runId, tenantId, projectId: productId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
     const input: UserValidateActivityInput = {
       runId,
       tenantId,
-      projectId: productId,
+      productId: productId,
       runnerName: "opencode",
       spriteId: ref.id,
       adapter: ref.adapter,
