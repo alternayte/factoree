@@ -247,6 +247,33 @@ describe("the Proof Pack renderer", () => {
     expect(markdown).toContain("Linear team: PAY");
     expect(markdown).toContain("acme/checkout-api @ 4f21c9e -> PR #812");
     expect(markdown).toContain("acme/checkout-events @ 1b7d004");
+    expect(markdown).toContain("Selection reason: sole member");
+  });
+
+  it("folds a newline in the selection reason so the Routing section stays one line per field", () => {
+    const markdown = renderProofPack(
+      input({
+        routing: {
+          productSlug: "checkout-platform",
+          linearTeamKey: "PAY",
+          targets: [
+            {
+              fullName: "acme/checkout-api",
+              baseSha: "4f21c9e",
+              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
+              mergeOrder: 1,
+            },
+          ],
+          siblingsRead: [],
+          selectionReason: "declared coupling\nconfirmed by an operator",
+        },
+      }),
+    );
+
+    expect(markdown).toContain(
+      "Selection reason: declared coupling confirmed by an operator",
+    );
+    expect(markdown).not.toContain("Selection reason: declared coupling\nconfirmed");
   });
 
   it("omits the Merge order line when the Run touched one target", () => {
