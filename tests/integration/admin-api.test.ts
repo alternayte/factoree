@@ -71,6 +71,7 @@ beforeAll(async () => {
       repositories: new PrismaRepositoryRegistry(prisma),
       webhookLog: new PrismaWebhookLog(prisma),
       starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
+      refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
       repositoryBaseUrl: "https://github.com",
     }),
@@ -226,6 +227,95 @@ describe("administration API", () => {
     expect(updated.json<{ organizationSkillsRepository: string }>().organizationSkillsRepository).toBe(
       "acme/other-skills",
     );
+  });
+
+  it("F8: changes the name and the maximum Run minutes on update", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-fields", slug: "fields", name: "Fields", linearTeamKey: "FLD" },
+    });
+    const product = created.json<{ id: string; maxRunMinutes: number }>();
+    expect(product.maxRunMinutes).toBe(90);
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-fields`,
+      headers: auth,
+      payload: { name: "Renamed Fields", maxRunMinutes: 45 },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json<{ name: string; maxRunMinutes: number }>()).toMatchObject({
+      name: "Renamed Fields",
+      maxRunMinutes: 45,
+    });
+  });
+
+  it("F8: answers 409, and names the claimant, when a create names a Linear team another Product already claims", async () => {
+    const first = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-claim", slug: "checkout", name: "Checkout", linearTeamKey: "PAY" },
+    });
+    expect(first.statusCode).toBe(201);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-claim", slug: "billing", name: "Billing", linearTeamKey: "PAY" },
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json<{ error: string }>().error).toContain("checkout");
+  });
+
+  it("F6: removes a Product, so a typo-created pending Product does not persist forever", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-remove", slug: "remove-me", name: "Remove me", linearTeamKey: "RMV" },
+    });
+    const product = created.json<{ id: string }>();
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-remove`,
+      headers: auth,
+    });
+    expect(removed.statusCode).toBe(204);
+
+    const gone = await app.inject({
+      method: "GET",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-remove`,
+      headers: auth,
+    });
+    expect(gone.statusCode).toBe(404);
+  });
+
+  it("F6: answers 404 for a Product of another tenant", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-remove-owner", slug: "own-remove", name: "Own", linearTeamKey: "OWR" },
+    });
+    const product = created.json<{ id: string }>();
+    await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-remove-other", slug: "oth-remove", name: "Oth", linearTeamKey: "OTR" },
+    });
+
+    const stolen = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-remove-other`,
+      headers: auth,
+    });
+    expect(stolen.statusCode).toBe(404);
   });
 
   it("refuses an organization skills repository that is not an owner and repository slug", async () => {

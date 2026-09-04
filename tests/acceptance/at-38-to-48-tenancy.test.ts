@@ -50,6 +50,7 @@ const productFor = (slug: string, teamId = "team-1"): ProductRecord => ({
 
 const buildDelegationService = (options: { products: ProductRecord[]; repositories: RepositoryRecord[] }) => {
   const started: Array<{ workflowId: string; args: [AgentRunWorkflowInput] }> = [];
+  const postedFailures: Array<{ workspaceId: string; sessionId: string; message: string }> = [];
   const service = new DelegationService({
     tenants: {
       findByWorkspace: () =>
@@ -75,10 +76,16 @@ const buildDelegationService = (options: { products: ProductRecord[]; repositori
       signalStop: () => Promise.resolve(true),
       signalHumanInput: () => Promise.resolve(true),
     },
+    refusalNotifier: {
+      postFailure: (workspaceId: string, sessionId: string, message: string) => {
+        postedFailures.push({ workspaceId, sessionId, message });
+        return Promise.resolve();
+      },
+    },
     logger,
     repositoryBaseUrl: "https://github.com",
   });
-  return { service, started };
+  return { service, started, postedFailures };
 };
 
 describe("AT-38 to AT-41 and AT-48: routing and discovery", () => {
@@ -130,7 +137,7 @@ describe("AT-38 to AT-41 and AT-48: routing and discovery", () => {
   });
 
   it("AT-39 refuses with BLOCKED_ROUTING when two Products claim one team", async () => {
-    const { service, started } = buildDelegationService({
+    const { service, started, postedFailures } = buildDelegationService({
       products: [productFor("checkout", "team-1"), productFor("billing", "team-1")],
       repositories: [],
     });
@@ -139,6 +146,10 @@ describe("AT-38 to AT-41 and AT-48: routing and discovery", () => {
 
     expect(outcome.kind).toBe("blocked_routing");
     expect(started).toHaveLength(0);
+    // F4. Specification section 9 requires the reason and the missing binding to reach the
+    // human as a Linear comment, not only Linear's delivery log.
+    expect(postedFailures).toHaveLength(1);
+    if (outcome.kind === "blocked_routing") expect(postedFailures[0]?.message).toBe(outcome.reason);
   });
 
   it("AT-40 fails validation, by key name, when a repository file sets autonomy", () => {
@@ -389,6 +400,14 @@ class FakeProductRegistry implements ProductRegistry {
     if (row === undefined) return Promise.resolve(null);
     row.organizationSkillsRepository = organizationSkillsRepository;
     return Promise.resolve(row);
+  }
+
+  update(): Promise<ProductRecord | null> {
+    throw new Error("not used by this test");
+  }
+
+  remove(): Promise<boolean> {
+    throw new Error("not used by this test");
   }
 }
 

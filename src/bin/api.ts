@@ -16,6 +16,8 @@ import { buildServer } from "~/http/server.js";
 import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
+import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
+import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
 
 const env = loadEnv();
 const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
@@ -28,16 +30,6 @@ const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
 const runs = new PrismaRunRepository(prisma);
 const client = await createTemporalClient(env);
 
-const delegation = new DelegationService({
-  tenants,
-  products,
-  repositories,
-  webhookLog: new PrismaWebhookLog(prisma),
-  starter: createTemporalWorkflowStarter(client, env.TEMPORAL_TASK_QUEUE),
-  logger,
-  repositoryBaseUrl: env.GITHUB_BASE_URL,
-});
-
 // A Linear access token lives for twenty-four hours. The provider refreshes it before it
 // expires. Without the client credentials the provider can only report the expiry. The route
 // then surfaces that failure to the operator, rather than a resolved team key.
@@ -48,6 +40,27 @@ const linearTokens = new LinearTokenProvider({
       ? null
       : createLinearOAuthClient({ clientId: env.LINEAR_CLIENT_ID, clientSecret: env.LINEAR_CLIENT_SECRET }),
   logger,
+});
+
+// Specification section 9. A routing refusal must reach the human, not only Linear's delivery
+// log. `DelegationService` posts the reason on the agent session that raised it. No Run row
+// exists yet at that point, so the token resolves from the workspace id the webhook carried.
+const refusalNotifier: RefusalNotifier = {
+  postFailure: async (workspaceId, sessionId, message) => {
+    const linearClient = createLinearAgentClient(await linearTokens.tokenFor(workspaceId));
+    await linearClient.fail(sessionId, message);
+  },
+};
+
+const delegation = new DelegationService({
+  tenants,
+  products,
+  repositories,
+  webhookLog: new PrismaWebhookLog(prisma),
+  starter: createTemporalWorkflowStarter(client, env.TEMPORAL_TASK_QUEUE),
+  refusalNotifier,
+  logger,
+  repositoryBaseUrl: env.GITHUB_BASE_URL,
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`

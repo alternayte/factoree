@@ -5,6 +5,16 @@ import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
+
+/**
+ * Specification section 9. Posts a refusal reason on the agent session that raised it, so a
+ * routing failure, an unconfigured tenant, or an unusable slug reaches the human waiting in
+ * Linear, not only Linear's delivery log. The workspace id resolves the token, because no Run
+ * row exists yet to resolve it from.
+ */
+export interface RefusalNotifier {
+  postFailure(workspaceId: string, sessionId: string, message: string): Promise<void>;
+}
 import type { AgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import { classifyAgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import type {
@@ -39,6 +49,7 @@ export interface DelegationDependencies {
   repositories: RepositoryRegistry;
   webhookLog: WebhookLog;
   starter: WorkflowStarter;
+  refusalNotifier: RefusalNotifier;
   logger: Logger;
   repositoryBaseUrl: string;
 }
@@ -63,7 +74,15 @@ export class DelegationService {
     if (!tenant) {
       // Release the marker, so that configuring the workspace and redelivering works.
       await this.dependencies.webhookLog.remove(deliveryId);
-      return { kind: "unconfigured", reason: `no tenant for Linear workspace ${event.organizationId}` };
+      const reason = `no tenant for Linear workspace ${event.organizationId}`;
+      // Specification section 9. This refusal must reach the human too, not only Linear's
+      // delivery log.
+      await this.dependencies.refusalNotifier.postFailure(
+        event.organizationId,
+        event.agentSession.id,
+        reason,
+      );
+      return { kind: "unconfigured", reason };
     }
 
     try {
@@ -101,6 +120,13 @@ export class DelegationService {
     if (outcome.kind === "refused") {
       await this.dependencies.webhookLog.remove(deliveryId);
       // Specification section 9. A refusal never guesses, and it names what an operator must fix.
+      // The reason must reach the human, not only Linear's delivery log, so Factoree posts it on
+      // the agent session that raised it.
+      await this.dependencies.refusalNotifier.postFailure(
+        event.organizationId,
+        event.agentSession.id,
+        outcome.reason,
+      );
       return { kind: "blocked_routing", reason: outcome.reason };
     }
     const product = outcome.product;
@@ -146,10 +172,15 @@ export class DelegationService {
       }
     } catch (error) {
       await this.dependencies.webhookLog.remove(deliveryId);
-      return {
-        kind: "unconfigured",
-        reason: `product ${product.slug} has an unusable repository: ${String(error)}`,
-      };
+      const reason = `product ${product.slug} has an unusable repository: ${String(error)}`;
+      // Specification section 9. This refusal must reach the human too, not only Linear's
+      // delivery log.
+      await this.dependencies.refusalNotifier.postFailure(
+        event.organizationId,
+        event.agentSession.id,
+        reason,
+      );
+      return { kind: "unconfigured", reason };
     }
 
     await this.dependencies.starter.start({

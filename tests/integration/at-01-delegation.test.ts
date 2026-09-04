@@ -141,6 +141,8 @@ beforeAll(async () => {
     workflowsPath: new URL("../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
     activities: createActivities({
       runs,
+      products,
+      repositories,
       agentSession,
       workItems,
       // This test drives the Phase 1 path, which carries no sandbox. The doubles below satisfy
@@ -198,6 +200,7 @@ beforeAll(async () => {
       repositories,
       webhookLog: new PrismaWebhookLog(prisma),
       starter: createTemporalWorkflowStarter(environment.client, env.TEMPORAL_TASK_QUEUE),
+      refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
       logger,
       repositoryBaseUrl: "https://github.com",
     }),

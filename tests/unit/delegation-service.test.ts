@@ -58,6 +58,7 @@ const build = (
   }> = {},
 ) => {
   const recorded = new Set<string>();
+  const postedFailures: Array<{ workspaceId: string; sessionId: string; message: string }> = [];
   const starter = {
     start: vi.fn((input: { workflowId: string; args: [AgentRunWorkflowInput] }) =>
       overrides.startFails === true
@@ -97,10 +98,16 @@ const build = (
       },
     },
     starter,
+    refusalNotifier: {
+      postFailure: (workspaceId: string, sessionId: string, message: string) => {
+        postedFailures.push({ workspaceId, sessionId, message });
+        return Promise.resolve();
+      },
+    },
     logger,
     repositoryBaseUrl: "https://github.com",
   });
-  return { service, starter };
+  return { service, starter, postedFailures };
 };
 
 describe("DelegationService", () => {
@@ -163,24 +170,32 @@ describe("DelegationService", () => {
   });
 
   it("reports an unknown workspace instead of starting work", async () => {
-    const { service, starter } = build({ tenant: null });
+    const { service, starter, postedFailures } = build({ tenant: null });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-3");
     expect(outcome.kind).toBe("unconfigured");
     expect(starter.start).not.toHaveBeenCalled();
+    // F4. A refusal must reach the human waiting in Linear, not only the delivery log.
+    expect(postedFailures).toHaveLength(1);
+    expect(postedFailures[0]?.sessionId).toBe("session-1");
+    if (outcome.kind === "unconfigured") expect(postedFailures[0]?.message).toBe(outcome.reason);
   });
 
   it("blocks routing when no Product claims the team", async () => {
-    const { service, starter } = build({ products: [] });
+    const { service, starter, postedFailures } = build({ products: [] });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-4");
     expect(outcome).toMatchObject({ kind: "blocked_routing" });
     expect(starter.start).not.toHaveBeenCalled();
+    // F4. The routing refusal reaches the human, as a comment on the agent session.
+    expect(postedFailures).toHaveLength(1);
+    if (outcome.kind === "blocked_routing") expect(postedFailures[0]?.message).toBe(outcome.reason);
   });
 
   it("blocks routing when two Products claim the team", async () => {
-    const { service, starter } = build({ products: [productFor("a"), productFor("b")] });
+    const { service, starter, postedFailures } = build({ products: [productFor("a"), productFor("b")] });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-13");
     expect(outcome).toMatchObject({ kind: "blocked_routing" });
     expect(starter.start).not.toHaveBeenCalled();
+    expect(postedFailures).toHaveLength(1);
   });
 
   it("passes every member repository to the workflow", async () => {
@@ -238,12 +253,14 @@ describe("DelegationService", () => {
   });
 
   it("does not start a workflow when a member repository slug is unusable", async () => {
-    const { service, starter } = build({
+    const { service, starter, postedFailures } = build({
       repositories: [repositoryFor(defaultProduct.id, "not-a-slug")],
     });
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
     expect(outcome.kind).toBe("unconfigured");
     expect(starter.start).not.toHaveBeenCalled();
+    // F4. An unusable slug refusal reaches the human too.
+    expect(postedFailures).toHaveLength(1);
 
     // The marker was released, so a Linear redelivery of the same identifier is not a duplicate.
     const redelivery = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
