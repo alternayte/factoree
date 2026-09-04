@@ -33,11 +33,19 @@ export class GitHubApiError extends Error {
    */
   readonly deterministic: boolean;
 
-  constructor(message: string, status: number) {
+  /**
+   * The `x-ratelimit-remaining` and `retry-after` response headers, when the caller supplies
+   * them. A discovery sync reads these to tell a real permission fault from a rate limit, both
+   * of which GitHub reports as a 403.
+   */
+  readonly headers: Record<string, string> | undefined;
+
+  constructor(message: string, status: number, headers?: Record<string, string>) {
     super(message);
     this.name = "GitHubApiError";
     this.status = status;
     this.deterministic = status >= 400 && status < 500 && status !== 408 && status !== 429;
+    this.headers = headers;
   }
 }
 

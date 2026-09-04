@@ -85,6 +85,7 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
         throw new GitHubApiError(
           `the GitHub API answered ${String(response.status)} while it listed the repositories of installation ${installationId}`,
           response.status,
+          this.rateLimitHeaders(response.headers),
         );
       }
       const body = (text === "" ? {} : JSON.parse(text)) as GitHubInstallationRepositoriesResponse;
@@ -111,6 +112,7 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
       throw new GitHubApiError(
         `the GitHub API answered ${String(response.status)} while it read the configuration of ${fullName} at ${ref}`,
         response.status,
+        this.rateLimitHeaders(response.headers),
       );
     }
     const body = (text === "" ? {} : JSON.parse(text)) as GitHubContentsResponse;
@@ -120,6 +122,20 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
       throw new Error(`the GitHub API answered a configuration file of ${fullName} without a SHA or content`);
     }
     return { content: Buffer.from(content, "base64").toString("utf8"), sha };
+  }
+
+  /**
+   * The two headers a discovery sync needs to tell a real permission fault from a rate limit,
+   * both of which GitHub answers as a 403. Absent headers become absent entries, never empty
+   * strings, so the caller can tell "not present" from "present and empty".
+   */
+  private rateLimitHeaders(headers: Headers): Record<string, string> {
+    const result: Record<string, string> = {};
+    const remaining = headers.get("x-ratelimit-remaining");
+    if (remaining !== null) result["x-ratelimit-remaining"] = remaining;
+    const retryAfter = headers.get("retry-after");
+    if (retryAfter !== null) result["retry-after"] = retryAfter;
+    return result;
   }
 
   private toDiscoveredRepository(entry: GitHubRepositorySummary): DiscoveredRepository {

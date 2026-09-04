@@ -33,6 +33,8 @@ import { PrismaValidationContractStore } from "~/persistence/prisma/validation-c
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
 import { createActivities } from "~/activities/index.js";
+import { DiscoveryService } from "~/domain/products/discovery-service.js";
+import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -140,6 +142,11 @@ beforeAll(async () => {
 
   const runs = new PrismaRunRepository(prisma);
   const fakeSandbox = new FakeSandbox();
+  // The Phase 1 path never runs an installation sync, so this double only satisfies the shape.
+  const discoveryClient: RepositoryDiscoveryClient = {
+    listInstallationRepositories: () => Promise.reject(new Error("this test never syncs")),
+    readConfig: () => Promise.reject(new Error("this test never syncs")),
+  };
 
   worker = await Worker.create({
     connection: environment.nativeConnection,
@@ -185,6 +192,16 @@ beforeAll(async () => {
       // The Phase 1 path never clones, never reads a private repository, and never publishes,
       // so this double only satisfies the shape.
       tokens: { tokenForInstallation: () => Promise.reject(new Error("this test never mints")) },
+      // The Phase 1 path never runs an installation sync, so these two doubles only satisfy the
+      // shape.
+      discoveryClient,
+      discoveryService: new DiscoveryService(
+        discoveryClient,
+        products,
+        repositories,
+        { resolveTeamKey: () => Promise.reject(new Error("this test never syncs")), resolveTeamId: () => Promise.reject(new Error("this test never syncs")) },
+        logger,
+      ),
     }),
   });
   workerRun = worker.run();

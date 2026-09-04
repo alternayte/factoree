@@ -55,6 +55,9 @@ import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
+import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
+import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
+import { DiscoveryService } from "~/domain/products/discovery-service.js";
 
 const env = loadEnv();
 const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
@@ -178,6 +181,22 @@ const githubTokens = new GitHubAppTokenProvider({
   apiBaseUrl: env.GITHUB_API_BASE_URL,
 });
 
+// Specification section 10. `syncInstallationWorkflow` reads an installation's repositories,
+// and one repository's `.factoree/config.yaml`, through this client.
+const discoveryClient = new GitHubRepositoryDiscoveryClient({
+  apiBaseUrl: env.GITHUB_API_BASE_URL,
+  tokens: githubTokens,
+});
+
+// Resolves the Linear team a repository declaration names. Reuses the same tenant-scoped
+// pattern the Products administration route already wires in `src/bin/api.ts`.
+const discoveryLinearTeams = new TenantScopedLinearTeamLookup(
+  { linearWorkspaceIdFor: async (tenantId) => (await prisma.tenant.findUnique({ where: { id: tenantId } }))?.linearWorkspaceId ?? null },
+  linearTokens,
+);
+
+const discoveryService = new DiscoveryService(discoveryClient, products, repositories, discoveryLinearTeams, logger);
+
 // Controller decision 1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
 // the real `SecretStore` answers it directly through `get`, which already takes a tenant and a
 // Product.
@@ -258,7 +277,9 @@ const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.TEMPORAL_NAMESPACE,
   taskQueue: env.TEMPORAL_TASK_QUEUE,
-  workflowsPath: new URL("../workflows/agent-run.workflow.js", import.meta.url).pathname,
+  // A second workflow, `syncInstallationWorkflow`, joined `agentRunWorkflow` on this taskQueue.
+  // The worker bundles one file per `workflowsPath`, so the barrel re-exports both.
+  workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
   activities: createActivities({
     runs,
     products,
@@ -296,6 +317,8 @@ const worker = await Worker.create({
     gitAuthor: { name: env.FACTOREE_GIT_AUTHOR_NAME, email: env.FACTOREE_GIT_AUTHOR_EMAIL },
     logger,
     tokens: githubTokens,
+    discoveryClient,
+    discoveryService,
   }),
 });
 
