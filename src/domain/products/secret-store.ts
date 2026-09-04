@@ -7,9 +7,11 @@
  *   `injectIntoImplementer` mark, and `guardAgainstForbiddenMaterial` inspects it there.
  * - `runner_credential`: a model provider credential of the coding agent. It reaches the sandbox
  *   environment, never a prompt, and never the Implementer input.
- * - `repository_read`: a read-only repository credential. It is used for one git command at a
- *   time and never stays inside the sandbox.
- * - `publish`: the GitHub write credential of the publication. It never enters a sandbox.
+ * - `repository_read`: retired. The GitHub App installation replaced it as the one credential
+ *   path to GitHub, and no code reads a secret of this kind any more. The kind stays defined so
+ *   an existing stored row keeps its kind rather than silently becoming `test`, which is the one
+ *   kind the injection mark permits.
+ * - `publish`: retired, for the same reason and the same guard as `repository_read`.
  *
  * A secret of any kind other than `test` must not carry the injection mark. The store rejects
  * that combination, so a credential cannot reach the Implementer path by a configuration slip.
