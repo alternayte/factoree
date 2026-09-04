@@ -121,7 +121,7 @@ export const parseContextSourceSettings = (
 export interface ContextSourceConfigurationRecord {
   id: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   /** The value `ContextSource.id()` returns for the built source. */
   sourceId: string;
   kind: ContextSourceKind;
@@ -129,8 +129,8 @@ export interface ContextSourceConfigurationRecord {
   /** The base URL of the catalog or of the MCP server. */
   endpoint: string;
   /**
-   * SDD section 30. A credential never lives in this row. The column names one `ProjectSecret`
-   * of the same Project, and the value is read at the moment the source is built.
+   * SDD section 30. A credential never lives in this row. The column names one `ProductSecret`
+   * of the same Product, and the value is read at the moment the source is built.
    */
   secretName: string | null;
   settings: ContextSourceSettings;
@@ -140,7 +140,7 @@ export interface ContextSourceConfigurationRecord {
 
 export interface CreateContextSourceConfigurationInput {
   tenantId: string;
-  projectId: string;
+  productId: string;
   sourceId: string;
   kind: ContextSourceKind;
   endpoint: string;
@@ -152,6 +152,6 @@ export interface CreateContextSourceConfigurationInput {
 /** SDD section 52. Every method filters on the tenant. */
 export interface ContextSourceConfigurationStore {
   put(input: CreateContextSourceConfigurationInput): Promise<ContextSourceConfigurationRecord>;
-  list(tenantId: string, projectId: string): Promise<ContextSourceConfigurationRecord[]>;
-  remove(tenantId: string, projectId: string, sourceId: string): Promise<boolean>;
+  list(tenantId: string, productId: string): Promise<ContextSourceConfigurationRecord[]>;
+  remove(tenantId: string, productId: string, sourceId: string): Promise<boolean>;
 }

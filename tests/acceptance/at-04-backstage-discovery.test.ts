@@ -164,7 +164,7 @@ describe("AT-04 — Backstage discovery", () => {
             {
               id: "row-1",
               tenantId: "tenant",
-              projectId: "project",
+              productId: "product",
               sourceId: "backstage",
               kind: "backstage",
               enabled: true,

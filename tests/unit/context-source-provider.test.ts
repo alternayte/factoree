@@ -23,7 +23,7 @@ const record = (
 ): ContextSourceConfigurationRecord => ({
   id: "row",
   tenantId: "tenant",
-  projectId: "project",
+  productId: "product",
   sourceId: "backstage",
   kind: "backstage",
   enabled: true,

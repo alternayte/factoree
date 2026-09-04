@@ -443,37 +443,39 @@ describe("the GitHub installation binding endpoint", () => {
 describe("the context source endpoints of SDD section 59", () => {
   const contextWorkspace = "ws-context";
   const otherContextWorkspace = "ws-context-other";
-  let projectId: string;
-  let otherTenantProjectId: string;
+  let productId: string;
+  let otherTenantProductId: string;
 
   beforeAll(async () => {
-    // The Project administration route no longer exists: discovery, not an operator, owns
-    // Repository rows, and the old CRUD route left with Project. A Project row still exists for
-    // this suite, seeded directly through the registry these routes still use.
+    // SDD section 5 and section 7 put context sources on the Product, alongside secrets,
+    // autonomy, risk caps, action policy, and redaction.
     const tenant = await tenants.ensureTenant(contextWorkspace, "Context");
-    const project = await projects.create({
+    const products = new PrismaProductRegistry(prisma);
+    const product = await products.create({
       tenantId: tenant.id,
-      key: "ctx",
+      slug: "ctx",
       name: "Context",
-      primaryRepository: "acme/ctx",
+      linearTeamKey: "CTX",
+      linearTeamId: "team-ctx",
     });
-    projectId = project.id;
+    productId = product.id;
 
     const otherTenant = await tenants.ensureTenant(otherContextWorkspace, "Context Other");
-    const otherProject = await projects.create({
+    const otherProduct = await products.create({
       tenantId: otherTenant.id,
-      key: "ctxo",
+      slug: "ctxo",
       name: "Context Other",
-      primaryRepository: "acme/ctxo",
+      linearTeamKey: "CTXO",
+      linearTeamId: "team-ctxo",
     });
-    otherTenantProjectId = otherProject.id;
+    otherTenantProductId = otherProduct.id;
   });
 
   it("refuses an endpoint that carries a credential", async () => {
     // SDD section 60. The userinfo of the endpoint would reach a log line and an error message.
     const refused = await app.inject({
       method: "POST",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
       payload: {
         sourceId: "backstage-credential",
@@ -489,19 +491,11 @@ describe("the context source endpoints of SDD section 59", () => {
 
   it("creates, lists, and deletes one source", async () => {
     // The secret exists with a real value, so the assertion below has something to find. This
-    // seeds the row through the Product administration secret route.
-    const tenant = await prisma.tenant.findFirstOrThrow({ where: { linearWorkspaceId: contextWorkspace } });
-    const products = new PrismaProductRegistry(prisma);
-    const product = await products.create({
-      tenantId: tenant.id,
-      slug: "context-secrets",
-      name: "Context Secrets",
-      linearTeamKey: "CTXS",
-      linearTeamId: "team-context-secrets",
-    });
+    // seeds the row through the Product administration secret route, on the same Product the
+    // context source below belongs to.
     const secretPut = await app.inject({
       method: "PUT",
-      url: `/admin/products/${product.id}/secrets/BACKSTAGE_TOKEN?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/secrets/BACKSTAGE_TOKEN?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
       payload: { value: "bs_super_secret_value_87654321" },
     });
@@ -509,7 +503,7 @@ describe("the context source endpoints of SDD section 59", () => {
 
     const created = await app.inject({
       method: "POST",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
       payload: {
         sourceId: "backstage",
@@ -527,7 +521,7 @@ describe("the context source endpoints of SDD section 59", () => {
 
     const listed = await app.inject({
       method: "GET",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
     });
     expect(listed.statusCode).toBe(200);
@@ -536,14 +530,14 @@ describe("the context source endpoints of SDD section 59", () => {
 
     const deleted = await app.inject({
       method: "DELETE",
-      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
     });
     expect(deleted.statusCode).toBe(204);
 
     const deletedAgain = await app.inject({
       method: "DELETE",
-      url: `/admin/projects/${projectId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources/backstage?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
     });
     expect(deletedAgain.statusCode).toBe(404);
@@ -552,7 +546,7 @@ describe("the context source endpoints of SDD section 59", () => {
   it("refuses an invalid setting with 400 and names the key", async () => {
     const response = await app.inject({
       method: "POST",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
       payload: {
         sourceId: "docs",
@@ -568,7 +562,7 @@ describe("the context source endpoints of SDD section 59", () => {
   it("refuses a reserved source identifier with 400", async () => {
     const response = await app.inject({
       method: "POST",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
       payload: {
         sourceId: "linear",
@@ -584,15 +578,15 @@ describe("the context source endpoints of SDD section 59", () => {
   it("refuses a request without the administration token", async () => {
     const response = await app.inject({
       method: "GET",
-      url: `/admin/projects/${projectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
     });
     expect(response.statusCode).toBe(401);
   });
 
-  it("returns 404 for a project of another tenant", async () => {
+  it("returns 404 for a product of another tenant", async () => {
     const response = await app.inject({
       method: "GET",
-      url: `/admin/projects/${otherTenantProjectId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
+      url: `/admin/products/${otherTenantProductId}/context-sources?linearWorkspaceId=${contextWorkspace}`,
       headers: auth,
     });
     expect(response.statusCode).toBe(404);

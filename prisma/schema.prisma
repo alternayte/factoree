@@ -64,7 +64,6 @@ model Project {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   secrets            ProjectSecret[]
-  contextSources     ContextSourceConfiguration[]
 
   @@unique([tenantId, key])
   @@index([tenantId])
@@ -93,20 +92,22 @@ model ProjectSecret {
 model ContextSourceConfiguration {
   id          String   @id @default(uuid())
   tenantId    String
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // SDD section 5 and section 7. A context source belongs to the Product, alongside secrets,
+  // autonomy, risk caps, action policy, and redaction.
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   // The identifier the built source reports from `ContextSource.id()`.
   sourceId    String
   kind        String
   enabled     Boolean  @default(true)
   endpoint    String
-  // SDD section 30. This column names a ProjectSecret. It never holds a credential.
+  // SDD section 30. This column names a ProductSecret. It never holds a credential.
   secretName  String?
   settings    Json
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([projectId, sourceId])
+  @@unique([productId, sourceId])
   @@index([tenantId])
 }
 
@@ -386,6 +387,7 @@ model Product {
   updatedAt      DateTime @updatedAt
   repositories   Repository[]
   secrets        ProductSecret[]
+  contextSources ContextSourceConfiguration[]
   runs           Run[]
 
   @@unique([tenantId, slug])

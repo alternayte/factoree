@@ -87,7 +87,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     registerRunRoutes(admin, { runs: dependencies.runs, tenants: dependencies.tenants });
     registerInstallationRoutes(admin, { tenants: dependencies.tenants });
     registerContextSourceRoutes(admin, {
-      projects: dependencies.projects,
+      products: dependencies.products,
       tenants: dependencies.tenants,
       contextSources: new PrismaContextSourceConfigurationStore(dependencies.prisma),
     });
