@@ -71,6 +71,43 @@ export interface ActionPolicyOverrides {
   role?: AgentRole;
 }
 
+/**
+ * A sibling action names one repository of the Run's Product, other than the target. The
+ * decision depends on the Run's own member list, so it takes that list on every call instead of
+ * living in `ActionPolicyOverrides`, which holds only Project-wide and session-wide values.
+ */
+export type SiblingAction = "clone_sibling" | "write_sibling";
+
+export interface SiblingActionInput {
+  action: SiblingAction;
+  /** The `owner/repo` full name of the sibling repository. */
+  fullName: string;
+  /** The full names of every repository the Run's Product owns. */
+  members: string[];
+}
+
+/** Thrown when a sibling action is denied. See `decideSiblingAction`. */
+export class SiblingActionDeniedError extends Error {
+  constructor(
+    readonly action: SiblingAction,
+    readonly fullName: string,
+  ) {
+    super(`The Action Policy denies the sibling action "${action}" for repository "${fullName}".`);
+    this.name = "SiblingActionDeniedError";
+  }
+}
+
+/**
+ * Decides one sibling repository action. A clone is allowed only for a member repository of the
+ * Run's Product, and membership is checked against the actual member list, never against a name
+ * pattern. A write to a sibling is always denied, because a sibling clone exists for read-only
+ * context alone.
+ */
+export const decideSiblingAction = (input: SiblingActionInput): ActionDecision => {
+  if (input.action === "write_sibling") return "deny";
+  return input.members.includes(input.fullName) ? "allow" : "deny";
+};
+
 export class ActionDeniedError extends Error {
   constructor(readonly action: AgentAction) {
     super(`The Action Policy denies this action: ${LABELS[action]}.`);

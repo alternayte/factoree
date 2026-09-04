@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ActionDeniedError, buildActionPolicy, McpToolDeniedError } from "~/domain/policy/action-policy.js";
+import {
+  ActionDeniedError,
+  buildActionPolicy,
+  decideSiblingAction,
+  McpToolDeniedError,
+} from "~/domain/policy/action-policy.js";
 
 describe("buildActionPolicy", () => {
   it("uses the SDD section 29 default table", () => {
@@ -66,5 +71,25 @@ describe("the MCP tool gate of SDD section 58", () => {
   it("throws with the tool name when a call is refused", () => {
     expect(() => buildActionPolicy({}).assertMcpTool("search_docs")).toThrow(/search_docs/);
     expect(() => buildActionPolicy({}).assertMcpTool("search_docs")).toThrow(McpToolDeniedError);
+  });
+});
+
+describe("decideSiblingAction, the gate on a sibling repository of the Run's Product", () => {
+  it("allows a read-only clone of a member repository", () => {
+    expect(
+      decideSiblingAction({ action: "clone_sibling", fullName: "acme/web", members: ["acme/api", "acme/web"] }),
+    ).toBe("allow");
+  });
+
+  it("denies a clone of a repository outside the Product", () => {
+    expect(
+      decideSiblingAction({ action: "clone_sibling", fullName: "acme/other", members: ["acme/api", "acme/web"] }),
+    ).toBe("deny");
+  });
+
+  it("denies a write to a sibling, even a member repository", () => {
+    expect(
+      decideSiblingAction({ action: "write_sibling", fullName: "acme/web", members: ["acme/api", "acme/web"] }),
+    ).toBe("deny");
   });
 });

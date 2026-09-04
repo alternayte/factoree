@@ -9,8 +9,12 @@ import type { ValidationEvidenceKind } from "~/domain/validation/validation-cont
  * A deterministic verification check answers no Validation assertion, so
  * `validationAssertionId` is null for it. SDD section 37 and section 38 name the artefact kinds a
  * user validation assertion produces, and this type adds them.
+ *
+ * `sibling_read` answers no Validation assertion either. It records that the agent session
+ * cloned a sibling repository of the Run's Product, so the Reviewer can see which sibling the
+ * Implementer read.
  */
-export type EvidenceKind = "deterministic_check" | ValidationEvidenceKind;
+export type EvidenceKind = "deterministic_check" | "sibling_read" | ValidationEvidenceKind;
 
 export interface EvidenceRecord {
   id: string;

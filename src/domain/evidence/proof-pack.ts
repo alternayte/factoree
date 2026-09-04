@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import type {
-  ValidationEvidenceKind,
-  ValidationMethod,
-} from "~/domain/validation/validation-contract.js";
+import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validation/validation-contract.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { ReviewCategory, ReviewSeverity } from "~/domain/review/review-report.js";
+import type { EvidenceKind } from "~/domain/evidence/evidence.js";
 
 /**
  * SDD section 47. The Proof Pack optimizes for one human acceptance decision. It must not dump a
@@ -35,7 +33,7 @@ export const PROOF_PACK_HEADINGS = [
 
 /** One stored artefact of SDD section 39. The bytes stay in storage, and the reference travels. */
 export interface ProofPackEvidenceRef {
-  kind: ValidationEvidenceKind | "deterministic_check";
+  kind: EvidenceKind;
   source: string;
   sha256: string;
   storageRef: string | null;
