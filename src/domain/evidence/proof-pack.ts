@@ -94,6 +94,29 @@ export interface ProofPackConflict {
   reason: string;
 }
 
+/** One `RunTarget` row of SDD section 18. The commit the Run pushed to one routed repository. */
+export interface ProofPackRoutingTarget {
+  fullName: string;
+  baseSha: string;
+  pullRequestUrl: string;
+  mergeOrder: number;
+}
+
+/** One sibling repository the Run read but did not change. SDD section 18. */
+export interface ProofPackRoutingSibling {
+  fullName: string;
+  commitSha: string;
+}
+
+/** SDD section 18. Routing information. Absent when a Run predates multi-repository routing. */
+export interface ProofPackRouting {
+  productSlug: string;
+  linearTeamKey: string;
+  targets: ProofPackRoutingTarget[];
+  siblingsRead: ProofPackRoutingSibling[];
+  selectionReason: string;
+}
+
 export interface ProofPackInput {
   runId: string;
   workItem: { title: string; url: string | null };
@@ -117,6 +140,8 @@ export interface ProofPackInput {
   commitSha: string;
   repairCount: number;
   repairLimit: number;
+  /** SDD section 18. Present only for a Run that a routed Product produced. */
+  routing?: ProofPackRouting;
 }
 
 /** Keeps one field inside the cap. A truncated field says so, so a reader never guesses. */
@@ -239,6 +264,36 @@ const limitationSection = (input: ProofPackInput): string[] => {
   );
 };
 
+/** SDD section 18. The Routing section. Renders only when the Run carries `routing`. */
+const routingSection = (routing: ProofPackRouting): string[] => {
+  const targets = [...routing.targets].sort((a, b) => a.mergeOrder - b.mergeOrder);
+  const prNumber = (pullRequestUrl: string): string => pullRequestUrl.split("/").pop() ?? "";
+  const targetLines = targets.map(
+    (target, index) =>
+      `  ${index + 1}. ${target.fullName} @ ${target.baseSha} -> PR #${prNumber(target.pullRequestUrl)}`,
+  );
+  const shortName = (target: ProofPackRoutingTarget): string => target.fullName.split("/").pop() ?? target.fullName;
+  const mergeOrderLine =
+    targets.length > 1 ? [`Merge order: ${targets.map(shortName).join(", then ")}`] : [];
+  const siblingLines =
+    routing.siblingsRead.length === 0
+      ? ["Sibling repositories read: none."]
+      : [
+          `Sibling repositories read: ${routing.siblingsRead
+            .map((sibling) => `${sibling.fullName} @ ${sibling.commitSha}`)
+            .join(", ")}`,
+        ];
+  return [
+    `Product: ${routing.productSlug}`,
+    `Linear team: ${routing.linearTeamKey}`,
+    "Targets:",
+    ...targetLines,
+    ...mergeOrderLine,
+    ...siblingLines,
+    `Selection reason: ${routing.selectionReason}`,
+  ];
+};
+
 const metadataSection = (input: ProofPackInput): string[] => [
   `- Run: ${input.runId}`,
   `- Base SHA: ${input.baseSha}`,
@@ -262,6 +317,7 @@ export const renderProofPack = (input: ProofPackInput): string =>
     "",
     input.pullRequestUrl,
     "",
+    ...(input.routing === undefined ? [] : ["### Routing", "", ...routingSection(input.routing), ""]),
     "### Validation contract",
     "",
     ...validationSection(input),
