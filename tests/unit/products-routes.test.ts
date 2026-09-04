@@ -102,6 +102,29 @@ class FakeProductRegistry implements ProductRegistry {
     this.rows.set(id, updated);
     return Promise.resolve(updated);
   }
+
+  update(
+    tenantId: string,
+    id: string,
+    fields: { name?: string; maxRunMinutes?: number },
+  ): Promise<ProductRecord | null> {
+    const row = this.rows.get(id);
+    if (!row || row.tenantId !== tenantId) return Promise.resolve(null);
+    const updated = {
+      ...row,
+      ...(fields.name === undefined ? {} : { name: fields.name }),
+      ...(fields.maxRunMinutes === undefined ? {} : { maxRunMinutes: fields.maxRunMinutes }),
+    };
+    this.rows.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
+  remove(tenantId: string, id: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row || row.tenantId !== tenantId) return Promise.resolve(false);
+    this.rows.delete(id);
+    return Promise.resolve(true);
+  }
 }
 
 class FakeRepositoryRegistry implements RepositoryRegistry {

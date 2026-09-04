@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -24,8 +25,11 @@ const createSchema = z
 
 const updateSchema = z
   .object({
+    name: z.string().min(1),
+    maxRunMinutes: z.number().int().positive().max(600),
     organizationSkillsRepository: z.string().regex(/^[^/]+\/[^/]+$/).nullable(),
   })
+  .partial()
   .strict();
 
 const activateSchema = z
@@ -35,6 +39,9 @@ const activateSchema = z
   .strict();
 
 const tenantQuerySchema = z.object({ linearWorkspaceId: z.string().min(1) });
+
+const isUniqueConstraintViolation = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 
 const secretBodySchema = z
   .object({
@@ -65,18 +72,34 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
         .code(404)
         .send({ error: `Linear reports no team for the key "${parsed.data.linearTeamKey}".` });
     }
-    const product = await dependencies.products.create({
-      tenantId: tenant.id,
-      slug: parsed.data.slug,
-      name: parsed.data.name,
-      linearTeamKey: team.key,
-      linearTeamId: team.id,
-      ...(parsed.data.maxRunMinutes === undefined ? {} : { maxRunMinutes: parsed.data.maxRunMinutes }),
-      ...(parsed.data.organizationSkillsRepository === undefined
-        ? {}
-        : { organizationSkillsRepository: parsed.data.organizationSkillsRepository }),
-    });
-    return reply.code(201).send(product);
+    try {
+      const product = await dependencies.products.create({
+        tenantId: tenant.id,
+        slug: parsed.data.slug,
+        name: parsed.data.name,
+        linearTeamKey: team.key,
+        linearTeamId: team.id,
+        ...(parsed.data.maxRunMinutes === undefined ? {} : { maxRunMinutes: parsed.data.maxRunMinutes }),
+        ...(parsed.data.organizationSkillsRepository === undefined
+          ? {}
+          : { organizationSkillsRepository: parsed.data.organizationSkillsRepository }),
+      });
+      return reply.code(201).send(product);
+    } catch (error) {
+      // F8. A create for a Linear team, or a slug, another Product already claims must not
+      // surface as a bare 500. The unique constraint of `Product` names the collision, so the
+      // response names the Product that already claims it.
+      if (isUniqueConstraintViolation(error)) {
+        const claimant = await dependencies.products.findByLinearTeamId(tenant.id, team.id);
+        return reply.code(409).send({
+          error:
+            claimant === null
+              ? `Product "${parsed.data.slug}" already exists for tenant "${tenant.id}".`
+              : `Linear team "${team.key}" is already claimed by Product "${claimant.slug}".`,
+        });
+      }
+      throw error;
+    }
   });
 
   app.get("/admin/products", async (request, reply) => {
@@ -103,13 +126,37 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!query.success || !body.success) return reply.code(400).send({ error: "invalid request" });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
-    const product = await dependencies.products.updateOrganizationSkillsRepository(
-      tenant.id,
-      request.params.id,
-      body.data.organizationSkillsRepository,
-    );
+    // F8. The replaced `PUT /admin/projects/:id` route let an operator change the name and the
+    // maximum Run minutes too. `updateSchema` now covers those, so both writes must apply.
+    let product = null;
+    if (body.data.name !== undefined || body.data.maxRunMinutes !== undefined) {
+      product = await dependencies.products.update(tenant.id, request.params.id, {
+        ...(body.data.name === undefined ? {} : { name: body.data.name }),
+        ...(body.data.maxRunMinutes === undefined ? {} : { maxRunMinutes: body.data.maxRunMinutes }),
+      });
+      if (!product) return reply.code(404).send({ error: "product not found" });
+    }
+    if (body.data.organizationSkillsRepository !== undefined) {
+      product = await dependencies.products.updateOrganizationSkillsRepository(
+        tenant.id,
+        request.params.id,
+        body.data.organizationSkillsRepository,
+      );
+      if (!product) return reply.code(404).send({ error: "product not found" });
+    }
+    if (product === null) product = await dependencies.products.findById(tenant.id, request.params.id);
     if (!product) return reply.code(404).send({ error: "product not found" });
     return product;
+  });
+
+  app.delete<{ Params: { id: string } }>("/admin/products/:id", async (request, reply) => {
+    const query = tenantQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+    const tenant = await resolveTenant(query.data.linearWorkspaceId);
+    if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    const removed = await dependencies.products.remove(tenant.id, request.params.id);
+    if (!removed) return reply.code(404).send({ error: "product not found" });
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/admin/products/:id/activate", async (request, reply) => {

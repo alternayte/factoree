@@ -150,6 +150,31 @@ export class PrismaProductRegistry implements ProductRegistry {
     });
     return toProduct(row);
   }
+
+  async update(
+    tenantId: string,
+    id: string,
+    fields: { name?: string; maxRunMinutes?: number },
+  ): Promise<ProductRecord | null> {
+    const existing = await this.findById(tenantId, id);
+    if (!existing) return null;
+    const row = await this.prisma.product.update({
+      where: { id },
+      data: {
+        ...(fields.name === undefined ? {} : { name: fields.name }),
+        ...(fields.maxRunMinutes === undefined ? {} : { maxRunMinutes: fields.maxRunMinutes }),
+      },
+    });
+    return toProduct(row);
+  }
+
+  async remove(tenantId: string, id: string): Promise<boolean> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the
+    // boundary. `deleteMany` reports the count, so a wrong tenant or a wrong id answers false
+    // rather than throwing.
+    const removed = await this.prisma.product.deleteMany({ where: { id, tenantId } });
+    return removed.count > 0;
+  }
 }
 
 export class PrismaRepositoryRegistry implements RepositoryRegistry {

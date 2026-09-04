@@ -53,4 +53,20 @@ export interface ProductRegistry {
     id: string,
     organizationSkillsRepository: string | null,
   ): Promise<ProductRecord | null>;
+  /**
+   * F8. The replaced `PUT /admin/projects/:id` route let an operator change the name and the
+   * maximum Run minutes. `PUT /admin/products/:id` must allow the same, because discovery owns
+   * mechanics but a human still owns these policy fields.
+   */
+  update(
+    tenantId: string,
+    id: string,
+    fields: { name?: string; maxRunMinutes?: number },
+  ): Promise<ProductRecord | null>;
+  /**
+   * F6. Discovery auto-creates a pending Product for any repository that names an unknown
+   * slug, so an operator needs a way to remove one a typo handed them. Returns false when no row
+   * of that tenant and id exists.
+   */
+  remove(tenantId: string, id: string): Promise<boolean>;
 }
