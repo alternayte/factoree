@@ -160,7 +160,7 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
   }
 
   private async request(url: string, githubInstallationId: string): Promise<Response> {
-    const token = await this.tokens.tokenForInstallation(githubInstallationId);
+    const token = await this.tokens.tokenForInstallation(githubInstallationId, { contents: "read" });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GITHUB_API_TIMEOUT_MS);
     timer.unref();
