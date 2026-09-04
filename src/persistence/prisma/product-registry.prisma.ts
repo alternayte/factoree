@@ -130,6 +130,20 @@ export class PrismaProductRegistry implements ProductRegistry {
     });
     return toProduct(row);
   }
+
+  async updateOrganizationSkillsRepository(
+    tenantId: string,
+    id: string,
+    organizationSkillsRepository: string | null,
+  ): Promise<ProductRecord | null> {
+    const existing = await this.findById(tenantId, id);
+    if (!existing) return null;
+    const row = await this.prisma.product.update({
+      where: { id },
+      data: { organizationSkillsRepository },
+    });
+    return toProduct(row);
+  }
 }
 
 export class PrismaRepositoryRegistry implements RepositoryRegistry {

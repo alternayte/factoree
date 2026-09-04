@@ -44,4 +44,13 @@ export interface ProductRegistry {
    * stored key changes. A later discovery task calls this when Linear reports a new key.
    */
   renameLinearTeamKey(tenantId: string, id: string, linearTeamKey: string): Promise<ProductRecord | null>;
+  /**
+   * Changes the organization-wide skills repository slug, or clears it with null. The
+   * administration API exposes this on create and on update, per specification section 16.
+   */
+  updateOrganizationSkillsRepository(
+    tenantId: string,
+    id: string,
+    organizationSkillsRepository: string | null,
+  ): Promise<ProductRecord | null>;
 }

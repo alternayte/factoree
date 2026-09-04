@@ -71,6 +71,17 @@ class FakeProductRegistry implements ProductRegistry {
     row.linearTeamKey = linearTeamKey;
     return Promise.resolve(row);
   }
+
+  updateOrganizationSkillsRepository(
+    tenantId: string,
+    id: string,
+    organizationSkillsRepository: string | null,
+  ): Promise<ProductRecord | null> {
+    const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
+    if (row === undefined) return Promise.resolve(null);
+    row.organizationSkillsRepository = organizationSkillsRepository;
+    return Promise.resolve(row);
+  }
 }
 
 /** An in-memory RepositoryRegistry fake, keyed by tenant and full name. */

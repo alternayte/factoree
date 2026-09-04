@@ -185,6 +185,13 @@ beforeAll(async () => {
     prisma,
     projects,
     tenants,
+    products,
+    repositories,
+    // This test never exercises the Products administration route. It resolves nothing.
+    linearTeams: {
+      resolveTeamKey: () => Promise.reject(new Error("unused")),
+      resolveTeamId: () => Promise.reject(new Error("unused")),
+    },
     secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
     runs: new PrismaRunRepository(prisma),
     delegation: new DelegationService({
