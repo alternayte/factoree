@@ -929,11 +929,21 @@ export const waitForStatus = async (
   );
 };
 
-/** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
+/**
+ * Polls until the predicate holds. It lets the workflow reach a step before the test signals.
+ *
+ * The test environment skips virtual time, but a real Temporal Worker still dispatches each
+ * activity through an actual poll, execute, and report cycle over a native connection. Under
+ * `npm run verify`, the workflow suite runs after the build and the integration suite, so the
+ * machine can still carry load from those steps. No in-process signal reports that dispatch as
+ * done sooner than the activity call itself completing, so the wait needs a wall-clock budget
+ * wide enough to absorb that contention. `testTimeout` in `vitest.workflow.config.ts` is
+ * 180 seconds, so this default still fails fast well inside one test case.
+ */
 export const waitFor = async (
   predicate: () => boolean | Promise<boolean>,
   what = "the condition",
-  timeoutMs = 10_000,
+  timeoutMs = 60_000,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
