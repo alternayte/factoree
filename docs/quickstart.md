@@ -38,14 +38,13 @@ holds a working local default.
 | `SETUP_GITHUB_INSTALLATION_ID` | The numeric installation ID GitHub assigned to the Factoree app. |
 | `SETUP_GITHUB_ACCOUNT_LOGIN` | The GitHub account or organization the app is installed on. |
 | `SETUP_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
-| `SETUP_GITHUB_TOKEN` | The token Factoree pushes the branch and opens the pull request with. |
 
 Leave an optional value empty. The `justfile` skips an empty value, so an
 empty `TEMPORAL_API_KEY` or `SPRITES_BASE_URL` does not break the start.
 
-`LIVE_GITHUB_TOKEN` and `SETUP_GITHUB_TOKEN` are two different credentials.
-The first belongs to the test driver, which acts as the human operator. The
-second belongs to Factoree.
+`LIVE_GITHUB_TOKEN` belongs to the test driver, which acts as the human
+operator. Factoree needs no GitHub secret: it mints every clone credential
+and every publish credential against the GitHub App installation instead.
 
 ## 3. Start the stack
 
@@ -72,8 +71,8 @@ app settings of the test workspace.
 
 The command reads `.env` and does several calls against the API. It
 registers the Linear installation, creates the Tenant and the Product, binds
-the GitHub installation, stores the `GITHUB_TOKEN` Product secret, and
-registers the Backstage row and the MCP row. It prints the new Product ID.
+the GitHub installation, and registers the Backstage row and the MCP row. It
+prints the new Product ID.
 
 Bootstrap does not create a Repository row. Discovery creates it from the
 `.factoree/config.yaml` file of the fixture repository, when the GitHub App
@@ -95,8 +94,9 @@ the same slug, and it overwrites the other records.
 
 ## 4b. Paid models and private repositories
 
-Both need a Product secret with the right kind. `just bootstrap` writes the
-`GITHUB_TOKEN` secret for you. Add the other two by hand.
+A model provider credential needs a Product secret with the right kind. A
+private repository needs no Product secret at all: bind its GitHub App
+installation instead, and Factoree mints a read-only credential for it.
 
 A model provider credential, for opencode Zen, DeepSeek, or Anthropic:
 
@@ -175,9 +175,10 @@ then the stub log.
 carry `Bearer <ADMIN_API_TOKEN>`. `just bootstrap` reads the value from
 `.env` itself.
 
-**Publication fails with "The Project holds no secret named GITHUB_TOKEN".**
-`SETUP_GITHUB_TOKEN` was empty when you ran `just bootstrap`. Fill it and run
-the `PUT /admin/products/:id/secrets/GITHUB_TOKEN` call again.
+**Publication fails with a configuration error naming the GitHub App
+installation.** The target repository carries no installation, or the
+installation was removed. Install the Factoree GitHub App on the repository
+again.
 
 **Factoree never comments in Linear.** The Linear installation record is
 absent or carries a wrong token. Run `just bootstrap` again, or repeat the
