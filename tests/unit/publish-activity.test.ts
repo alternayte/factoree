@@ -15,6 +15,7 @@ import type {
   PullRequestRecord,
 } from "~/domain/publishing/pull-request.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import {
   TrustedCheckoutError,
   type TrustedCheckoutInput,
@@ -267,6 +268,49 @@ describe("the publish activity", () => {
     await expect(
       environment.run((value: PublishActivityInput) => activities.publish(value), input),
     ).rejects.toThrow(/install-1/);
+  });
+
+  it("refuses an empty installation id before it mints", async () => {
+    const tokens = stubTokens();
+    const { activities } = build({ tokens });
+    const noInstallation: PublishActivityInput = { ...input, githubInstallationId: "" };
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), noInstallation),
+    ).rejects.toBeInstanceOf(RunConfigurationError);
+    expect(tokens.calls).toEqual([]);
+  });
+
+  it("converts a deterministic mint failure into a configuration fault, reaching the workflow's install-the-App message", async () => {
+    const tokens = stubTokens(
+      new GitHubAppAuthError("the GitHub API answered 401 for installation install-1", 401, "install-1"),
+    );
+    const { activities } = build({ tokens });
+
+    const error = await environment
+      .run((value: PublishActivityInput) => activities.publish(value), input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    // `isConfigurationFault` in the workflow recognises this class, which is what makes the
+    // workflow's "Install the Factoree GitHub App" message reachable for this fault.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+  });
+
+  it("keeps a 5xx mint failure retryable, because a retry can still succeed", async () => {
+    const tokens = stubTokens(
+      new GitHubAppAuthError("the GitHub API answered 500 for installation install-1", 500, "install-1"),
+    );
+    const { activities } = build({ tokens });
+
+    const error = await environment
+      .run((value: PublishActivityInput) => activities.publish(value), input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GitHubAppAuthError);
+    expect(error).not.toBeInstanceOf(RunConfigurationError);
   });
 
   it("registers the minted token with the redactor before it is used", async () => {

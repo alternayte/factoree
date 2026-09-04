@@ -1,10 +1,11 @@
 import { ApplicationFailure } from "@temporalio/activity";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
-import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
 import {
   assertSameChangedFiles,
   capturePatch as captureVerifiedPatch,
@@ -33,7 +34,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
  * The scope a publish mints. SDD section 46 pushes a branch and opens a pull request, and
  * nothing else, so the token carries no permission beyond those two calls.
  */
-export const PUBLISH_TOKEN_SCOPE = { contents: "write", pull_requests: "write" };
+export const PUBLISH_TOKEN_SCOPE: GitHubTokenScope = { contents: "write", pull_requests: "write" };
 
 /**
  * The author date and the committer date of every Factoree publication commit. The value is a
@@ -147,6 +148,15 @@ const assertHttpsRepositoryUrl = (plainUrl: string): void => {
 };
 
 /**
+ * Reports whether a `GitHubAppAuthError` names a fault of the request itself, not a passing
+ * infrastructure fault. A 401 and a 403 mean the installation, or its grant, is wrong. A 404
+ * means the installation id names nothing GitHub knows. All three repeat on every retry. A 5xx
+ * and a network failure carry no such status, and they stay retryable.
+ */
+const isDeterministicGitHubAppAuthError = (error: GitHubAppAuthError): boolean =>
+  error.status === 401 || error.status === 403 || error.status === 404;
+
+/**
  * SDD section 49. A semantic publication failure must not consume the Temporal retry policy. A
  * retry repeats the same fault. A network failure and a GitHub 500 stay retryable, so this
  * function converts a deterministic failure only. The message passes through the redactor first.
@@ -170,6 +180,19 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
   // A GitHub 4xx names a fault of the request itself. A 408, a 429, and every 5xx stay retryable.
   if (error instanceof GitHubApiError && error.deterministic) {
     return ApplicationFailure.nonRetryable(redactor.redactText(error.message), "PUBLICATION_FAILED");
+  }
+  // A rejected mint of the write credential is a configuration fault, not an infrastructure
+  // fault: an operator must repair the GitHub App installation, not wait for a retry. The class
+  // is `RunConfigurationError`, so the workflow recognises it the same way it recognises every
+  // other configuration fault. The message names the installation, never the key.
+  if (error instanceof GitHubAppAuthError && isDeterministicGitHubAppAuthError(error)) {
+    return new RunConfigurationError(
+      redactor.redactText(
+        `Factoree could not mint a GitHub credential for installation ${error.githubInstallationId}: ` +
+          `the GitHub API answered ${String(error.status)}. Install the Factoree GitHub App on the ` +
+          "target repository, or repair the existing installation, then retry the Run.",
+      ),
+    );
   }
   return error;
 };
@@ -225,9 +248,19 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         dependencies.logger,
       );
 
-      // Step 2. The GitHub write credential. Ruling 2 requires a scoped mint: this publish pushes
-      // a branch and opens a pull request, and nothing else, so the token carries exactly those
-      // two permissions and no more.
+      // Step 2. The GitHub write credential. An empty installation id names no installation to
+      // mint against, and a mint request against an empty id would reach GitHub as a malformed
+      // URL rather than a clear refusal, so this activity refuses it here instead.
+      if (input.githubInstallationId === "") {
+        throw new RunConfigurationError(
+          "The target repository carries no GitHub App installation. Factoree needs one to push " +
+            "the branch and to open the pull request. Install the Factoree GitHub App on the " +
+            "repository.",
+        );
+      }
+
+      // Ruling 2 requires a scoped mint: this publish pushes a branch and opens a pull request,
+      // and nothing else, so the token carries exactly those two permissions and no more.
       const token = await dependencies.tokens.tokenForInstallation(
         input.githubInstallationId,
         PUBLISH_TOKEN_SCOPE,
