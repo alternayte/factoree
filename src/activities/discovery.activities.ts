@@ -35,13 +35,17 @@ export interface DiscoveryActivitiesDependencies {
  * header, in seconds, becomes the delay before the next attempt, so Temporal waits exactly as
  * long as GitHub asks. A deterministic client fault, for example a 401 or a 403 that carries no
  * rate-limit header, becomes non-retryable, so a run does not spend its retry budget on a fault
- * no attempt can fix.
+ * no attempt can fix. Every conversion carries one operator-visible line, because none of these
+ * three outcomes reaches a log anywhere else.
  */
-const toApplicationFailure = (error: unknown): unknown => {
+const toApplicationFailure = (error: unknown, logger: Logger): unknown => {
   if (!(error instanceof GitHubApiError)) return error;
   const remaining = error.headers?.["x-ratelimit-remaining"];
   if (error.status === 403 && remaining === "0") {
     const retryAfterSeconds = Number(error.headers?.["retry-after"]);
+    logger.warn("the GitHub API rate-limited a discovery call", {
+      retry_after_seconds: Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : null,
+    });
     return ApplicationFailure.create({
       message: error.message,
       type: "GITHUB_RATE_LIMITED",
@@ -50,8 +54,10 @@ const toApplicationFailure = (error: unknown): unknown => {
     });
   }
   if (error.deterministic) {
+    logger.warn("a discovery call failed with a client fault no retry can fix", { status: error.status });
     return ApplicationFailure.create({ message: error.message, type: "GITHUB_API_ERROR", nonRetryable: true });
   }
+  logger.warn("a discovery call failed against the GitHub API", { status: error.status });
   return ApplicationFailure.create({ message: error.message, type: "GITHUB_API_ERROR", nonRetryable: false });
 };
 
@@ -66,7 +72,7 @@ export const createDiscoveryActivities = (dependencies: DiscoveryActivitiesDepen
     try {
       return await dependencies.discoveryClient.listInstallationRepositories(input.githubInstallationId);
     } catch (error) {
-      throw toApplicationFailure(error);
+      throw toApplicationFailure(error, dependencies.logger);
     }
   },
 
@@ -78,9 +84,14 @@ export const createDiscoveryActivities = (dependencies: DiscoveryActivitiesDepen
         input.defaultBranch,
         input.githubInstallationId,
       );
+      if (outcome.kind === "conflict") {
+        dependencies.logger.warn("a repository declaration conflicted during an installation sync", {
+          full_name: input.fullName,
+        });
+      }
       return { kind: outcome.kind };
     } catch (error) {
-      throw toApplicationFailure(error);
+      throw toApplicationFailure(error, dependencies.logger);
     }
   },
 });
