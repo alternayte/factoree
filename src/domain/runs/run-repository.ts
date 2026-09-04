@@ -204,6 +204,13 @@ export interface RunRepository {
    * silent success hides a caller defect.
    */
   setConfigSha(tenantId: string, runId: string, sha: string): Promise<void>;
+  /**
+   * F6. The count of Runs a Product owns, so an operator's DELETE /admin/products/:id can
+   * refuse to destroy the Run history and the Proof Pack evidence a cascade would otherwise
+   * take with it. `Run.productId` carries `onDelete: Cascade`, so this count is exactly what
+   * would be lost.
+   */
+  countByProduct(tenantId: string, productId: string): Promise<number>;
 }
 
 export interface WebhookLog {

@@ -10,6 +10,7 @@ import type {
 import type { TenantRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { ProjectSecretDescriptor, PutSecretOptions, SecretStore } from "~/domain/products/secret-store.js";
+import type { RunRepository } from "~/domain/runs/run-repository.js";
 
 const TENANT: TenantRecord = { id: "tenant-1", linearWorkspaceId: "ws-1", name: "Acme" };
 
@@ -196,17 +197,33 @@ class FakeLinearTeamLookup implements LinearTeamLookup {
   }
 }
 
+/** F6. Reports a Run count per Product, so a test can assert the delete route's refusal. */
+class FakeRunRepository {
+  readonly runCountByProduct = new Map<string, number>();
+  countByProduct(_tenantId: string, productId: string): Promise<number> {
+    return Promise.resolve(this.runCountByProduct.get(productId) ?? 0);
+  }
+}
+
 const build = (options: { teamKeyResolves?: boolean } = {}) => {
   const products = new FakeProductRegistry();
   const repositories = new FakeRepositoryRegistry();
   const secrets = new FakeSecretStore();
   const tenants = new FakeTenantRegistry();
   const linearTeams = new FakeLinearTeamLookup(options.teamKeyResolves ?? true);
+  const runs = new FakeRunRepository();
 
   const app: FastifyInstance = Fastify({ logger: false });
-  registerProductRoutes(app, { products, repositories, tenants, secrets, linearTeams });
+  registerProductRoutes(app, {
+    products,
+    repositories,
+    tenants,
+    secrets,
+    linearTeams,
+    runs: runs as unknown as RunRepository,
+  });
 
-  return { app, products, repositories, secrets };
+  return { app, products, repositories, secrets, runs };
 };
 
 describe("Products administration API", () => {
@@ -369,6 +386,55 @@ describe("Products administration API", () => {
       url: `/admin/products/${product.id}/secrets/GITHUB_TOKEN?linearWorkspaceId=ws-1`,
     });
     expect(removedAgain.statusCode).toBe(404);
+  });
+
+  it("F6: refuses to delete a Product that owns at least one Run, and deletes nothing", async () => {
+    const { app, products, runs } = build({});
+    const product = await products.create({
+      tenantId: TENANT.id,
+      slug: "owns-runs",
+      name: "Owns runs",
+      linearTeamKey: "OWN",
+      linearTeamId: "team-own",
+    });
+    runs.runCountByProduct.set(product.id, 3);
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.body).toContain("3 Runs");
+
+    const stillThere = await app.inject({
+      method: "GET",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
+    });
+    expect(stillThere.statusCode).toBe(200);
+  });
+
+  it("F6: deletes a Product that owns no Runs", async () => {
+    const { app, products, runs } = build({});
+    const product = await products.create({
+      tenantId: TENANT.id,
+      slug: "no-runs",
+      name: "No runs",
+      linearTeamKey: "NOR",
+      linearTeamId: "team-nor",
+    });
+    runs.runCountByProduct.set(product.id, 0);
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
+    });
+    expect(response.statusCode).toBe(204);
+
+    const gone = await app.inject({
+      method: "GET",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
+    });
+    expect(gone.statusCode).toBe(404);
   });
 
   it("refuses a runner credential that holds a GitHub token", async () => {

@@ -135,8 +135,13 @@ describe("GitHub webhook route", () => {
     expect(logger.warnCalls[0]?.fields).toMatchObject({
       repository: "acme/api",
       outcome: "conflict",
+      reason: 'acme/api claims the team PAY for "checkout", but Product "billing" already claims it.',
     });
+    // An operator reading the message alone, with no code open, must see the repository, the
+    // offending team key, and the competing Product slug.
     expect(logger.warnCalls[0]?.message).toContain("acme/api");
+    expect(logger.warnCalls[0]?.message).toContain("PAY");
+    expect(logger.warnCalls[0]?.message).toContain("billing");
   });
 
   it("syncs a push that touches the configuration file, and ignores one that does not", async () => {

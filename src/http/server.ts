@@ -81,6 +81,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       tenants: dependencies.tenants,
       secrets: dependencies.secrets,
       linearTeams: dependencies.linearTeams,
+      runs: dependencies.runs,
     });
     registerRunRoutes(admin, { runs: dependencies.runs, tenants: dependencies.tenants });
     registerInstallationRoutes(admin, { tenants: dependencies.tenants });

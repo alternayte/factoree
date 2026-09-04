@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
+import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS, ProjectSecretKindError } from "~/domain/products/secret-store.js";
@@ -57,6 +58,7 @@ export interface ProductRouteDependencies {
   tenants: TenantRegistry;
   secrets: SecretStore;
   linearTeams: LinearTeamLookup;
+  runs: RunRepository;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -154,6 +156,22 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    const product = await dependencies.products.findById(tenant.id, request.params.id);
+    if (!product) return reply.code(404).send({ error: "product not found" });
+    // F6. `Run.productId` carries `onDelete: Cascade`, so deleting a Product that owns Runs
+    // would destroy their evidence and every Proof Pack it ever produced. Deleting audit
+    // evidence to tidy the registry is the wrong trade, so this route refuses instead of
+    // deleting when the Product still owns at least one Run. A pending Product a typo created
+    // owns none, so that case still deletes.
+    const runCount = await dependencies.runs.countByProduct(tenant.id, product.id);
+    if (runCount > 0) {
+      return reply.code(409).send({
+        error:
+          `Product "${product.slug}" owns ${String(runCount)} Run${runCount === 1 ? "" : "s"}, so ` +
+          "Factoree refuses to delete it. Deleting it would destroy their evidence and every " +
+          "Proof Pack it produced.",
+      });
+    }
     const removed = await dependencies.products.remove(tenant.id, request.params.id);
     if (!removed) return reply.code(404).send({ error: "product not found" });
     return reply.code(204).send();

@@ -39,10 +39,13 @@ const resolveTenantId = async (
 const touchesConfigPath = (files: string[]): boolean => files.includes(FACTOREE_CONFIG_PATH);
 
 /**
- * Specification section 8. A discovery conflict must not vanish. Nothing in the current model
- * persists a binding conflict against a repository that failed to register, so this at least
- * makes the conflict visible to an operator through the worker log, naming the repository and
- * the reason, rather than silently discarding it as the route did before.
+ * Specification section 8. A discovery conflict must not vanish. This route is not yet wired
+ * into the running server (discovery is dispatched from tests only today), so no conflict can
+ * reach production before that follow-up lands. The follow-up is where a persisted conflict
+ * and the operator route that lists it belong. Until then, the worker log is the record: it
+ * names the repository, the reason, and, because `DiscoveryService` already folds the
+ * offending key or the competing Product's slug into `reason`, an operator can read the line
+ * alone and know exactly what to change, with no code open.
  */
 const logDiscoveryOutcome = (
   dependencies: GitHubWebhookDependencies,

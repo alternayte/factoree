@@ -295,6 +295,46 @@ describe("administration API", () => {
     expect(gone.statusCode).toBe(404);
   });
 
+  it("F6: refuses to delete a Product that owns a Run, and the Product survives", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-run-owner", slug: "run-owner", name: "Run owner", linearTeamKey: "RUN" },
+    });
+    const product = created.json<{ id: string; tenantId: string }>();
+
+    // F6 ruling: `Run.productId` carries `onDelete: Cascade` (prisma/schema.prisma:77), so a
+    // Product that owns a Run must refuse deletion rather than silently destroy the Run and
+    // the evidence behind every Proof Pack it produced.
+    await prisma.run.create({
+      data: {
+        tenantId: product.tenantId,
+        productId: product.id,
+        linearAgentSessionId: "session-f6-run-owner",
+        temporalWorkflowId: "workflow-f6-run-owner",
+        status: "RECEIVED",
+        autonomyLevel: "L2",
+      },
+    });
+
+    const refused = await app.inject({
+      method: "DELETE",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-run-owner`,
+      headers: auth,
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json<{ error: string }>().error).toContain("1 Run");
+
+    const stillThere = await app.inject({
+      method: "GET",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-run-owner`,
+      headers: auth,
+    });
+    expect(stillThere.statusCode).toBe(200);
+    expect(stillThere.json<{ id: string }>().id).toBe(product.id);
+  });
+
   it("F6: answers 404 for a Product of another tenant", async () => {
     const created = await app.inject({
       method: "POST",

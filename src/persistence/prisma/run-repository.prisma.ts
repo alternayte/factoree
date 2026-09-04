@@ -303,6 +303,10 @@ export class PrismaRunRepository implements RunRepository {
     }
   }
 
+  async countByProduct(tenantId: string, productId: string): Promise<number> {
+    return this.prisma.run.count({ where: { tenantId, productId } });
+  }
+
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {
     const rows = await this.prisma.run.findMany({
       where: { spriteId: { not: null }, spriteRetainUntil: { lte: now } },

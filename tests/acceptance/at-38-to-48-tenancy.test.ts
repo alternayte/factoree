@@ -577,7 +577,15 @@ const buildProductsApi = (): { app: FastifyInstance; products: FakeProductRegist
   const linearTeams = new FakeLinearTeamLookup();
 
   const app = Fastify({ logger: false });
-  registerProductRoutes(app, { products, repositories, tenants, secrets, linearTeams });
+  registerProductRoutes(app, {
+    products,
+    repositories,
+    tenants,
+    secrets,
+    linearTeams,
+    // AT-38 to AT-41 and AT-48 do not exercise DELETE /admin/products/:id.
+    runs: { countByProduct: () => Promise.resolve(0) } as never,
+  });
 
   return { app, products };
 };
