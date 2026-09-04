@@ -259,6 +259,16 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     selectionReason: string;
     mergeOrder: number;
   }> = [];
+  /** Every recorded `recordRunTargetFacts` call, in order. F2. */
+  const recordRunTargetFactsCalls: Array<{
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    baseSha?: string;
+    patchSha256?: string;
+    commitSha?: string;
+    pullRequestUrl?: string;
+  }> = [];
   /** Every recorded `postTargetNotice` call, in order. */
   const postTargetNoticeCalls: Array<{
     tenantId: string;
@@ -755,6 +765,17 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       recordRunTargetCalls.push(input);
       return `target-${input.runId}-${input.repositoryId}`;
     },
+    recordRunTargetFacts: async (input: {
+      tenantId: string;
+      runId: string;
+      repositoryId: string;
+      baseSha?: string;
+      patchSha256?: string;
+      commitSha?: string;
+      pullRequestUrl?: string;
+    }) => {
+      recordRunTargetFactsCalls.push(input);
+    },
     postTargetNotice: async (input: {
       tenantId: string;
       runId: string;
@@ -873,6 +894,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     proofPackOutcomes,
     heldProofPacks,
     recordRunTargetCalls,
+    recordRunTargetFactsCalls,
     postTargetNoticeCalls,
     targetIdentityOutcomes,
     targetIdentityCalls,

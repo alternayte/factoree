@@ -136,6 +136,24 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   },
 
   /**
+   * Specification section 14. Records the per-target facts of one RunTarget as they become
+   * known: the base SHA after context resolution, the patch hash and commit SHA after
+   * publication, and the pull request URL once the pull request exists.
+   */
+  async recordRunTargetFacts(input: {
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    baseSha?: string;
+    patchSha256?: string;
+    commitSha?: string;
+    pullRequestUrl?: string;
+  }): Promise<void> {
+    const { tenantId, runId, repositoryId, ...patch } = input;
+    await dependencies.runs.updateRunTarget(tenantId, runId, repositoryId, patch);
+  },
+
+  /**
    * Specification section 10. Posts the Linear notice that names the confident target and its
    * reason. The notice reaches the Run's own agent session. The activity resolves the session
    * id from the Run record.

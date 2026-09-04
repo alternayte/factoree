@@ -100,6 +100,33 @@ export interface CreateRunTargetInput {
   mergeOrder: number;
 }
 
+/** Specification section 5. One `RunTarget` row, with the per-target facts section 14 defines. */
+export interface RunTargetRecord {
+  id: string;
+  tenantId: string;
+  runId: string;
+  repositoryId: string;
+  role: string;
+  selectionReason: string;
+  baseSha: string | null;
+  patchSha256: string | null;
+  commitSha: string | null;
+  pullRequestUrl: string | null;
+  mergeOrder: number;
+}
+
+/**
+ * Specification section 14. The per-target facts recorded as each becomes known: the base SHA
+ * after context resolution, the patch hash and commit SHA after publication, and the pull
+ * request URL after the pull request exists. A caller sends only the fields it has learned.
+ */
+export interface RunTargetPatch {
+  baseSha?: string;
+  patchSha256?: string;
+  commitSha?: string;
+  pullRequestUrl?: string;
+}
+
 export interface RunRepository {
   createIfAbsent(input: CreateRunInput): Promise<{ run: RunRecord; created: boolean }>;
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
@@ -158,6 +185,19 @@ export interface RunRepository {
    * single-target Run writes one row, so `mergeOrder` starts at one.
    */
   createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }>;
+  /**
+   * Specification section 14. Records the per-target facts of one `RunTarget` as they become
+   * known. The method throws when it reaches no `RunTarget` of that Run and repository in that
+   * tenant, because a silent success hides a caller defect.
+   */
+  updateRunTarget(
+    tenantId: string,
+    runId: string,
+    repositoryId: string,
+    patch: RunTargetPatch,
+  ): Promise<void>;
+  /** Specification section 18. The `RunTarget` rows of one Run, in merge order. */
+  listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]>;
   /**
    * Specification section 8. Records the SHA-256 of `.factoree/config.yaml` as read at the
    * Run's base commit. The method throws when it reaches no Run of that tenant, because a

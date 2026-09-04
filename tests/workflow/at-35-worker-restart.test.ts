@@ -29,6 +29,7 @@ const activities = {
   // Specification section 10. This Run holds one repository, so `selectTarget` never gates it,
   // and the double only needs to return a target id.
   recordRunTarget: async () => "target-fake",
+  recordRunTargetFacts: async () => undefined,
   postTargetNotice: async () => undefined,
   completeRun: async (input: { runId: string; status: string; failureReason?: string }) => {
     completions.push(input.runId);

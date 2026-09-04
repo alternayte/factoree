@@ -27,6 +27,12 @@ import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js"
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
+// The workflow bundler resolves a relative path only, so this type import does not use the
+// `~/` alias either. F8. The type now lives in the domain layer; the workflow re-exports it, so
+// the workflow's own external input type is unaffected.
+import type { AgentRunProductRepositoryInput } from "../domain/runs/product-repository.js";
+
+export type { AgentRunProductRepositoryInput };
 
 import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
@@ -44,18 +50,6 @@ import { completionInvariantFailures } from "../domain/runs/completion-invariant
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { selectTarget } from "../domain/routing/select-targets.js";
-
-/** One member repository of a Product, as the workflow needs to see it. */
-export interface AgentRunProductRepositoryInput {
-  id: string;
-  fullName: string;
-  defaultBranch: string;
-  /**
-   * Specification section 10. `selectTarget` reads this value to apply the sole-member rule to
-   * the present repositories only. Null while discovery still sees the configuration file.
-   */
-  absentSince: string | null;
-}
 
 export interface AgentRunProductInput {
   productId: string;
@@ -420,11 +414,12 @@ export async function agentRunWorkflow(
   // target-selection step corrects `primaryRepositorySlug` once the target is known.
   const targetRepositories = input.product.repositories;
   let primaryRepositorySlug = targetRepositories[0]?.fullName ?? "";
+  // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
+  // can record its per-target facts as they become known.
+  let primaryRepositoryId = targetRepositories[0]?.id ?? "";
   const referenceRepositorySlugs = targetRepositories.slice(1).map((repository) => repository.fullName);
   const defaultBranchForSlug = (slug: string) =>
-    targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ??
-    targetRepositories[0]?.defaultBranch ??
-    "main";
+    targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
 
   setHandler(stopSignal, () => {
     stopRequested = true;
@@ -970,10 +965,12 @@ export async function agentRunWorkflow(
         notice: boolean,
       ): Promise<void> => {
         primaryRepositorySlug = repository.fullName;
+        primaryRepositoryId = repository.id;
         refined.primaryRepository = repository.fullName;
-        refined.referenceRepositories = presentRepositories
-          .filter((candidate) => candidate.fullName !== repository.fullName)
-          .map((candidate) => candidate.fullName);
+        // Specification section 12. A sibling repository is absent at start. An agent that
+        // needs one calls clone_sibling, which the Action Policy gates. Target selection must
+        // not populate reference repositories from Product membership, because that would
+        // bypass the gate and check out every sibling unconditionally.
         await activities.recordRunTarget({
           tenantId: input.tenantId,
           runId: id,
@@ -1119,6 +1116,15 @@ export async function agentRunWorkflow(
           identity.declaredProduct ?? "an unknown Product",
         );
       }
+
+      // Specification section 14. The base SHA of the target's RunTarget row is known now, at
+      // context resolution.
+      await activities.recordRunTargetFacts({
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: primaryRepositoryId,
+        baseSha: resolvedContext.primary.sha,
+      });
 
       // SDD section 49 places the Validation Contract between context resolution and sandbox
       // preparation. SDD section 24 requires the contract to freeze before implementation starts.
@@ -1697,6 +1703,18 @@ export async function agentRunWorkflow(
       // The publication succeeded. A later stop message and a later timeout message read this
       // value, so neither one claims that Factoree published nothing.
       publishedPullRequestUrl = publication.pullRequestUrl;
+
+      // Specification section 14. The patch hash and commit SHA are known after publication, and
+      // the pull request URL is known once the pull request exists. All three describe the same
+      // moment here.
+      await activities.recordRunTargetFacts({
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: primaryRepositoryId,
+        patchSha256: publication.patchSha256,
+        commitSha: publication.commitSha,
+        pullRequestUrl: publication.pullRequestUrl,
+      });
 
       // SDD section 50. A stop that arrived during the publication ends the Run CANCELLED. The
       // pull request already exists, and the stop message names it.

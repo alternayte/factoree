@@ -5,6 +5,8 @@ import type {
   CreateRunTargetInput,
   ExpiredSandboxRun,
   RunSandboxPatch,
+  RunTargetPatch,
+  RunTargetRecord,
   SupersededSandbox,
   RunRecord,
   RunRepository,
@@ -246,6 +248,46 @@ export class PrismaRunRepository implements RunRepository {
       },
     });
     return { id: row.id };
+  }
+
+  async updateRunTarget(
+    tenantId: string,
+    runId: string,
+    repositoryId: string,
+    patch: RunTargetPatch,
+  ): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.runTarget.updateMany({
+      where: { runId, repositoryId, tenantId },
+      data: patch,
+    });
+    // A write that reaches no row must not report success. A wrong Run, repository, or tenant is
+    // a caller defect, and a silent success leaves the RunTarget facts unrecorded.
+    if (updated.count === 0) {
+      throw new Error(
+        `no RunTarget for run "${runId}" and repository "${repositoryId}" of tenant "${tenantId}" received the update`,
+      );
+    }
+  }
+
+  async listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]> {
+    const rows = await this.prisma.runTarget.findMany({
+      where: { runId, tenantId },
+      orderBy: { mergeOrder: "asc" },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenantId,
+      runId: row.runId,
+      repositoryId: row.repositoryId,
+      role: row.role,
+      selectionReason: row.selectionReason,
+      baseSha: row.baseSha,
+      patchSha256: row.patchSha256,
+      commitSha: row.commitSha,
+      pullRequestUrl: row.pullRequestUrl,
+      mergeOrder: row.mergeOrder,
+    }));
   }
 
   async setConfigSha(tenantId: string, runId: string, sha: string): Promise<void> {
