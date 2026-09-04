@@ -2251,7 +2251,7 @@ A Run clones and publishes with a token minted from the GitHub App installation,
 
 ### AT-54 — Rate-limit backoff
 
-Factoree backs off on a GitHub API rate limit, through the Temporal retry policy of the installation sync activity, and completes the sync.
+Factoree backs off on a GitHub API rate limit, through the Temporal retry policy of the installation sync activity. It completes the sync.
 
 ### AT-55 — Repository without a configuration file
 

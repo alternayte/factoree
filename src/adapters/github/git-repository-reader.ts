@@ -129,9 +129,10 @@ export class GitRepositoryReader implements RepositoryReader {
 
   /**
    * The credential environment for one repository URL, or an empty environment when the origin
-   * has none. Mints a fresh token immediately before the git command that consumes it, so no
-   * token outlives the single command it authenticates. Only one origin is ever in play for one
-   * command, so `GIT_CONFIG_COUNT` stays at one and no merge of two config sources is needed.
+   * has none. This method mints a fresh token immediately before the git command that consumes
+   * it. No token outlives the single command it authenticates. Only one origin is ever in play
+   * for one command. `GIT_CONFIG_COUNT` therefore stays at one. No merge of two config sources
+   * is needed.
    */
   private async credentialFor(url: string): Promise<Record<string, string>> {
     let origin: string;

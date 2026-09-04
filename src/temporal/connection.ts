@@ -55,7 +55,7 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
 
 /**
  * Starts `syncInstallationWorkflow`, keyed on the installation id. A repeated `installation`
- * webhook joins the run already in flight rather than starting a second one.
+ * webhook joins the run already in flight rather than start a second one.
  */
 export const createSyncInstallationStarter =
   (client: Client, taskQueue: string) =>

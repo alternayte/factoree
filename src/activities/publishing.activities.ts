@@ -148,10 +148,10 @@ const assertHttpsRepositoryUrl = (plainUrl: string): void => {
 };
 
 /**
- * Reports whether a `GitHubAppAuthError` names a fault of the request itself, not a passing
+ * Reports whether a `GitHubAppAuthError` names a fault of the request itself, not a temporary
  * infrastructure fault. A 401 and a 403 mean the installation, or its grant, is wrong. A 404
  * means the installation id names nothing GitHub knows. All three repeat on every retry. A 5xx
- * and a network failure carry no such status, and they stay retryable.
+ * and a network failure carry no such status. Both stay retryable.
  */
 const isDeterministicGitHubAppAuthError = (error: GitHubAppAuthError): boolean =>
   error.status === 401 || error.status === 403 || error.status === 404;
@@ -259,8 +259,9 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         );
       }
 
-      // Ruling 2 requires a scoped mint: this publish pushes a branch and opens a pull request,
-      // and nothing else, so the token carries exactly those two permissions and no more.
+      // Ruling 2 requires the token to carry a scope no wider than this publish needs. This
+      // publish pushes one branch. It opens one pull request. The token carries exactly those
+      // two permissions, never more.
       const token = await dependencies.tokens.tokenForInstallation(
         input.githubInstallationId,
         PUBLISH_TOKEN_SCOPE,

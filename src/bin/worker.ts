@@ -306,9 +306,9 @@ const worker = await Worker.create({
     evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
     reviewFindings: new PrismaReviewFindingStore(prisma),
-    // The publish activity mints one write-scoped token per Run and passes it here, so the pull
-    // request port spends the exact same credential the trusted checkout pushes with. Wrapping
-    // it in a fixed-token provider costs nothing extra: no second mint, no second scope.
+    // The publish activity mints one write-scoped token per Run. It passes the token here. The
+    // pull request port then spends the exact same credential the trusted checkout pushes with.
+    // A fixed-token provider wraps it at no extra cost: no second mint, no second scope.
     pullRequests: (token: string) =>
       new GitHubPullRequests({
         apiBaseUrl: env.GITHUB_API_BASE_URL,

@@ -58,9 +58,9 @@ publish credential itself, scoped to one installation.
    `SETUP_GITHUB_REPOSITORY`.
 
 A local worker needs a public URL for the webhook. `just tunnel`, in section
-3 below, opens one. Run it first, and set the App's webhook URL to the
-value it prints, before step 2 above. A tunnel URL changes on every
-restart, so update the App's webhook URL again after a restart.
+3 below, opens one. Run it first. Set the App's webhook URL to the value
+it prints, before step 2 above. A tunnel URL changes on every restart.
+Update the App's webhook URL again after each restart.
 
 ## 2. The environment file
 

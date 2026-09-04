@@ -417,8 +417,8 @@ export async function agentRunWorkflow(
   // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
   // can record its per-target facts as they become known.
   let primaryRepositoryId = targetRepositories[0]?.id ?? "";
-  // Task 6. The GitHub App installation that grants the target repository. The clone, the
-  // discovery read, and the publish all mint against this id, never against a Project secret.
+  // The GitHub App installation that grants the target repository. The clone, the discovery
+  // read, and the publish all mint against this id, never against a Project secret.
   let primaryRepositoryInstallationId = targetRepositories[0]?.githubInstallationId ?? "";
   // Specification section 12. A repository in the Product that is not the target is absent at
   // start. It must reach an agent only through clone_sibling, which the Action Policy gates and

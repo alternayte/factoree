@@ -3,9 +3,9 @@ import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js"
 
 /**
  * Records every `git` invocation this reader made, capturing the environment the credential
- * mint produced. `credentialFor` mints a token immediately before this call, so this fake is
- * the seam that proves the mint happened at the right time, for the right installation, on
- * every call rather than once.
+ * mint produced. `credentialFor` mints a token immediately before this call. This fake is the
+ * seam that proves the mint happened at the right time, for the right installation, on every
+ * call rather than once.
  */
 const { calls, execFileImpl } = vi.hoisted(() => {
   const recorded: Array<{ args: string[]; env: Record<string, string> }> = [];
@@ -13,9 +13,9 @@ const { calls, execFileImpl } = vi.hoisted(() => {
     recorded.push({ args, env: options.env ?? {} });
     return Promise.resolve({ stdout: `${"d".repeat(40)}\trefs/heads/main\n`, stderr: "" });
   };
-  // `promisify(execFile)` runs at module load of the reader, against this mock. Node only
-  // resolves a function that already returns a Promise when the well-known custom symbol names
-  // it explicitly, so the symbol is attached here, before the reader module ever imports it.
+  // `promisify(execFile)` runs at module load of the reader, against this mock. Node resolves a
+  // function as already returning a Promise only when the well-known custom symbol names it
+  // explicitly. The symbol is attached here, before the reader module ever imports it.
   (impl as unknown as Record<symbol, unknown>)[Symbol.for("nodejs.util.promisify.custom")] = impl;
   return { calls: recorded, execFileImpl: impl };
 });
@@ -99,7 +99,7 @@ describe("GitRepositoryReader credential minting", () => {
     await reader.resolveRef("https://example.test/o/r.git", "main");
 
     // Two calls, two mints. A future change that caches the resolved environment on
-    // `credentialSources` and mints once would leave `asked` at length one and fail here.
+    // `credentialSources` and mints once leaves `asked` at length one. That change fails here.
     expect(asked).toEqual(["111", "111"]);
     const first = mintedIdentity(calls[0]?.env ?? {});
     const second = mintedIdentity(calls[1]?.env ?? {});

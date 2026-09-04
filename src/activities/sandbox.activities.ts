@@ -116,8 +116,8 @@ const prepare = async (
   // SDD section 30. A private repository needs a read-only credential for the checkout. It never
   // reaches an agent session: `checkout` gives it to the git clone command alone. The provider
   // mints it fresh for this one preparation, scoped to `contents: read`, so the credential this
-  // sandbox receives can never push. An empty installation id means the repository grants
-  // Factoree no installation, so no credential is minted.
+  // sandbox receives can never push. An empty installation id means the repository carries no
+  // GitHub App installation. Factoree then mints no credential.
   const repositoryCredential =
     input.githubInstallationId === ""
       ? null

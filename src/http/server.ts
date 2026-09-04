@@ -43,7 +43,7 @@ export interface ServerDependencies {
   verifyGitHubSignature: (raw: Buffer, signature: string) => boolean;
   /**
    * Starts the sync of one GitHub App installation, keyed on the installation id so a repeated
-   * `installation` event joins the run already in flight rather than starting a second one.
+   * `installation` event joins the run already in flight rather than start a second one.
    */
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
 }
