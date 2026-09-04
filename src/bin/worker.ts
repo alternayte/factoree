@@ -30,6 +30,7 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
+import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
@@ -169,6 +170,14 @@ function isLinearAuthenticationError(error: unknown): boolean {
 const repositoryReader = new GitRepositoryReader();
 const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
 
+// Ruling 1 and ruling 2. One credential path to GitHub: every GitHub adapter mints its token
+// through this one provider, and every mint carries only the scope its one operation needs.
+const githubTokens = new GitHubAppTokenProvider({
+  appId: env.GITHUB_APP_ID,
+  privateKeyBase64: env.GITHUB_APP_PRIVATE_KEY,
+  apiBaseUrl: env.GITHUB_API_BASE_URL,
+});
+
 // Controller decision 1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
 // the real `SecretStore` answers it directly through `get`, which already takes a tenant and a
 // Product.
@@ -276,8 +285,9 @@ const worker = await Worker.create({
     evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
     reviewFindings: new PrismaReviewFindingStore(prisma),
-    // Task 6 replaces this single Project token with a real per-installation `GitHubTokenProvider`.
-    // Until then, the adapter mints against the one Project secret regardless of installation id.
+    // The publish activity mints one write-scoped token per Run and passes it here, so the pull
+    // request port spends the exact same credential the trusted checkout pushes with. Wrapping
+    // it in a fixed-token provider costs nothing extra: no second mint, no second scope.
     pullRequests: (token: string) =>
       new GitHubPullRequests({
         apiBaseUrl: env.GITHUB_API_BASE_URL,
@@ -285,6 +295,7 @@ const worker = await Worker.create({
       }),
     gitAuthor: { name: env.FACTOREE_GIT_AUTHOR_NAME, email: env.FACTOREE_GIT_AUTHOR_EMAIL },
     logger,
+    tokens: githubTokens,
   }),
 });
 

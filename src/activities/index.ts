@@ -24,6 +24,7 @@ import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
@@ -66,6 +67,11 @@ export interface ActivityDependencies {
   pullRequests: (token: string) => PullRequestPort;
   gitAuthor: { name: string; email: string };
   logger: Logger;
+  /**
+   * Mints every GitHub installation token Factoree needs: the read-only clone credential, the
+   * discovery read, and the write credential of a publish. One provider, one credential path.
+   */
+  tokens: GitHubTokenProvider;
 }
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
@@ -85,6 +91,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     runners: dependencies.runners,
     logger: dependencies.logger,
+    tokens: dependencies.tokens,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,
@@ -107,6 +114,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     sources: dependencies.contextSources,
     repositoryReader: dependencies.repositoryReader,
     secrets: dependencies.secrets,
+    tokens: dependencies.tokens,
   }),
   ...createValidationActivities({
     contracts: dependencies.validationContracts,
@@ -148,6 +156,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     pullRequests: dependencies.pullRequests,
     gitAuthor: dependencies.gitAuthor,
     logger: dependencies.logger,
+    tokens: dependencies.tokens,
   }),
   ...createProofPackActivities({
     runs: dependencies.runs,

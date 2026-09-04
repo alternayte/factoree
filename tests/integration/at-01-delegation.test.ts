@@ -182,6 +182,9 @@ beforeAll(async () => {
       }),
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       logger,
+      // The Phase 1 path never clones, never reads a private repository, and never publishes,
+      // so this double only satisfies the shape.
+      tokens: { tokenForInstallation: () => Promise.reject(new Error("this test never mints")) },
     }),
   });
   workerRun = worker.run();
