@@ -1,4 +1,4 @@
-import type { AgentRunProductRepositoryInput } from "~/workflows/agent-run.workflow.js";
+import type { AgentRunProductRepositoryInput } from "~/domain/runs/product-repository.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import { decideSiblingAction, SiblingActionDeniedError } from "~/domain/policy/action-policy.js";

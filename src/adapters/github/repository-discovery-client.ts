@@ -125,12 +125,30 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     return { fullName, defaultBranch };
   }
 
-  /** The URL of the next page, read from a `link` header, or null when no next page exists. */
+  /**
+   * The URL of the next page, read from a `link` header, or null when no next page exists.
+   * F8. `request` attaches the bearer token to whatever URL this method returns, so a `link`
+   * header naming a host other than the configured GitHub API host must not be followed. The
+   * check compares scheme and host, never a string prefix, so `https://api.github.com.evil.example`
+   * cannot pass it.
+   */
   private nextPageUrl(linkHeader: string | null): string | null {
     if (linkHeader === null) return null;
+    let allowedOrigin: string;
+    try {
+      allowedOrigin = new URL(this.base).origin;
+    } catch {
+      return null;
+    }
     for (const part of linkHeader.split(",")) {
       const match = /<([^>]+)>;\s*rel="next"/.exec(part.trim());
-      if (match?.[1] !== undefined) return match[1];
+      const candidate = match?.[1];
+      if (candidate === undefined) continue;
+      try {
+        if (new URL(candidate).origin === allowedOrigin) return candidate;
+      } catch {
+        continue;
+      }
     }
     return null;
   }

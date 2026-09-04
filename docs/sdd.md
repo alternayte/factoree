@@ -2223,7 +2223,7 @@ The Implementer clones a sibling repository of the same Product read-only, outsi
 
 ### AT-47 — Sibling clone denied
 
-A clone request for a repository outside the Product is denied. Factoree clones nothing. It writes no evidence record.
+The Action Policy denies a clone request for a repository outside the Product. Factoree clones nothing. It writes no evidence record.
 
 ### AT-48 — Team key rename
 

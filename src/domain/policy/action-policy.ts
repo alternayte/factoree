@@ -100,9 +100,9 @@ export class SiblingActionDeniedError extends Error {
 /**
  * Decides one sibling repository action.
  * The policy allows a clone only for a member repository of the Run's Product.
- * The membership check reads the actual member list, never a name pattern. A
- * write to a sibling is always denied, because a sibling clone exists for read-only context
- * alone.
+ * The membership check reads the actual member list, never a name pattern. The
+ * policy always denies a write to a sibling, because a sibling clone exists for read-only
+ * context alone.
  */
 export const decideSiblingAction = (input: SiblingActionInput): ActionDecision => {
   if (input.action === "write_sibling") return "deny";

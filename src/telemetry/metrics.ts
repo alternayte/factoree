@@ -3,23 +3,21 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry });
 
-const labelNames = ["tenant_id", "product_id"] as const;
-
 // Every metric now carries a Product id, because the Project entity no longer exists.
-const runLabelNames = ["tenant_id", "product_id"] as const;
+const labelNames = ["tenant_id", "product_id"] as const;
 
 export const metrics = {
   registry,
   runsStarted: new Counter({
     name: "factoree_runs_started_total",
     help: "Runs started",
-    labelNames: runLabelNames,
+    labelNames,
     registers: [registry],
   }),
   runsReady: new Counter({
     name: "factoree_runs_ready_total",
     help: "Runs that reached READY_FOR_HUMAN",
-    labelNames: runLabelNames,
+    labelNames,
     registers: [registry],
   }),
   runsFailed: new Counter({
@@ -27,26 +25,26 @@ export const metrics = {
     help: "Runs that reached a failure state",
     // SDD section 67 requires a normalized category. The reason stays, because an operator
     // needs the exact rule. The category groups the reasons an operator acts on the same way.
-    labelNames: [...runLabelNames, "reason", "category"],
+    labelNames: [...labelNames, "reason", "category"],
     registers: [registry],
   }),
   runsCancelled: new Counter({
     name: "factoree_runs_cancelled_total",
     help: "Runs that were cancelled",
-    labelNames: runLabelNames,
+    labelNames,
     registers: [registry],
   }),
   runDuration: new Histogram({
     name: "factoree_run_duration_seconds",
     help: "Run duration in seconds",
-    labelNames: runLabelNames,
+    labelNames,
     buckets: [30, 60, 300, 900, 1800, 3600, 5400],
     registers: [registry],
   }),
   activeRuns: new Gauge({
     name: "factoree_active_runs",
     help: "Runs that are not in a terminal state",
-    labelNames: runLabelNames,
+    labelNames,
     registers: [registry],
   }),
   implementationDuration: new Histogram({
@@ -132,7 +130,7 @@ export const metrics = {
   repairs: new Counter({
     name: "factoree_repairs_total",
     help: "Repair attempts started",
-    labelNames: [...runLabelNames, "reason"],
+    labelNames: [...labelNames, "reason"],
     registers: [registry],
   }),
 };

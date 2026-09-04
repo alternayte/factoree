@@ -82,6 +82,14 @@ class FakeProductRegistry implements ProductRegistry {
     row.organizationSkillsRepository = organizationSkillsRepository;
     return Promise.resolve(row);
   }
+
+  update(): Promise<ProductRecord | null> {
+    throw new Error("not used by this test");
+  }
+
+  remove(): Promise<boolean> {
+    throw new Error("not used by this test");
+  }
 }
 
 /** An in-memory RepositoryRegistry fake, keyed by tenant and full name. */
