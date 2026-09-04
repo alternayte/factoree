@@ -1,5 +1,5 @@
 import { createPrivateKey, createSign } from "node:crypto";
-import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
 
 const DEFAULT_API_BASE_URL = "https://api.github.com";
 /** Refresh under this margin. A long operation must not race the expiry boundary. */
@@ -18,6 +18,20 @@ export class GitHubAppAuthError extends Error {
 
 const base64Url = (input: Buffer): string =>
   input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+/**
+ * A canonical key for a scope, independent of the order its fields were written in. Ruling 2
+ * requires the cache key to include the scope, so a cached write-scoped token can never answer a
+ * read request. Two scopes with the same fields in a different order must resolve to one entry.
+ */
+const scopeKey = (scope: GitHubTokenScope | undefined): string =>
+  JSON.stringify(
+    Object.entries(scope ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+  );
+
+/** The cache key and the in-flight key of one installation, mixed with one scope. */
+const cacheKey = (githubInstallationId: string, scope: GitHubTokenScope | undefined): string =>
+  `${githubInstallationId}::${scopeKey(scope)}`;
 
 type CacheEntry = { token: string; expiresAtMs: number };
 
@@ -46,24 +60,25 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
 
   constructor(private readonly options: GitHubAppTokenProviderOptions) {}
 
-  async tokenForInstallation(githubInstallationId: string): Promise<string> {
+  async tokenForInstallation(githubInstallationId: string, scope?: GitHubTokenScope): Promise<string> {
     const now = this.options.now?.() ?? Date.now();
-    const cached = this.cache.get(githubInstallationId);
+    const key = cacheKey(githubInstallationId, scope);
+    const cached = this.cache.get(key);
     if (cached !== undefined && cached.expiresAtMs - now > REFRESH_MARGIN_MS) return cached.token;
 
-    const existing = this.inflight.get(githubInstallationId);
+    const existing = this.inflight.get(key);
     if (existing !== undefined) {
       const minted = await existing;
       return minted.token;
     }
 
-    const mintPromise = this.mint(githubInstallationId, now).finally(() => {
-      this.inflight.delete(githubInstallationId);
+    const mintPromise = this.mint(githubInstallationId, now, scope).finally(() => {
+      this.inflight.delete(key);
     });
-    this.inflight.set(githubInstallationId, mintPromise);
+    this.inflight.set(key, mintPromise);
 
     const minted = await mintPromise;
-    this.cache.set(githubInstallationId, minted);
+    this.cache.set(key, minted);
     return minted.token;
   }
 
@@ -81,7 +96,7 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
     return `${header}.${payload}.${base64Url(signer.sign(key))}`;
   }
 
-  private async mint(githubInstallationId: string, nowMs: number): Promise<CacheEntry> {
+  private async mint(githubInstallationId: string, nowMs: number, scope?: GitHubTokenScope): Promise<CacheEntry> {
     const base = (this.options.apiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
     const url = `${base}/app/installations/${githubInstallationId}/access_tokens`;
     const fetchImpl = this.options.fetch ?? fetch;
@@ -91,7 +106,9 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
         authorization: `Bearer ${this.signJwt(nowMs)}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
+        ...(scope === undefined ? {} : { "content-type": "application/json" }),
       },
+      ...(scope === undefined ? {} : { body: JSON.stringify({ permissions: scope }) }),
     });
     if (response.status !== 201) {
       throw new GitHubAppAuthError(

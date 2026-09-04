@@ -144,4 +144,108 @@ describe("GitHubAppTokenProvider", () => {
 
     expect(first).not.toBe(second);
   });
+
+  it("sends the requested permissions to the mint request", async () => {
+    const bodies: string[] = [];
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: ((_url: string, init: RequestInit) => {
+        bodies.push(typeof init.body === "string" ? init.body : "");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ token: "ghs_read_token", expires_at: new Date(3_600_000).toISOString() }),
+            { status: 201 },
+          ),
+        );
+      }) as unknown as typeof fetch,
+    });
+
+    await provider.tokenForInstallation("42", { contents: "read" });
+
+    expect(bodies[0]).toBeDefined();
+    expect(JSON.parse(bodies[0] ?? "{}")).toEqual({ permissions: { contents: "read" } });
+  });
+
+  it("never returns a cached write-scoped token for a read request", async () => {
+    let minted = 0;
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: () => {
+        minted += 1;
+        const token = minted === 1 ? "ghs_write_token" : "ghs_read_token";
+        return Promise.resolve(
+          new Response(JSON.stringify({ token, expires_at: new Date(3_600_000).toISOString() }), {
+            status: 201,
+          }),
+        );
+      },
+    });
+
+    const write = await provider.tokenForInstallation("42", { contents: "write", pull_requests: "write" });
+    const read = await provider.tokenForInstallation("42", { contents: "read" });
+
+    expect(write).toBe("ghs_write_token");
+    expect(read).toBe("ghs_read_token");
+    expect(read).not.toBe(write);
+    expect(minted).toBe(2);
+  });
+
+  it("reuses the cache of one scope without minting again", async () => {
+    let minted = 0;
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: () => {
+        minted += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ token: "ghs_read_token", expires_at: new Date(3_600_000).toISOString() }),
+            { status: 201 },
+          ),
+        );
+      },
+    });
+
+    await provider.tokenForInstallation("42", { contents: "read" });
+    await provider.tokenForInstallation("42", { contents: "read" });
+
+    expect(minted).toBe(1);
+  });
+
+  it("de-duplicates a concurrent mint of one installation and one scope only", async () => {
+    let minted = 0;
+    let releaseFetch: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: async () => {
+        await gate;
+        minted += 1;
+        const token = minted === 1 ? "ghs_write_token" : "ghs_read_token";
+        return new Response(
+          JSON.stringify({ token, expires_at: new Date(3_600_000).toISOString() }),
+          { status: 201 },
+        );
+      },
+    });
+
+    const write1 = provider.tokenForInstallation("42", { contents: "write" });
+    const write2 = provider.tokenForInstallation("42", { contents: "write" });
+    const read = provider.tokenForInstallation("42", { contents: "read" });
+    releaseFetch?.();
+
+    const [w1, w2, r] = await Promise.all([write1, write2, read]);
+    expect(w1).toBe(w2);
+    expect(r).not.toBe(w1);
+    expect(minted).toBe(2);
+  });
 });
