@@ -15,6 +15,53 @@ For the local process sandbox instead of a Fly Sprite, set
 3. A Fly.io organization that can create a Sprite.
 4. `jq`, `docker`, and the `temporal` CLI on your machine.
 
+## 1b. Create the Factoree GitHub App
+
+Factoree authenticates to GitHub through one GitHub App. No Product carries a
+`GITHUB_TOKEN` secret. The App mints every clone credential and every
+publish credential itself, scoped to one installation.
+
+1. Go to `github.com/settings/apps/new`, under the account or organization
+   that owns the fixture repository.
+2. Set the webhook URL to the tunnel URL of step 3 below, followed by
+   `/webhooks/github`. Set the webhook secret to a random value. Store it
+   as `GITHUB_WEBHOOK_SECRET` in `.env`.
+3. Grant exactly three repository permissions:
+
+   | Permission | Access |
+   | --- | --- |
+   | Contents | Read and write |
+   | Pull requests | Read and write |
+   | Metadata | Read |
+
+   Grant no other permission.
+4. Under "Subscribe to events", check `Push` only. GitHub delivers the
+   `installation` and the `installation_repositories` events to every App
+   automatically. Neither one appears in the subscription list, so do not
+   look for it there.
+5. Create the App. Note the App ID on the "General" settings page. Store it
+   as `GITHUB_APP_ID` in `.env`.
+6. Under "Private keys" on the same page, generate a private key. GitHub
+   downloads a PEM file.
+7. Encode the PEM to base64 on one line, with a command that runs the same
+   way on macOS and on Linux:
+
+       base64 < private-key.pem | tr -d '\n'
+
+   Do not use `base64 -i`. That flag exists on macOS only. Do not omit
+   `tr -d '\n'`. GNU `base64` wraps its output at 76 columns, and the
+   environment schema of Factoree rejects a value that carries a line
+   break. Store the one-line result as `GITHUB_APP_PRIVATE_KEY` in `.env`.
+8. Install the App on the fixture repository. GitHub assigns a numeric
+   installation ID. Store it as `SETUP_GITHUB_INSTALLATION_ID` in `.env`,
+   together with `SETUP_GITHUB_ACCOUNT_LOGIN` and
+   `SETUP_GITHUB_REPOSITORY`.
+
+A local worker needs a public URL for the webhook. `just tunnel`, in section
+3 below, opens one. Run it first, and set the App's webhook URL to the
+value it prints, before step 2 above. A tunnel URL changes on every
+restart, so update the App's webhook URL again after a restart.
+
 ## 2. The environment file
 
 Copy `.env.example` to `.env`. Fill these values. Every other value already
@@ -25,6 +72,9 @@ holds a working local default.
 | `ADMIN_API_TOKEN` | Any token of 32 characters. It guards `/admin/*`. |
 | `FACTOREE_SECRET_KEY` | 64 hexadecimal characters. It encrypts the stored secrets. |
 | `LINEAR_WEBHOOK_SECRET` | The webhook signing secret of the Linear app. |
+| `GITHUB_APP_ID` | The App ID of the Factoree GitHub App. Section 1b explains how to create the App. |
+| `GITHUB_APP_PRIVATE_KEY` | The private key of the App, base64-encoded on one line. Section 1b names the exact command. |
+| `GITHUB_WEBHOOK_SECRET` | The webhook secret set on the App. |
 | `SANDBOX_ADAPTER` | `fly-sprites` |
 | `SPRITES_TOKEN` | A Fly.io token that can create and delete a Sprite. |
 | `LIVE_LINEAR_API_KEY` | A personal API key of the test workspace. The test driver uses it. |
@@ -95,8 +145,10 @@ the same slug, and it overwrites the other records.
 ## 4b. Paid models and private repositories
 
 A model provider credential needs a Product secret with the right kind. A
-private repository needs no Product secret at all: bind its GitHub App
-installation instead, and Factoree mints a read-only credential for it.
+private repository needs no Product secret at all: install the Factoree
+GitHub App on it, the way section 1b describes, and Factoree mints a
+read-only credential for it. There is no other credential path. The
+`repository_read` secret kind is retired.
 
 A model provider credential, for opencode Zen, DeepSeek, or Anthropic:
 
@@ -110,18 +162,7 @@ The secret name becomes the environment variable name inside the sandbox, so
 name it exactly as the tool expects. The value reaches the agent process and
 nothing else. It never enters a prompt.
 
-A read-only repository credential, for a private repository:
-
-    curl -sS -X PUT \
-      "$API_BASE/admin/products/$PRODUCT_ID/secrets/GITHUB_READ_TOKEN?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
-      -H "Authorization: Bearer $ADMIN_API_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{"value": "<THE TOKEN>", "kind": "repository_read"}'
-
-Give this token Contents read only. Factoree uses it for the checkout and for
-context discovery. It never stays inside the sandbox.
-
-Do not set `injectIntoImplementer` on either secret. The API refuses the
+Do not set `injectIntoImplementer` on this secret. The API refuses the
 combination, because SDD section 30 permits the mark on a `test` secret only.
 
 Free models need no credential at all. opencode answers with its own

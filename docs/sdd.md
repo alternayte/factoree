@@ -2229,6 +2229,34 @@ The Action Policy denies a clone request for a repository outside the Product. F
 
 A Linear team key rename keeps the existing Product, because the team id is stable. Factoree stores the new key. It reports the drift.
 
+### AT-49 — Full installation sync
+
+The installation sync workflow syncs every granted repository of a GitHub App installation.
+
+### AT-50 — Wrong webhook signature
+
+Factoree answers 401 for a wrong GitHub webhook signature. It does no work.
+
+### AT-51 — Unbound installation
+
+Factoree warns for a GitHub event of an unbound installation. It does no work. It answers 200, so GitHub does not redeliver the event.
+
+### AT-52 — One token per installation
+
+Factoree mints a token per GitHub App installation. It never shares a minted token between two installations.
+
+### AT-53 — Publication mints its own credential
+
+A Run clones and publishes with a token minted from the GitHub App installation, and holds no Product `GITHUB_TOKEN` secret.
+
+### AT-54 — Rate-limit backoff
+
+Factoree backs off on a GitHub API rate limit, through the Temporal retry policy of the installation sync activity, and completes the sync.
+
+### AT-55 — Repository without a configuration file
+
+The installation sync skips a repository that carries no `.factoree/config.yaml` file. It does not fail the sync of the rest.
+
 ---
 
 ## 65. Required development commands
