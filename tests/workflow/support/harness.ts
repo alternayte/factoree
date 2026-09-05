@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
 import { Worker } from "@temporalio/worker";
+import { inject } from "vitest";
 import type { TestWorkflowEnvironment } from "@temporalio/testing";
 import type { WorkflowHandle } from "@temporalio/client";
 import {
@@ -79,6 +81,21 @@ export interface CompletionCall {
 
 /** The single verification command every Run of the harness gets by default. */
 export const DEFAULT_VERIFY_COMMANDS: VerificationCommand[] = [{ name: "unit", run: "npm test" }];
+
+/**
+ * Caches the agent-run workflow bundle for this test process.
+ *
+ * `tests/workflow/support/global-setup.ts` builds the bundle once for the whole
+ * suite and provides its file path over vitest's `provide`/`inject` channel.
+ * Each test file runs in its own worker process, so this module reads the file
+ * once per process and reuses the result for every `runWorker` call, instead
+ * of asking `Worker.create` to bundle `workflowsPath` again on every call.
+ */
+let agentRunWorkflowBundlePromise: Promise<string> | undefined;
+const loadAgentRunWorkflowBundle = async (): Promise<string> => {
+  agentRunWorkflowBundlePromise ??= readFile(inject("agentRunWorkflowBundlePath"), "utf8");
+  return agentRunWorkflowBundlePromise;
+};
 
 /** The frozen Validation Contract hash the double reports. */
 export const VALIDATION_SHA = "c".repeat(64);
@@ -837,7 +854,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     const worker = await Worker.create({
       connection: environment().nativeConnection,
       taskQueue: "test",
-      workflowsPath: new URL("../../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
+      workflowBundle: { code: await loadAgentRunWorkflowBundle() },
       activities,
     });
     return worker.runUntil(body());
@@ -932,23 +949,33 @@ export const waitForStatus = async (
 /**
  * Polls until the predicate holds. It lets the workflow reach a step before the test signals.
  *
- * The test environment skips virtual time, but a real Temporal Worker still dispatches each
- * activity through an actual poll, execute, and report cycle over a native connection. Under
- * `npm run verify`, the workflow suite runs after the build and the integration suite, so the
- * machine can still carry load from those steps. No in-process signal reports that dispatch as
- * done sooner than the activity call itself completes. The wait needs a wall-clock budget
- * wide enough to absorb that contention. `testTimeout` in `vitest.workflow.config.ts` is
- * 180 seconds, so this default still fails fast well inside one test case.
+ * A real Temporal Worker dispatches each activity through an actual poll, execute, and report
+ * cycle over a native connection, and that dispatch can starve entirely under CPU contention.
+ * Instrumentation confirmed this: under deliberate oversubscription, a stalled wait polled
+ * about 2200 times across its whole budget with zero movement in the watched value. Widening
+ * this budget does not fix that. A failure here points at contention on the machine, not at a
+ * defect in the workflow under test. `testTimeout` in `vitest.workflow.config.ts` is 180
+ * seconds, so this default still fails fast well inside one test case.
  */
 export const waitFor = async (
   predicate: () => boolean | Promise<boolean>,
   what = "the condition",
   timeoutMs = 60_000,
+  describe?: () => unknown,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+  let lastObserved: unknown;
   while (!(await predicate())) {
+    pollCount += 1;
+    if (describe) {
+      lastObserved = await describe();
+    }
     if (Date.now() > deadline) {
-      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}`);
+      const detail = describe
+        ? ` (polled ${pollCount} times; last observed value: ${JSON.stringify(lastObserved)})`
+        : ` (polled ${pollCount} times)`;
+      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}${detail}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
@@ -12,6 +13,15 @@ import { agentRunWorkflow } from "~/workflows/agent-run.workflow.js";
 import type { DiscoveredRepository } from "~/adapters/github/repository-discovery-client.js";
 
 let environment: TestWorkflowEnvironment;
+
+// This file starts several workers against `sync-installation.workflow.ts`. `global-setup.ts`
+// bundles that module once for the whole suite, so every worker here reuses that one bundle
+// instead of asking `Worker.create` to bundle it again with webpack.
+let syncInstallationWorkflowBundlePromise: Promise<string> | undefined;
+const loadSyncInstallationWorkflowBundle = async (): Promise<string> => {
+  syncInstallationWorkflowBundlePromise ??= readFile(inject("syncInstallationWorkflowBundlePath"), "utf8");
+  return syncInstallationWorkflowBundlePromise;
+};
 
 beforeAll(async () => {
   environment = await TestWorkflowEnvironment.createTimeSkipping();
@@ -92,7 +102,7 @@ const runSyncWorkflow = async (
   const worker = await Worker.create({
     connection: environment.nativeConnection,
     taskQueue: harness.taskQueue,
-    workflowsPath: new URL("../../src/workflows/sync-installation.workflow.ts", import.meta.url).pathname,
+    workflowBundle: { code: await loadSyncInstallationWorkflowBundle() },
     activities: harness.activities,
   });
   const result = await worker.runUntil(() =>
@@ -168,7 +178,7 @@ describe("syncInstallationWorkflow", () => {
       const worker = await Worker.create({
         connection: environment.nativeConnection,
         taskQueue: harness.taskQueue,
-        workflowsPath: new URL("../../src/workflows/sync-installation.workflow.ts", import.meta.url).pathname,
+        workflowBundle: { code: await loadSyncInstallationWorkflowBundle() },
         activities: harness.activities,
       });
 
