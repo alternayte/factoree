@@ -12,9 +12,23 @@ model Tenant {
   name              String
   createdAt         DateTime            @default(now())
   installations     LinearInstallation[]
-  projects          Project[]
+  githubInstallations GitHubInstallation[]
+  products          Product[]
   runs              Run[]
   webhooks          ProcessedWebhook[]
+}
+
+model GitHubInstallation {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // The numeric installation identifier GitHub sends. It is stable across an account rename.
+  githubInstallationId String   @unique
+  // The account login, for an operator to read. Never resolve on it, because it can change.
+  accountLogin         String
+  createdAt            DateTime @default(now())
+
+  @@index([tenantId])
 }
 
 model LinearInstallation {
@@ -31,68 +45,25 @@ model LinearInstallation {
   updatedAt           DateTime @updatedAt
 }
 
-model Project {
-  id                 String          @id @default(uuid())
-  tenantId           String
-  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  key                String
-  name               String
-  primaryRepository  String
-  referenceRepositories String[]     @default([])
-  // SDD section 16. A Project can define one organization-wide skills repository. The value is
-  // an owner and repository slug, the same shape `primaryRepository` uses.
-  organizationSkillsRepository String?
-  linearTeamId       String?
-  defaultAutonomy    String          @default("L2")
-  maxRunMinutes      Int             @default(90)
-  defaultBranch      String          @default("main")
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  secrets            ProjectSecret[]
-  runs               Run[]
-  contextSources     ContextSourceConfiguration[]
-
-  @@unique([tenantId, key])
-  @@index([tenantId])
-}
-
-model ProjectSecret {
-  id          String   @id @default(uuid())
-  tenantId    String
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name        String
-  valueCipher String
-  // SDD section 30. Only a secret an operator marks reaches the Implementer environment. Every
-  // secret reaches the redactor, marked or not.
-  injectIntoImplementer Boolean @default(false)
-  // SDD section 30. What the secret is for. "test" keeps the behaviour of every row written
-  // before this column existed. A kind other than "test" must never carry the injection mark.
-  kind        String   @default("test")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@unique([projectId, name])
-  @@index([tenantId])
-}
-
 model ContextSourceConfiguration {
   id          String   @id @default(uuid())
   tenantId    String
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // SDD section 5 and section 7. A context source belongs to the Product, alongside secrets,
+  // autonomy, risk caps, action policy, and redaction.
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   // The identifier the built source reports from `ContextSource.id()`.
   sourceId    String
   kind        String
   enabled     Boolean  @default(true)
   endpoint    String
-  // SDD section 30. This column names a ProjectSecret. It never holds a credential.
+  // SDD section 30. This column names a ProductSecret. It never holds a credential.
   secretName  String?
   settings    Json
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([projectId, sourceId])
+  @@unique([productId, sourceId])
   @@index([tenantId])
 }
 
@@ -100,8 +71,10 @@ model Run {
   id                       String    @id @default(uuid())
   tenantId                 String
   tenant                   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  projectId                String
-  project                  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Task 9. Delegation routes through the Product, not the Project, so this column carries a
+  // Product id, with a real foreign key. There is no fallback to a Project default.
+  productId                String
+  product                  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   linearIssueId            String?
   linearAgentSessionId     String    @unique
   temporalWorkflowId       String    @unique
@@ -117,6 +90,9 @@ model Run {
   spriteRetainUntil        DateTime?
   baseSha                  String?
   organizationSkillsSha    String?
+  // Specification section 8. The SHA-256 of .factoree/config.yaml, read from the target
+  // repository at the Run's base commit. Null until context resolution pins that commit.
+  configSha                 String?
   patchSha256              String?
   commitSha                String?
   pullRequestUrl           String?
@@ -134,9 +110,10 @@ model Run {
   validationContract       ValidationContract?
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
+  targets                  RunTarget[]
 
   @@index([tenantId])
-  @@index([projectId])
+  @@index([productId])
   @@index([spriteRetainUntil])
 }
 
@@ -344,5 +321,96 @@ model ProcessedWebhook {
   eventType  String
   receivedAt DateTime @default(now())
 
+  @@index([tenantId])
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  slug           String
+  name           String
+  // "pending" until an operator supplies secrets and activates it. A pending Product runs at L0.
+  status         String   @default("pending")
+  linearTeamKey  String
+  linearTeamId   String
+  defaultAutonomy String  @default("L0")
+  maxRunMinutes  Int      @default(90)
+  // SDD section 16. A Product can define one organization-wide skills repository. The value is
+  // an owner and repository slug, the same shape a Repository's `fullName` uses.
+  organizationSkillsRepository String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  repositories   Repository[]
+  secrets        ProductSecret[]
+  contextSources ContextSourceConfiguration[]
+  runs           Run[]
+
+  @@unique([tenantId, slug])
+  // One Linear team maps to at most one Product. This constraint makes the routing rule of
+  // specification section 9 satisfiable at the database level.
+  @@unique([tenantId, linearTeamId])
+  @@index([tenantId])
+}
+
+model Repository {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  productId            String
+  product              Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fullName             String
+  defaultBranch        String   @default("main")
+  // The commit of `.factoree/config.yaml` that discovery last read.
+  configSha            String
+  // Names only. A value never reaches this column.
+  requestedSecretNames String[] @default([])
+  discoveredAt         DateTime @default(now())
+  lastSeenAt           DateTime @default(now())
+  // Set when the configuration file disappears. The row stays, so the Run history survives.
+  absentSince          DateTime?
+  // The installation that granted access to this repository. Discovery knows it at sync time.
+  // A clone or a push mints its token against this installation.
+  githubInstallationId String
+  runTargets           RunTarget[]
+
+  @@unique([tenantId, fullName])
+  @@index([productId])
+}
+
+model ProductSecret {
+  id          String   @id @default(uuid())
+  tenantId    String
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String
+  valueCipher String
+  injectIntoImplementer Boolean @default(false)
+  kind        String   @default("test")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([productId, name])
+  @@index([tenantId])
+}
+
+model RunTarget {
+  id              String     @id @default(uuid())
+  tenantId        String
+  runId           String
+  run             Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  repositoryId    String
+  repository      Repository @relation(fields: [repositoryId], references: [id])
+  // "primary" or "secondary". A single-target Run holds one primary row.
+  role            String     @default("primary")
+  selectionReason String
+  baseSha         String?
+  patchSha256     String?
+  commitSha       String?
+  pullRequestUrl  String?
+  mergeOrder      Int        @default(1)
+  createdAt       DateTime   @default(now())
+
+  @@unique([runId, repositoryId])
+  @@index([runId])
   @@index([tenantId])
 }

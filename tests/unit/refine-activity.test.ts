@@ -13,7 +13,7 @@ const activities = createRefinementActivities({
 const input = (over: Partial<RefineActivityInput> = {}): RefineActivityInput => ({
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   source: {
     issueId: "issue-1",
     title: "Add a webhook retry",

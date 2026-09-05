@@ -1,9 +1,10 @@
 import { ApplicationFailure } from "@temporalio/activity";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
-import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
+import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
+import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
 import {
   assertSameChangedFiles,
   capturePatch as captureVerifiedPatch,
@@ -22,14 +23,18 @@ import {
   TrustedCheckoutError,
 } from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
-/** The Project secret that carries the GitHub write credential. SDD section 30. */
-export const GITHUB_TOKEN_SECRET = "GITHUB_TOKEN";
+/**
+ * The scope a publish mints. SDD section 46 pushes a branch and opens a pull request, and
+ * nothing else, so the token carries no permission beyond those two calls.
+ */
+export const PUBLISH_TOKEN_SCOPE: GitHubTokenScope = { contents: "write", pull_requests: "write" };
 
 /**
  * The author date and the committer date of every Factoree publication commit. The value is a
@@ -44,7 +49,7 @@ export const publishBranchName = (runId: string): string => `factoree/run-${runI
 export interface CheckBaseActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   repositorySlug: string;
   repositoryBaseUrl: string;
   branch: string;
@@ -59,7 +64,7 @@ export interface CheckBaseActivityOutput {
 export interface PublishActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   spriteId: string;
   adapter: string;
   workspacePath: string;
@@ -78,6 +83,8 @@ export interface PublishActivityInput {
   workItemUrl: string | null;
   verificationSummary: string;
   repairCount: number;
+  /** The GitHub App installation that grants the target repository. */
+  githubInstallationId: string;
 }
 
 export interface PublishActivityOutput {
@@ -97,6 +104,8 @@ export interface PublishingActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   runs: RunRepository;
+  /** Mints the write credential of one publish. SDD section 30 keeps it off every agent session. */
+  tokens: GitHubTokenProvider;
   /**
    * `checkBase` and the base backstop of `publish` read the target branch. Each one passes the
    * plain URL, never a credential.
@@ -139,39 +148,6 @@ const assertHttpsRepositoryUrl = (plainUrl: string): void => {
 };
 
 /**
- * Reads the GitHub write credential of the Project. SDD section 30 forbids that credential in
- * every agent session, so an injection mark on it is a fault an operator must repair.
- */
-const readGitHubToken = async (
-  dependencies: PublishingActivityDependencies,
-  tenantId: string,
-  projectId: string,
-): Promise<string> => {
-  const descriptors = await dependencies.secrets.list(tenantId, projectId);
-  const descriptor = descriptors.find((entry) => entry.name === GITHUB_TOKEN_SECRET);
-  if (descriptor === undefined) {
-    throw new RunConfigurationError(
-      `The Project holds no secret named "${GITHUB_TOKEN_SECRET}". Factoree needs it to push the ` +
-        "branch and to open the pull request. Add it to the Project secrets.",
-    );
-  }
-  if (descriptor.injectIntoImplementer) {
-    throw new RunConfigurationError(
-      `The Project secret "${GITHUB_TOKEN_SECRET}" carries the injection mark, so the credential ` +
-        "already reached an agent session. SDD section 30 forbids that. Rotate the credential. " +
-        "Then add it again without the injection mark.",
-    );
-  }
-  const token = await dependencies.secrets.get(tenantId, projectId, GITHUB_TOKEN_SECRET);
-  if (token === null || token.length === 0) {
-    throw new RunConfigurationError(
-      `The Project secret "${GITHUB_TOKEN_SECRET}" holds no value. Add the GitHub write credential.`,
-    );
-  }
-  return token;
-};
-
-/**
  * SDD section 49. A semantic publication failure must not consume the Temporal retry policy. A
  * retry repeats the same fault. A network failure and a GitHub 500 stay retryable, so this
  * function converts a deterministic failure only. The message passes through the redactor first.
@@ -196,7 +172,13 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
   if (error instanceof GitHubApiError && error.deterministic) {
     return ApplicationFailure.nonRetryable(redactor.redactText(error.message), "PUBLICATION_FAILED");
   }
-  return error;
+  // A rejected mint of the write credential is a configuration fault, not an infrastructure
+  // fault: an operator must repair the GitHub App installation, not wait for a retry. The class
+  // is `RunConfigurationError`, so the workflow recognises it the same way it recognises every
+  // other configuration fault. The message names the installation, never the key. The shared
+  // module of `~/domain/runs/github-app-auth-fault.js` holds this conversion, so every mint site
+  // applies the identical rule.
+  return asRunConfigurationErrorIfDeterministic(redactor, error);
 };
 
 /** SDD section 44, section 45, and section 46. */
@@ -207,7 +189,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
    */
   async checkBase(input: CheckBaseActivityInput): Promise<CheckBaseActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       const url = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
@@ -219,7 +201,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       dependencies.logger.info("base freshness checked", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "publish",
         fresh: result.fresh,
@@ -238,7 +220,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
    */
   async publish(input: PublishActivityInput): Promise<PublishActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       // Step 1. SDD section 60. Every Project secret reaches the redactor first.
@@ -246,12 +228,28 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         dependencies.redactor,
         dependencies.secrets,
         input.tenantId,
-        input.projectId,
+        input.productId,
         dependencies.logger,
       );
 
-      // Step 2. The GitHub write credential. Controller decision 7 owns both refusals.
-      const token = await readGitHubToken(dependencies, input.tenantId, input.projectId);
+      // Step 2. The GitHub write credential. An empty installation id names no installation to
+      // mint against, and a mint request against an empty id would reach GitHub as a malformed
+      // URL rather than a clear refusal, so this activity refuses it here instead.
+      if (input.githubInstallationId === "") {
+        throw new RunConfigurationError(
+          "The target repository carries no GitHub App installation. Factoree needs one to push " +
+            "the branch and to open the pull request. Install the Factoree GitHub App on the " +
+            "repository.",
+        );
+      }
+
+      // Ruling 2 requires the token to carry a scope no wider than this publish needs. This
+      // publish pushes one branch. It opens one pull request. The token carries exactly those
+      // two permissions, never more.
+      const token = await dependencies.tokens.tokenForInstallation(
+        input.githubInstallationId,
+        PUBLISH_TOKEN_SCOPE,
+      );
 
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
       dependencies.redactor.addSecret(token);
@@ -295,7 +293,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       // Step 8. AT-35. A worker restart must not create a second pull request. This lookup runs
       // before the trusted checkout, so an existing pull request stops the push too.
-      const existing = await port.findByHead(input.repositorySlug, branch);
+      const existing = await port.findByHead(input.repositorySlug, branch, input.githubInstallationId);
       if (existing !== null) {
         // GitHub already answered the tip commit of the head branch. Factoree therefore runs no
         // second git read here. A `git ls-remote` puts its URL on the process argument list, so
@@ -309,7 +307,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         });
         dependencies.logger.info("the pull request of this Run already exists", {
           tenant_id: input.tenantId,
-          project_id: input.projectId,
+          product_id: input.productId,
           run_id: input.runId,
           step: "publish",
           branch,
@@ -382,7 +380,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         onCleanupFailure: (error: unknown) => {
           dependencies.logger.error("the trusted checkout directory was not removed", {
             tenant_id: input.tenantId,
-            project_id: input.projectId,
+            product_id: input.productId,
             run_id: input.runId,
             step: "publish",
             error: dependencies.redactor.redactText(String(error)),
@@ -391,22 +389,25 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       });
 
       // Step 10. SDD section 46 step 9.
-      const created = await port.create({
-        slug: input.repositorySlug,
-        headBranch: branch,
-        baseBranch: input.baseBranch,
-        title,
-        body: buildPullRequestBody({
-          workItemTitle: input.workItemTitle,
-          workItemUrl: input.workItemUrl,
-          runId: input.runId,
-          baseSha: input.baseSha,
-          patchSha256: patch.patchSha256,
-          verificationSummary: input.verificationSummary,
-          changedFileCount: patch.changedFiles.length,
-          repairCount: input.repairCount,
-        }),
-      });
+      const created = await port.create(
+        {
+          slug: input.repositorySlug,
+          headBranch: branch,
+          baseBranch: input.baseBranch,
+          title,
+          body: buildPullRequestBody({
+            workItemTitle: input.workItemTitle,
+            workItemUrl: input.workItemUrl,
+            runId: input.runId,
+            baseSha: input.baseSha,
+            patchSha256: patch.patchSha256,
+            verificationSummary: input.verificationSummary,
+            changedFileCount: patch.changedFiles.length,
+            repairCount: input.repairCount,
+          }),
+        },
+        input.githubInstallationId,
+      );
 
       // Step 11. The publication facts of the Run.
       await dependencies.runs.setPublication(input.tenantId, input.runId, {
@@ -417,7 +418,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       dependencies.logger.info("the pull request was created", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "publish",
         branch,

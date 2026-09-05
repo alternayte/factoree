@@ -4,7 +4,7 @@ import type { RunFailureCategory } from "./failure-category.js";
 export interface RunRecord {
   id: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   linearIssueId: string | null;
   linearAgentSessionId: string;
   temporalWorkflowId: string;
@@ -29,6 +29,8 @@ export interface RunRecord {
    * Project configures no organization skills repository, or the Run recorded no sandbox yet.
    */
   organizationSkillsSha: string | null;
+  /** Specification section 8. The SHA-256 of the identity file at the Run's base commit. */
+  configSha: string | null;
   /** SDD section 47. The SHA-256 of the Proof Pack this Run posted, or null while none exists. */
   proofPackSha256: string | null;
   proofPackPostedAt: Date | null;
@@ -40,7 +42,7 @@ export interface RunRecord {
 
 export interface CreateRunInput {
   tenantId: string;
-  projectId: string;
+  productId: string;
   linearIssueId: string | null;
   linearAgentSessionId: string;
   temporalWorkflowId: string;
@@ -87,6 +89,42 @@ export interface ExpiredSandboxRun {
   runId: string;
   spriteId: string;
   adapter: string;
+}
+
+/** Specification section 10. The write `recordRunTarget` sends to the `RunTarget` row. */
+export interface CreateRunTargetInput {
+  tenantId: string;
+  runId: string;
+  repositoryId: string;
+  selectionReason: string;
+  mergeOrder: number;
+}
+
+/** Specification section 5. One `RunTarget` row, with the per-target facts section 14 defines. */
+export interface RunTargetRecord {
+  id: string;
+  tenantId: string;
+  runId: string;
+  repositoryId: string;
+  role: string;
+  selectionReason: string;
+  baseSha: string | null;
+  patchSha256: string | null;
+  commitSha: string | null;
+  pullRequestUrl: string | null;
+  mergeOrder: number;
+}
+
+/**
+ * Specification section 14. The per-target facts recorded as each becomes known: the base SHA
+ * after context resolution, the patch hash and commit SHA after publication, and the pull
+ * request URL after the pull request exists. A caller sends only the fields it has learned.
+ */
+export interface RunTargetPatch {
+  baseSha?: string;
+  patchSha256?: string;
+  commitSha?: string;
+  pullRequestUrl?: string;
 }
 
 export interface RunRepository {
@@ -142,6 +180,37 @@ export interface RunRepository {
   setAutonomyLevel(tenantId: string, runId: string, level: string): Promise<void>;
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
   listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
+  /**
+   * Specification section 10. Records the repository target selection decided this task. A
+   * single-target Run writes one row, so `mergeOrder` starts at one.
+   */
+  createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }>;
+  /**
+   * Specification section 14. Records the per-target facts of one `RunTarget` as they become
+   * known. The method throws when it reaches no `RunTarget` of that Run and repository in that
+   * tenant, because a silent success hides a caller defect.
+   */
+  updateRunTarget(
+    tenantId: string,
+    runId: string,
+    repositoryId: string,
+    patch: RunTargetPatch,
+  ): Promise<void>;
+  /** Specification section 18. The `RunTarget` rows of one Run, in merge order. */
+  listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]>;
+  /**
+   * Specification section 8. Records the SHA-256 of `.factoree/config.yaml` as read at the
+   * Run's base commit. The method throws when it reaches no Run of that tenant, because a
+   * silent success hides a caller defect.
+   */
+  setConfigSha(tenantId: string, runId: string, sha: string): Promise<void>;
+  /**
+   * F6. The count of Runs a Product owns, so an operator's DELETE /admin/products/:id can
+   * refuse to destroy the Run history and the Proof Pack evidence a cascade would otherwise
+   * take with it. `Run.productId` carries `onDelete: Cascade`, so this count is exactly what
+   * would be lost.
+   */
+  countByProduct(tenantId: string, productId: string): Promise<number>;
 }
 
 export interface WebhookLog {

@@ -10,7 +10,7 @@ import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 
 const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore()) => {
   const sandbox = new FakeSandbox();
@@ -48,7 +48,7 @@ const waitFor = async (predicate: () => boolean): Promise<void> => {
 const input = {
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   runnerName: "opencode",
   spriteId: "sprite-1",
   adapter: "fake",

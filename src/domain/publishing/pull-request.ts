@@ -25,8 +25,8 @@ export interface CreatePullRequestInput {
  */
 export interface PullRequestPort {
   /** The open pull request for that head branch, or null. Controller decision 8 needs it. */
-  findByHead(slug: string, headBranch: string): Promise<PullRequestRecord | null>;
-  create(input: CreatePullRequestInput): Promise<PullRequestRecord>;
+  findByHead(slug: string, headBranch: string, githubInstallationId: string): Promise<PullRequestRecord | null>;
+  create(input: CreatePullRequestInput, githubInstallationId: string): Promise<PullRequestRecord>;
 }
 
 const MAX_TITLE = 120;

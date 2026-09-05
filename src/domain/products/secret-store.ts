@@ -7,9 +7,11 @@
  *   `injectIntoImplementer` mark, and `guardAgainstForbiddenMaterial` inspects it there.
  * - `runner_credential`: a model provider credential of the coding agent. It reaches the sandbox
  *   environment, never a prompt, and never the Implementer input.
- * - `repository_read`: a read-only repository credential. It is used for one git command at a
- *   time and never stays inside the sandbox.
- * - `publish`: the GitHub write credential of the publication. It never enters a sandbox.
+ * - `repository_read`: retired. The GitHub App installation replaced it as the one credential
+ *   path to GitHub, and no code reads a secret of this kind any more. The kind stays defined so
+ *   an existing stored row keeps its kind rather than silently becoming `test`, which is the one
+ *   kind the injection mark permits.
+ * - `publish`: retired, for the same reason and the same guard as `repository_read`.
  *
  * A secret of any kind other than `test` must not carry the injection mark. The store rejects
  * that combination, so a credential cannot reach the Implementer path by a configuration slip.
@@ -58,14 +60,38 @@ export const assertSecretKindAndMark = (kind: ProjectSecretKind, injectIntoImple
 export interface SecretStore {
   put(
     tenantId: string,
-    projectId: string,
+    productId: string,
     name: string,
     value: string,
     options?: PutSecretOptions,
   ): Promise<void>;
-  get(tenantId: string, projectId: string, name: string): Promise<string | null>;
-  listNames(tenantId: string, projectId: string): Promise<string[]>;
-  /** Every secret of the Project, with its injection mark and its kind. The value never appears here. */
-  list(tenantId: string, projectId: string): Promise<ProjectSecretDescriptor[]>;
-  remove(tenantId: string, projectId: string, name: string): Promise<boolean>;
+  get(tenantId: string, productId: string, name: string): Promise<string | null>;
+  listNames(tenantId: string, productId: string): Promise<string[]>;
+  /** Every secret of the Product, with its injection mark and its kind. The value never appears here. */
+  list(tenantId: string, productId: string): Promise<ProjectSecretDescriptor[]>;
+  remove(tenantId: string, productId: string, name: string): Promise<boolean>;
 }
+
+/**
+ * Thrown when a repository requests a secret the Product secret store does not hold. The message
+ * names every absent secret, not only the first, because an operator can then repair every gap
+ * before the next Run. A repository can only name a secret in `.factoree/config.yaml`. It can
+ * never supply a value. An unmatched name must fail the Run, rather than run silently.
+ */
+export class MissingSecretError extends Error {
+  constructor(readonly missingNames: string[]) {
+    super(`The Product secret store is missing the following requested secret name(s): ${missingNames.join(", ")}.`);
+    this.name = "MissingSecretError";
+  }
+}
+
+/**
+ * Checks that every name a repository requests exists in the Product secret store. `requested`
+ * holds names parsed from `.factoree/config.yaml`. `available` holds the names the Product
+ * secret store actually holds. A name absent from `available` fails the whole check.
+ */
+export const assertRequestedSecretsExist = (requested: string[], available: string[]): void => {
+  const availableNames = new Set(available);
+  const missingNames = requested.filter((name) => !availableNames.has(name));
+  if (missingNames.length > 0) throw new MissingSecretError(missingNames);
+};

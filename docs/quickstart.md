@@ -15,6 +15,53 @@ For the local process sandbox instead of a Fly Sprite, set
 3. A Fly.io organization that can create a Sprite.
 4. `jq`, `docker`, and the `temporal` CLI on your machine.
 
+## 1b. Create the Factoree GitHub App
+
+Factoree authenticates to GitHub through one GitHub App. No Product carries a
+`GITHUB_TOKEN` secret. The App mints every clone credential and every
+publish credential itself, scoped to one installation.
+
+1. Go to `github.com/settings/apps/new`, under the account or organization
+   that owns the fixture repository.
+2. Set the webhook URL to the tunnel URL of step 3 below, followed by
+   `/webhooks/github`. Set the webhook secret to a random value. Store it
+   as `GITHUB_WEBHOOK_SECRET` in `.env`.
+3. Grant exactly three repository permissions:
+
+   | Permission | Access |
+   | --- | --- |
+   | Contents | Read and write |
+   | Pull requests | Read and write |
+   | Metadata | Read |
+
+   Grant no other permission.
+4. Under "Subscribe to events", check `Push` only. GitHub delivers the
+   `installation` and the `installation_repositories` events to every App
+   automatically. Neither one appears in the subscription list, so do not
+   look for it there.
+5. Create the App. Note the App ID on the "General" settings page. Store it
+   as `GITHUB_APP_ID` in `.env`.
+6. Under "Private keys" on the same page, generate a private key. GitHub
+   downloads a PEM file.
+7. Encode the PEM to base64 on one line, with a command that runs the same
+   way on macOS and on Linux:
+
+       base64 < private-key.pem | tr -d '\n'
+
+   Do not use `base64 -i`. That flag exists on macOS only. Do not omit
+   `tr -d '\n'`. GNU `base64` wraps its output at 76 columns, and the
+   environment schema of Factoree rejects a value that carries a line
+   break. Store the one-line result as `GITHUB_APP_PRIVATE_KEY` in `.env`.
+8. Install the App on the fixture repository. GitHub assigns a numeric
+   installation ID. Store it as `SETUP_GITHUB_INSTALLATION_ID` in `.env`,
+   together with `SETUP_GITHUB_ACCOUNT_LOGIN` and
+   `SETUP_GITHUB_REPOSITORY`.
+
+A local worker needs a public URL for the webhook. `just tunnel`, in section
+3 below, opens one. Run it first. Set the App's webhook URL to the value
+it prints, before step 2 above. A tunnel URL changes on every restart.
+Update the App's webhook URL again after each restart.
+
 ## 2. The environment file
 
 Copy `.env.example` to `.env`. Fill these values. Every other value already
@@ -25,6 +72,9 @@ holds a working local default.
 | `ADMIN_API_TOKEN` | Any token of 32 characters. It guards `/admin/*`. |
 | `FACTOREE_SECRET_KEY` | 64 hexadecimal characters. It encrypts the stored secrets. |
 | `LINEAR_WEBHOOK_SECRET` | The webhook signing secret of the Linear app. |
+| `GITHUB_APP_ID` | The App ID of the Factoree GitHub App. Section 1b explains how to create the App. |
+| `GITHUB_APP_PRIVATE_KEY` | The private key of the App, base64-encoded on one line. Section 1b names the exact command. |
+| `GITHUB_WEBHOOK_SECRET` | The webhook secret set on the App. |
 | `SANDBOX_ADAPTER` | `fly-sprites` |
 | `SPRITES_TOKEN` | A Fly.io token that can create and delete a Sprite. |
 | `LIVE_LINEAR_API_KEY` | A personal API key of the test workspace. The test driver uses it. |
@@ -33,15 +83,18 @@ holds a working local default.
 | `LIVE_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
 | `SETUP_LINEAR_WORKSPACE_ID` | The ID of the test workspace. |
 | `SETUP_LINEAR_ACCESS_TOKEN` | The access token of the installed Factoree Linear app. Factoree comments with it. |
+| `SETUP_PRODUCT_SLUG` | A short unique identifier for the bootstrap Product. |
+| `SETUP_LINEAR_TEAM_KEY` | The key of the Linear team the fixture issue belongs to. |
+| `SETUP_GITHUB_INSTALLATION_ID` | The numeric installation ID GitHub assigned to the Factoree app. |
+| `SETUP_GITHUB_ACCOUNT_LOGIN` | The GitHub account or organization the app is installed on. |
 | `SETUP_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
-| `SETUP_GITHUB_TOKEN` | The token Factoree pushes the branch and opens the pull request with. |
 
 Leave an optional value empty. The `justfile` skips an empty value, so an
 empty `TEMPORAL_API_KEY` or `SPRITES_BASE_URL` does not break the start.
 
-`LIVE_GITHUB_TOKEN` and `SETUP_GITHUB_TOKEN` are two different credentials.
-The first belongs to the test driver, which acts as the human operator. The
-second belongs to Factoree.
+`LIVE_GITHUB_TOKEN` belongs to the test driver, which acts as the human
+operator. Factoree needs no GitHub secret: it mints every clone credential
+and every publish credential against the GitHub App installation instead.
 
 ## 3. Start the stack
 
@@ -66,14 +119,18 @@ app settings of the test workspace.
 
     just bootstrap
 
-The command reads `.env` and does five calls against the API. It registers
-the Linear installation, creates the Tenant and the Project, stores the
-`GITHUB_TOKEN` Project secret, and registers the Backstage row and the MCP
-row. It prints the new Project ID.
+The command reads `.env` and does several calls against the API. It
+registers the Linear installation, creates the Tenant and the Product, binds
+the GitHub installation, and registers the Backstage row and the MCP row. It
+prints the new Product ID.
+
+Bootstrap does not create a Repository row. Discovery creates it from the
+`.factoree/config.yaml` file of the fixture repository, when the GitHub App
+reports the repository push to Factoree.
 
 The two context source rows point at the local stubs of `just stubs`. You
 need no real Backstage instance and no real MCP server for this path.
-`tests/live/scenario.ts` refuses to start unless the Project carries one
+`tests/live/scenario.ts` refuses to start unless the Product carries one
 enabled `backstage` row and one enabled `mcp` row, and the stubs answer both.
 To point the rows at a real catalog and a real MCP source instead, set
 `SETUP_BACKSTAGE_URL` and `SETUP_MCP_URL` in `.env`.
@@ -82,18 +139,21 @@ An `mcp` row must name two tools. `SETUP_MCP_DISCOVER_TOOL` and
 `SETUP_MCP_FETCH_TOOL` hold them, and default to `search` and `fetch`. The
 local stub answers any tool name, so the defaults work.
 
-The command is safe to run again. It reuses a Project that already carries
-the same key, and it overwrites the other four records.
+The command is safe to run again. It reuses a Product that already carries
+the same slug, and it overwrites the other records.
 
 ## 4b. Paid models and private repositories
 
-Both need a Project secret with the right kind. `just bootstrap` writes the
-`GITHUB_TOKEN` secret for you. Add the other two by hand.
+A model provider credential needs a Product secret with the right kind. A
+private repository needs no Product secret at all: install the Factoree
+GitHub App on it, the way section 1b describes, and Factoree mints a
+read-only credential for it. There is no other credential path. The
+`repository_read` secret kind is retired.
 
 A model provider credential, for opencode Zen, DeepSeek, or Anthropic:
 
     curl -sS -X PUT \
-      "$API_BASE/admin/projects/$PROJECT_ID/secrets/OPENCODE_API_KEY?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
+      "$API_BASE/admin/products/$PRODUCT_ID/secrets/OPENCODE_API_KEY?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
       -H "Authorization: Bearer $ADMIN_API_TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"value": "<THE KEY>", "kind": "runner_credential"}'
@@ -102,22 +162,11 @@ The secret name becomes the environment variable name inside the sandbox, so
 name it exactly as the tool expects. The value reaches the agent process and
 nothing else. It never enters a prompt.
 
-A read-only repository credential, for a private repository:
-
-    curl -sS -X PUT \
-      "$API_BASE/admin/projects/$PROJECT_ID/secrets/GITHUB_READ_TOKEN?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
-      -H "Authorization: Bearer $ADMIN_API_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{"value": "<THE TOKEN>", "kind": "repository_read"}'
-
-Give this token Contents read only. Factoree uses it for the checkout and for
-context discovery. It never stays inside the sandbox.
-
-Do not set `injectIntoImplementer` on either secret. The API refuses the
+Do not set `injectIntoImplementer` on this secret. The API refuses the
 combination, because SDD section 30 permits the mark on a `test` secret only.
 
 Free models need no credential at all. opencode answers with its own
-`opencode/big-pickle` model when the Project holds no runner credential.
+`opencode/big-pickle` model when the Product holds no runner credential.
 
 ## 4c. Keep the Linear token alive
 
@@ -167,9 +216,10 @@ then the stub log.
 carry `Bearer <ADMIN_API_TOKEN>`. `just bootstrap` reads the value from
 `.env` itself.
 
-**Publication fails with "The Project holds no secret named GITHUB_TOKEN".**
-`SETUP_GITHUB_TOKEN` was empty when you ran `just bootstrap`. Fill it and run
-the `PUT /admin/projects/:id/secrets/GITHUB_TOKEN` call again.
+**Publication fails with a configuration error naming the GitHub App
+installation.** The target repository carries no installation, or the
+installation was removed. Install the Factoree GitHub App on the repository
+again.
 
 **Factoree never comments in Linear.** The Linear installation record is
 absent or carries a wrong token. Run `just bootstrap` again, or repeat the

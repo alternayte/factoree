@@ -10,10 +10,12 @@ import type {
   VerificationCommand,
 } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
-import { loadRepositoryReadToken, loadRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
+import { loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { Redactor } from "~/telemetry/redaction.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
@@ -27,18 +29,22 @@ export interface SandboxActivityDependencies {
   redactor: Redactor;
   runners: AgentRunnerRegistry;
   logger: Logger;
+  /** Mints the read-only clone credential of the target repository, scoped to `contents: read`. */
+  tokens: GitHubTokenProvider;
 }
 
 export interface PrepareSandboxActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   primary: RepositorySpec;
   references: RepositorySpec[];
   defaults: ProjectDefaults;
   environment: Record<string, string>;
   /** SDD section 16. The organization skills repository of the Project, or null. */
   organizationSkills: RepositorySpec | null;
+  /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -105,21 +111,36 @@ const prepare = async (
   const runnerEnvironment = await loadRunnerEnvironment(
     dependencies.secrets,
     input.tenantId,
-    input.projectId,
+    input.productId,
   );
 
   // SDD section 30. A private repository needs a read-only credential for the checkout. It never
-  // reaches an agent session: `checkout` gives it to the git clone command alone.
-  const repositoryCredential = await loadRepositoryReadToken(
-    dependencies.secrets,
-    input.tenantId,
-    input.projectId,
-  );
+  // reaches an agent session: `checkout` gives it to the git clone command alone. The provider
+  // mints it fresh for this one preparation, scoped to `contents: read`, so the credential this
+  // sandbox receives can never push. An empty installation id means the repository carries no
+  // GitHub App installation. Factoree then mints no credential.
+  let repositoryCredential: string | null;
+  if (input.githubInstallationId === "") {
+    repositoryCredential = null;
+  } else {
+    try {
+      repositoryCredential = await dependencies.tokens.tokenForInstallation(input.githubInstallationId, {
+        contents: "read",
+      });
+    } catch (error) {
+      // A rejected mint of the clone credential is a configuration fault, not an
+      // infrastructure fault, so it must map to the same `RunConfigurationError` the publish
+      // activity produces. `~/domain/runs/github-app-auth-fault.js` holds the single conversion
+      // every mint site applies.
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
+  }
+  if (repositoryCredential !== null) dependencies.redactor.addSecret(repositoryCredential);
 
   const prepared = await dependencies.sandboxManager.prepare({
     runId: input.runId,
     tenantId: input.tenantId,
-    projectId: input.projectId,
+    productId: input.productId,
     primary: input.primary,
     references: input.references,
     defaults: input.defaults,
@@ -191,12 +212,12 @@ const prepare = async (
 
   metrics.sandboxesCreated.inc({
     tenant_id: input.tenantId,
-    project_id: input.projectId,
+    product_id: input.productId,
     adapter: prepared.ref.adapter,
   });
   dependencies.logger.info("sandbox prepared", {
     tenant_id: input.tenantId,
-    project_id: input.projectId,
+    product_id: input.productId,
     run_id: input.runId,
     sprite_id: prepared.ref.id,
     base_sha: prepared.checkout.primary.baseSha,
@@ -234,7 +255,7 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
       dependencies.redactor,
       dependencies.secrets,
       input.tenantId,
-      input.projectId,
+      input.productId,
       dependencies.logger,
     );
 

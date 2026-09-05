@@ -102,11 +102,11 @@ interface Rig {
   root: string;
 }
 
-const buildRig = async (name: string, tenantId: string, projectId: string, runId: string): Promise<Rig> => {
+const buildRig = async (name: string, tenantId: string, productId: string, runId: string): Promise<Rig> => {
   const port = await pickPort();
   sandboxRoot = await mkdtemp(join(tmpdir(), `factoree-phase07-${name}-`));
   const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  const ref = await sandbox.create({ runId, tenantId, projectId });
+  const ref = await sandbox.create({ runId, tenantId, productId });
   return { sandbox, ref, port, root: ref.workspacePath };
 };
 
@@ -118,8 +118,8 @@ const buildRig = async (name: string, tenantId: string, projectId: string, runId
  */
 describe("Phase 7 exit — a UI fixture change produces independent acceptance evidence", () => {
   it("passes, and writes real evidence rows, after the UI fixture change is applied", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
-    const rig = await buildRig("after", tenantId, projectId, runId);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+    const rig = await buildRig("after", tenantId, productId, runId);
 
     // Step 1 and 2. The fixture repository starts with the bug: a save does not survive a
     // reload. The Implementer-style fix is applied before the validator runs.
@@ -213,8 +213,8 @@ describe("Phase 7 exit — a UI fixture change produces independent acceptance e
   }, 90_000);
 
   it("fails the same contract before the UI fixture change, and still produces the screenshot", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
-    const rig = await buildRig("before", tenantId, projectId, runId);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+    const rig = await buildRig("before", tenantId, productId, runId);
 
     // The negative half. The fixture repository still carries the bug: a save does not survive
     // a reload.

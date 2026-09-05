@@ -14,6 +14,11 @@ const IDENTITY = ["-c", "user.email=fixture@factoree.test", "-c", "user.name=fix
  */
 export const FIXTURE_CONFIG = `version: 1
 
+identity:
+  product: fixture-product
+  linear:
+    teamKey: FIX
+
 verify:
   commands:
     - name: check

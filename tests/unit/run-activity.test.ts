@@ -10,7 +10,7 @@ import { createLogger } from "~/telemetry/logger.js";
 const record = (status: RunStatus, repairCount: number): RunRecord => ({
   id: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "product-1",
   linearIssueId: null,
   linearAgentSessionId: "session-1",
   temporalWorkflowId: "workflow-1",
@@ -31,6 +31,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   contextContractVersion: null,
   validationContractVersion: null,
   organizationSkillsSha: null,
+  configSha: null,
   proofPackSha256: null,
   proofPackPostedAt: null,
   repairCount,
@@ -56,7 +57,19 @@ const build = () => {
   const runners = {
     all: () => [{ name: "fake", releaseRun: (runId: string) => released.push(runId) }],
   } as unknown as AgentRunnerRegistry;
-  const activities = createRunActivities({ runs, logger: createLogger({ level: "error", redactor }), runners });
+  const agentSession = {
+    acknowledge: () => Promise.resolve(),
+    progress: () => Promise.resolve(),
+    elicit: () => Promise.resolve(),
+    respond: () => Promise.resolve(),
+    fail: () => Promise.resolve(),
+  };
+  const activities = createRunActivities({
+    runs,
+    logger: createLogger({ level: "error", redactor }),
+    runners,
+    agentSession,
+  });
   return { activities, calls, released };
 };
 
@@ -66,7 +79,7 @@ const repairCount = async (reason = "VERIFICATION"): Promise<number> => {
   const sample = metric.values.find(
     (value) =>
       value.labels.tenant_id === "tenant-1" &&
-      value.labels.project_id === "project-1" &&
+      value.labels.product_id === "product-1" &&
       value.labels.reason === reason,
   );
   return sample?.value ?? 0;

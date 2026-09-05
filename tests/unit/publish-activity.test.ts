@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { ApplicationFailure } from "@temporalio/common";
 import {
@@ -15,6 +15,7 @@ import type {
   PullRequestRecord,
 } from "~/domain/publishing/pull-request.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import {
   TrustedCheckoutError,
   type TrustedCheckoutInput,
@@ -150,7 +151,7 @@ const stubPublishToBranch = (
 const input: PublishActivityInput = {
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   spriteId: "sprite-1",
   adapter: "stub",
   workspacePath: "/workspace",
@@ -165,10 +166,28 @@ const input: PublishActivityInput = {
   workItemUrl: "https://linear.app/acme/issue/ENG-1",
   verificationSummary: "every check passed",
   repairCount: 0,
+  githubInstallationId: "install-1",
+};
+
+interface StubTokens {
+  tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string>;
+  calls: Array<{ id: string; scope: Record<string, string> | undefined }>;
+}
+
+const stubTokens = (token: string | Error = TOKEN): StubTokens => {
+  const calls: StubTokens["calls"] = [];
+  return {
+    calls,
+    tokenForInstallation: (id: string, scope?: Record<string, string>): Promise<string> => {
+      calls.push({ id, scope });
+      return token instanceof Error ? Promise.reject(token) : Promise.resolve(token);
+    },
+  };
 };
 
 const build = (options: {
   secrets?: MemorySecretStore;
+  tokens?: StubTokens;
   changedFiles?: string[];
   patchText?: string;
   existing?: PullRequestRecord | null;
@@ -181,7 +200,8 @@ const build = (options: {
 } = {}) => {
   const lines: string[] = [];
   const redactor = new Redactor([]);
-  const secrets = options.secrets ?? new MemorySecretStore({ GITHUB_TOKEN: TOKEN });
+  const secrets = options.secrets ?? new MemorySecretStore({});
+  const tokens = options.tokens ?? stubTokens();
   const pullRequests = memoryPullRequests(options.existing ?? null);
   if (options.pullRequestFailure !== undefined) {
     const failure = options.pullRequestFailure;
@@ -197,6 +217,7 @@ const build = (options: {
       patchText: options.patchText ?? PATCH_TEXT,
     }),
     secrets,
+    tokens,
     redactor,
     runs,
     repositoryReader: reader,
@@ -211,6 +232,9 @@ const build = (options: {
     runs,
     reader,
     publishToBranch,
+    tokens,
+    redactor,
+    secrets,
     lines,
   };
 };
@@ -218,18 +242,102 @@ const build = (options: {
 const environment = new MockActivityEnvironment();
 
 describe("the publish activity", () => {
-  it("refuses a Project without the GITHUB_TOKEN secret", async () => {
-    const { activities, pullRequests } = build({ secrets: new MemorySecretStore({}) });
-    await expect(environment.run((value: PublishActivityInput) => activities.publish(value), input)).rejects.toBeInstanceOf(RunConfigurationError);
-    expect(pullRequests.lookups).toEqual([]);
+  it("mints with the write scope and reads no Product secret", async () => {
+    const secrets = new MemorySecretStore({});
+    const listSpy = vi.spyOn(secrets, "list");
+    const getSpy = vi.spyOn(secrets, "get");
+    const tokens = stubTokens();
+    const { activities } = build({ secrets, tokens });
+
+    await environment.run((value: PublishActivityInput) => activities.publish(value), input);
+
+    expect(tokens.calls).toEqual([
+      { id: "install-1", scope: { contents: "write", pull_requests: "write" } },
+    ]);
+    expect(getSpy).not.toHaveBeenCalled();
+    // `registerProjectSecrets` still lists Project secrets, for the redactor of SDD section 60.
+    // It never reads one by name for the GitHub credential, which is the property this proves.
+    listSpy.mockRestore();
+    getSpy.mockRestore();
   });
 
-  it("refuses a GITHUB_TOKEN that carries the injection mark and names the rotation", async () => {
-    const secrets = new MemorySecretStore({
-      GITHUB_TOKEN: { value: TOKEN, injectIntoImplementer: true },
-    });
-    const { activities } = build({ secrets });
-    await expect(environment.run((value: PublishActivityInput) => activities.publish(value), input)).rejects.toThrow(/Rotate the credential/);
+  it("names the installation when a mint fails", async () => {
+    const tokens = stubTokens(new Error("the GitHub API answered 401 while it minted a token for installation install-1"));
+    const { activities } = build({ tokens });
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), input),
+    ).rejects.toThrow(/install-1/);
+  });
+
+  it("refuses an empty installation id before it mints", async () => {
+    const tokens = stubTokens();
+    const { activities } = build({ tokens });
+    const noInstallation: PublishActivityInput = { ...input, githubInstallationId: "" };
+
+    await expect(
+      environment.run((value: PublishActivityInput) => activities.publish(value), noInstallation),
+    ).rejects.toBeInstanceOf(RunConfigurationError);
+    expect(tokens.calls).toEqual([]);
+  });
+
+  it("converts a deterministic mint failure into a configuration fault, reaching the workflow's install-the-App message", async () => {
+    const tokens = stubTokens(
+      new GitHubAppAuthError("the GitHub API answered 401 for installation install-1", 401, "install-1"),
+    );
+    const { activities } = build({ tokens });
+
+    const error = await environment
+      .run((value: PublishActivityInput) => activities.publish(value), input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    // `isConfigurationFault` in the workflow recognises this class, which is what makes the
+    // workflow's "Install the Factoree GitHub App" message reachable for this fault.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+  });
+
+  it("converts a 422 mint failure into a configuration fault naming the permission problem", async () => {
+    const tokens = stubTokens(
+      new GitHubAppAuthError("the GitHub API answered 422 for installation install-1", 422, "install-1"),
+    );
+    const { activities } = build({ tokens });
+
+    const error = await environment
+      .run((value: PublishActivityInput) => activities.publish(value), input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    // A 422 means the installation does not grant a requested permission, not that the
+    // installation is missing, so the message must point the operator at the App's permissions.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+    expect(String(error)).toMatch(/permission/i);
+  });
+
+  it("keeps a 5xx mint failure retryable, because a retry can still succeed", async () => {
+    const tokens = stubTokens(
+      new GitHubAppAuthError("the GitHub API answered 500 for installation install-1", 500, "install-1"),
+    );
+    const { activities } = build({ tokens });
+
+    const error = await environment
+      .run((value: PublishActivityInput) => activities.publish(value), input)
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GitHubAppAuthError);
+    expect(error).not.toBeInstanceOf(RunConfigurationError);
+  });
+
+  it("registers the minted token with the redactor before it is used", async () => {
+    const tokens = stubTokens("ghs_minted_secret_value");
+    const { activities, redactor } = build({ tokens });
+
+    await environment.run((value: PublishActivityInput) => activities.publish(value), input);
+
+    expect(redactor.redact("a line holding ghs_minted_secret_value")).not.toContain("ghs_minted_secret_value");
   });
 
   it("refuses a patch that names a file the review never saw, before any pull request call", async () => {

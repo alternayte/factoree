@@ -34,7 +34,7 @@ describe("OpenCodeRunner against a real sandbox process", () => {
   });
 
   const input = async (extraEnv: Record<string, string>) => {
-    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     return {
       ref,
       run: {

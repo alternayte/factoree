@@ -107,7 +107,7 @@ afterEach(async () => {
  */
 describe("AT-21 — the Reviewer session is fresh", () => {
   it("differs from the Implementer session, in the persisted rows, in the prompt text, and carries the SDD section 40 input list", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
 
     root = await mkdtemp(join(tmpdir(), "factoree-at21-repo-"));
     const primary = await createFixtureRepository(root, "app");
@@ -124,7 +124,7 @@ describe("AT-21 — the Reviewer session is fresh", () => {
 
     sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at21-sandbox-"));
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId, tenantId, projectId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
 
     const contract: ValidationContract = {
       version: 1,
@@ -183,7 +183,7 @@ describe("AT-21 — the Reviewer session is fresh", () => {
     const input: ReviewActivityInput = {
       runId,
       tenantId,
-      projectId,
+      productId: productId,
       runnerName: "opencode",
       spriteId: ref.id,
       adapter: ref.adapter,

@@ -79,7 +79,7 @@ describe("Phase 3 exit condition — a false agent success claim cannot bypass a
     const prepared = await manager.prepare({
       runId,
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
       primary: { url: primaryPath, ref: "main" },
       references: [],
       defaults: DEFAULT_PROJECT_DEFAULTS,

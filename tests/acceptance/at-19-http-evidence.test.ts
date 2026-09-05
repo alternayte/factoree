@@ -42,7 +42,7 @@ describe("AT-19 — HTTP evidence records sanitized request and response fields"
     const port = await pickPort();
     sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at19-sandbox-"));
     sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId: "at19-run", tenantId: "at19-tenant", projectId: "at19-project" });
+    const ref = await sandbox.create({ runId: "at19-run", tenantId: "at19-tenant", productId: "at19-project" });
     root = ref.workspacePath;
     await writePreviewFixtureApp({ root, persistName: true });
 

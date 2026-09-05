@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
 import { Worker } from "@temporalio/worker";
+import { inject } from "vitest";
 import type { TestWorkflowEnvironment } from "@temporalio/testing";
 import type { WorkflowHandle } from "@temporalio/client";
 import {
@@ -79,6 +81,21 @@ export interface CompletionCall {
 
 /** The single verification command every Run of the harness gets by default. */
 export const DEFAULT_VERIFY_COMMANDS: VerificationCommand[] = [{ name: "unit", run: "npm test" }];
+
+/**
+ * Caches the agent-run workflow bundle for this test process.
+ *
+ * `tests/workflow/support/global-setup.ts` builds the bundle once for the whole
+ * suite and provides its file path over vitest's `provide`/`inject` channel.
+ * Each test file runs in its own worker process, so this module reads the file
+ * once per process and reuses the result for every `runWorker` call, instead
+ * of asking `Worker.create` to bundle `workflowsPath` again on every call.
+ */
+let agentRunWorkflowBundlePromise: Promise<string> | undefined;
+const loadAgentRunWorkflowBundle = async (): Promise<string> => {
+  agentRunWorkflowBundlePromise ??= readFile(inject("agentRunWorkflowBundlePath"), "utf8");
+  return agentRunWorkflowBundlePromise;
+};
 
 /** The frozen Validation Contract hash the double reports. */
 export const VALIDATION_SHA = "c".repeat(64);
@@ -235,6 +252,47 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const proofPackOutcomes = new Map<string, () => PublishProofPackActivityOutput>();
   /** A run id in this map holds `publishProofPack` until the promise resolves. */
   const heldProofPacks = new Map<string, Promise<void>>();
+  /**
+   * A run id in this map replaces the `verifyTargetIdentity` result. The default reports a
+   * match, so a test that does not care about section 8 sees no gate.
+   */
+  const targetIdentityOutcomes = new Map<
+    string,
+    () => { configSha: string; matched: boolean; declaredProduct: string | null }
+  >();
+  /** Every recorded `verifyTargetIdentity` call, in order. */
+  const targetIdentityCalls: Array<{
+    tenantId: string;
+    runId: string;
+    productSlug: string;
+    repositoryUrl: string;
+    baseSha: string;
+  }> = [];
+  /** Every recorded `recordRunTarget` call, in order. */
+  const recordRunTargetCalls: Array<{
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    selectionReason: string;
+    mergeOrder: number;
+  }> = [];
+  /** Every recorded `recordRunTargetFacts` call, in order. F2. */
+  const recordRunTargetFactsCalls: Array<{
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    baseSha?: string;
+    patchSha256?: string;
+    commitSha?: string;
+    pullRequestUrl?: string;
+  }> = [];
+  /** Every recorded `postTargetNotice` call, in order. */
+  const postTargetNoticeCalls: Array<{
+    tenantId: string;
+    runId: string;
+    fullName: string;
+    reason: string;
+  }> = [];
   /** A run id in this map holds the publication open until the test resolves the promise. */
   const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
@@ -701,6 +759,48 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         postedAt: "2026-01-01T03:00:00.000Z",
       };
     },
+    verifyTargetIdentity: async (input: {
+      tenantId: string;
+      runId: string;
+      productSlug: string;
+      repositoryUrl: string;
+      baseSha: string;
+    }) => {
+      activityOrder.push("verifyTargetIdentity");
+      targetIdentityCalls.push(input);
+      const outcome = targetIdentityOutcomes.get(input.runId);
+      if (outcome !== undefined) return outcome();
+      return { configSha: "f".repeat(64), matched: true, declaredProduct: input.productSlug };
+    },
+    recordRunTarget: async (input: {
+      tenantId: string;
+      runId: string;
+      repositoryId: string;
+      selectionReason: string;
+      mergeOrder: number;
+    }) => {
+      recordRunTargetCalls.push(input);
+      return `target-${input.runId}-${input.repositoryId}`;
+    },
+    recordRunTargetFacts: async (input: {
+      tenantId: string;
+      runId: string;
+      repositoryId: string;
+      baseSha?: string;
+      patchSha256?: string;
+      commitSha?: string;
+      pullRequestUrl?: string;
+    }) => {
+      recordRunTargetFactsCalls.push(input);
+    },
+    postTargetNotice: async (input: {
+      tenantId: string;
+      runId: string;
+      fullName: string;
+      reason: string;
+    }) => {
+      postTargetNoticeCalls.push(input);
+    },
   };
 
   /**
@@ -715,11 +815,13 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     labels: [],
   };
 
-  /** The Project of a Run. SDD section 15: only the Project defaults travel from here. */
-  const projectInput = {
-    primaryRepository: "acme/primary",
-    referenceRepositories: [],
-    defaultBranch: "main",
+  /** The Product of a Run. SDD section 15: only the Product defaults travel from here. */
+  const productInput = {
+    productId: "product-1",
+    productSlug: "acme",
+    repositories: [
+      { id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    ],
     repositoryBaseUrl: "https://example.invalid",
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
     spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
@@ -730,13 +832,14 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const input = (sessionId: string, maxRunMinutes = 90): AgentRunWorkflowInput => ({
     tenantId: "tenant-1",
     workspaceId: "workspace-123",
-    projectId: "project-1",
+    productId: "product-1",
     linearIssueId: "issue-1",
     agentSessionId: sessionId,
     autonomyLevel: "L2",
     maxRunMinutes,
     workItem: workItemInput,
-    project: projectInput,
+    product: productInput,
+    repositoryProposal: null,
   });
 
   /** Starts one Run of the default fixture Project, with the given overrides. */
@@ -751,7 +854,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     const worker = await Worker.create({
       connection: environment().nativeConnection,
       taskQueue: "test",
-      workflowsPath: new URL("../../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
+      workflowBundle: { code: await loadAgentRunWorkflowBundle() },
       activities,
     });
     return worker.runUntil(body());
@@ -807,6 +910,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     proofPackCalls,
     proofPackOutcomes,
     heldProofPacks,
+    recordRunTargetCalls,
+    recordRunTargetFactsCalls,
+    postTargetNoticeCalls,
+    targetIdentityOutcomes,
+    targetIdentityCalls,
     activityOrder,
     workItemLabels,
     failingLabelReads,
@@ -816,7 +924,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     contextConflicts,
     missingBranches,
     workItemInput,
-    projectInput,
+    productInput,
     PRIMARY_SHA,
     input,
     start,
@@ -838,16 +946,36 @@ export const waitForStatus = async (
   );
 };
 
-/** Polls until the predicate holds. It lets the workflow reach a step before the test signals. */
+/**
+ * Polls until the predicate holds. It lets the workflow reach a step before the test signals.
+ *
+ * A real Temporal Worker dispatches each activity through an actual poll, execute, and report
+ * cycle over a native connection, and that dispatch can starve entirely under CPU contention.
+ * Instrumentation confirmed this: under deliberate oversubscription, a stalled wait polled
+ * about 2200 times across its whole budget with zero movement in the watched value. Widening
+ * this budget does not fix that. A failure here points at contention on the machine, not at a
+ * defect in the workflow under test. `testTimeout` in `vitest.workflow.config.ts` is 180
+ * seconds, so this default still fails fast well inside one test case.
+ */
 export const waitFor = async (
   predicate: () => boolean | Promise<boolean>,
   what = "the condition",
-  timeoutMs = 10_000,
+  timeoutMs = 60_000,
+  describe?: () => unknown,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+  let lastObserved: unknown;
   while (!(await predicate())) {
+    pollCount += 1;
+    if (describe) {
+      lastObserved = await describe();
+    }
     if (Date.now() > deadline) {
-      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}`);
+      const detail = describe
+        ? ` (polled ${pollCount} times; last observed value: ${JSON.stringify(lastObserved)})`
+        : ` (polled ${pollCount} times)`;
+      throw new Error(`the test waited ${timeoutMs} milliseconds for ${what}${detail}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

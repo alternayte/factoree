@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSecretKindAndMark, ProjectSecretKindError } from "~/domain/projects/secret-store.js";
+import { assertSecretKindAndMark, ProjectSecretKindError } from "~/domain/products/secret-store.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 
 describe("the Project secret kind", () => {

@@ -80,7 +80,12 @@ const run = async (
  */
 export type RepositoryCredential = string | undefined;
 
-const clone = async (
+/**
+ * Clones one repository at one ref. It reports the commit it landed on. `checkoutPrimary`,
+ * `checkoutReferences`, `checkoutOrganizationSkills`, and `cloneSibling` all share this
+ * function, so every checkout disables the push URL and captures the base SHA the same way.
+ */
+export const cloneRepository = async (
   sandbox: Sandbox,
   ref: SandboxRef,
   spec: RepositorySpec,
@@ -131,7 +136,7 @@ export const checkoutPrimary = async (
   credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository> => {
   const path = `${ref.workspacePath}/primary`;
-  const baseSha = await clone(sandbox, ref, spec, path, credential);
+  const baseSha = await cloneRepository(sandbox, ref, spec, path, credential);
   return { url: spec.url, path, baseSha, readOnly: false };
 };
 
@@ -181,7 +186,7 @@ export const checkoutReferences = async (
   for (const spec of specs) {
     const name = namesByUrl.get(spec.url) ?? repositoryName(spec.url);
     const path = `${ref.workspacePath}/reference/${name}`;
-    const baseSha = await clone(sandbox, ref, spec, path, credential);
+    const baseSha = await cloneRepository(sandbox, ref, spec, path, credential);
     // SDD section 29 denies writing a reference repository. This is a file mode, not a prompt.
     await run(sandbox, ref, { file: "chmod", args: ["-R", "a-w", path] });
     references.push({ url: spec.url, path, baseSha, readOnly: true });
@@ -202,7 +207,7 @@ export const checkoutOrganizationSkills = async (
   credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository> => {
   const path = `${ref.workspacePath}/organization-skills`;
-  const baseSha = await clone(sandbox, ref, spec, path, credential);
+  const baseSha = await cloneRepository(sandbox, ref, spec, path, credential);
   // SDD section 29 denies writing a repository the agent must only read. This is a file mode.
   await run(sandbox, ref, { file: "chmod", args: ["-R", "a-w", path] });
   return { url: spec.url, path, baseSha, readOnly: true };

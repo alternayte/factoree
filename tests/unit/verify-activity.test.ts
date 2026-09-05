@@ -28,7 +28,7 @@ const build = (
 const input = {
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   spriteId: "sprite-1",
   adapter: "fake",
   workspacePath: "/w",

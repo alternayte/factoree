@@ -14,11 +14,7 @@ import { FakeContextContractStore } from "../support/fake-context-contract-store
 import { createWorkflowHarness, hold, waitFor } from "../workflow/support/harness.js";
 import type { ContextFixture } from "./support/context-fixture-repository.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
-import {
-  PRIMARY_SLUG,
-  REFERENCE_SLUG,
-  buildContextFixture,
-} from "./support/context-fixture-repository.js";
+import { PRIMARY_SLUG, buildContextFixture } from "./support/context-fixture-repository.js";
 
 let environment: TestWorkflowEnvironment;
 let fixture: ContextFixture;
@@ -72,6 +68,10 @@ beforeAll(async () => {
     },
     repositoryReader: reader,
     secrets: new MemorySecretStore(),
+    tokens: {
+      tokenForInstallation: () => Promise.reject(new Error("this fixture reads a local path, so no mint runs")),
+    },
+    redactor: new Redactor(),
   });
   harness.activities.resolveContext = (input) => contextActivities.resolveContext(input);
 
@@ -109,16 +109,21 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
           url: null,
           labels: [],
         },
-        project: {
-          ...harness.projectInput,
-          primaryRepository: PRIMARY_SLUG,
-          referenceRepositories: [REFERENCE_SLUG],
-          defaultBranch: "main",
+        product: {
+          ...harness.productInput,
+          // F1 (specification section 12). A repository of the Product that is not the target
+          // stays absent at Run start; the workflow no longer seeds a reference repository from
+          // Product membership. This exit condition proves the Context Contract explains a
+          // single-repository Product; Phase 5 proves a reference repository reaches the
+          // contract through the legitimate mechanism, Backstage automatic discovery.
+          repositories: [
+            { id: "repository-primary", fullName: PRIMARY_SLUG, defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+          ],
           repositoryBaseUrl: fixture.root,
         },
       });
-      // This Run clones two real repositories through git, so it needs more than the default
-      // ten seconds on a cold machine.
+      // This Run clones a real repository through git, so it needs more than the default ten
+      // seconds on a cold machine.
       await waitFor(
         () => implementCalls.some((entry) => entry.runId === RUN_ID),
         "the Implementer of the exit Run",
@@ -138,10 +143,10 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
         // SDD section 53. The frozen version reached the Run row as well.
         expect(contextVersions).toContain(stored?.sha256);
 
-        // Every repository carries an explicit commit SHA, and each one is the SHA the fixture
-        // really holds.
+        // The repository carries an explicit commit SHA, and it is the SHA the fixture really
+        // holds.
         expect(stored?.document).toContain(`${PRIMARY_SLUG} at ${fixture.primarySha}`);
-        expect(stored?.document).toContain(`${REFERENCE_SLUG} at ${fixture.referenceSha}`);
+        expect(stored?.document).toContain("Reference repositories\n\n- None.");
 
         // Every item carries complete provenance.
         expect(stored?.items.length).toBeGreaterThan(0);
@@ -160,7 +165,6 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
         const progress = postedProgress.join("\n");
         expect(progress).toContain("Context Contract");
         expect(progress).toContain(`${PRIMARY_SLUG}@${fixture.primarySha.slice(0, 7)}`);
-        expect(progress).toContain(`${REFERENCE_SLUG}@${fixture.referenceSha.slice(0, 7)}`);
 
         // The explanation reached the Implementer, and it is the frozen text.
         const call = implementCalls.find((entry) => entry.runId === RUN_ID);
@@ -177,7 +181,8 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
         // state Factoree explained.
         const prepare = prepared.find((entry) => entry.runId === RUN_ID);
         expect(prepare?.primary.ref).toBe(fixture.primarySha);
-        expect(prepare?.references.map((entry) => entry.ref)).toEqual([fixture.referenceSha]);
+        // F1. No sibling was seeded as a reference repository, so the sandbox checks out none.
+        expect(prepare?.references).toEqual([]);
       } finally {
         // The held Implementer must always be released, or the worker cannot shut down. The
         // stop must reach the activity before the release, exactly as

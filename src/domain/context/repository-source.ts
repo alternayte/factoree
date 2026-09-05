@@ -1,7 +1,7 @@
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { RepositoryReadError } from "~/adapters/github/git-repository-reader.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
-import { FACTOREE_CONFIG_PATH } from "~/domain/projects/factoree-config.js";
+import { FACTOREE_CONFIG_PATH } from "~/domain/products/factoree-config.js";
 import type { AuthorityClass } from "./authority.js";
 import type {
   ContextCandidate,

@@ -222,6 +222,114 @@ describe("the Proof Pack renderer", () => {
     expect(renderProofPack(input())).toMatch(/### Preview\n\nNot available\./);
   });
 
+  it("renders the Routing section with the product, the team, and every target", () => {
+    const markdown = renderProofPack(
+      input({
+        routing: {
+          productSlug: "checkout-platform",
+          linearTeamKey: "PAY",
+          targets: [
+            {
+              fullName: "acme/checkout-api",
+              baseSha: "4f21c9e",
+              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
+              mergeOrder: 1,
+            },
+          ],
+          siblingsRead: [{ fullName: "acme/checkout-events", commitSha: "1b7d004" }],
+          selectionReason: "sole member",
+        },
+      }),
+    );
+
+    expect(markdown).toContain("### Routing");
+    expect(markdown).toContain("Product: checkout-platform");
+    expect(markdown).toContain("Linear team: PAY");
+    expect(markdown).toContain("acme/checkout-api @ 4f21c9e -> PR #812");
+    expect(markdown).toContain("acme/checkout-events @ 1b7d004");
+    expect(markdown).toContain("Selection reason: sole member");
+  });
+
+  it("folds a newline in the selection reason so the Routing section stays one line per field", () => {
+    const markdown = renderProofPack(
+      input({
+        routing: {
+          productSlug: "checkout-platform",
+          linearTeamKey: "PAY",
+          targets: [
+            {
+              fullName: "acme/checkout-api",
+              baseSha: "4f21c9e",
+              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
+              mergeOrder: 1,
+            },
+          ],
+          siblingsRead: [],
+          selectionReason: "declared coupling\nconfirmed by an operator",
+        },
+      }),
+    );
+
+    expect(markdown).toContain(
+      "Selection reason: declared coupling confirmed by an operator",
+    );
+    expect(markdown).not.toContain("Selection reason: declared coupling\nconfirmed");
+  });
+
+  it("omits the Merge order line when the Run touched one target", () => {
+    const markdown = renderProofPack(
+      input({
+        routing: {
+          productSlug: "checkout-platform",
+          linearTeamKey: "PAY",
+          targets: [
+            {
+              fullName: "acme/checkout-api",
+              baseSha: "4f21c9e",
+              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
+              mergeOrder: 1,
+            },
+          ],
+          siblingsRead: [],
+          selectionReason: "sole member",
+        },
+      }),
+    );
+
+    expect(markdown).not.toContain("Merge order:");
+    expect(markdown).toContain("Sibling repositories read: none.");
+  });
+
+  it("renders the Merge order line when the Run touched several targets", () => {
+    const markdown = renderProofPack(
+      input({
+        routing: {
+          productSlug: "checkout-platform",
+          linearTeamKey: "PAY",
+          targets: [
+            {
+              fullName: "acme/checkout-api",
+              baseSha: "4f21c9e",
+              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
+              mergeOrder: 1,
+            },
+            {
+              fullName: "acme/checkout-web",
+              baseSha: "88a0f2b",
+              pullRequestUrl: "https://github.com/acme/checkout-web/pull/341",
+              mergeOrder: 2,
+            },
+          ],
+          siblingsRead: [{ fullName: "acme/checkout-events", commitSha: "1b7d004" }],
+          selectionReason: "declared coupling",
+        },
+      }),
+    );
+
+    expect(markdown).toContain("2. acme/checkout-web @ 88a0f2b -> PR #341");
+    expect(markdown).toContain("Merge order: checkout-api, then checkout-web");
+  });
+
   it("hashes one body to one value and two bodies to two values", () => {
     const body = renderProofPack(input());
     expect(hashProofPack(body)).toBe(hashProofPack(body));

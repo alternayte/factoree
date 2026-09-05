@@ -17,6 +17,15 @@ export const RUN_STATUSES = [
   "FAILED",
   "FAILED_REVIEW",
   "CANCELLED",
+  // Specification section 9. No Product for the Linear team, or two Products claim it. An
+  // operator must resolve the binding, so this state is terminal.
+  "BLOCKED_ROUTING",
+  // Specification section 10. Several repositories, and no confident target. The Run waits for
+  // a Linear reply, the same way `WAITING_FOR_INPUT` does.
+  "BLOCKED_TARGET",
+  // Specification section 15. A target repository moved before publication. The Run ends here,
+  // and Factoree creates no pull request.
+  "BLOCKED_STALE_SET",
 ] as const;
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
@@ -28,6 +37,8 @@ export const TERMINAL_RUN_STATUSES = [
   "FAILED",
   "FAILED_REVIEW",
   "CANCELLED",
+  "BLOCKED_ROUTING",
+  "BLOCKED_STALE_SET",
 ] as const satisfies readonly RunStatus[];
 
 const terminal = new Set<string>(TERMINAL_RUN_STATUSES);
@@ -49,6 +60,9 @@ export const RUN_FAILURE_REASONS = [
   // SDD section 9 item 5. The Work Item states no observable success assertion, and the bounded
   // question rounds ended with no human answer. Implementation must not start.
   "VALIDATION_UNRESOLVED",
+  // Specification section 10. The bounded question rounds ended with no confirmed target
+  // repository.
+  "TARGET_UNRESOLVED",
   // SDD section 36. At least one assertion is FAIL and the repair budget of SDD section 42 is
   // spent.
   "VALIDATION_FAILED",

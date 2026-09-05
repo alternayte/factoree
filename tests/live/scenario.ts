@@ -33,7 +33,7 @@ import { resolveProfile } from "./profile.js";
 
 /** SDD section 59 fixes this path. An operator creates a Backstage or an MCP context source
  * configuration row with it. */
-export const CONTEXT_SOURCE_ADMIN_ENDPOINT = "POST /admin/projects/:id/context-sources";
+export const CONTEXT_SOURCE_ADMIN_ENDPOINT = "POST /admin/products/:id/context-sources";
 
 /** How long the scenario waits for Factoree to post the Proof Pack comment. */
 const PROOF_PACK_TIMEOUT_MS = 30 * 60 * 1000;
@@ -164,11 +164,11 @@ const waitForAgentActivity = async (linear: LinearClient, issueId: string): Prom
 /**
  * SDD section 66 requires a test Backstage catalog and a test MCP source. Backstage and MCP
  * are not environment-configured. They are `ContextSourceConfiguration` rows in the database,
- * per Project. This check queries those rows directly, rather than trusting an environment
+ * per Product. This check queries those rows directly, rather than trusting an environment
  * gate, because a gate proves nothing about what the worker actually reads.
  */
 const checkContextSources = async (env: NodeJS.ProcessEnv): Promise<LiveFact> => {
-  const name = "The Project has an enabled Backstage source and an enabled MCP source";
+  const name = "The Product has an enabled Backstage source and an enabled MCP source";
   const databaseUrl = env.DATABASE_URL ?? "";
   const teamId = env.LIVE_LINEAR_TEAM_ID ?? "";
   const profile = resolveProfile(env);
@@ -178,18 +178,18 @@ const checkContextSources = async (env: NodeJS.ProcessEnv): Promise<LiveFact> =>
       : " This profile's stub endpoints satisfy this requirement when registered as rows.";
   const prisma = createPrismaClient(databaseUrl);
   try {
-    const project = await prisma.project.findFirst({ where: { linearTeamId: teamId } });
-    if (project === null) {
+    const product = await prisma.product.findFirst({ where: { linearTeamId: teamId } });
+    if (product === null) {
       return {
         name,
         holds: false,
         detail:
-          `no Project row names Linear team ${teamId}. Create the Project first, then add a ` +
+          `no Product row names Linear team ${teamId}. Create the Product first, then add a ` +
           `context source with ${CONTEXT_SOURCE_ADMIN_ENDPOINT}.${standInNote}`,
       };
     }
     const sources = await prisma.contextSourceConfiguration.findMany({
-      where: { projectId: project.id, enabled: true },
+      where: { productId: product.id, enabled: true },
     });
     const hasBackstage = sources.some((source) => source.kind === "backstage");
     const hasMcp = sources.some((source) => source.kind === "mcp");
@@ -198,8 +198,8 @@ const checkContextSources = async (env: NodeJS.ProcessEnv): Promise<LiveFact> =>
       name,
       holds,
       detail: holds
-        ? "an enabled backstage row and an enabled mcp row exist for the Project."
-        : `the Project is missing an enabled backstage row, an enabled mcp row, or both. ` +
+        ? "an enabled backstage row and an enabled mcp row exist for the Product."
+        : `the Product is missing an enabled backstage row, an enabled mcp row, or both. ` +
           `Create the missing row with ${CONTEXT_SOURCE_ADMIN_ENDPOINT}.${standInNote}`,
     };
   } finally {
@@ -317,7 +317,7 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
   if (prUrlMatch !== null && env.LIVE_GITHUB_TOKEN !== undefined && env.LIVE_GITHUB_REPOSITORY !== undefined) {
     const pullRequests = new GitHubPullRequests({
       apiBaseUrl: "https://api.github.com",
-      token: env.LIVE_GITHUB_TOKEN,
+      tokens: { tokenForInstallation: () => Promise.resolve(env.LIVE_GITHUB_TOKEN ?? "") },
     });
     // The Proof Pack names the pull request by its URL, and SDD section 47 fixes that section as
     // the URL alone. A URL carries the number, so the number is what this scenario confirms. An
@@ -327,7 +327,9 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
     const number = Number.parseInt(numberMatch?.[1] ?? "", 10);
     if (Number.isInteger(number)) {
       try {
-        const record = await pullRequests.findByNumber(env.LIVE_GITHUB_REPOSITORY, number);
+        // The live scenario reads with the Project token above, which carries no installation
+        // of its own, so this identifier selects nothing and is never read by that path.
+        const record = await pullRequests.findByNumber(env.LIVE_GITHUB_REPOSITORY, number, "");
         prConfirmed = record !== null && record.number === number;
         prDetail = prConfirmed
           ? `GitHub confirms pull request #${number} at ${prUrlMatch[0]}, on branch ${record?.headBranch ?? "?"}`

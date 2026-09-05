@@ -12,11 +12,21 @@ import { Redactor } from "~/telemetry/redaction.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
+import { RepositoryReadError, type RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
 const SHA_A = "a".repeat(40);
 
-const build = (files: Record<string, string>, secrets = new MemorySecretStore()) => {
+const build = (
+  files: Record<string, string>,
+  secrets = new MemorySecretStore(),
+  tokens: { tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string> } = {
+    tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
+  },
+  redactor = new Redactor(),
+) => {
   const reader = new FakeRepositoryReader({ [PRIMARY_URL]: { sha: SHA_A, files } });
   const contracts = new FakeContextContractStore();
   const versions: Array<{ tenantId: string; runId: string; version: string }> = [];
@@ -42,6 +52,8 @@ const build = (files: Record<string, string>, secrets = new MemorySecretStore())
     },
     repositoryReader: reader,
     secrets,
+    tokens,
+    redactor,
   });
   return { activities, contracts, versions, reader };
 };
@@ -49,13 +61,14 @@ const build = (files: Record<string, string>, secrets = new MemorySecretStore())
 const input = (over: Partial<ResolveContextActivityInput> = {}): ResolveContextActivityInput => ({
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   goal: "Retry a failed notification delivery.",
   acceptanceCriteria: ["A failed notification is retried."],
   primaryRepository: { slug: "acme/webhook-service", url: PRIMARY_URL, ref: "main" },
   referenceRepositories: [],
   workItemReferences: [],
   decisions: [],
+  githubInstallationId: "",
   ...over,
 });
 
@@ -233,21 +246,139 @@ describe("resolveContext activity", () => {
 
 describe("resolveContext, the private repository credential", () => {
   it("gives the reader the credential for the primary repository origin", async () => {
-    const secrets = new MemorySecretStore({
-      GITHUB_READ_TOKEN: { value: "read-value", injectIntoImplementer: false, kind: "repository_read" },
-    });
-    const { activities, reader } = build({}, secrets);
+    const tokens = { tokenForInstallation: () => Promise.resolve("ghs_context_read_token") };
+    const { activities, reader } = build({}, new MemorySecretStore(), tokens);
 
-    await activities.resolveContext(input());
+    await activities.resolveContext(input({ githubInstallationId: "install-1" }));
 
     expect(reader.credentialOrigins).toEqual(["https://git"]);
   });
 
-  it("gives the reader no credential when the Project holds none", async () => {
+  it("gives the reader no credential when the repository holds no installation", async () => {
     const { activities, reader } = build({});
 
     await activities.resolveContext(input());
 
     expect(reader.credentialOrigins).toEqual([]);
+  });
+
+  it("registers the minted discovery-read token with the redactor before it is used", async () => {
+    const tokens = { tokenForInstallation: () => Promise.resolve("ghs_discovery_read_secret_value") };
+    const redactor = new Redactor();
+    const { activities, reader } = build({}, new MemorySecretStore(), tokens, redactor);
+
+    await activities.resolveContext(input({ githubInstallationId: "install-1" }));
+
+    expect(reader.mintedTokens).toEqual(["ghs_discovery_read_secret_value"]);
+    expect(redactor.redact("a line holding ghs_discovery_read_secret_value")).not.toContain(
+      "ghs_discovery_read_secret_value",
+    );
+  });
+});
+
+describe("resolveContext, a rejected mint of the discovery-read credential", () => {
+  /**
+   * `GitRepositoryReader` wraps a mint rejected inside a git command into a
+   * `RepositoryReadError`, with the original `GitHubAppAuthError` as its `cause`. This stub
+   * reproduces that wrapping, so the test proves the activity unwraps it rather than only the
+   * bare `GitHubAppAuthError` publish-time tests already cover.
+   */
+  const rejectingReader = (authError: GitHubAppAuthError): RepositoryReader => ({
+    useCredential: () => undefined,
+    resolveRef: () =>
+      Promise.reject(
+        new RepositoryReadError(`could not resolve the ref: ${authError.message}`, { cause: authError }),
+      ),
+    listTree: () => Promise.reject(new Error("not used")),
+    readBlob: () => Promise.reject(new Error("not used")),
+  });
+
+  const buildWithReader = (reader: RepositoryReader) =>
+    createContextActivities({
+      resolver: new ContextResolver(),
+      contracts: new FakeContextContractStore(),
+      runs: { setContextContractVersion: () => Promise.resolve() } as unknown as RunRepository,
+      logger: createLogger({ level: "error", redactor: new Redactor() }),
+      sources: {
+        sourcesFor: () =>
+          Promise.resolve(
+            new ContextSourceRegistry([
+              new LinearContextSource(),
+              new RepositoryContextSource({ reader }),
+            ]),
+          ),
+      },
+      repositoryReader: reader,
+      secrets: new MemorySecretStore(),
+      tokens: { tokenForInstallation: () => Promise.resolve("ghs_context_read_token") },
+      redactor: new Redactor(),
+    });
+
+  it("converts a deterministic mint failure into a configuration fault, even wrapped in a RepositoryReadError", async () => {
+    const authError = new GitHubAppAuthError(
+      "the GitHub API answered 401 for installation install-1",
+      401,
+      "install-1",
+    );
+    const activities = buildWithReader(rejectingReader(authError));
+
+    const error = await activities
+      .resolveContext(input({ githubInstallationId: "install-1" }))
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+  });
+
+  it("keeps a 5xx mint failure retryable, even wrapped in a RepositoryReadError", async () => {
+    const authError = new GitHubAppAuthError(
+      "the GitHub API answered 500 for installation install-1",
+      500,
+      "install-1",
+    );
+    const activities = buildWithReader(rejectingReader(authError));
+
+    const error = await activities
+      .resolveContext(input({ githubInstallationId: "install-1" }))
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(RepositoryReadError);
+    expect(error).not.toBeInstanceOf(RunConfigurationError);
+  });
+
+  it("converts a deterministic mint failure at verifyTargetIdentity into a configuration fault", async () => {
+    const authError = new GitHubAppAuthError(
+      "the GitHub API answered 403 for installation install-1",
+      403,
+      "install-1",
+    );
+    const reader: RepositoryReader = {
+      useCredential: () => undefined,
+      resolveRef: () => Promise.reject(new Error("not used")),
+      listTree: () => Promise.reject(new Error("not used")),
+      readBlob: () =>
+        Promise.reject(
+          new RepositoryReadError(`could not read the blob: ${authError.message}`, { cause: authError }),
+        ),
+    };
+    const activities = buildWithReader(reader);
+
+    const error = await activities
+      .verifyTargetIdentity({
+        runId: "run-1",
+        tenantId: "tenant-1",
+        productId: "project-1",
+        productSlug: "checkout-platform",
+        repositoryUrl: PRIMARY_URL,
+        baseSha: SHA_A,
+        githubInstallationId: "install-1",
+      })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
   });
 });

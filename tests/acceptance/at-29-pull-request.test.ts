@@ -129,7 +129,7 @@ beforeAll(async () => {
   // reads it.
   sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at29-sandbox-"));
   sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  ref = await sandbox.create({ runId: RUN_ID, tenantId: "tenant-1", projectId: "project-1" });
+  ref = await sandbox.create({ runId: RUN_ID, tenantId: "tenant-1", productId: "project-1" });
   primaryPath = `${ref.workspacePath}/primary`;
   const clone = await sandbox.exec(ref, {
     file: "sh",
@@ -153,11 +153,12 @@ beforeAll(async () => {
   runs = memoryRuns();
   const activities = createPublishingActivities({
     sandbox,
-    secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+    secrets: new MemorySecretStore({}),
+    tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
     redactor,
     runs,
     repositoryReader: reader,
-    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
+    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
     gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
     logger: createLogger({ level: "debug", redactor, sink: (line) => logLines.push(line) }),
     publishToBranch: seam,
@@ -176,7 +177,7 @@ beforeAll(async () => {
   input = {
     runId: RUN_ID,
     tenantId: "tenant-1",
-    projectId: "project-1",
+    productId: "project-1",
     spriteId: ref.id,
     adapter: ref.adapter,
     workspacePath: ref.workspacePath,
@@ -191,6 +192,7 @@ beforeAll(async () => {
     workItemUrl: "https://linear.app/acme/issue/ENG-29",
     verificationSummary: VERIFICATION_SUMMARY,
     repairCount: 1,
+    githubInstallationId: "install-1",
   };
 
   first = await environment.run(
@@ -288,12 +290,13 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
     const runId = "at29-hostile-scheme";
     const activities = createPublishingActivities({
       sandbox,
-      secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+      secrets: new MemorySecretStore({}),
+      tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
       redactor,
       runs: memoryRuns(),
       repositoryReader: forbiddenRepositoryReader(),
       pullRequests: (token: string) =>
-        new GitHubPullRequests({ apiBaseUrl: hostileApi.baseUrl, token }),
+        new GitHubPullRequests({ apiBaseUrl: hostileApi.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
       publishToBranch: (value: TrustedCheckoutInput) => {

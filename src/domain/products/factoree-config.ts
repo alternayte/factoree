@@ -18,6 +18,58 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 // defined meaning and stay rejected.
 const HOST_NAME = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
+/**
+ * Keys a repository must never set. The file lives inside a repository that Factoree agents
+ * write to, so it must never raise a privilege. Specification section 6 fixes this list.
+ */
+export const PRIVILEGE_KEYS = [
+  "policy",
+  "autonomy",
+  "actionPolicy",
+  "riskCaps",
+  "redaction",
+  "secrets.values",
+] as const;
+
+/** Thrown when `.factoree/config.yaml` sets a key that only the Product can own. */
+export class FactoreeConfigPrivilegeError extends RunConfigurationError {
+  constructor(readonly key: string) {
+    super(`.factoree/config.yaml must not set ${key}. The Product owns it.`);
+  }
+}
+
+/**
+ * Walks the raw parsed YAML for a privilege key before the zod parse runs.
+ * The guard runs before the schema parse. The error then names the offending key. A generic
+ * unknown-key failure from the parse does not name it.
+ */
+const assertNoPrivilegeKey = (raw: unknown): void => {
+  if (typeof raw !== "object" || raw === null) return;
+  const record = raw as Record<string, unknown>;
+  for (const key of PRIVILEGE_KEYS) {
+    const [head, tail] = key.split(".");
+    if (head === undefined) continue;
+    const value = record[head];
+    if (value === undefined) continue;
+    if (tail === undefined) throw new FactoreeConfigPrivilegeError(key);
+    if (typeof value === "object" && value !== null && tail in (value as Record<string, unknown>)) {
+      throw new FactoreeConfigPrivilegeError(key);
+    }
+  }
+};
+
+const identitySchema = z
+  .object({
+    product: z
+      .string()
+      .min(1)
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "must be lower case letters, digits, or hyphen"),
+    linear: z
+      .object({ teamKey: z.string().min(1).max(10).regex(/^[A-Za-z][A-Za-z0-9]*$/) })
+      .strict(),
+  })
+  .strict();
+
 const commandSchema = z
   .object({
     name: z
@@ -31,6 +83,7 @@ const commandSchema = z
 const schema = z
   .object({
     version: z.literal(1),
+    identity: identitySchema,
     bootstrap: z.object({ command: z.string().min(1) }).strict().nullable().default(null),
     verify: z
       .object({ commands: z.array(commandSchema).min(1, "verify.commands must hold at least one command") })
@@ -76,12 +129,11 @@ const schema = z
       })
       .strict()
       .default({ backstage: { enabled: false }, referenceRepositories: { automaticDiscovery: false } }),
-    // Phase 9 consumes `policy`. SDD section 57 forbids this file from raising a level a human
-    // set, so Phase 3 reads the level of the Run from the Project record instead.
-    policy: z
-      .object({ defaultAutonomy: z.enum(["L0", "L1", "L2", "L3", "L4"]).default("L3") })
+    // The repository can only name a secret it needs. The Product owns the value.
+    secrets: z
+      .object({ require: z.array(z.string().min(1)).default([]) })
       .strict()
-      .default({ defaultAutonomy: "L3" }),
+      .default({ require: [] }),
   })
   .strict();
 
@@ -114,6 +166,8 @@ export const parseFactoreeConfig = (text: string): FactoreeConfig => {
   if (document === null || typeof document !== "object" || Array.isArray(document)) {
     throw new RunConfigurationError(`${FACTOREE_CONFIG_PATH} must hold a mapping at the top level.`);
   }
+
+  assertNoPrivilegeKey(document);
 
   const parsed = schema.safeParse(document);
   if (!parsed.success) {

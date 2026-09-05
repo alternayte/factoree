@@ -3,7 +3,8 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry });
 
-const labelNames = ["tenant_id", "project_id"] as const;
+// Every metric now carries a Product id, because the Project entity no longer exists.
+const labelNames = ["tenant_id", "product_id"] as const;
 
 export const metrics = {
   registry,

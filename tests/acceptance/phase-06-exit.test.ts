@@ -42,7 +42,7 @@ afterAll(async () => {
  */
 describe("Phase 6 exit — every implementation starts after a frozen Validation Contract", () => {
   it("runs the whole path from a Work Item to a frozen contract the Implementer receives", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
     const activities = createValidationActivities({ contracts, runs, logger });
 
     const refined = new RefinementEngine().refine({
@@ -71,7 +71,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId,
+      productId: productId,
       workItem: "ENG-300",
       goal: refined.goal,
       acceptanceCriteria: refined.proposedAcceptanceCriteria,
@@ -122,7 +122,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
   });
 
   it("freezes nothing when the activity receives no acceptance criterion and no human assertion", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
     const activities = createValidationActivities({ contracts, runs, logger });
 
     // Refinement normally satisfies SDD section 9 item 5 upstream of this activity: it derives
@@ -151,7 +151,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId,
+      productId: productId,
       workItem: "ENG-301",
       goal: refined.goal,
       acceptanceCriteria: [],
@@ -175,13 +175,13 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
     // end at the workflow level, driving the real Temporal workflow. This test proves it with
     // the pieces available to this suite: the real freeze activity, then a real read of the Run
     // row, then a real Implementer input built from what that row and the frozen document hold.
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
     const activities = createValidationActivities({ contracts, runs, logger });
 
     const built = await activities.buildValidationContract({
       runId,
       tenantId,
-      projectId,
+      productId: productId,
       workItem: "ENG-302",
       goal: "A signed-in editor can archive a report.",
       acceptanceCriteria: [

@@ -12,24 +12,24 @@ import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
 import { runUserValidation } from "~/domain/validation/user-validator.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
-import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 
 export interface BuildValidationContractActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   workItem: string;
   goal: string;
   acceptanceCriteria: ValidationCriterion[];
@@ -78,7 +78,7 @@ export interface ValidationActivityDependencies {
 export interface UserValidateActivityInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   runnerName: string;
   spriteId: string;
   adapter: string;
@@ -152,7 +152,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
     input: BuildValidationContractActivityInput,
   ): Promise<BuildValidationContractActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       // SDD section 25. A frozen contract is the contract of this Run. A retry, and any later
@@ -169,7 +169,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         );
         dependencies.logger.info("validation contract already frozen", {
           tenant_id: input.tenantId,
-          project_id: input.projectId,
+          product_id: input.productId,
           run_id: input.runId,
           step: "build_validation_contract",
           status: "ready",
@@ -198,7 +198,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       if (built.contract.assertions.length === 0) {
         dependencies.logger.info("validation contract needs input", {
           tenant_id: input.tenantId,
-          project_id: input.projectId,
+          product_id: input.productId,
           run_id: input.runId,
           step: "build_validation_contract",
           status: "needs_input",
@@ -236,7 +236,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       dependencies.logger.info("validation contract frozen", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "build_validation_contract",
         status: "ready",
@@ -268,7 +268,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
    */
   async userValidate(input: UserValidateActivityInput): Promise<UserValidateActivityOutput> {
     const started = Date.now();
-    const labels = { tenant_id: input.tenantId, project_id: input.projectId };
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
       const uv = dependencies.userValidation;
@@ -285,7 +285,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         uv.redactor,
         uv.secrets,
         input.tenantId,
-        input.projectId,
+        input.productId,
         dependencies.logger,
       );
 
@@ -311,7 +311,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         ref,
         uv.secrets,
         input.tenantId,
-        input.projectId,
+        input.productId,
       );
       const validationDirectory = `${input.workspacePath}/validation`;
 
@@ -350,12 +350,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       // The Project test secrets marked for injection. Same rule as the Implementer, SDD
       // section 30.
-      const descriptors = await uv.secrets.list(input.tenantId, input.projectId);
+      const descriptors = await uv.secrets.list(input.tenantId, input.productId);
       const projectTestSecrets: Record<string, string> = {};
       for (const descriptor of descriptors) {
         // A credential of another kind reaches its carrier by its own path, never this map.
         if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
-        const value = await uv.secrets.get(input.tenantId, input.projectId, descriptor.name);
+        const value = await uv.secrets.get(input.tenantId, input.productId, descriptor.name);
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
 
@@ -487,7 +487,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       if (planResult.exitCode !== 0) {
         dependencies.logger.warn("the validator wrote no plan, asking once more", {
           tenant_id: input.tenantId,
-          project_id: input.projectId,
+          product_id: input.productId,
           run_id: input.runId,
           step: "user_validate",
         });
@@ -559,7 +559,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       dependencies.logger.info("user validation finished", {
         tenant_id: input.tenantId,
-        project_id: input.projectId,
+        product_id: input.productId,
         run_id: input.runId,
         step: "user_validate",
         passed: outcome.passed,

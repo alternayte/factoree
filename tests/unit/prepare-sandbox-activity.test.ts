@@ -10,6 +10,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentRunner } from "~/domain/runs/agent-runner.js";
 
@@ -22,9 +23,9 @@ const stubRunner = (name: string): AgentRunner => ({
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 
-const DEFAULT_CONFIG_YAML = "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+const DEFAULT_CONFIG_YAML = "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
 const BOOTSTRAP_CONFIG_YAML =
-  "version: 1\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+  "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: npm ci\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
 
 interface Scripted {
   matcher: RegExp;
@@ -69,6 +70,9 @@ const build = (
   secretValues: Record<string, string> = {},
   sandbox: FakeSandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML),
   runners: AgentRunnerRegistry = new AgentRunnerRegistry([stubRunner("opencode"), stubRunner("claude")]),
+  tokens: { tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string> } = {
+    tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
+  },
 ) => {
   const runs = {
     setSandbox: vi.fn().mockResolvedValue(superseded),
@@ -97,6 +101,11 @@ const build = (
     setProofPack: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the Proof Pack facts'),
     ),
+    createRunTarget: vi.fn().mockResolvedValue({ id: "target-1" }),
+    updateRunTarget: vi.fn().mockResolvedValue(undefined),
+    listRunTargets: vi.fn().mockResolvedValue([]),
+    setConfigSha: vi.fn().mockResolvedValue(undefined),
+    countByProduct: vi.fn().mockResolvedValue(0),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({
@@ -108,6 +117,7 @@ const build = (
     redactor,
     runners,
     logger: createLogger({ level: "error", redactor, sink: () => undefined }),
+    tokens,
   });
   return { activities, sandbox, runs, redactor };
 };
@@ -115,12 +125,13 @@ const build = (
 const input = {
   runId: "run-1",
   tenantId: "tenant-1",
-  projectId: "project-1",
+  productId: "project-1",
   primary: { url: "https://github.com/acme/app.git", ref: "main" },
   references: [],
   defaults: DEFAULT_PROJECT_DEFAULTS,
   environment: {},
   organizationSkills: null,
+  githubInstallationId: "",
 };
 
 describe("the prepareSandbox activity", () => {
@@ -203,9 +214,92 @@ describe("the prepareSandbox activity and SDD section 60", () => {
   });
 });
 
+describe("the prepareSandbox activity and the minted clone credential", () => {
+  it("mints against the installation of the target repository, scoped to a read-only token", async () => {
+    const calls: Array<{ id: string; scope: Record<string, string> | undefined }> = [];
+    const tokens = {
+      tokenForInstallation: (id: string, scope?: Record<string, string>): Promise<string> => {
+        calls.push({ id, scope });
+        return Promise.resolve("ghs_minted_clone_credential");
+      },
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    await activities.prepareSandbox({ ...input, githubInstallationId: "install-1" });
+
+    expect(calls).toEqual([{ id: "install-1", scope: { contents: "read" } }]);
+  });
+
+  it("mints no credential when the repository holds no installation", async () => {
+    let minted = false;
+    const tokens = {
+      tokenForInstallation: (): Promise<string> => {
+        minted = true;
+        return Promise.resolve("ghs_should_never_mint");
+      },
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    await activities.prepareSandbox({ ...input, githubInstallationId: "" });
+
+    expect(minted).toBe(false);
+  });
+
+  it("registers the minted clone credential with the redactor before it prepares anything", async () => {
+    const tokens = {
+      tokenForInstallation: (): Promise<string> => Promise.resolve("ghs_minted_clone_secret_value"),
+    };
+    const { activities, redactor } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    await activities.prepareSandbox({ ...input, githubInstallationId: "install-1" });
+
+    expect(redactor.redact("a line holding ghs_minted_clone_secret_value")).not.toContain(
+      "ghs_minted_clone_secret_value",
+    );
+  });
+
+  it("converts a deterministic mint failure of the clone credential into a configuration fault", async () => {
+    const tokens = {
+      tokenForInstallation: (): Promise<string> =>
+        Promise.reject(
+          new GitHubAppAuthError("the GitHub API answered 401 for installation install-1", 401, "install-1"),
+        ),
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    const error = await activities
+      .prepareSandbox({ ...input, githubInstallationId: "install-1" })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    // The workflow recognises a configuration fault only by this class, so a mint rejected at
+    // the clone must map to it, exactly as a mint rejected at publish already does.
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect(String(error)).toContain("install-1");
+  });
+
+  it("keeps a 5xx mint failure of the clone credential retryable", async () => {
+    const tokens = {
+      tokenForInstallation: (): Promise<string> =>
+        Promise.reject(
+          new GitHubAppAuthError("the GitHub API answered 500 for installation install-1", 500, "install-1"),
+        ),
+    };
+    const { activities } = build({ spriteId: null, adapter: null }, {}, undefined, undefined, tokens);
+
+    const error = await activities
+      .prepareSandbox({ ...input, githubInstallationId: "install-1" })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GitHubAppAuthError);
+    expect(error).not.toBeInstanceOf(RunConfigurationError);
+  });
+});
+
 describe("the prepareSandbox activity and the preview configuration", () => {
   const PREVIEW_CONFIG_YAML =
-    "version: 1\n" +
+    "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\n" +
     "verify:\n  commands:\n    - name: test\n      run: npm test\n" +
     "preview:\n" +
     "  enabled: true\n" +

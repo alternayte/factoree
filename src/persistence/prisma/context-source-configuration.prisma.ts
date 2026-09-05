@@ -24,7 +24,7 @@ const asKind = (value: string): ContextSourceKind => {
 interface Row {
   id: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   sourceId: string;
   kind: string;
   enabled: boolean;
@@ -40,7 +40,7 @@ const toRecord = (row: Row): ContextSourceConfigurationRecord => {
   return {
     id: row.id,
     tenantId: row.tenantId,
-    projectId: row.projectId,
+    productId: row.productId,
     sourceId: row.sourceId,
     kind,
     enabled: row.enabled,
@@ -70,12 +70,12 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
       );
     }
     // SDD section 60. A credential in the userinfo of the endpoint would reach a log line, an
-    // error message, and the Context Contract. The token belongs in a Project secret, which the
+    // error message, and the Context Contract. The token belongs in a Product secret, which the
     // source reads through `secretName`. The message never echoes the credential.
     if (endpoint.username !== "" || endpoint.password !== "") {
       throw new ContextSourceConfigurationError(
         `The endpoint of the context source "${input.sourceId}" carries a user name or a ` +
-          "password. Remove the credential from the URL, and name a Project secret instead.",
+          "password. Remove the credential from the URL, and name a Product secret instead.",
       );
     }
     // A configuration endpoint is a base address. A query string or a fragment carries no base
@@ -84,12 +84,12 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
     if (endpoint.search !== "" || endpoint.hash !== "") {
       throw new ContextSourceConfigurationError(
         `The endpoint of the context source "${input.sourceId}" carries a query string or a ` +
-          "fragment. An endpoint is a base address, and a credential belongs in a Project secret.",
+          "fragment. An endpoint is a base address, and a credential belongs in a Product secret.",
       );
     }
     const data = {
       tenantId: input.tenantId,
-      projectId: input.projectId,
+      productId: input.productId,
       sourceId: input.sourceId,
       kind: input.kind,
       enabled: input.enabled ?? true,
@@ -98,24 +98,24 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
       settings: settings as unknown as Prisma.InputJsonValue,
     };
     const row = await this.prisma.contextSourceConfiguration.upsert({
-      where: { projectId_sourceId: { projectId: input.projectId, sourceId: input.sourceId } },
+      where: { productId_sourceId: { productId: input.productId, sourceId: input.sourceId } },
       create: data,
       update: data,
     });
     return toRecord(row);
   }
 
-  async list(tenantId: string, projectId: string): Promise<ContextSourceConfigurationRecord[]> {
+  async list(tenantId: string, productId: string): Promise<ContextSourceConfigurationRecord[]> {
     const rows = await this.prisma.contextSourceConfiguration.findMany({
-      where: { tenantId, projectId },
+      where: { tenantId, productId },
       orderBy: { sourceId: "asc" },
     });
     return rows.map((row) => toRecord(row as Row));
   }
 
-  async remove(tenantId: string, projectId: string, sourceId: string): Promise<boolean> {
+  async remove(tenantId: string, productId: string, sourceId: string): Promise<boolean> {
     const result = await this.prisma.contextSourceConfiguration.deleteMany({
-      where: { tenantId, projectId, sourceId },
+      where: { tenantId, productId, sourceId },
     });
     return result.count > 0;
   }

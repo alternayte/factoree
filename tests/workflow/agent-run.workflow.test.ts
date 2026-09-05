@@ -31,7 +31,7 @@ const {
   configurationFaults,
   contextCalls,
   missingBranches,
-  projectInput,
+  productInput,
   workItemInput,
   input,
   runWorker,
@@ -377,7 +377,10 @@ describe("a Project default branch that does not exist", () => {
         args: [
           {
             ...input("ses-badbranch"),
-            project: { ...projectInput, defaultBranch: "no-such-branch" },
+            product: {
+              ...productInput,
+              repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "no-such-branch", absentSince: null, githubInstallationId: "install-1" }],
+            },
           },
         ],
       });
@@ -453,7 +456,7 @@ describe("the refinement result the Run records", () => {
           {
             ...input("ses-autonomy"),
             autonomyLevel: "L3",
-            project: { ...projectInput, defaultAutonomy: "L3" },
+            product: { ...productInput, defaultAutonomy: "L3" },
           },
         ],
       });
@@ -478,7 +481,7 @@ describe("the refinement result the Run records", () => {
             {
               ...input("ses-label-fault"),
               autonomyLevel: "L2",
-              project: { ...projectInput, defaultAutonomy: "L2" },
+              product: { ...productInput, defaultAutonomy: "L2" },
             },
           ],
         });

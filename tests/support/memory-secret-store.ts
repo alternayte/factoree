@@ -3,8 +3,8 @@ import type {
   ProjectSecretKind,
   PutSecretOptions,
   SecretStore,
-} from "~/domain/projects/secret-store.js";
-import { assertSecretKindAndMark } from "~/domain/projects/secret-store.js";
+} from "~/domain/products/secret-store.js";
+import { assertSecretKindAndMark } from "~/domain/products/secret-store.js";
 
 interface Entry {
   value: string;
@@ -32,7 +32,7 @@ export class MemorySecretStore implements SecretStore {
   // `PrismaSecretStore.put` fails that way, and a test double must fail the same way.
   put(
     _tenantId: string,
-    _projectId: string,
+    _productId: string,
     name: string,
     value: string,
     options?: PutSecretOptions,
@@ -48,7 +48,7 @@ export class MemorySecretStore implements SecretStore {
     return Promise.resolve();
   }
 
-  get(_tenantId: string, _projectId: string, name: string): Promise<string | null> {
+  get(_tenantId: string, _productId: string, name: string): Promise<string | null> {
     return Promise.resolve(this.entries.get(name)?.value ?? null);
   }
 
@@ -66,7 +66,7 @@ export class MemorySecretStore implements SecretStore {
     );
   }
 
-  remove(_tenantId: string, _projectId: string, name: string): Promise<boolean> {
+  remove(_tenantId: string, _productId: string, name: string): Promise<boolean> {
     return Promise.resolve(this.entries.delete(name));
   }
 }

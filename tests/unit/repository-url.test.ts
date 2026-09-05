@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
+import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 
 describe("buildRepositoryUrl", () => {
   it("builds a clone URL from a slug", () => {

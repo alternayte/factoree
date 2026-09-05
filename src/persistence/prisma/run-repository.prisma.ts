@@ -2,8 +2,11 @@ import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type {
   CreateRunInput,
+  CreateRunTargetInput,
   ExpiredSandboxRun,
   RunSandboxPatch,
+  RunTargetPatch,
+  RunTargetRecord,
   SupersededSandbox,
   RunRecord,
   RunRepository,
@@ -17,7 +20,7 @@ type RunRow = Awaited<ReturnType<FactoreePrismaClient["run"]["findFirst"]>>;
 const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   id: row.id,
   tenantId: row.tenantId,
-  projectId: row.projectId,
+  productId: row.productId,
   linearIssueId: row.linearIssueId,
   linearAgentSessionId: row.linearAgentSessionId,
   temporalWorkflowId: row.temporalWorkflowId,
@@ -38,6 +41,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   contextContractVersion: row.contextContractVersion,
   validationContractVersion: row.validationContractVersion,
   organizationSkillsSha: row.organizationSkillsSha ?? null,
+  configSha: row.configSha ?? null,
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   repairCount: row.repairCount,
@@ -54,7 +58,7 @@ export class PrismaRunRepository implements RunRepository {
       const row = await this.prisma.run.create({
         data: {
           tenantId: input.tenantId,
-          projectId: input.projectId,
+          productId: input.productId,
           linearIssueId: input.linearIssueId,
           linearAgentSessionId: input.linearAgentSessionId,
           temporalWorkflowId: input.temporalWorkflowId,
@@ -231,6 +235,76 @@ export class PrismaRunRepository implements RunRepository {
     if (updated.count === 0) {
       throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the autonomy level`);
     }
+  }
+
+  async createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }> {
+    const row = await this.prisma.runTarget.create({
+      data: {
+        tenantId: input.tenantId,
+        runId: input.runId,
+        repositoryId: input.repositoryId,
+        selectionReason: input.selectionReason,
+        mergeOrder: input.mergeOrder,
+      },
+    });
+    return { id: row.id };
+  }
+
+  async updateRunTarget(
+    tenantId: string,
+    runId: string,
+    repositoryId: string,
+    patch: RunTargetPatch,
+  ): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.runTarget.updateMany({
+      where: { runId, repositoryId, tenantId },
+      data: patch,
+    });
+    // A write that reaches no row must not report success. A wrong Run, repository, or tenant is
+    // a caller defect, and a silent success leaves the RunTarget facts unrecorded.
+    if (updated.count === 0) {
+      throw new Error(
+        `no RunTarget for run "${runId}" and repository "${repositoryId}" of tenant "${tenantId}" received the update`,
+      );
+    }
+  }
+
+  async listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]> {
+    const rows = await this.prisma.runTarget.findMany({
+      where: { runId, tenantId },
+      orderBy: { mergeOrder: "asc" },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenantId,
+      runId: row.runId,
+      repositoryId: row.repositoryId,
+      role: row.role,
+      selectionReason: row.selectionReason,
+      baseSha: row.baseSha,
+      patchSha256: row.patchSha256,
+      commitSha: row.commitSha,
+      pullRequestUrl: row.pullRequestUrl,
+      mergeOrder: row.mergeOrder,
+    }));
+  }
+
+  async setConfigSha(tenantId: string, runId: string, sha: string): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { configSha: sha },
+    });
+    // A write that reaches no row must not report success. This value names the exact identity
+    // file the Run checked. A wrong Run or a wrong tenant is a caller defect.
+    if (updated.count === 0) {
+      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the config SHA`);
+    }
+  }
+
+  async countByProduct(tenantId: string, productId: string): Promise<number> {
+    return this.prisma.run.count({ where: { tenantId, productId } });
   }
 
   async listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]> {

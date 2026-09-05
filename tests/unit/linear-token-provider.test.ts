@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LinearInstallationError,
   LinearTokenProvider,
-} from "~/domain/projects/linear-token-provider.js";
-import type { InstallationInput, InstallationRecord, TenantRegistry } from "~/domain/projects/project-registry.js";
+} from "~/domain/products/linear-token-provider.js";
+import type { InstallationInput, InstallationRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 

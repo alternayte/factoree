@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseFactoreeConfig } from "~/domain/projects/factoree-config.js";
+import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 
 const complete = `
 version: 1
+
+identity:
+  product: checkout-platform
+  linear:
+    teamKey: PAY
 
 bootstrap:
   command: npm ci
@@ -39,16 +44,21 @@ context:
   referenceRepositories:
     automaticDiscovery: true
 
-policy:
-  defaultAutonomy: L3
+secrets:
+  require:
+    - STRIPE_TEST_KEY
 `;
 
-const minimum = "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n";
+const minimum =
+  "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\n" +
+  "verify:\n  commands:\n    - name: test\n      run: npm test\n";
 
 describe("parseFactoreeConfig", () => {
   it("reads every documented key of SDD section 15", () => {
     const config = parseFactoreeConfig(complete);
     expect(config.version).toBe(1);
+    expect(config.identity).toEqual({ product: "checkout-platform", linear: { teamKey: "PAY" } });
+    expect(config.secrets).toEqual({ require: ["STRIPE_TEST_KEY"] });
     expect(config.bootstrap).toEqual({ command: "npm ci" });
     expect(config.verify.commands).toEqual([
       { name: "typecheck", run: "npm run typecheck" },
@@ -65,7 +75,6 @@ describe("parseFactoreeConfig", () => {
     expect(config.sandbox).toEqual({ allowedDomains: ["registry.npmjs.org"] });
     expect(config.context.backstage.enabled).toBe(true);
     expect(config.context.referenceRepositories.automaticDiscovery).toBe(true);
-    expect(config.policy.defaultAutonomy).toBe("L3");
   });
 
   it("accepts the minimum file", () => {
@@ -75,7 +84,7 @@ describe("parseFactoreeConfig", () => {
     expect(config.agents.implementer).toBe("opencode");
     expect(config.repair.maxAttempts).toBe(2);
     expect(config.sandbox.allowedDomains).toEqual([]);
-    expect(config.policy.defaultAutonomy).toBe("L3");
+    expect(config.secrets).toEqual({ require: [] });
   });
 
   it("rejects an unknown top-level key", () => {
@@ -99,7 +108,8 @@ describe("parseFactoreeConfig", () => {
 
   it("rejects a duplicate command name", () => {
     const text =
-      "version: 1\nverify:\n  commands:\n    - name: test\n      run: a\n    - name: test\n      run: b\n";
+      "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\n" +
+      "verify:\n  commands:\n    - name: test\n      run: a\n    - name: test\n      run: b\n";
     expect(() => parseFactoreeConfig(text)).toThrow(/duplicate/i);
   });
 
@@ -134,5 +144,63 @@ describe("parseFactoreeConfig", () => {
   it("rejects a bare wildcard, which would allow every domain", () => {
     const text = `${minimum}sandbox:\n  allowedDomains:\n    - "*"\n`;
     expect(() => parseFactoreeConfig(text)).toThrow(RunConfigurationError);
+  });
+
+  it("parses the identity block and the requested secret names", () => {
+    const config = parseFactoreeConfig(`
+version: 1
+identity:
+  product: checkout-platform
+  linear:
+    teamKey: PAY
+verify:
+  commands:
+    - name: test
+      run: npm test
+secrets:
+  require:
+    - STRIPE_TEST_KEY
+`);
+
+    expect(config.identity.product).toBe("checkout-platform");
+    expect(config.identity.linear.teamKey).toBe("PAY");
+    expect(config.secrets.require).toEqual(["STRIPE_TEST_KEY"]);
+  });
+
+  it("fails, and names the key, when the file sets an autonomy level", () => {
+    expect(() =>
+      parseFactoreeConfig(`
+version: 1
+identity:
+  product: checkout-platform
+  linear:
+    teamKey: PAY
+verify:
+  commands:
+    - name: test
+      run: npm test
+policy:
+  defaultAutonomy: L4
+`),
+    ).toThrowError(/policy/);
+  });
+
+  it("fails when the file supplies a secret value", () => {
+    expect(() =>
+      parseFactoreeConfig(`
+version: 1
+identity:
+  product: checkout-platform
+  linear:
+    teamKey: PAY
+verify:
+  commands:
+    - name: test
+      run: npm test
+secrets:
+  values:
+    STRIPE_TEST_KEY: sk_live_abc
+`),
+    ).toThrowError(/secrets.values/);
   });
 });

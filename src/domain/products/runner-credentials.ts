@@ -1,6 +1,6 @@
 import { isGithubOrLinearCredentialValue } from "~/domain/security/credential-formats.js";
 import { isForbiddenName } from "~/domain/runs/implementer-input.js";
-import type { ProjectSecretKind, SecretStore } from "~/domain/projects/secret-store.js";
+import type { ProjectSecretKind, SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 
@@ -51,13 +51,13 @@ export const assertRunnerCredential = (name: string, value: string): void => {
 export const loadRunnerEnvironment = async (
   secrets: SecretStore,
   tenantId: string,
-  projectId: string,
+  productId: string,
 ): Promise<Record<string, string>> => {
-  const descriptors = await secrets.list(tenantId, projectId);
+  const descriptors = await secrets.list(tenantId, productId);
   const environment: Record<string, string> = {};
   for (const descriptor of descriptors) {
     if (descriptor.kind !== ("runner_credential" satisfies ProjectSecretKind)) continue;
-    const value = await secrets.get(tenantId, projectId, descriptor.name);
+    const value = await secrets.get(tenantId, productId, descriptor.name);
     if (value === null || value === "") continue;
     assertRunnerCredential(descriptor.name, value);
     environment[descriptor.name] = value;
@@ -77,24 +77,7 @@ export const attachRunnerEnvironment = async (
   ref: SandboxRef,
   secrets: SecretStore,
   tenantId: string,
-  projectId: string,
+  productId: string,
 ): Promise<void> => {
-  sandbox.attachEnvironment(ref, await loadRunnerEnvironment(secrets, tenantId, projectId));
-};
-
-/**
- * The read-only repository credential of one Project, or null when the Project holds none. SDD
- * section 30 forbids a GitHub write credential in an agent session, so this value must never be a
- * token that can push.
- */
-export const loadRepositoryReadToken = async (
-  secrets: SecretStore,
-  tenantId: string,
-  projectId: string,
-): Promise<string | null> => {
-  const descriptors = await secrets.list(tenantId, projectId);
-  const descriptor = descriptors.find((entry) => entry.kind === "repository_read");
-  if (descriptor === undefined) return null;
-  const value = await secrets.get(tenantId, projectId, descriptor.name);
-  return value === null || value === "" ? null : value;
+  sandbox.attachEnvironment(ref, await loadRunnerEnvironment(secrets, tenantId, productId));
 };

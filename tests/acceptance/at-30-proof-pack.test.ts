@@ -11,6 +11,10 @@ import { PrismaValidationContractStore } from "~/persistence/prisma/validation-c
 import { PrismaContextContractStore } from "~/persistence/prisma/context-contract.prisma.js";
 import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
+import {
+  PrismaProductRegistry,
+  PrismaRepositoryRegistry,
+} from "~/persistence/prisma/product-registry.prisma.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -36,7 +40,7 @@ const SECRET = "fixture-secret-value-12345";
 const seedProvedRun = async (
   options: { changedFileCount?: number; silentPassingReview?: boolean } = {},
 ) => {
-  const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
+  const { tenantId, runId, productId } = await seedTenantProjectAndRun(prisma);
   const contracts = new PrismaValidationContractStore(prisma);
   const contextContracts = new PrismaContextContractStore(prisma);
   const results = new PrismaValidationResultStore(prisma);
@@ -283,6 +287,8 @@ const seedProvedRun = async (
   const redactor = new Redactor();
   const activities = createProofPackActivities({
     runs,
+    products: new PrismaProductRegistry(prisma),
+    repositories: new PrismaRepositoryRegistry(prisma),
     contextContracts,
     validationContracts: contracts,
     validationResults: results,
@@ -311,7 +317,7 @@ const seedProvedRun = async (
   const input: PublishProofPackActivityInput = {
     runId,
     tenantId,
-    projectId: "unused",
+    productId,
     sessionId: "session-1",
     workItem: { title: "Add the health endpoint", url: "https://linear.app/acme/issue/ENG-143" },
     pullRequestUrl: "https://github.com/acme/fixture/pull/1",
@@ -328,7 +334,7 @@ const seedProvedRun = async (
     reviewAttempt: 2,
   };
 
-  return { tenantId, runId, activities, input, runs };
+  return { tenantId, runId, productId, activities, input, runs };
 };
 
 const posted: string[] = [];

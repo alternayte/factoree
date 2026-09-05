@@ -214,7 +214,10 @@ const build = (
         order.push("record");
         proofPacks.push(proofPack);
       },
+      listRunTargets: async () => [],
     },
+    products: { findById: async () => null },
+    repositories: { listByProduct: async () => [] },
     contextContracts: { findByRun: async () => contextContract },
     validationContracts: { findByRun: async () => contract },
     validationResults: { listForRun: async () => results },
@@ -239,7 +242,7 @@ const build = (
 const input: PublishProofPackActivityInput = {
   runId: "run-1",
   tenantId: "t1",
-  projectId: "p1",
+  productId: "p1",
   sessionId: "session-1",
   workItem: { title: "Add the health endpoint", url: null },
   pullRequestUrl: "https://github.com/acme/fixture/pull/1",
@@ -357,6 +360,75 @@ describe("publishProofPack", () => {
     } as unknown as Partial<ProofPackActivityDependencies>);
     await expect(harness.activities.publishProofPack(input)).rejects.toThrow(/Validation Contract/);
     expect(harness.posted).toHaveLength(0);
+  });
+
+  it("renders the Routing section, F3, from the Product, the RunTarget rows, and sibling_read evidence", async () => {
+    const harness = build({
+      products: {
+        findById: async () => ({
+          id: "p1",
+          slug: "checkout-platform",
+          name: "Checkout",
+          status: "active",
+          linearTeamKey: "PAY",
+        }),
+      },
+      repositories: {
+        listByProduct: async () => [
+          { id: "repo-1", fullName: "acme/checkout-api" },
+          { id: "repo-2", fullName: "acme/checkout-web" },
+        ],
+      },
+      runs: {
+        setProofPack: async () => undefined,
+        listRunTargets: async () => [
+          {
+            id: "rt-1",
+            tenantId: "t1",
+            runId: "run-1",
+            repositoryId: "repo-1",
+            role: "primary",
+            selectionReason: "sole member",
+            baseSha: "3".repeat(40),
+            patchSha256: "2".repeat(64),
+            commitSha: "1".repeat(40),
+            pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
+            mergeOrder: 1,
+          },
+        ],
+      },
+      evidence: {
+        listForRun: async () => [
+          ...evidenceRows,
+          {
+            id: "e3",
+            tenantId: "t1",
+            runId: "run-1",
+            validationAssertionId: null,
+            kind: "sibling_read",
+            source: "sibling_clone",
+            createdAt: new Date("2026-01-01T01:20:00.000Z"),
+            sha256: "9".repeat(64),
+            storageRef: null,
+            metadata: {
+              fullName: "acme/checkout-events",
+              commitSha: "1b7d004".padEnd(40, "0"),
+              role: "implementer",
+            },
+          },
+        ],
+      },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+
+    const output = await harness.activities.publishProofPack(input);
+
+    expect(harness.posted[0]).toContain("### Routing");
+    expect(harness.posted[0]).toContain("Product: checkout-platform");
+    expect(harness.posted[0]).toContain("Linear team: PAY");
+    expect(harness.posted[0]).toContain("acme/checkout-api");
+    expect(harness.posted[0]).toContain("PR #812");
+    expect(harness.posted[0]).toContain("acme/checkout-events");
+    expect(output.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("reports an assertion with no result row as BLOCKED rather than hide it", async () => {

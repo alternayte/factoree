@@ -26,6 +26,13 @@ import type { PublishProofPackActivityOutput } from "~/activities/evidence.activ
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
+import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
+// The workflow bundler resolves a relative path only, so this type import does not use the
+// `~/` alias either. F8. The type now lives in the domain layer; the workflow re-exports it, so
+// the workflow's own external input type is unaffected.
+import type { AgentRunProductRepositoryInput } from "../domain/runs/product-repository.js";
+
+export type { AgentRunProductRepositoryInput };
 
 import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
@@ -33,29 +40,36 @@ import { buildWorkflowId } from "../temporal/workflow-id.js";
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { buildRepositoryUrl } from "../domain/projects/repository-url.js";
+import { buildRepositoryUrl } from "../domain/products/repository-url.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { renderRisks } from "../domain/refinement/risk.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { completionInvariantFailures } from "../domain/runs/completion-invariant.js";
+// The workflow bundler resolves a relative path only, so this value import does not use the
+// `~/` alias either.
+import { selectTarget } from "../domain/routing/select-targets.js";
 
-export interface AgentRunProjectInput {
-  primaryRepository: string;
-  referenceRepositories: string[];
-  defaultBranch: string;
+export interface AgentRunProductInput {
+  productId: string;
+  productSlug: string;
+  defaultAutonomy: string;
+  /**
+   * Every repository the Product owns. Task 10 selects the target repository of the Run from
+   * this list. Until then, the workflow treats the first entry as the target.
+   */
+  repositories: AgentRunProductRepositoryInput[];
   /** Turns an `owner/repo` slug into a clone URL until the Phase 9 GitHub adapter exists. */
   repositoryBaseUrl: string;
   /**
    * SDD section 15 and SDD section 57. The runtime configuration comes from
-   * `.factoree/config.yaml` in the primary repository. The Project owns these two values, and a
+   * `.factoree/config.yaml` in the target repository. The Product owns these two values, and a
    * repository must not widen them.
    */
   stagingRead: boolean;
   spriteRetentionHours: number;
-  defaultAutonomy: string;
-  /** SDD section 16. The organization skills repository slug of the Project, or null. */
+  /** SDD section 16. The organization skills repository slug of the Product, or null. */
   organizationSkillsRepository: string | null;
 }
 
@@ -71,13 +85,19 @@ export interface AgentRunWorkItemInput {
 export interface AgentRunWorkflowInput {
   tenantId: string;
   workspaceId: string;
-  projectId: string;
+  productId: string;
   linearIssueId: string | null;
   agentSessionId: string;
   autonomyLevel: string;
   maxRunMinutes: number;
   workItem: AgentRunWorkItemInput;
-  project: AgentRunProjectInput;
+  product: AgentRunProductInput;
+  /**
+   * Specification section 10. Refinement's future repository-proposal step supplies this value
+   * when the Product holds several repositories. A null value means no proposal exists yet.
+   * `selectTarget` then asks a human whenever more than one repository is present.
+   */
+  repositoryProposal: { fullName: string; reason: string; confident: boolean } | null;
 }
 
 export interface AgentRunWorkflowResult {
@@ -333,6 +353,44 @@ const cancelActivities = proxyActivities<Activities>({
 // each attempt writes its own AgentExecution row.
 const FIRST_IMPLEMENTER_ATTEMPT = 1;
 
+/**
+ * Specification section 10. Matches a human reply against the ambiguous candidates by whole
+ * token, never by substring. `acme/checkout-api` must not match a reply that names
+ * `acme/checkout-api-gateway`. It returns null when no candidate matches. It also returns null
+ * when more than one candidate matches. A reply that resolves nothing must not guess.
+ */
+const matchReplyToCandidate = <T extends { fullName: string }>(
+  reply: string,
+  candidates: T[],
+): T | null => {
+  // Splits the reply on whitespace. It trims leading and trailing punctuation from each piece.
+  // A slash and a hyphen survive the trim, so `org/repo-name` stays one token. Lower case makes
+  // the match case-insensitive, so a reply typed in the wrong case still resolves.
+  const tokens = reply
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^\w/]+|[^\w/-]+$/g, "").toLowerCase())
+    .filter((token) => token.length > 0);
+
+  // A bare repository name resolves only when one candidate carries it. Two candidates that
+  // share a bare name make that name ambiguous, even when only one of them appears in the
+  // reply. Case folding can create that same collision, so the owner count uses the folded
+  // name too.
+  const bareNameOwners = new Map<string, number>();
+  for (const candidate of candidates) {
+    const bareName = (candidate.fullName.split("/").at(-1) ?? candidate.fullName).toLowerCase();
+    bareNameOwners.set(bareName, (bareNameOwners.get(bareName) ?? 0) + 1);
+  }
+
+  const matches = candidates.filter((candidate) => {
+    const fullName = candidate.fullName.toLowerCase();
+    if (tokens.includes(fullName)) return true;
+    const bareName = (candidate.fullName.split("/").at(-1) ?? candidate.fullName).toLowerCase();
+    return tokens.includes(bareName) && bareNameOwners.get(bareName) === 1;
+  });
+
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+};
+
 export async function agentRunWorkflow(
   input: AgentRunWorkflowInput,
 ): Promise<AgentRunWorkflowResult> {
@@ -350,6 +408,27 @@ export async function agentRunWorkflow(
   let contextContractVersion: string | null = null;
   let validationContractVersion: string | null = null;
   let questionRounds = 0;
+
+  // Refinement needs a repository pair before target selection runs, further below. This
+  // placeholder feeds Refinement only, and the pass-through echo never reaches the sandbox. The
+  // target-selection step corrects `primaryRepositorySlug` once the target is known.
+  const targetRepositories = input.product.repositories;
+  let primaryRepositorySlug = targetRepositories[0]?.fullName ?? "";
+  // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
+  // can record its per-target facts as they become known.
+  let primaryRepositoryId = targetRepositories[0]?.id ?? "";
+  // The GitHub App installation that grants the target repository. The clone, the discovery
+  // read, and the publish all mint against this id, never against a Project secret.
+  let primaryRepositoryInstallationId = targetRepositories[0]?.githubInstallationId ?? "";
+  // Specification section 12. A repository in the Product that is not the target is absent at
+  // start. It must reach an agent only through clone_sibling, which the Action Policy gates and
+  // which writes an evidence record. This list must therefore never take a value from Product
+  // membership. `Project.referenceRepositories` no longer exists (specification section 5,
+  // "Removed"); a legitimate reference repository now arrives as an ordinary context source
+  // (for example Backstage), a mechanism this list plays no part in.
+  const referenceRepositorySlugs: string[] = [];
+  const defaultBranchForSlug = (slug: string) =>
+    targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
 
   setHandler(stopSignal, () => {
     stopRequested = true;
@@ -369,7 +448,8 @@ export async function agentRunWorkflow(
 
   const created = await activities.createRun({
     tenantId: input.tenantId,
-    projectId: input.projectId,
+    // The Run row tracks the Product this delegation routed to.
+    productId: input.productId,
     linearIssueId: input.linearIssueId,
     linearAgentSessionId: input.agentSessionId,
     temporalWorkflowId: buildWorkflowId(input.workspaceId, input.agentSessionId),
@@ -394,6 +474,7 @@ export async function agentRunWorkflow(
       | "CONFIGURATION_INVALID"
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
+      | "TARGET_UNRESOLVED"
       | "CONTEXT_UNRESOLVED"
       | "VALIDATION_UNRESOLVED"
       | "VALIDATION_FAILED"
@@ -467,6 +548,35 @@ export async function agentRunWorkflow(
     return { runId: id, status };
   };
 
+  /**
+   * Specification section 8 and section 17. The routing table used a cached repository row.
+   * A repository that claims a different Product at the base commit is a binding problem. Only
+   * an operator can settle it. The Run ends here. This status is terminal.
+   */
+  const endRoutingMismatch = async (
+    routedProductSlug: string,
+    declaredProductSlug: string,
+  ): Promise<AgentRunWorkflowResult> => {
+    status = "BLOCKED_ROUTING";
+    await activities.completeRun({
+      tenantId: input.tenantId,
+      runId: id,
+      status,
+      completedAt: new Date(Date.now()).toISOString(),
+    });
+    await notify(() =>
+      activities.postError({
+        sessionId: input.agentSessionId,
+        message:
+          "Factoree stopped, because the target repository names a different Product at its " +
+          `base commit. Routing used "${routedProductSlug}". The repository names ` +
+          `"${declaredProductSlug}". An operator must resolve this binding. Factoree published ` +
+          "nothing.",
+      }),
+    );
+    return { runId: id, status };
+  };
+
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
 
   /**
@@ -496,15 +606,20 @@ export async function agentRunWorkflow(
      * that subject, and no other pair. A refinement question carries no domain.
      */
     domain?: AuthorityDomain,
+    /**
+     * Specification section 10. The target-selection gate reports `BLOCKED_TARGET` while it
+     * waits, not `WAITING_FOR_INPUT`. Every other caller keeps the default.
+     */
+    waitingStatus: RunStatus = "WAITING_FOR_INPUT",
   ): Promise<boolean> => {
     if (questionRounds >= MAX_QUESTION_ROUNDS) return false;
     // The count is read before the first await. A human can answer as soon as the Run reports
-    // WAITING_FOR_INPUT, which happens before the elicitation reaches Linear. An answer that
+    // the waiting status, which happens before the elicitation reaches Linear. An answer that
     // arrives in that moment answers this question, and the wait does not miss it.
     const answersBefore = humanInputs.length;
     questionRounds += 1;
     openQuestion = question;
-    status = "WAITING_FOR_INPUT";
+    status = waitingStatus;
     await activities.setRunStatus({ runId: id, status });
     await notify(() => activities.postElicitation({ sessionId: input.agentSessionId, question }));
 
@@ -598,7 +713,7 @@ export async function agentRunWorkflow(
       implementActivities.implement({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.projectId,
+        productId: input.productId,
         runnerName: attemptInput.prepared.runtime.implementerRunner,
         spriteId: attemptInput.prepared.spriteId,
         adapter: attemptInput.prepared.adapter,
@@ -649,7 +764,7 @@ export async function agentRunWorkflow(
       userValidateActivities.userValidate({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.projectId,
+        productId: input.productId,
         runnerName: attemptInput.prepared.runtime.validatorRunner,
         spriteId: attemptInput.prepared.spriteId,
         adapter: attemptInput.prepared.adapter,
@@ -682,7 +797,7 @@ export async function agentRunWorkflow(
       reviewActivities.review({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.projectId,
+        productId: input.productId,
         runnerName: attemptInput.prepared.runtime.reviewerRunner,
         spriteId: attemptInput.prepared.spriteId,
         adapter: attemptInput.prepared.adapter,
@@ -778,12 +893,12 @@ export async function agentRunWorkflow(
       const refinementInput = () => ({
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.projectId,
+        productId: input.productId,
         source: { ...input.workItem, labels },
         project: {
-          primaryRepository: input.project.primaryRepository,
-          referenceRepositories: input.project.referenceRepositories,
-          defaultAutonomy: input.project.defaultAutonomy,
+          primaryRepository: primaryRepositorySlug,
+          referenceRepositories: referenceRepositorySlugs,
+          defaultAutonomy: input.product.defaultAutonomy,
         },
         decisions,
       });
@@ -832,12 +947,95 @@ export async function agentRunWorkflow(
         );
       }
 
+      // Specification section 10. Target selection decides the repository this Run changes.
+      // A constant epoch fills the fields `selectTarget` does not read. This keeps the mapping
+      // deterministic.
+      const EPOCH = new Date(0);
+      const presentRepositories: RepositoryRecord[] = targetRepositories.map((repository) => ({
+        id: repository.id,
+        tenantId: input.tenantId,
+        productId: input.product.productId,
+        fullName: repository.fullName,
+        defaultBranch: repository.defaultBranch,
+        configSha: "",
+        requestedSecretNames: [],
+        discoveredAt: EPOCH,
+        lastSeenAt: EPOCH,
+        absentSince: repository.absentSince === null ? null : new Date(repository.absentSince),
+        githubInstallationId: repository.githubInstallationId,
+      }));
+
+      /**
+       * Applies a confirmed target. It corrects the repository fields Refinement echoed. It
+       * records the RunTarget row. It posts the notice when `notice` is true.
+       */
+      const applyTarget = async (
+        repository: RepositoryRecord,
+        reason: string,
+        notice: boolean,
+      ): Promise<void> => {
+        primaryRepositorySlug = repository.fullName;
+        primaryRepositoryId = repository.id;
+        primaryRepositoryInstallationId = repository.githubInstallationId;
+        refined.primaryRepository = repository.fullName;
+        // Specification section 12. A sibling repository is absent at start. An agent that
+        // needs one calls clone_sibling, which the Action Policy gates. Target selection must
+        // not populate reference repositories from Product membership, because that would
+        // bypass the gate and check out every sibling unconditionally.
+        await activities.recordRunTarget({
+          tenantId: input.tenantId,
+          runId: id,
+          repositoryId: repository.id,
+          selectionReason: reason,
+          mergeOrder: 1,
+        });
+        if (notice) {
+          await notify(() =>
+            activities.postTargetNotice({
+              tenantId: input.tenantId,
+              runId: id,
+              fullName: repository.fullName,
+              reason,
+            }),
+          );
+        }
+      };
+
+      let targetOutcome = selectTarget(presentRepositories, input.repositoryProposal);
+      while (targetOutcome.kind === "ambiguous") {
+        const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
+        const proceeded = await askAndWait(
+          "target-selection",
+          "Factoree found several repositories in this Product, and no confident target. " +
+            `Candidates: ${candidateNames}. Reply with the exact repository name to use.`,
+          undefined,
+          undefined,
+          "BLOCKED_TARGET",
+        );
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "TARGET_UNRESOLVED",
+            "Factoree could not confirm the target repository of this Product, so it published " +
+              "nothing.",
+          );
+        }
+        const reply = decisions[decisions.length - 1]?.answer ?? "";
+        const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
+        targetOutcome =
+          chosen === null
+            ? { kind: "ambiguous", candidates: targetOutcome.candidates }
+            : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
+      }
+      await applyTarget(targetOutcome.repository, targetOutcome.reason, targetOutcome.notify);
+
       // SDD section 20. Discovery pins one SHA for each repository. The ref below is the ref
       // discovery starts from. The checkout later uses the pinned SHA.
       const repositoryRef = (slug: string) => ({
         slug,
-        url: buildRepositoryUrl(input.project.repositoryBaseUrl, slug),
-        ref: input.project.defaultBranch,
+        url: buildRepositoryUrl(input.product.repositoryBaseUrl, slug),
+        ref: defaultBranchForSlug(slug),
       });
 
       // SDD section 23. A conflict without an authority winner blocks the Run. The bounded
@@ -853,13 +1051,14 @@ export async function agentRunWorkflow(
           resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
             runId: id,
             tenantId: input.tenantId,
-            projectId: input.projectId,
+            productId: input.productId,
             goal: refined.goal,
             acceptanceCriteria: refined.acceptanceCriteria,
             primaryRepository: repositoryRef(refined.primaryRepository),
             referenceRepositories: refined.referenceRepositories.map(repositoryRef),
             workItemReferences: refined.workItemReferences,
             decisions,
+            githubInstallationId: primaryRepositoryInstallationId,
           });
         } catch (error) {
           // SDD section 49. A repository reference that resolves to nothing is a semantic
@@ -911,6 +1110,35 @@ export async function agentRunWorkflow(
       if (stopRequested) return await cancelRun();
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+      // Specification section 8. The routing table used a cached repository row. The base
+      // commit is the ground truth. Factoree reads the identity block there. It checks that
+      // block against the Product routing used.
+      const identity = await activities.verifyTargetIdentity({
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        productSlug: input.product.productSlug,
+        repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
+        baseSha: resolvedContext.primary.sha,
+        githubInstallationId: primaryRepositoryInstallationId,
+      });
+      if (stopRequested) return await cancelRun();
+      if (!identity.matched) {
+        return await endRoutingMismatch(
+          input.product.productSlug,
+          identity.declaredProduct ?? "an unknown Product",
+        );
+      }
+
+      // Specification section 14. The base SHA of the target's RunTarget row is known now, at
+      // context resolution.
+      await activities.recordRunTargetFacts({
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: primaryRepositoryId,
+        baseSha: resolvedContext.primary.sha,
+      });
+
       // SDD section 49 places the Validation Contract between context resolution and sandbox
       // preparation. SDD section 24 requires the contract to freeze before implementation starts.
       // The loop ends because `askAndWait` is bounded by the question rounds and by the budget.
@@ -925,7 +1153,7 @@ export async function agentRunWorkflow(
         validation = await validationActivities.buildValidationContract({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.projectId,
+          productId: input.productId,
           workItem: input.workItem.issueId ?? id,
           goal: refined.goal,
           acceptanceCriteria: refined.criteria,
@@ -987,31 +1215,31 @@ export async function agentRunWorkflow(
       // primary repository. Only the values a repository must not own travel from here.
       const sandbox = {
         primary: {
-          url: buildRepositoryUrl(input.project.repositoryBaseUrl, resolvedContext.primary.slug),
+          url: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
           // SDD section 20. The checkout lands on the SHA discovery pinned. A branch name can
           // point to a new commit at any time, so the workflow must not use one here. The Run
           // and the Context Contract then read one state of the repository.
           ref: resolvedContext.primary.sha,
         },
         references: resolvedContext.references.map((repository) => ({
-          url: buildRepositoryUrl(input.project.repositoryBaseUrl, repository.slug),
+          url: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.slug),
           ref: repository.sha,
         })),
         defaults: {
-          stagingRead: input.project.stagingRead,
-          spriteRetentionHours: input.project.spriteRetentionHours,
+          stagingRead: input.product.stagingRead,
+          spriteRetentionHours: input.product.spriteRetentionHours,
         },
         organizationSkills:
-          input.project.organizationSkillsRepository === null
+          input.product.organizationSkillsRepository === null
             ? null
             : {
                 url: buildRepositoryUrl(
-                  input.project.repositoryBaseUrl,
-                  input.project.organizationSkillsRepository,
+                  input.product.repositoryBaseUrl,
+                  input.product.organizationSkillsRepository,
                 ),
-                // No discovery step resolves a skills repository, so the Project default branch
-                // is the only defined ref. See controller decision 3.
-                ref: input.project.defaultBranch,
+                // No discovery step resolves a skills repository, so the target repository default
+                // branch is the only defined ref. See controller decision 3.
+                ref: defaultBranchForSlug(primaryRepositorySlug),
               },
         goal: refined.goal,
       };
@@ -1030,12 +1258,13 @@ export async function agentRunWorkflow(
         preparedSandbox = await sandboxActivities.prepareSandbox({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.projectId,
+          productId: input.productId,
           primary: sandbox.primary,
           references: sandbox.references,
           defaults: sandbox.defaults,
           environment: {},
           organizationSkills: sandbox.organizationSkills,
+          githubInstallationId: primaryRepositoryInstallationId,
         });
       } catch (error) {
         // A configuration fault is not an infrastructure fault. The Run ends in
@@ -1142,7 +1371,7 @@ export async function agentRunWorkflow(
           verification = await verifyActivities.verify({
             runId: id,
             tenantId: input.tenantId,
-            projectId: input.projectId,
+            productId: input.productId,
             spriteId: preparedSandbox.spriteId,
             adapter: preparedSandbox.adapter,
             workspacePath: preparedSandbox.workspacePath,
@@ -1398,14 +1627,14 @@ export async function agentRunWorkflow(
       const publishInput = {
         runId: id,
         tenantId: input.tenantId,
-        projectId: input.projectId,
+        productId: input.productId,
         spriteId: preparedSandbox.spriteId,
         adapter: preparedSandbox.adapter,
         workspacePath: preparedSandbox.workspacePath,
         primaryPath: preparedSandbox.primaryPath,
         repositorySlug: resolvedContext.primary.slug,
-        repositoryBaseUrl: input.project.repositoryBaseUrl,
-        baseBranch: input.project.defaultBranch,
+        repositoryBaseUrl: input.product.repositoryBaseUrl,
+        baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),
         baseSha: preparedSandbox.baseSha,
         reviewedChangedFiles: publishedChangedFiles,
         reviewedWorktreeSha: publishedWorktreeSha,
@@ -1413,6 +1642,7 @@ export async function agentRunWorkflow(
         workItemUrl: input.workItem.url,
         verificationSummary: publishedVerificationSummary,
         repairCount,
+        githubInstallationId: primaryRepositoryInstallationId,
       };
 
       // SDD section 45. The stale-base check runs before any write, so a moved branch reaches no
@@ -1424,7 +1654,7 @@ export async function agentRunWorkflow(
         baseCheck = await publishingActivities.checkBase({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.projectId,
+          productId: input.productId,
           repositorySlug: publishInput.repositorySlug,
           repositoryBaseUrl: publishInput.repositoryBaseUrl,
           branch: publishInput.baseBranch,
@@ -1457,9 +1687,9 @@ export async function agentRunWorkflow(
         if (isConfigurationFault(error)) {
           return await failRun(
             "CONFIGURATION_INVALID",
-            "Factoree could not publish, because the Run configuration is invalid. Add a " +
-              "`GITHUB_TOKEN` Project secret that carries write access and that no agent session " +
-              "receives.",
+            "Factoree could not publish, because the Run configuration is invalid. Install the " +
+              "Factoree GitHub App on the target repository, so Factoree can mint a write " +
+              "credential that no agent session receives.",
           );
         }
         const reason = publicationFailureReasonOf(error);
@@ -1489,6 +1719,18 @@ export async function agentRunWorkflow(
       // value, so neither one claims that Factoree published nothing.
       publishedPullRequestUrl = publication.pullRequestUrl;
 
+      // Specification section 14. The patch hash and commit SHA are known after publication, and
+      // the pull request URL is known once the pull request exists. All three describe the same
+      // moment here.
+      await activities.recordRunTargetFacts({
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: primaryRepositoryId,
+        patchSha256: publication.patchSha256,
+        commitSha: publication.commitSha,
+        pullRequestUrl: publication.pullRequestUrl,
+      });
+
       // SDD section 50. A stop that arrived during the publication ends the Run CANCELLED. The
       // pull request already exists, and the stop message names it.
       if (stopRequested) return await cancelRun();
@@ -1500,7 +1742,7 @@ export async function agentRunWorkflow(
         proofPack = await proofPackActivities.publishProofPack({
           runId: id,
           tenantId: input.tenantId,
-          projectId: input.projectId,
+          productId: input.productId,
           sessionId: input.agentSessionId,
           workItem: { title: input.workItem.title, url: input.workItem.url },
           pullRequestUrl: publication.pullRequestUrl,

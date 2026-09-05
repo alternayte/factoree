@@ -63,7 +63,7 @@ describe("AT-37 — skill discovery", () => {
     prepared = await manager.prepare({
       runId: "run-at37",
       tenantId: "tenant-1",
-      projectId: "project-1",
+      productId: "project-1",
       primary: { url: primary, ref: "main" },
       references: [],
       defaults: DEFAULT_PROJECT_DEFAULTS,

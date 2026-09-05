@@ -14,7 +14,7 @@ const PRIMARY_URL = "https://git/acme/webhook-service";
 const REFERENCE_URL = "https://git/acme/notification-service";
 
 const files = {
-  ".factoree/config.yaml": "version: 1\nverify:\n  commands:\n    - name: test\n      run: npm test\n",
+  ".factoree/config.yaml": "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nverify:\n  commands:\n    - name: test\n      run: npm test\n",
   "README.md": "# Webhook service\n",
   "docs/ADR-031.md": "# ADR 31\n\nStatus: accepted\n",
   "docs/overview.md": "An overview.\n",

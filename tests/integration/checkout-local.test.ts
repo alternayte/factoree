@@ -43,7 +43,7 @@ describe("checkoutRepositories against real git repositories", () => {
 
   it("captures the real base SHA, writes the primary worktree, and denies the reference worktree", async () => {
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId: "r", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
     const result = await checkoutRepositories(sandbox, ref, {
       primary: { url: primaryUrl, ref: "main" },
       references: [{ url: referenceUrl, ref: "main" }],
@@ -83,7 +83,7 @@ describe("checkoutRepositories against real git repositories", () => {
     // tag as a path and fails with exit code 128.
     await run("git", ["-C", primaryUrl, "tag", "v1.0.0"]);
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId: "tag", tenantId: "t", projectId: "p" });
+    const ref = await sandbox.create({ runId: "tag", tenantId: "t", productId: "p" });
     const result = await checkoutRepositories(sandbox, ref, {
       primary: { url: primaryUrl, ref: "v1.0.0" },
       references: [],

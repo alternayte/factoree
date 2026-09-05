@@ -65,7 +65,7 @@ describe("AT-13 — Action Policy", () => {
     const prepared = await manager.prepare({
       runId: "run-write",
       tenantId: "t",
-      projectId: "p",
+      productId: "p",
       primary: { url: primary, ref: "main" },
       references: [{ url: reference, ref: "main" }],
       defaults: DEFAULT_PROJECT_DEFAULTS,
@@ -87,7 +87,7 @@ describe("AT-13 — Action Policy", () => {
     const prepared = await manager.prepare({
       runId: "run-reference",
       tenantId: "t",
-      projectId: "p",
+      productId: "p",
       primary: { url: primary, ref: "main" },
       references: [{ url: reference, ref: "main" }],
       defaults: DEFAULT_PROJECT_DEFAULTS,
@@ -113,7 +113,7 @@ describe("AT-13 — Action Policy", () => {
     const prepared = await manager.prepare({
       runId: "run-push",
       tenantId: "t",
-      projectId: "p",
+      productId: "p",
       primary: { url: primary, ref: "main" },
       references: [],
       defaults: DEFAULT_PROJECT_DEFAULTS,
@@ -133,7 +133,7 @@ describe("AT-13 — Action Policy", () => {
     // policy document FlySpriteSandbox sends. The live proof belongs to Phase 12, SDD section 66.
     const sent: unknown[] = [];
     const sprites = new FlySpriteSandbox({ gateway: recordingGateway(sent) });
-    const ref = await sprites.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+    const ref = await sprites.create({ runId: "run-1", tenantId: "t", productId: "p" });
 
     await sprites.applyNetworkPolicy(ref, { allowedDomains: ["registry.npmjs.org"] });
     expect(sent[0]).toEqual({

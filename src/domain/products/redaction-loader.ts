@@ -1,6 +1,6 @@
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Logger } from "~/telemetry/logger.js";
-import type { SecretStore } from "./secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
 
 /**
  * A Project secret this short still passes the redaction floor. A common word or a short
@@ -23,18 +23,18 @@ export const registerProjectSecrets = async (
   redactor: Redactor,
   secrets: SecretStore,
   tenantId: string,
-  projectId: string,
+  productId: string,
   logger?: Logger,
 ): Promise<number> => {
-  const names = await secrets.listNames(tenantId, projectId);
+  const names = await secrets.listNames(tenantId, productId);
   let registered = 0;
   for (const name of names) {
-    const value = await secrets.get(tenantId, projectId, name);
+    const value = await secrets.get(tenantId, productId, name);
     if (value === null || value.length === 0) continue;
     if (value.length < SHORT_SECRET_WARNING_THRESHOLD) {
       logger?.warn("Project secret is short and can produce noisy redaction", {
         tenant_id: tenantId,
-        project_id: projectId,
+        product_id: productId,
         secret_name: name,
         secret_length: value.length,
       });

@@ -1,5 +1,5 @@
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
-import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/projects/factoree-config.js";
+import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 
 /**
  * SDD section 15. The `context` block governs discovery, and SDD section 49 puts discovery

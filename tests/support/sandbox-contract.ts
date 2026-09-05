@@ -43,8 +43,8 @@ export const runSandboxContract = (
 
     it("creates a sandbox with a unique identifier and a workspace path", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const first = await sandbox.create({ runId: "run-a", tenantId: "t", projectId: "p" });
-        const second = await sandbox.create({ runId: "run-b", tenantId: "t", projectId: "p" });
+        const first = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
+        const second = await sandbox.create({ runId: "run-b", tenantId: "t", productId: "p" });
         expect(first.id).not.toBe(second.id);
         expect(first.adapter).toBe(sandbox.name);
         expect(first.workspacePath.startsWith("/")).toBe(true);
@@ -55,7 +55,7 @@ export const runSandboxContract = (
 
     whenExecuting("runs a command and reports stdout and a zero exit code", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-1", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
         const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "printf hello"] });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toBe("hello");
@@ -66,7 +66,7 @@ export const runSandboxContract = (
 
     whenExecuting("reports a non-zero exit code and stderr without throwing", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-2", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-2", tenantId: "t", productId: "p" });
         const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "printf oops >&2; exit 3"] });
         expect(result.exitCode).toBe(3);
         expect(result.stderr).toBe("oops");
@@ -76,7 +76,7 @@ export const runSandboxContract = (
 
     whenExecuting("runs a command in the workspace by default and honours cwd and env", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-3", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-3", tenantId: "t", productId: "p" });
         await sandbox.exec(ref, { file: "sh", args: ["-c", "mkdir -p sub && printf x > sub/f"] });
         const inSub = await sandbox.exec(ref, { file: "sh", args: ["-c", "cat f"], cwd: "sub" });
         expect(inSub.stdout).toBe("x");
@@ -92,7 +92,7 @@ export const runSandboxContract = (
 
     whenExecuting("stops a command at its timeout and reports timedOut", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-4", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-4", tenantId: "t", productId: "p" });
         const result = await sandbox.exec(ref, { file: "sh", args: ["-c", "sleep 30"], timeoutMs: 500 });
         expect(result.timedOut).toBe(true);
         expect(result.exitCode).not.toBe(0);
@@ -102,7 +102,7 @@ export const runSandboxContract = (
 
     whenExecuting("starts a process, reads its output, and reports it as finished", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-5", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-5", tenantId: "t", productId: "p" });
         const process = await sandbox.startProcess(ref, { file: "sh", args: ["-c", "printf started; exit 0"] });
         const snapshot = await pollUntil(async () => sandbox.readProcess(ref, process), (s) => !s.running);
         expect(snapshot.exitCode).toBe(0);
@@ -113,7 +113,7 @@ export const runSandboxContract = (
 
     it("cancels a running process", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-6", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-6", tenantId: "t", productId: "p" });
         const process = await sandbox.startProcess(ref, { file: "sh", args: ["-c", "sleep 60"] });
         await sandbox.cancelProcess(ref, process);
         const snapshot = await pollUntil(async () => sandbox.readProcess(ref, process), (s) => !s.running);
@@ -125,7 +125,7 @@ export const runSandboxContract = (
 
     whenExecuting("cancelling an already finished process does not throw", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-7", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-7", tenantId: "t", productId: "p" });
         const process = await sandbox.startProcess(ref, { file: "sh", args: ["-c", "exit 0"] });
         await pollUntil(async () => sandbox.readProcess(ref, process), (s) => !s.running);
         await expect(sandbox.cancelProcess(ref, process)).resolves.toBeUndefined();
@@ -136,7 +136,7 @@ export const runSandboxContract = (
     it("creates a named checkpoint when the adapter supports checkpoints", async () => {
       await withSandbox(async ({ sandbox }) => {
         if (!sandbox.capabilities.supportsCheckpoints) return;
-        const ref = await sandbox.create({ runId: "run-8", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-8", tenantId: "t", productId: "p" });
         const checkpoint = await sandbox.checkpoint(ref, "baseline");
         expect(checkpoint.name).toBe("baseline");
         expect(checkpoint.id.length).toBeGreaterThan(0);
@@ -146,7 +146,7 @@ export const runSandboxContract = (
 
     it("applies a network policy without throwing", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-9", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-9", tenantId: "t", productId: "p" });
         await expect(
           sandbox.applyNetworkPolicy(ref, { allowedDomains: ["registry.npmjs.org"] }),
         ).resolves.toBeUndefined();
@@ -156,7 +156,7 @@ export const runSandboxContract = (
 
     it("destroying a sandbox twice does not throw", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const ref = await sandbox.create({ runId: "run-10", tenantId: "t", projectId: "p" });
+        const ref = await sandbox.create({ runId: "run-10", tenantId: "t", productId: "p" });
         await sandbox.destroy(ref);
         await expect(sandbox.destroy(ref)).resolves.toBeUndefined();
       });
@@ -164,8 +164,8 @@ export const runSandboxContract = (
 
     whenExecuting("isolates two sandboxes from one another", async () => {
       await withSandbox(async ({ sandbox }) => {
-        const first = await sandbox.create({ runId: "run-11", tenantId: "t", projectId: "p" });
-        const second = await sandbox.create({ runId: "run-12", tenantId: "t", projectId: "p" });
+        const first = await sandbox.create({ runId: "run-11", tenantId: "t", productId: "p" });
+        const second = await sandbox.create({ runId: "run-12", tenantId: "t", productId: "p" });
         await sandbox.exec(first, { file: "sh", args: ["-c", "printf one > marker"] });
         const read = await sandbox.exec(second, { file: "sh", args: ["-c", "cat marker 2>/dev/null; printf END"] });
         expect(read.stdout).toBe("END");

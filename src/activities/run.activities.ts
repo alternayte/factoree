@@ -2,6 +2,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import type { AgentSessionPort } from "~/domain/runs/ports.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 import { failureCategoryOf } from "~/domain/runs/failure-category.js";
@@ -10,18 +11,19 @@ export interface RunActivityDependencies {
   runs: RunRepository;
   logger: Logger;
   runners: AgentRunnerRegistry;
+  agentSession: AgentSessionPort;
 }
 
 export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   async createRun(input: CreateRunInput): Promise<{ runId: string; created: boolean }> {
     const { run, created } = await dependencies.runs.createIfAbsent(input);
     if (created) {
-      metrics.runsStarted.inc({ tenant_id: input.tenantId, project_id: input.projectId });
-      metrics.activeRuns.inc({ tenant_id: input.tenantId, project_id: input.projectId });
+      metrics.runsStarted.inc({ tenant_id: input.tenantId, product_id: input.productId });
+      metrics.activeRuns.inc({ tenant_id: input.tenantId, product_id: input.productId });
     }
     dependencies.logger.info("run received", {
       tenant_id: run.tenantId,
-      project_id: run.projectId,
+      product_id: run.productId,
       run_id: run.id,
       workflow_id: run.temporalWorkflowId,
       step: "receive",
@@ -51,7 +53,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       // workflow must stay deterministic.
       metrics.repairs.inc({
         tenant_id: run.tenantId,
-        project_id: run.projectId,
+        product_id: run.productId,
         reason: input.repairReason ?? "VERIFICATION",
       });
     }
@@ -86,7 +88,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       ...(failureCategory === undefined ? {} : { failureCategory }),
       completedAt: new Date(input.completedAt),
     });
-    const labels = { tenant_id: run.tenantId, project_id: run.projectId };
+    const labels = { tenant_id: run.tenantId, product_id: run.productId };
     const completedAt = run.completedAt ?? new Date(input.completedAt);
     // An activity retry after a successful write must not count the terminal state twice.
     if (!alreadyTerminal) {
@@ -106,10 +108,67 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     for (const runner of dependencies.runners.all()) runner.releaseRun?.(input.runId);
     dependencies.logger.info("run completed", {
       tenant_id: run.tenantId,
-      project_id: run.projectId,
+      product_id: run.productId,
       run_id: run.id,
       step: "complete",
       status: input.status,
     });
+  },
+
+  /**
+   * Specification section 10. Records the repository target selection the workflow decided.
+   * `mergeOrder` starts at one, because Task 10 selects one target only.
+   */
+  async recordRunTarget(input: {
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    selectionReason: string;
+    mergeOrder: number;
+  }): Promise<string> {
+    const target = await dependencies.runs.createRunTarget(input);
+    dependencies.logger.info("run target recorded", {
+      tenant_id: input.tenantId,
+      run_id: input.runId,
+      step: "target_selection",
+    });
+    return target.id;
+  },
+
+  /**
+   * Specification section 14. Records the per-target facts of one RunTarget as they become
+   * known: the base SHA after context resolution, the patch hash and commit SHA after
+   * publication, and the pull request URL once the pull request exists.
+   */
+  async recordRunTargetFacts(input: {
+    tenantId: string;
+    runId: string;
+    repositoryId: string;
+    baseSha?: string;
+    patchSha256?: string;
+    commitSha?: string;
+    pullRequestUrl?: string;
+  }): Promise<void> {
+    const { tenantId, runId, repositoryId, ...patch } = input;
+    await dependencies.runs.updateRunTarget(tenantId, runId, repositoryId, patch);
+  },
+
+  /**
+   * Specification section 10. Posts the Linear notice that names the confident target and its
+   * reason. The notice reaches the Run's own agent session. The activity resolves the session
+   * id from the Run record.
+   */
+  async postTargetNotice(input: {
+    tenantId: string;
+    runId: string;
+    fullName: string;
+    reason: string;
+  }): Promise<void> {
+    const run = await dependencies.runs.findById(input.tenantId, input.runId);
+    if (run === null) return;
+    await dependencies.agentSession.progress(
+      run.linearAgentSessionId,
+      `Factoree selected "${input.fullName}" as the target repository, because ${input.reason}.`,
+    );
   },
 });

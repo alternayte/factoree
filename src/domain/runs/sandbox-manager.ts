@@ -14,7 +14,7 @@ import type { Logger } from "~/telemetry/logger.js";
 export interface PrepareSandboxInput {
   runId: string;
   tenantId: string;
-  projectId: string;
+  productId: string;
   primary: RepositorySpec;
   references: RepositorySpec[];
   defaults: ProjectDefaults;
@@ -130,7 +130,7 @@ export class SandboxManager {
     const ref = await sandbox.create({
       runId: input.runId,
       tenantId: input.tenantId,
-      projectId: input.projectId,
+      productId: input.productId,
       ...(input.environment === undefined ? {} : { environment: input.environment }),
     });
 

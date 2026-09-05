@@ -6,7 +6,9 @@ import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
-import type { SecretStore } from "~/domain/projects/secret-store.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
+import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
@@ -22,6 +24,9 @@ import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
+import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities } from "./sandbox.activities.js";
@@ -33,9 +38,12 @@ import { createValidationActivities } from "./validation.activities.js";
 import { createEvidencePersistence, createProofPackActivities } from "./evidence.activities.js";
 import { createReviewActivities } from "./review.activities.js";
 import { createPublishingActivities } from "./publishing.activities.js";
+import { createDiscoveryActivities } from "./discovery.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
+  products: ProductRegistry;
+  repositories: RepositoryRegistry;
   agentSession: AgentSessionPort;
   workItems: WorkItemPort;
   sandboxManager: SandboxManager;
@@ -62,10 +70,24 @@ export interface ActivityDependencies {
   pullRequests: (token: string) => PullRequestPort;
   gitAuthor: { name: string; email: string };
   logger: Logger;
+  /**
+   * Mints every GitHub installation token Factoree needs: the read-only clone credential, the
+   * discovery read, and the write credential of a publish. One provider, one credential path.
+   */
+  tokens: GitHubTokenProvider;
+  /** The read side of repository discovery. `syncInstallationWorkflow` lists an installation's repositories through it. */
+  discoveryClient: RepositoryDiscoveryClient;
+  /** Turns one repository's `.factoree/config.yaml` declaration into rows. */
+  discoveryService: DiscoveryService;
 }
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
-  ...createRunActivities({ runs: dependencies.runs, logger: dependencies.logger, runners: dependencies.runners }),
+  ...createRunActivities({
+    runs: dependencies.runs,
+    logger: dependencies.logger,
+    runners: dependencies.runners,
+    agentSession: dependencies.agentSession,
+  }),
   ...createLinearActivities({ agentSession: dependencies.agentSession, workItems: dependencies.workItems }),
   ...createSandboxActivities({
     sandboxManager: dependencies.sandboxManager,
@@ -76,6 +98,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     runners: dependencies.runners,
     logger: dependencies.logger,
+    tokens: dependencies.tokens,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,
@@ -98,6 +121,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     sources: dependencies.contextSources,
     repositoryReader: dependencies.repositoryReader,
     secrets: dependencies.secrets,
+    tokens: dependencies.tokens,
+    redactor: dependencies.redactor,
   }),
   ...createValidationActivities({
     contracts: dependencies.validationContracts,
@@ -139,9 +164,12 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     pullRequests: dependencies.pullRequests,
     gitAuthor: dependencies.gitAuthor,
     logger: dependencies.logger,
+    tokens: dependencies.tokens,
   }),
   ...createProofPackActivities({
     runs: dependencies.runs,
+    products: dependencies.products,
+    repositories: dependencies.repositories,
     contextContracts: dependencies.contextContracts,
     validationContracts: dependencies.validationContracts,
     validationResults: dependencies.validationResults,
@@ -157,6 +185,11 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     evidence: dependencies.evidence,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
+    logger: dependencies.logger,
+  }),
+  ...createDiscoveryActivities({
+    discoveryClient: dependencies.discoveryClient,
+    discoveryService: dependencies.discoveryService,
     logger: dependencies.logger,
   }),
 });

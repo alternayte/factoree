@@ -334,7 +334,7 @@ const createFixtureBase = async (workspacePath: string): Promise<{ appPath: stri
 
 interface Rig {
   tenantId: string;
-  projectId: string;
+  productId: string;
   runId: string;
   sandbox: LocalProcessSandbox;
   ref: Awaited<ReturnType<LocalProcessSandbox["create"]>>;
@@ -362,13 +362,13 @@ interface Rig {
  * defective revision on the first attempt, and the repaired revision on every later attempt.
  */
 const buildRig = async (name: string, reportFor: (call: number) => string | null): Promise<Rig> => {
-  const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+  const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
   const port = await pickPort();
 
   const sandboxRoot = await mkdtemp(join(tmpdir(), `factoree-phase08-${name}-`));
   temporaryRoots.push(sandboxRoot);
   const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-  const ref = await sandbox.create({ runId, tenantId, projectId });
+  const ref = await sandbox.create({ runId, tenantId, productId: productId });
   const { appPath, baseSha } = await createFixtureBase(ref.workspacePath);
 
   const contracts = new PrismaValidationContractStore(prisma);
@@ -506,7 +506,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
 
   return {
     tenantId,
-    projectId,
+    productId,
     runId,
     sandbox,
     ref,
@@ -551,7 +551,7 @@ const startRun = async (rig: Rig) =>
       {
         ...rig.harness.input(rig.sessionId),
         tenantId: rig.tenantId,
-        projectId: rig.projectId,
+        productId: rig.productId,
       },
     ],
   });
@@ -720,11 +720,11 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
   }, 300_000);
 
   it("blocks a valid high finding even when the Reviewer claims a pass verdict", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
     const sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-phase08-liar-"));
     temporaryRoots.push(sandboxRoot);
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
-    const ref = await sandbox.create({ runId, tenantId, projectId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
     const { appPath, baseSha } = await createFixtureBase(ref.workspacePath);
     await writeReviewFixtureApp({ root: appPath, requireEditor: false });
 
@@ -756,7 +756,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
         {
           runId,
           tenantId,
-          projectId,
+          productId: productId,
           runnerName: "claude",
           spriteId: ref.id,
           adapter: ref.adapter,

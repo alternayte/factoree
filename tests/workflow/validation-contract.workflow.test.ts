@@ -138,6 +138,7 @@ describe("the Validation Contract state of the Run workflow", () => {
     // carries the Implementer and that verification call, and it stops before user validation.
     expect(order).toEqual([
       "resolveContext",
+      "verifyTargetIdentity",
       "buildValidationContract",
       "prepareSandbox",
       "implement",

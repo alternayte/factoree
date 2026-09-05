@@ -1,34 +1,33 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
-import {
-  PrismaProjectRegistry,
-  PrismaTenantRegistry,
-} from "~/persistence/prisma/project-registry.prisma.js";
+import { PrismaProductRegistry, PrismaTenantRegistry } from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
-import type { ProjectRecord, TenantRecord } from "~/domain/projects/project-registry.js";
+import type { ProductRecord } from "~/domain/products/product-registry.js";
+import type { TenantRecord } from "~/domain/products/tenant-registry.js";
 
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let tenants: PrismaTenantRegistry;
-let projects: PrismaProjectRegistry;
+let products: PrismaProductRegistry;
 let tenant: TenantRecord;
 let otherTenant: TenantRecord;
-let project: ProjectRecord;
+let product: ProductRecord;
 
 beforeAll(async () => {
   const database = await startDatabase();
   stop = database.stop;
   prisma = createPrismaClient(database.url);
   tenants = new PrismaTenantRegistry(prisma, "b".repeat(64));
-  projects = new PrismaProjectRegistry(prisma);
+  products = new PrismaProductRegistry(prisma);
   tenant = await tenants.ensureTenant("ws-context-source", "Context Source Workspace");
   otherTenant = await tenants.ensureTenant("ws-context-source-other", "Context Source Other");
-  project = await projects.create({
+  product = await products.create({
     tenantId: tenant.id,
-    key: "ctx",
+    slug: "ctx",
     name: "Context",
-    primaryRepository: "acme/ctx",
+    linearTeamKey: "CTX",
+    linearTeamId: "team-ctx",
   });
 });
 
@@ -42,7 +41,7 @@ describe("PrismaContextSourceConfigurationStore", () => {
     const store = new PrismaContextSourceConfigurationStore(prisma);
     const created = await store.put({
       tenantId: tenant.id,
-      projectId: project.id,
+      productId: product.id,
       sourceId: "backstage",
       kind: "backstage",
       endpoint: "https://backstage.example.test",
@@ -56,34 +55,34 @@ describe("PrismaContextSourceConfigurationStore", () => {
       includeOwnership: true,
     });
 
-    const listed = await store.list(tenant.id, project.id);
+    const listed = await store.list(tenant.id, product.id);
     expect(listed.map((row) => row.sourceId)).toEqual(["backstage"]);
 
-    // SDD section 52. Another tenant sees nothing, even with the right project id.
-    expect(await store.list(otherTenant.id, project.id)).toEqual([]);
-    expect(await store.remove(otherTenant.id, project.id, "backstage")).toBe(false);
-    expect(await store.remove(tenant.id, project.id, "backstage")).toBe(true);
-    expect(await store.list(tenant.id, project.id)).toEqual([]);
+    // SDD section 52. Another tenant sees nothing, even with the right product id.
+    expect(await store.list(otherTenant.id, product.id)).toEqual([]);
+    expect(await store.remove(otherTenant.id, product.id, "backstage")).toBe(false);
+    expect(await store.remove(tenant.id, product.id, "backstage")).toBe(true);
+    expect(await store.list(tenant.id, product.id)).toEqual([]);
   });
 
   it("replaces the row of the same source identifier rather than adding a second", async () => {
     const store = new PrismaContextSourceConfigurationStore(prisma);
     await store.put({
       tenantId: tenant.id,
-      projectId: project.id,
+      productId: product.id,
       sourceId: "backstage",
       kind: "backstage",
       endpoint: "https://a.test",
     });
     const second = await store.put({
       tenantId: tenant.id,
-      projectId: project.id,
+      productId: product.id,
       sourceId: "backstage",
       kind: "backstage",
       endpoint: "https://b.test",
     });
     expect(second.endpoint).toBe("https://b.test");
-    expect(await store.list(tenant.id, project.id)).toHaveLength(1);
+    expect(await store.list(tenant.id, product.id)).toHaveLength(1);
   });
 
   it("refuses an endpoint that carries a credential anywhere", async () => {
@@ -93,7 +92,7 @@ describe("PrismaContextSourceConfigurationStore", () => {
     const put = (endpoint: string) =>
       store.put({
         tenantId: tenant.id,
-        projectId: project.id,
+        productId: product.id,
         sourceId: "backstage",
         kind: "backstage",
         endpoint,
@@ -106,7 +105,7 @@ describe("PrismaContextSourceConfigurationStore", () => {
     await expect(put("https://operator:token@a.test")).rejects.not.toThrow(/operator/);
     // A plain base address still passes.
     expect((await put("https://a.test/api")).endpoint).toBe("https://a.test/api");
-    await store.remove(tenant.id, project.id, "backstage");
+    await store.remove(tenant.id, product.id, "backstage");
   });
 
   it("refuses settings that do not belong to the kind", async () => {
@@ -114,7 +113,7 @@ describe("PrismaContextSourceConfigurationStore", () => {
     await expect(
       store.put({
         tenantId: tenant.id,
-        projectId: project.id,
+        productId: product.id,
         sourceId: "docs",
         kind: "mcp",
         endpoint: "https://a.test",

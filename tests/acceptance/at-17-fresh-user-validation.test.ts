@@ -69,7 +69,7 @@ afterEach(async () => {
  */
 describe("AT-17 — the User Validator session is fresh", () => {
   it("differs from the Implementer session, in the persisted rows and in the prompt text", async () => {
-    const { tenantId, projectId, runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
 
     const contracts = new PrismaValidationContractStore(prisma);
     const runs = new PrismaRunRepository(prisma);
@@ -144,11 +144,11 @@ describe("AT-17 — the User Validator session is fresh", () => {
       },
     });
 
-    const ref = await sandbox.create({ runId, tenantId, projectId });
+    const ref = await sandbox.create({ runId, tenantId, productId: productId });
     const input: UserValidateActivityInput = {
       runId,
       tenantId,
-      projectId,
+      productId: productId,
       runnerName: "opencode",
       spriteId: ref.id,
       adapter: ref.adapter,
