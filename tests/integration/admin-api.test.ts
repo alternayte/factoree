@@ -15,6 +15,8 @@ import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { Env } from "~/config/env.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
+import { DiscoveryService } from "~/domain/products/discovery-service.js";
+import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 
 const token = "t".repeat(32);
 const env = {
@@ -22,6 +24,11 @@ const env = {
   FACTOREE_SECRET_KEY: "c".repeat(64),
   ADMIN_API_TOKEN: token,
   LINEAR_WEBHOOK_SECRET: "webhook-secret",
+  GITHUB_APP_ID: "123456",
+  GITHUB_APP_PRIVATE_KEY: Buffer.from(
+    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  ).toString("base64"),
+  GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
   TEMPORAL_ADDRESS: "localhost:7233",
   TEMPORAL_NAMESPACE: "default",
   TEMPORAL_TASK_QUEUE: "factoree",
@@ -75,6 +82,17 @@ beforeAll(async () => {
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
       repositoryBaseUrl: "https://github.com",
     }),
+    // This test drives the Products administration route, which never exercises the GitHub
+    // webhook route. These doubles only satisfy the shape `buildServer` now requires.
+    discovery: new DiscoveryService(
+      { listInstallationRepositories: () => Promise.reject(new Error("unused")), readConfig: () => Promise.reject(new Error("unused")) } satisfies RepositoryDiscoveryClient,
+      new PrismaProductRegistry(prisma),
+      new PrismaRepositoryRegistry(prisma),
+      fakeLinearTeams(["NOPE"]),
+      createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
+    ),
+    verifyGitHubSignature: () => false,
+    startInstallationSync: () => Promise.reject(new Error("unused")),
   });
   await app.ready();
 });

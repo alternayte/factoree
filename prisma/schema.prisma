@@ -368,6 +368,9 @@ model Repository {
   lastSeenAt           DateTime @default(now())
   // Set when the configuration file disappears. The row stays, so the Run history survives.
   absentSince          DateTime?
+  // The installation that granted access to this repository. Discovery knows it at sync time.
+  // A clone or a push mints its token against this installation.
+  githubInstallationId String
   runTargets           RunTarget[]
 
   @@unique([tenantId, fullName])

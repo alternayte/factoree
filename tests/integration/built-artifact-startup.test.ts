@@ -46,6 +46,11 @@ const dummyEnv = (port: number, temporalAddress: string): NodeJS.ProcessEnv => (
   ADMIN_API_TOKEN: "a".repeat(32),
   LINEAR_WEBHOOK_SECRET: "dummy-webhook-secret",
   SPRITES_TOKEN: "dummy-sprites-token",
+  GITHUB_APP_ID: "123456",
+  GITHUB_APP_PRIVATE_KEY: Buffer.from(
+    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  ).toString("base64"),
+  GITHUB_WEBHOOK_SECRET: "dummy-github-webhook-secret",
   TEMPORAL_ADDRESS: temporalAddress,
   PORT: String(port),
 });

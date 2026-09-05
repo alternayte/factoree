@@ -125,7 +125,8 @@ const buildActivities = (api: GitHubFixtureApi) => {
   const attempted: string[] = [];
   const activities = createPublishingActivities({
     sandbox,
-    secrets: new MemorySecretStore({ GITHUB_TOKEN: TOKEN }),
+    secrets: new MemorySecretStore({}),
+    tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
     redactor,
     runs: { setPublication: () => Promise.resolve() } as unknown as RunRepository,
     repositoryReader: {
@@ -135,7 +136,7 @@ const buildActivities = (api: GitHubFixtureApi) => {
       readBlob: () => Promise.resolve(null),
       useCredential: () => undefined,
     },
-    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, token }),
+    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
     gitAuthor: AUTHOR,
     logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
     publishToBranch: (value: TrustedCheckoutInput) => {
@@ -165,6 +166,7 @@ const publishInputFor = (runId: string, reviewedChangedFiles: string[]): Publish
   workItemUrl: null,
   verificationSummary: "every deterministic check passed",
   repairCount: 0,
+  githubInstallationId: "install-1",
 });
 
 describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {

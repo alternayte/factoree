@@ -30,7 +30,12 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
 
 const defaultProduct = productFor("acme");
 
-const repositoryFor = (productId: string, fullName: string, defaultBranch = "main"): RepositoryRecord => ({
+const repositoryFor = (
+  productId: string,
+  fullName: string,
+  defaultBranch = "main",
+  githubInstallationId = "install-1",
+): RepositoryRecord => ({
   id: `repository-${fullName}`,
   tenantId: "tenant-1",
   productId,
@@ -41,6 +46,7 @@ const repositoryFor = (productId: string, fullName: string, defaultBranch = "mai
   discoveredAt: new Date(),
   lastSeenAt: new Date(),
   absentSince: null,
+  githubInstallationId,
 });
 
 const defaultRepositories = [
@@ -206,6 +212,20 @@ describe("DelegationService", () => {
     expect(product.repositories.map((entry) => entry.fullName)).toEqual(["acme/api", "acme/web"]);
   });
 
+  it("passes the installation that granted each repository, not a placeholder", async () => {
+    const { service, starter } = build({
+      repositories: [repositoryFor(defaultProduct.id, "acme/api", "main", "install-77")],
+    });
+    await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-14b");
+    const started = starter.start.mock.calls[0]?.[0] as unknown as { args: [Record<string, unknown>] };
+    const product = started.args[0]?.product as {
+      repositories: Array<{ fullName: string; githubInstallationId: string }>;
+    };
+    expect(product.repositories).toEqual([
+      expect.objectContaining({ fullName: "acme/api", githubInstallationId: "install-77" }),
+    ]);
+  });
+
   it("gives the workflow the Work Item and the Product record", async () => {
     const { service, starter } = build({
       products: [productFor("app")],
@@ -227,7 +247,13 @@ describe("DelegationService", () => {
       productId: "product-app",
       productSlug: "app",
       repositories: [
-        { id: "repository-acme/app", fullName: "acme/app", defaultBranch: "release", absentSince: null },
+        {
+          id: "repository-acme/app",
+          fullName: "acme/app",
+          defaultBranch: "release",
+          absentSince: null,
+          githubInstallationId: "install-1",
+        },
       ],
       repositoryBaseUrl: "https://github.com",
       stagingRead: false,

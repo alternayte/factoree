@@ -3,13 +3,13 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.js";
-import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import type { VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import type { VerificationCheckResult } from "~/domain/runs/verification.js";
 import { runVerification } from "~/domain/runs/verification.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 
 export interface VerificationActivityDependencies {

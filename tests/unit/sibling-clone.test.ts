@@ -4,8 +4,8 @@ import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
 
 const REPOSITORIES = [
-  { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null },
-  { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+  { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+  { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
 ];
 
 const build = (overrides: { repositories?: typeof REPOSITORIES } = {}) => {

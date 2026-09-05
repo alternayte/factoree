@@ -3,7 +3,7 @@ import {
   TenantScopedLinearTeamLookup,
   type TenantWorkspaceLookup,
 } from "~/adapters/linear/team-lookup-by-tenant.js";
-import { LinearInstallationError, LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import { LinearInstallationError, LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import type { InstallationRecord, TenantRegistry } from "~/domain/products/tenant-registry.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";

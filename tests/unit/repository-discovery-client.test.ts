@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 
+const tokens = { tokenForInstallation: (id: string) => Promise.resolve(`ghs_${id}`) };
+
 describe("GitHubRepositoryDiscoveryClient.readConfig", () => {
   it("returns null when the configuration file is absent", async () => {
     const client = new GitHubRepositoryDiscoveryClient({
-      token: "t",
+      tokens,
       fetch: () => Promise.resolve(new Response("", { status: 404 })),
     });
 
-    expect(await client.readConfig("acme/api", "main")).toBeNull();
+    expect(await client.readConfig("acme/api", "main", "42")).toBeNull();
   });
 
   it("returns the decoded content and the blob sha", async () => {
@@ -18,20 +20,20 @@ describe("GitHubRepositoryDiscoveryClient.readConfig", () => {
       encoding: "base64",
     });
     const client = new GitHubRepositoryDiscoveryClient({
-      token: "t",
+      tokens,
       fetch: () => Promise.resolve(new Response(body, { status: 200 })),
     });
 
-    expect(await client.readConfig("acme/api", "main")).toEqual({ content: "version: 1\n", sha: "4f21c9e" });
+    expect(await client.readConfig("acme/api", "main", "42")).toEqual({ content: "version: 1\n", sha: "4f21c9e" });
   });
 
   it("throws on a failure that is not a missing file", async () => {
     const client = new GitHubRepositoryDiscoveryClient({
-      token: "t",
+      tokens,
       fetch: () => Promise.resolve(new Response("", { status: 500 })),
     });
 
-    await expect(client.readConfig("acme/api", "main")).rejects.toThrow();
+    await expect(client.readConfig("acme/api", "main", "42")).rejects.toThrow();
   });
 });
 
@@ -54,7 +56,7 @@ describe("GitHubRepositoryDiscoveryClient.listInstallationRepositories", () => {
       return Promise.resolve(new Response(pageTwo, { status: 200 }));
     }) as unknown as typeof fetch;
 
-    const client = new GitHubRepositoryDiscoveryClient({ token: "t", fetch: fetchImpl });
+    const client = new GitHubRepositoryDiscoveryClient({ tokens, fetch: fetchImpl });
 
     const repositories = await client.listInstallationRepositories("42");
 
@@ -64,5 +66,24 @@ describe("GitHubRepositoryDiscoveryClient.listInstallationRepositories", () => {
     ]);
     expect(calls).toHaveLength(2);
     expect(calls[1]).toBe("https://api.github.com/installation/repositories?page=2");
+  });
+
+  it("mints a token for each installation it reads", async () => {
+    const asked: string[] = [];
+    const client = new GitHubRepositoryDiscoveryClient({
+      tokens: {
+        tokenForInstallation: (id: string) => {
+          asked.push(id);
+          return Promise.resolve(`ghs_${id}`);
+        },
+      },
+      fetch: () =>
+        Promise.resolve(new Response(JSON.stringify({ repositories: [] }), { status: 200 })),
+    });
+
+    await client.listInstallationRepositories("42");
+    await client.listInstallationRepositories("43");
+
+    expect(asked).toEqual(["42", "43"]);
   });
 });

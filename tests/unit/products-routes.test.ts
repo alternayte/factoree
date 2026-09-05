@@ -143,6 +143,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,
+      githubInstallationId: input.githubInstallationId,
     };
     this.rows.push(record);
     return Promise.resolve(record);
@@ -347,6 +348,7 @@ describe("Products administration API", () => {
       defaultBranch: "main",
       configSha: "sha1",
       requestedSecretNames: [],
+      githubInstallationId: "install-1",
     });
 
     const response = await app.inject({

@@ -13,8 +13,10 @@ import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
-import { loadRepositoryReadToken } from "~/domain/projects/runner-credentials.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { Redactor } from "~/telemetry/redaction.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 
 export interface ResolveContextActivityInput {
   runId: string;
@@ -26,6 +28,8 @@ export interface ResolveContextActivityInput {
   referenceRepositories: RepositoryRef[];
   workItemReferences: string[];
   decisions: RecordedDecision[];
+  /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface ResolveContextActivityOutput {
@@ -56,9 +60,28 @@ export interface ContextActivityDependencies {
   sources: ContextSourceProvider;
   repositoryReader: RepositoryReader;
   secrets: SecretStore;
+  /** Mints the read-only credential of the primary repository origin, scoped to `contents: read`. */
+  tokens: GitHubTokenProvider;
+  /** Every minted token reaches this before a git command spends it. SDD section 7. */
+  redactor: Redactor;
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
+
+/**
+ * Wraps a `GitHubTokenProvider` so every token it mints reaches the redactor before the caller
+ * can spend it. `GitRepositoryReader` mints immediately before the git command that uses the
+ * token, so this wrapper is the only point between the mint and that command. A token must never
+ * reach output by design, and the redactor is the guarantee that survives a later edit by someone
+ * who does not know the rule.
+ */
+const redactingTokens = (tokens: GitHubTokenProvider, redactor: Redactor): GitHubTokenProvider => ({
+  tokenForInstallation: async (githubInstallationId, scope) => {
+    const token = await tokens.tokenForInstallation(githubInstallationId, scope);
+    redactor.addSecret(token);
+    return token;
+  },
+});
 
 /**
  * Specification section 8. The cached routing table can drift from the file at the commit a Run
@@ -73,6 +96,8 @@ export interface VerifyTargetIdentityActivityInput {
   productSlug: string;
   repositoryUrl: string;
   baseSha: string;
+  /** The GitHub App installation that grants the target repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface VerifyTargetIdentityActivityOutput {
@@ -96,17 +121,18 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     // SDD section 30. Discovery reads the repository on the worker, before a sandbox exists, so a
     // private repository needs the read-only credential here as well as in the checkout. The
-    // credential is set per Run, because a Project can rotate its token between two Runs.
-    const repositoryCredential = await loadRepositoryReadToken(
-      dependencies.secrets,
-      input.tenantId,
-      input.productId,
-    );
-    if (repositoryCredential !== null) {
+    // installation id names the source of the credential, and a Project can move a repository
+    // between two installations between two Runs, so this activity reads the id fresh every time.
+    if (input.githubInstallationId !== "") {
       try {
+        const origin = new URL(input.primaryRepository.url).origin;
+        // The provider mints on demand, immediately before the git command that spends the
+        // token, so no token outlives the single command. The scope stays read-only. SDD
+        // section 30 forbids a write credential here, and this path never asks for one.
         dependencies.repositoryReader.useCredential(
-          new URL(input.primaryRepository.url).origin,
-          repositoryCredential,
+          origin,
+          redactingTokens(dependencies.tokens, dependencies.redactor),
+          input.githubInstallationId,
         );
       } catch {
         // A local path carries no origin, and it needs no credential either.
@@ -115,28 +141,40 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     // SDD section 15 and controller decision 2. The `context` block governs discovery, and
     // discovery runs before the sandbox exists, so the file is read at the pinned primary SHA.
-    const contextConfiguration = await readRepositoryContextConfiguration(
-      dependencies.repositoryReader,
-      input.primaryRepository.url,
-      input.primaryRepository.ref,
-    );
-    const sources = await dependencies.sources.sourcesFor({
-      tenantId: input.tenantId,
-      productId: input.productId,
-      contextConfiguration,
-    });
+    //
+    // Discovery reads the repository through the credential `useCredential` registered above, so
+    // a rejected mint of that credential surfaces from one of these calls, not from the mint
+    // call itself. A deterministic rejection must map to the identical `RunConfigurationError`
+    // every other mint site produces, so this block converts it here.
+    let contextConfiguration;
+    let sources;
+    let resolved;
+    try {
+      contextConfiguration = await readRepositoryContextConfiguration(
+        dependencies.repositoryReader,
+        input.primaryRepository.url,
+        input.primaryRepository.ref,
+      );
+      sources = await dependencies.sources.sourcesFor({
+        tenantId: input.tenantId,
+        productId: input.productId,
+        contextConfiguration,
+      });
 
-    const resolved = await dependencies.resolver.resolve({
-      runId: input.runId,
-      goal: input.goal,
-      acceptanceCriteria: input.acceptanceCriteria,
-      primaryRepository: input.primaryRepository,
-      referenceRepositories: input.referenceRepositories,
-      workItemReferences: input.workItemReferences,
-      decisions: input.decisions,
-      sources,
-      contextConfiguration,
-    });
+      resolved = await dependencies.resolver.resolve({
+        runId: input.runId,
+        goal: input.goal,
+        acceptanceCriteria: input.acceptanceCriteria,
+        primaryRepository: input.primaryRepository,
+        referenceRepositories: input.referenceRepositories,
+        workItemReferences: input.workItemReferences,
+        decisions: input.decisions,
+        sources,
+        contextConfiguration,
+      });
+    } catch (error) {
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
 
     // SDD section 21 freezes the Context Contract. SDD section 23 forbids a start of
     // implementation while a conflict is unresolved. A contract that still holds an unresolved
@@ -244,24 +282,32 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
   async verifyTargetIdentity(
     input: VerifyTargetIdentityActivityInput,
   ): Promise<VerifyTargetIdentityActivityOutput> {
-    const repositoryCredential = await loadRepositoryReadToken(
-      dependencies.secrets,
-      input.tenantId,
-      input.productId,
-    );
-    if (repositoryCredential !== null) {
+    if (input.githubInstallationId !== "") {
       try {
-        dependencies.repositoryReader.useCredential(new URL(input.repositoryUrl).origin, repositoryCredential);
+        const origin = new URL(input.repositoryUrl).origin;
+        dependencies.repositoryReader.useCredential(
+          origin,
+          redactingTokens(dependencies.tokens, dependencies.redactor),
+          input.githubInstallationId,
+        );
       } catch {
         // A local path carries no origin, and it needs no credential either.
       }
     }
 
-    const text = await dependencies.repositoryReader.readBlob(
-      input.repositoryUrl,
-      input.baseSha,
-      FACTOREE_CONFIG_PATH,
-    );
+    // The read spends the credential `useCredential` registered above, so a rejected mint
+    // surfaces from this call. It must map to the identical `RunConfigurationError` every other
+    // mint site produces.
+    let text: string | null;
+    try {
+      text = await dependencies.repositoryReader.readBlob(
+        input.repositoryUrl,
+        input.baseSha,
+        FACTOREE_CONFIG_PATH,
+      );
+    } catch (error) {
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
 
     // A repository that carries no file, or an unparsable file, makes no claim about its
     // Product. Section 15 already enforces the file's validity elsewhere, so this check only

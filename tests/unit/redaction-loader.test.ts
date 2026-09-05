@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";

@@ -4,10 +4,10 @@ import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js"
 import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { buildImplementerInput } from "~/domain/runs/implementer-input.js";
-import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import { metrics } from "~/telemetry/metrics.js";

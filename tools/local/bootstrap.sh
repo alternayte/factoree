@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Registers the Linear installation, the GitHub installation, the Product, the GITHUB_TOKEN
-# secret, and the two context source rows. Reads every value from .env. Run it once, after
-# `just api` starts.
+# Registers the Linear installation, the GitHub installation, the Product, and the two context
+# source rows. Reads every value from .env. Run it once, after `just api` starts.
+#
+# The GitHub App installation is the only credential path to GitHub. Factoree mints every clone
+# credential and every publish credential against it, so this script sets up no GitHub secret.
 #
 # It does not create a Repository row. Discovery creates that row itself, from the
 # `.factoree/config.yaml` file of the fixture repository, once the GitHub App reports the
@@ -27,7 +29,7 @@ require() {
 for name in ADMIN_API_TOKEN SETUP_LINEAR_WORKSPACE_ID SETUP_LINEAR_ACCESS_TOKEN \
             SETUP_PRODUCT_SLUG SETUP_LINEAR_TEAM_KEY \
             SETUP_GITHUB_INSTALLATION_ID SETUP_GITHUB_ACCOUNT_LOGIN \
-            SETUP_GITHUB_REPOSITORY SETUP_GITHUB_TOKEN; do
+            SETUP_GITHUB_REPOSITORY; do
     require "${name}"
 done
 
@@ -94,24 +96,12 @@ echo "Product id: ${product_id}"
 api POST "/admin/products/${product_id}/activate${query_only}" "$(jq -n \
     --arg a "${SETUP_DEFAULT_AUTONOMY:-L2}" '{defaultAutonomy:$a}')" > /dev/null
 
-echo "3. The GITHUB_TOKEN Product secret."
-api PUT "/admin/products/${product_id}/secrets/GITHUB_TOKEN${query_only}" "$(jq -n \
-    --arg v "${SETUP_GITHUB_TOKEN}" '{value:$v, injectIntoImplementer:false, kind:"publish"}')"
-echo
-
 # SDD section 30. Each credential carries a kind, and the kind decides which carrier holds the
-# value. Neither takes the injection mark, and the API refuses that combination.
+# value. It takes no injection mark, and the API refuses that combination.
 if [[ -n "${SETUP_RUNNER_CREDENTIAL:-}" && -n "${SETUP_RUNNER_CREDENTIAL_NAME:-}" ]]; then
-    echo "3b. The runner credential ${SETUP_RUNNER_CREDENTIAL_NAME}."
+    echo "3. The runner credential ${SETUP_RUNNER_CREDENTIAL_NAME}."
     api PUT "/admin/products/${product_id}/secrets/${SETUP_RUNNER_CREDENTIAL_NAME}${query_only}" \
         "$(jq -n --arg v "${SETUP_RUNNER_CREDENTIAL}" '{value:$v, kind:"runner_credential"}')"
-    echo
-fi
-
-if [[ -n "${SETUP_GITHUB_READ_TOKEN:-}" ]]; then
-    echo "3c. The read-only repository credential."
-    api PUT "/admin/products/${product_id}/secrets/GITHUB_READ_TOKEN${query_only}" \
-        "$(jq -n --arg v "${SETUP_GITHUB_READ_TOKEN}" '{value:$v, kind:"repository_read"}')"
     echo
 fi
 

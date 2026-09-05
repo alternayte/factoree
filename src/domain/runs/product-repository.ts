@@ -14,4 +14,6 @@ export interface AgentRunProductRepositoryInput {
    * the present repositories only. Null while discovery still sees the configuration file.
    */
   absentSince: string | null;
+  /** The installation that granted access to this repository. A clone or a push mints its token against it. */
+  githubInstallationId: string;
 }

@@ -12,7 +12,12 @@ import type { Logger } from "~/telemetry/logger.js";
 export interface GitHubWebhookDependencies {
   discovery: DiscoveryService;
   tenants: TenantRegistry;
-  verifySignature: (raw: string, signature: string) => boolean;
+  verifySignature: (raw: Buffer, signature: string) => boolean;
+  /**
+   * Starts the sync of one GitHub App installation, keyed on the installation id so a repeated
+   * `installation` event joins the run already in flight rather than start a second one.
+   */
+  startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
   logger: Logger;
 }
 
@@ -39,13 +44,11 @@ const resolveTenantId = async (
 const touchesConfigPath = (files: string[]): boolean => files.includes(FACTOREE_CONFIG_PATH);
 
 /**
- * Specification section 8. A discovery conflict must not vanish. This route is not yet wired
- * into the running server (discovery is dispatched from tests only today), so no conflict can
- * reach production before that follow-up lands. The follow-up is where a persisted conflict
- * and the operator route that lists it belong. Until then, the worker log is the record: it
- * names the repository, the reason, and, because `DiscoveryService` already folds the
- * offending key or the competing Product's slug into `reason`, an operator can read the line
- * alone and know exactly what to change, with no code open.
+ * Specification section 8. A discovery conflict must not vanish. No persisted conflict record
+ * and no operator route that lists one exist yet, so the worker log is the record: it names
+ * the repository, the reason, and, because `DiscoveryService` already folds the offending key
+ * or the competing Product's slug into `reason`, an operator can read the line alone and know
+ * exactly what to change, with no code open.
  */
 const logDiscoveryOutcome = (
   dependencies: GitHubWebhookDependencies,
@@ -63,8 +66,7 @@ const logDiscoveryOutcome = (
 
 export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: GitHubWebhookDependencies): void => {
   app.post("/webhooks/github", async (request, reply) => {
-    const rawBody = request.rawBody;
-    const raw = rawBody ? rawBody.toString("utf8") : "";
+    const raw = request.rawBody ?? Buffer.alloc(0);
     const signature = request.headers["x-hub-signature-256"] as string | undefined;
     if (!dependencies.verifySignature(raw, signature ?? "")) {
       return reply.code(401).send({ error: "invalid_signature" });
@@ -87,6 +89,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
             tenantId,
             repository.full_name,
             repository.default_branch,
+            String(parsed.data.installation.id),
           );
           logDiscoveryOutcome(dependencies, repository.full_name, outcome);
         }
@@ -125,6 +128,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
               tenantId,
               repository.full_name,
               repository.default_branch,
+              String(installation.id),
             );
             logDiscoveryOutcome(dependencies, repository.full_name, outcome);
           }
@@ -136,8 +140,25 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
     if (event === "installation") {
       const parsed = installationEventSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
-      // GitHub sends no default branch on this event, so there is nothing here to sync. The
-      // schema still confirms the payload shape.
+      // "created" grants a fresh installation. "unsuspend" can restore access to repositories
+      // granted while the installation was suspended. Both need a sync. "deleted" and "suspend"
+      // must not sync: the installation's token can no longer be minted, so a sync would only
+      // fail against GitHub. GitHub sends no default branch on this event, so the sync workflow
+      // reads every granted repository of the installation instead, rather than a target here.
+      if (parsed.data.action !== "created" && parsed.data.action !== "unsuspend") {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
+      const tenantId = await resolveTenantId(
+        dependencies,
+        parsed.data.installation.id,
+        parsed.data.installation.account.login,
+      );
+      if (tenantId !== null) {
+        await dependencies.startInstallationSync({
+          tenantId,
+          githubInstallationId: String(parsed.data.installation.id),
+        });
+      }
       return reply.code(200).send({ status: "handled" });
     }
 

@@ -40,7 +40,7 @@ import { buildWorkflowId } from "../temporal/workflow-id.js";
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { buildRepositoryUrl } from "../domain/projects/repository-url.js";
+import { buildRepositoryUrl } from "../domain/products/repository-url.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { renderRisks } from "../domain/refinement/risk.js";
@@ -417,6 +417,9 @@ export async function agentRunWorkflow(
   // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
   // can record its per-target facts as they become known.
   let primaryRepositoryId = targetRepositories[0]?.id ?? "";
+  // The GitHub App installation that grants the target repository. The clone, the discovery
+  // read, and the publish all mint against this id, never against a Project secret.
+  let primaryRepositoryInstallationId = targetRepositories[0]?.githubInstallationId ?? "";
   // Specification section 12. A repository in the Product that is not the target is absent at
   // start. It must reach an agent only through clone_sibling, which the Action Policy gates and
   // which writes an evidence record. This list must therefore never take a value from Product
@@ -959,6 +962,7 @@ export async function agentRunWorkflow(
         discoveredAt: EPOCH,
         lastSeenAt: EPOCH,
         absentSince: repository.absentSince === null ? null : new Date(repository.absentSince),
+        githubInstallationId: repository.githubInstallationId,
       }));
 
       /**
@@ -972,6 +976,7 @@ export async function agentRunWorkflow(
       ): Promise<void> => {
         primaryRepositorySlug = repository.fullName;
         primaryRepositoryId = repository.id;
+        primaryRepositoryInstallationId = repository.githubInstallationId;
         refined.primaryRepository = repository.fullName;
         // Specification section 12. A sibling repository is absent at start. An agent that
         // needs one calls clone_sibling, which the Action Policy gates. Target selection must
@@ -1053,6 +1058,7 @@ export async function agentRunWorkflow(
             referenceRepositories: refined.referenceRepositories.map(repositoryRef),
             workItemReferences: refined.workItemReferences,
             decisions,
+            githubInstallationId: primaryRepositoryInstallationId,
           });
         } catch (error) {
           // SDD section 49. A repository reference that resolves to nothing is a semantic
@@ -1114,6 +1120,7 @@ export async function agentRunWorkflow(
         productSlug: input.product.productSlug,
         repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
         baseSha: resolvedContext.primary.sha,
+        githubInstallationId: primaryRepositoryInstallationId,
       });
       if (stopRequested) return await cancelRun();
       if (!identity.matched) {
@@ -1257,6 +1264,7 @@ export async function agentRunWorkflow(
           defaults: sandbox.defaults,
           environment: {},
           organizationSkills: sandbox.organizationSkills,
+          githubInstallationId: primaryRepositoryInstallationId,
         });
       } catch (error) {
         // A configuration fault is not an infrastructure fault. The Run ends in
@@ -1634,6 +1642,7 @@ export async function agentRunWorkflow(
         workItemUrl: input.workItem.url,
         verificationSummary: publishedVerificationSummary,
         repairCount,
+        githubInstallationId: primaryRepositoryInstallationId,
       };
 
       // SDD section 45. The stale-base check runs before any write, so a moved branch reaches no
@@ -1678,9 +1687,9 @@ export async function agentRunWorkflow(
         if (isConfigurationFault(error)) {
           return await failRun(
             "CONFIGURATION_INVALID",
-            "Factoree could not publish, because the Run configuration is invalid. Add a " +
-              "`GITHUB_TOKEN` Project secret that carries write access and that no agent session " +
-              "receives.",
+            "Factoree could not publish, because the Run configuration is invalid. Install the " +
+              "Factoree GitHub App on the target repository, so Factoree can mint a write " +
+              "credential that no agent session receives.",
           );
         }
         const reason = publicationFailureReasonOf(error);

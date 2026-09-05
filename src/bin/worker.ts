@@ -30,6 +30,7 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
+import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
 import { LinearContextSource } from "~/domain/context/linear-source.js";
@@ -52,11 +53,20 @@ import { createActivities } from "~/activities/index.js";
 import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
-import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
+import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
+import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
+import { DiscoveryService } from "~/domain/products/discovery-service.js";
 
 const env = loadEnv();
-const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
+const redactor = new Redactor([
+  env.ADMIN_API_TOKEN,
+  env.LINEAR_WEBHOOK_SECRET,
+  env.FACTOREE_SECRET_KEY,
+  env.GITHUB_APP_PRIVATE_KEY,
+  env.GITHUB_WEBHOOK_SECRET,
+]);
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
@@ -169,6 +179,30 @@ function isLinearAuthenticationError(error: unknown): boolean {
 const repositoryReader = new GitRepositoryReader();
 const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
 
+// Ruling 1 and ruling 2. One credential path to GitHub: every GitHub adapter mints its token
+// through this one provider, and every mint carries only the scope its one operation needs.
+const githubTokens = new GitHubAppTokenProvider({
+  appId: env.GITHUB_APP_ID,
+  privateKeyBase64: env.GITHUB_APP_PRIVATE_KEY,
+  apiBaseUrl: env.GITHUB_API_BASE_URL,
+});
+
+// Specification section 10. `syncInstallationWorkflow` reads an installation's repositories,
+// and one repository's `.factoree/config.yaml`, through this client.
+const discoveryClient = new GitHubRepositoryDiscoveryClient({
+  apiBaseUrl: env.GITHUB_API_BASE_URL,
+  tokens: githubTokens,
+});
+
+// Resolves the Linear team a repository declaration names. Reuses the same tenant-scoped
+// pattern the Products administration route already wires in `src/bin/api.ts`.
+const discoveryLinearTeams = new TenantScopedLinearTeamLookup(
+  { linearWorkspaceIdFor: async (tenantId) => (await prisma.tenant.findUnique({ where: { id: tenantId } }))?.linearWorkspaceId ?? null },
+  linearTokens,
+);
+
+const discoveryService = new DiscoveryService(discoveryClient, products, repositories, discoveryLinearTeams, logger);
+
 // Controller decision 1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
 // the real `SecretStore` answers it directly through `get`, which already takes a tenant and a
 // Product.
@@ -249,7 +283,9 @@ const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.TEMPORAL_NAMESPACE,
   taskQueue: env.TEMPORAL_TASK_QUEUE,
-  workflowsPath: new URL("../workflows/agent-run.workflow.js", import.meta.url).pathname,
+  // A second workflow, `syncInstallationWorkflow`, joined `agentRunWorkflow` on this taskQueue.
+  // The worker bundles one file per `workflowsPath`, so the barrel re-exports both.
+  workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
   activities: createActivities({
     runs,
     products,
@@ -276,9 +312,19 @@ const worker = await Worker.create({
     evidenceStorage,
     validationResults: new PrismaValidationResultStore(prisma),
     reviewFindings: new PrismaReviewFindingStore(prisma),
-    pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: env.GITHUB_API_BASE_URL, token }),
+    // The publish activity mints one write-scoped token per Run. It passes the token here. The
+    // pull request port then spends the exact same credential the trusted checkout pushes with.
+    // A fixed-token provider wraps it at no extra cost: no second mint, no second scope.
+    pullRequests: (token: string) =>
+      new GitHubPullRequests({
+        apiBaseUrl: env.GITHUB_API_BASE_URL,
+        tokens: { tokenForInstallation: () => Promise.resolve(token) },
+      }),
     gitAuthor: { name: env.FACTOREE_GIT_AUTHOR_NAME, email: env.FACTOREE_GIT_AUTHOR_EMAIL },
     logger,
+    tokens: githubTokens,
+    discoveryClient,
+    discoveryService,
   }),
 });
 

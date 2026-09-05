@@ -32,8 +32,13 @@ export class DiscoveryService {
     private readonly logger: Logger,
   ) {}
 
-  async syncRepository(tenantId: string, fullName: string, defaultBranch: string): Promise<DiscoveryOutcome> {
-    const file = await this.discoveryClient.readConfig(fullName, defaultBranch);
+  async syncRepository(
+    tenantId: string,
+    fullName: string,
+    defaultBranch: string,
+    githubInstallationId: string,
+  ): Promise<DiscoveryOutcome> {
+    const file = await this.discoveryClient.readConfig(fullName, defaultBranch, githubInstallationId);
     if (file === null) {
       return { kind: "skipped", reason: `${fullName} carries no .factoree/config.yaml at ${defaultBranch}.` };
     }
@@ -105,6 +110,7 @@ export class DiscoveryService {
       defaultBranch,
       configSha: file.sha,
       requestedSecretNames: config.secrets.require,
+      githubInstallationId,
     });
 
     return {

@@ -81,20 +81,3 @@ export const attachRunnerEnvironment = async (
 ): Promise<void> => {
   sandbox.attachEnvironment(ref, await loadRunnerEnvironment(secrets, tenantId, productId));
 };
-
-/**
- * The read-only repository credential of one Project, or null when the Project holds none. SDD
- * section 30 forbids a GitHub write credential in an agent session, so this value must never be a
- * token that can push.
- */
-export const loadRepositoryReadToken = async (
-  secrets: SecretStore,
-  tenantId: string,
-  productId: string,
-): Promise<string | null> => {
-  const descriptors = await secrets.list(tenantId, productId);
-  const descriptor = descriptors.find((entry) => entry.kind === "repository_read");
-  if (descriptor === undefined) return null;
-  const value = await secrets.get(tenantId, productId, descriptor.name);
-  return value === null || value === "" ? null : value;
-};

@@ -48,11 +48,16 @@ class FakeTenantRegistry implements TenantRegistry {
 
 /** Records every call the route makes, without touching a real DiscoveryService. */
 class FakeDiscoveryService {
-  readonly synced: [string, string][] = [];
+  readonly synced: [string, string, string][] = [];
   readonly absent: string[] = [];
   nextOutcome: DiscoveryOutcome = { kind: "registered", repositoryId: "r1", productId: "p1", productCreated: false };
-  syncRepository(_tenantId: string, fullName: string, defaultBranch: string): Promise<DiscoveryOutcome> {
-    this.synced.push([fullName, defaultBranch]);
+  syncRepository(
+    _tenantId: string,
+    fullName: string,
+    defaultBranch: string,
+    githubInstallationId: string,
+  ): Promise<DiscoveryOutcome> {
+    this.synced.push([fullName, defaultBranch, githubInstallationId]);
     return Promise.resolve(this.nextOutcome);
   }
   markAbsent(_tenantId: string, fullName: string): Promise<void> {
@@ -63,14 +68,15 @@ class FakeDiscoveryService {
 
 const TENANT: TenantRecord = { id: "tenant-1", linearWorkspaceId: "ws-1", name: "Acme" };
 
-const build = (options: { signatureValid?: boolean; bindInstallation?: boolean } = {}) => {
+const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}) => {
   const signatureValid = options.signatureValid ?? true;
-  const bindInstallation = options.bindInstallation ?? true;
+  const tenantBound = options.tenantBound ?? true;
   const discovery = new FakeDiscoveryService();
   const logger = new FakeLogger();
   const installations = new Map<string, TenantRecord>();
-  if (bindInstallation) installations.set("42", TENANT);
+  if (tenantBound) installations.set("42", TENANT);
   const tenants = new FakeTenantRegistry(installations);
+  const started: { tenantId: string; githubInstallationId: string }[] = [];
 
   const app: FastifyInstance = Fastify({ logger: false });
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
@@ -87,10 +93,14 @@ const build = (options: { signatureValid?: boolean; bindInstallation?: boolean }
     discovery: discovery as unknown as DiscoveryService,
     tenants,
     verifySignature: () => signatureValid,
+    startInstallationSync: (input) => {
+      started.push(input);
+      return Promise.resolve();
+    },
     logger,
   });
 
-  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery };
+  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started };
 };
 
 describe("GitHub webhook route", () => {
@@ -112,7 +122,7 @@ describe("GitHub webhook route", () => {
         repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
       },
     });
-    expect(synced).toEqual([["acme/api", "main"]]);
+    expect(synced).toEqual([["acme/api", "main", "42"]]);
   });
 
   it("F5: logs a discovery conflict instead of discarding it", async () => {
@@ -162,7 +172,7 @@ describe("GitHub webhook route", () => {
     expect(synced).toEqual([]);
 
     await app.inject(push([".factoree/config.yaml"]));
-    expect(synced).toEqual([["acme/api", "main"]]);
+    expect(synced).toEqual([["acme/api", "main", "42"]]);
   });
 
   it("ignores a push to a branch other than the repository default, even when it touches the configuration file", async () => {
@@ -216,7 +226,7 @@ describe("GitHub webhook route", () => {
   });
 
   it("answers 200 and does no work for an installation Factoree has no tenant for", async () => {
-    const { app, synced, absent, logger } = build({ bindInstallation: false });
+    const { app, synced, absent, logger } = build({ tenantBound: false });
     const response = await app.inject({
       method: "POST",
       url: "/webhooks/github",
@@ -235,5 +245,60 @@ describe("GitHub webhook route", () => {
       installation_id: "42",
       account_login: "acme",
     });
+  });
+
+  it("starts a sync when an installation is created", async () => {
+    const { app, started } = build({});
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation" },
+      payload: { action: "created", installation: { id: 42, account: { login: "acme" } } },
+    });
+
+    expect(started).toEqual([{ tenantId: "tenant-1", githubInstallationId: "42" }]);
+  });
+
+  it("starts no sync for an unbound installation", async () => {
+    const { app, started, logger } = build({ tenantBound: false });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation" },
+      payload: { action: "created", installation: { id: 99, account: { login: "other" } } },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(started).toEqual([]);
+    expect(logger.warnCalls[0]?.fields).toMatchObject({ installation_id: "99" });
+  });
+
+  it("starts a sync when a suspended installation is unsuspended", async () => {
+    const { app, started } = build({});
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation" },
+      payload: { action: "unsuspend", installation: { id: 42, account: { login: "acme" } } },
+    });
+
+    expect(started).toEqual([{ tenantId: "tenant-1", githubInstallationId: "42" }]);
+  });
+
+  it.each(["deleted", "suspend"])("starts no sync when an installation is %s", async (action) => {
+    const { app, started } = build({});
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "installation" },
+      payload: { action, installation: { id: 42, account: { login: "acme" } } },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(started).toEqual([]);
   });
 });

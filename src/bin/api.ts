@@ -11,16 +11,26 @@ import {
   PrismaTenantRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
-import { createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
+import { createSyncInstallationStarter, createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
 import { buildServer } from "~/http/server.js";
-import { LinearTokenProvider } from "~/domain/projects/linear-token-provider.js";
+import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
+import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
+import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
+import { DiscoveryService } from "~/domain/products/discovery-service.js";
+import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 
 const env = loadEnv();
-const redactor = new Redactor([env.ADMIN_API_TOKEN, env.LINEAR_WEBHOOK_SECRET, env.FACTOREE_SECRET_KEY]);
+const redactor = new Redactor([
+  env.ADMIN_API_TOKEN,
+  env.LINEAR_WEBHOOK_SECRET,
+  env.FACTOREE_SECRET_KEY,
+  env.GITHUB_APP_PRIVATE_KEY,
+  env.GITHUB_WEBHOOK_SECRET,
+]);
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
 const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
@@ -70,6 +80,28 @@ const linearTeams = new TenantScopedLinearTeamLookup(
   linearTokens,
 );
 
+// Ruling 1 and ruling 2. One credential path to GitHub: every GitHub adapter mints its token
+// through this one provider, and every mint carries only the scope its one operation needs.
+const githubTokens = new GitHubAppTokenProvider({
+  appId: env.GITHUB_APP_ID,
+  privateKeyBase64: env.GITHUB_APP_PRIVATE_KEY,
+  apiBaseUrl: env.GITHUB_API_BASE_URL,
+});
+
+// The GitHub webhook route reads and writes the same `.factoree/config.yaml` declaration
+// `syncInstallationWorkflow` reads, through the same `DiscoveryService`.
+const discoveryClient = new GitHubRepositoryDiscoveryClient({
+  apiBaseUrl: env.GITHUB_API_BASE_URL,
+  tokens: githubTokens,
+});
+const discovery = new DiscoveryService(discoveryClient, products, repositories, linearTeams, logger);
+
+// Verifies the raw request body against the `X-Hub-Signature-256` header, before any parse.
+const verifyGitHubWebhookSignature = (raw: Buffer, signature: string): boolean =>
+  verifyGitHubSignature({ rawBody: raw, signature, secret: env.GITHUB_WEBHOOK_SECRET }).ok;
+
+const startInstallationSync = createSyncInstallationStarter(client, env.TEMPORAL_TASK_QUEUE);
+
 const app = buildServer({
   env,
   logger,
@@ -81,6 +113,9 @@ const app = buildServer({
   secrets,
   runs,
   delegation,
+  discovery,
+  verifyGitHubSignature: verifyGitHubWebhookSignature,
+  startInstallationSync,
 });
 await app.listen({ port: env.PORT, host: "0.0.0.0" });
 logger.info("api started", { step: "boot" });

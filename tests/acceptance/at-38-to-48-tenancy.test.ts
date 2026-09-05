@@ -171,7 +171,7 @@ describe("AT-38 to AT-41 and AT-48: routing and discovery", () => {
       config: configFor("checkout-platform", "PAY"),
     });
 
-    const outcome = await service.syncRepository("tenant-1", "acme/api", "main");
+    const outcome = await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
 
     expect(outcome).toMatchObject({ kind: "registered", productCreated: true });
     const product = await products.findBySlug("tenant-1", "checkout-platform");
@@ -183,13 +183,13 @@ describe("AT-38 to AT-41 and AT-48: routing and discovery", () => {
     const { service, products, linear } = buildDiscovery({
       config: configFor("checkout-platform", "PAY"),
     });
-    await service.syncRepository("tenant-1", "acme/api", "main");
+    await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
     const before = await products.findBySlug("tenant-1", "checkout-platform");
 
     // The Linear stub renames the team key. The repository file still names the old key, and
     // the team id is stable, so the binding to the same Product must survive.
     linear.teamKeyNow = "PAYMENTS";
-    const outcome = await service.syncRepository("tenant-1", "acme/api", "main");
+    const outcome = await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
 
     expect(outcome).toMatchObject({ kind: "registered", drift: "linear_team_key_renamed" });
     const after = await products.findBySlug("tenant-1", "checkout-platform");
@@ -205,8 +205,8 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
   const { productInput, recordRunTargetCalls, postTargetNoticeCalls, start, runWorker, implementCalls } = harness;
 
   const twoRepositories = [
-    { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null },
-    { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+    { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
   ];
 
   beforeAll(async () => {
@@ -273,8 +273,8 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
 
 describe("AT-46 and AT-47: the gated sibling clone", () => {
   const REPOSITORIES = [
-    { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null },
-    { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+    { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
   ];
 
   const buildCloner = () => {
@@ -422,6 +422,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       existing.defaultBranch = input.defaultBranch;
       existing.configSha = input.configSha;
       existing.requestedSecretNames = input.requestedSecretNames;
+      existing.githubInstallationId = input.githubInstallationId;
       existing.lastSeenAt = new Date();
       existing.absentSince = null;
       return Promise.resolve(existing);
@@ -435,6 +436,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       defaultBranch: input.defaultBranch,
       configSha: input.configSha,
       requestedSecretNames: input.requestedSecretNames,
+      githubInstallationId: input.githubInstallationId,
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,

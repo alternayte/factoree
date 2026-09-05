@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/require-await -- stub Activities match the workflow's async activity signatures */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { agentRunWorkflow } from "~/workflows/agent-run.workflow.js";
@@ -178,11 +179,20 @@ const activities = {
   },
 };
 
+// This file starts a fresh worker three times, each of which would otherwise bundle
+// `agent-run.workflow.ts` with webpack again. `global-setup.ts` bundles it once for the
+// whole suite, so every call here reuses that one bundle instead.
+let agentRunWorkflowBundlePromise: Promise<string> | undefined;
+const loadAgentRunWorkflowBundle = async (): Promise<string> => {
+  agentRunWorkflowBundlePromise ??= readFile(inject("agentRunWorkflowBundlePath"), "utf8");
+  return agentRunWorkflowBundlePromise;
+};
+
 const newWorker = async (): Promise<Worker> =>
   Worker.create({
     connection: environment.nativeConnection,
     taskQueue: "at-35",
-    workflowsPath: new URL("../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
+    workflowBundle: { code: await loadAgentRunWorkflowBundle() },
     activities,
   });
 
@@ -222,7 +232,7 @@ describe("AT-35 worker restart", () => {
           product: {
             productId: "product-1",
             productSlug: "acme",
-            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null }],
+            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" }],
             repositoryBaseUrl: "https://example.invalid",
             stagingRead: false,
             spriteRetentionHours: 24,

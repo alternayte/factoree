@@ -317,7 +317,7 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
   if (prUrlMatch !== null && env.LIVE_GITHUB_TOKEN !== undefined && env.LIVE_GITHUB_REPOSITORY !== undefined) {
     const pullRequests = new GitHubPullRequests({
       apiBaseUrl: "https://api.github.com",
-      token: env.LIVE_GITHUB_TOKEN,
+      tokens: { tokenForInstallation: () => Promise.resolve(env.LIVE_GITHUB_TOKEN ?? "") },
     });
     // The Proof Pack names the pull request by its URL, and SDD section 47 fixes that section as
     // the URL alone. A URL carries the number, so the number is what this scenario confirms. An
@@ -327,7 +327,9 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
     const number = Number.parseInt(numberMatch?.[1] ?? "", 10);
     if (Number.isInteger(number)) {
       try {
-        const record = await pullRequests.findByNumber(env.LIVE_GITHUB_REPOSITORY, number);
+        // The live scenario reads with the Project token above, which carries no installation
+        // of its own, so this identifier selects nothing and is never read by that path.
+        const record = await pullRequests.findByNumber(env.LIVE_GITHUB_REPOSITORY, number, "");
         prConfirmed = record !== null && record.number === number;
         prDetail = prConfirmed
           ? `GitHub confirms pull request #${number} at ${prUrlMatch[0]}, on branch ${record?.headBranch ?? "?"}`

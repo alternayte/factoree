@@ -10,6 +10,8 @@ export interface RepositoryRecord {
   lastSeenAt: Date;
   /** Set when the configuration file disappears. Null while discovery still sees the file. */
   absentSince: Date | null;
+  /** The installation that granted access to this repository. A clone or a push mints its token against it. */
+  githubInstallationId: string;
 }
 
 export interface UpsertRepositoryInput {
@@ -19,6 +21,7 @@ export interface UpsertRepositoryInput {
   defaultBranch: string;
   configSha: string;
   requestedSecretNames: string[];
+  githubInstallationId: string;
 }
 
 /**

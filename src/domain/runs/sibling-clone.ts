@@ -2,7 +2,7 @@ import type { AgentRunProductRepositoryInput } from "~/domain/runs/product-repos
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import { decideSiblingAction, SiblingActionDeniedError } from "~/domain/policy/action-policy.js";
-import { buildRepositoryUrl } from "~/domain/projects/repository-url.js";
+import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import type { RepositoryCredential } from "./checkout.js";
 import { cloneRepository, withoutUrlCredentials } from "./checkout.js";
 import type { Sandbox, SandboxRef } from "./sandbox.js";

@@ -33,6 +33,8 @@ import { PrismaValidationContractStore } from "~/persistence/prisma/validation-c
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
 import { createActivities } from "~/activities/index.js";
+import { DiscoveryService } from "~/domain/products/discovery-service.js";
+import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -45,6 +47,11 @@ const env = {
   FACTOREE_SECRET_KEY: "d".repeat(64),
   ADMIN_API_TOKEN: "t".repeat(32),
   LINEAR_WEBHOOK_SECRET: secret,
+  GITHUB_APP_ID: "123456",
+  GITHUB_APP_PRIVATE_KEY: Buffer.from(
+    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  ).toString("base64"),
+  GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
   TEMPORAL_ADDRESS: "localhost:7233",
   TEMPORAL_NAMESPACE: "default",
   TEMPORAL_TASK_QUEUE: "factoree-at01",
@@ -130,10 +137,16 @@ beforeAll(async () => {
     defaultBranch: "main",
     configSha: "a".repeat(40),
     requestedSecretNames: [],
+    githubInstallationId: "install-1",
   });
 
   const runs = new PrismaRunRepository(prisma);
   const fakeSandbox = new FakeSandbox();
+  // The Phase 1 path never runs an installation sync, so this double only satisfies the shape.
+  const discoveryClient: RepositoryDiscoveryClient = {
+    listInstallationRepositories: () => Promise.reject(new Error("this test never syncs")),
+    readConfig: () => Promise.reject(new Error("this test never syncs")),
+  };
 
   worker = await Worker.create({
     connection: environment.nativeConnection,
@@ -176,6 +189,19 @@ beforeAll(async () => {
       }),
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       logger,
+      // The Phase 1 path never clones, never reads a private repository, and never publishes,
+      // so this double only satisfies the shape.
+      tokens: { tokenForInstallation: () => Promise.reject(new Error("this test never mints")) },
+      // The Phase 1 path never runs an installation sync, so these two doubles only satisfy the
+      // shape.
+      discoveryClient,
+      discoveryService: new DiscoveryService(
+        discoveryClient,
+        products,
+        repositories,
+        { resolveTeamKey: () => Promise.reject(new Error("this test never syncs")), resolveTeamId: () => Promise.reject(new Error("this test never syncs")) },
+        logger,
+      ),
     }),
   });
   workerRun = worker.run();
@@ -204,6 +230,17 @@ beforeAll(async () => {
       logger,
       repositoryBaseUrl: "https://github.com",
     }),
+    // This test drives the Phase 1 delegation path, which never exercises the GitHub webhook
+    // route. These doubles only satisfy the shape `buildServer` now requires.
+    discovery: new DiscoveryService(
+      discoveryClient,
+      products,
+      repositories,
+      { resolveTeamKey: () => Promise.reject(new Error("unused")), resolveTeamId: () => Promise.reject(new Error("unused")) },
+      logger,
+    ),
+    verifyGitHubSignature: () => false,
+    startInstallationSync: () => Promise.reject(new Error("unused")),
   });
   await app.ready();
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Redactor } from "~/telemetry/redaction.js";
 import { renderProofPack } from "~/domain/evidence/proof-pack.js";
 import { createLogger } from "~/telemetry/logger.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 
 describe("AT-32 redaction in logs", () => {

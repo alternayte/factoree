@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   assertRunnerCredential,
-  loadRepositoryReadToken,
   loadRunnerEnvironment,
   RunnerCredentialError,
-} from "~/domain/projects/runner-credentials.js";
+} from "~/domain/products/runner-credentials.js";
 import {
   RUN_CONFIGURATION_ERROR_TYPE,
   RunConfigurationError,
@@ -65,18 +64,6 @@ describe("loadRunnerEnvironment", () => {
   it("returns an empty environment when the Project holds no runner credential", async () => {
     const secrets = new MemorySecretStore({ FIXTURE_URL: "https://fixture.test" });
     await expect(loadRunnerEnvironment(secrets, "t", "p")).resolves.toEqual({});
-  });
-});
-
-describe("loadRepositoryReadToken", () => {
-  it("returns the read-only repository token, and null without one", async () => {
-    const withToken = new MemorySecretStore({
-      GITHUB_READ_TOKEN: { value: "read-value", injectIntoImplementer: false, kind: "repository_read" },
-    });
-    await expect(loadRepositoryReadToken(withToken, "t", "p")).resolves.toBe("read-value");
-
-    const without = new MemorySecretStore({ FIXTURE_URL: "https://fixture.test" });
-    await expect(loadRepositoryReadToken(without, "t", "p")).resolves.toBeNull();
   });
 });
 

@@ -39,8 +39,8 @@ const contextCallsOf = (runId: string) => contextCalls.filter((entry) => entry.r
 
 /** Specification section 10. Two present repositories of one Product, for the ambiguous cases. */
 const twoRepositories = [
-  { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null },
-  { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null },
+  { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+  { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
 ];
 
 /**
@@ -49,12 +49,13 @@ const twoRepositories = [
  * longer one.
  */
 const prefixRepositories = [
-  { id: "repository-checkout-api", fullName: "acme/checkout-api", defaultBranch: "main", absentSince: null },
+  { id: "repository-checkout-api", fullName: "acme/checkout-api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
   {
     id: "repository-checkout-api-gateway",
     fullName: "acme/checkout-api-gateway",
     defaultBranch: "main",
     absentSince: null,
+    githubInstallationId: "install-1",
   },
 ];
 

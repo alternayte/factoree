@@ -11,9 +11,11 @@ import type {
 } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
-import { loadRepositoryReadToken, loadRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { Redactor } from "~/telemetry/redaction.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
@@ -27,6 +29,8 @@ export interface SandboxActivityDependencies {
   redactor: Redactor;
   runners: AgentRunnerRegistry;
   logger: Logger;
+  /** Mints the read-only clone credential of the target repository, scoped to `contents: read`. */
+  tokens: GitHubTokenProvider;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -39,6 +43,8 @@ export interface PrepareSandboxActivityInput {
   environment: Record<string, string>;
   /** SDD section 16. The organization skills repository of the Project, or null. */
   organizationSkills: RepositorySpec | null;
+  /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -109,12 +115,27 @@ const prepare = async (
   );
 
   // SDD section 30. A private repository needs a read-only credential for the checkout. It never
-  // reaches an agent session: `checkout` gives it to the git clone command alone.
-  const repositoryCredential = await loadRepositoryReadToken(
-    dependencies.secrets,
-    input.tenantId,
-    input.productId,
-  );
+  // reaches an agent session: `checkout` gives it to the git clone command alone. The provider
+  // mints it fresh for this one preparation, scoped to `contents: read`, so the credential this
+  // sandbox receives can never push. An empty installation id means the repository carries no
+  // GitHub App installation. Factoree then mints no credential.
+  let repositoryCredential: string | null;
+  if (input.githubInstallationId === "") {
+    repositoryCredential = null;
+  } else {
+    try {
+      repositoryCredential = await dependencies.tokens.tokenForInstallation(input.githubInstallationId, {
+        contents: "read",
+      });
+    } catch (error) {
+      // A rejected mint of the clone credential is a configuration fault, not an
+      // infrastructure fault, so it must map to the same `RunConfigurationError` the publish
+      // activity produces. `~/domain/runs/github-app-auth-fault.js` holds the single conversion
+      // every mint site applies.
+      throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
+  }
+  if (repositoryCredential !== null) dependencies.redactor.addSecret(repositoryCredential);
 
   const prepared = await dependencies.sandboxManager.prepare({
     runId: input.runId,

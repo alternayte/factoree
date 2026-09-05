@@ -11,7 +11,7 @@ import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js"
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
-import { registerProjectSecrets } from "~/domain/projects/redaction-loader.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildReviewerInput } from "~/domain/review/reviewer-input.js";
 import {
   captureSourceDiff,
@@ -25,7 +25,7 @@ import {
 } from "~/domain/review/review-report.js";
 import { decideReview, failureLine } from "~/domain/review/blocking.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
-import { attachRunnerEnvironment } from "~/domain/projects/runner-credentials.js";
+import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 
 /**
  * SDD section 40. The Reviewer runs in a fresh session, against the goal, the frozen Validation

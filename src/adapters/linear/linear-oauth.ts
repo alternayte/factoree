@@ -1,4 +1,4 @@
-import type { LinearOAuthPort, RefreshedLinearToken } from "~/domain/projects/linear-token-provider.js";
+import type { LinearOAuthPort, RefreshedLinearToken } from "~/domain/products/linear-token-provider.js";
 
 /** SDD section 59. The Linear token endpoint. */
 const TOKEN_URL = "https://api.linear.app/oauth/token";
