@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
 import { Worker } from "@temporalio/worker";
+import { inject } from "vitest";
 import type { TestWorkflowEnvironment } from "@temporalio/testing";
 import type { WorkflowHandle } from "@temporalio/client";
 import {
@@ -79,6 +81,21 @@ export interface CompletionCall {
 
 /** The single verification command every Run of the harness gets by default. */
 export const DEFAULT_VERIFY_COMMANDS: VerificationCommand[] = [{ name: "unit", run: "npm test" }];
+
+/**
+ * Caches the agent-run workflow bundle for this test process.
+ *
+ * `tests/workflow/support/global-setup.ts` builds the bundle once for the whole
+ * suite and provides its file path over vitest's `provide`/`inject` channel.
+ * Each test file runs in its own worker process, so this module reads the file
+ * once per process and reuses the result for every `runWorker` call, instead
+ * of asking `Worker.create` to bundle `workflowsPath` again on every call.
+ */
+let agentRunWorkflowBundlePromise: Promise<string> | undefined;
+const loadAgentRunWorkflowBundle = async (): Promise<string> => {
+  agentRunWorkflowBundlePromise ??= readFile(inject("agentRunWorkflowBundlePath"), "utf8");
+  return agentRunWorkflowBundlePromise;
+};
 
 /** The frozen Validation Contract hash the double reports. */
 export const VALIDATION_SHA = "c".repeat(64);
@@ -837,7 +854,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     const worker = await Worker.create({
       connection: environment().nativeConnection,
       taskQueue: "test",
-      workflowsPath: new URL("../../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
+      workflowBundle: { code: await loadAgentRunWorkflowBundle() },
       activities,
     });
     return worker.runUntil(body());

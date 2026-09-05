@@ -1,6 +1,10 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { execFileSync } from "node:child_process";
 import type { TestProject } from "vitest/node";
+import {
+  bundleAgentRunWorkflow,
+  deleteAgentRunWorkflowBundle,
+} from "../../workflow/support/bundle-agent-run-workflow.js";
 
 /**
  * Connection facts for the one template database. `startDatabase` uses these facts to
@@ -22,6 +26,7 @@ export interface TemplateDatabase {
 declare module "vitest" {
   export interface ProvidedContext {
     templateDatabase: TemplateDatabase;
+    agentRunWorkflowBundlePath: string;
   }
 }
 
@@ -61,10 +66,14 @@ export default async function setup(project: TestProject): Promise<() => Promise
 
   project.provide("templateDatabase", templateDatabase);
 
+  const agentRunBundlePath = await bundleAgentRunWorkflow();
+  project.provide("agentRunWorkflowBundlePath", agentRunBundlePath);
+
   return async () => {
     if (container) {
       await container.stop();
       container = undefined;
     }
+    await deleteAgentRunWorkflowBundle(agentRunBundlePath);
   };
 }
