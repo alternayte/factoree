@@ -359,7 +359,6 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
               fullName: fullNameById.get(target.repositoryId) ?? target.repositoryId,
               baseSha: target.baseSha ?? "",
               pullRequestUrl: target.pullRequestUrl ?? "",
-              mergeOrder: target.mergeOrder,
             })),
             siblingsRead: [...siblingReads.values()],
             selectionReason: runTargets[0]?.selectionReason ?? "sole member",

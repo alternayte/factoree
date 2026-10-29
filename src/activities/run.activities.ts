@@ -117,15 +117,14 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   },
 
   /**
-   * Specification section 10. Records the repository target selection the workflow decided.
-   * `mergeOrder` starts at one, because Task 10 selects one target only.
+   * Specification section 10. Records the repository target the workflow selected. A Version 1
+   * Run has one target.
    */
   async recordRunTarget(input: {
     tenantId: string;
     runId: string;
     repositoryId: string;
     selectionReason: string;
-    mergeOrder: number;
   }): Promise<string> {
     const target = await dependencies.runs.createRunTarget(input);
     dependencies.logger.info("run target recorded", {

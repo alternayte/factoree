@@ -287,7 +287,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     runId: string;
     repositoryId: string;
     selectionReason: string;
-    mergeOrder: number;
   }> = [];
   /** Every recorded `recordRunTargetFacts` call, in order. F2. */
   const recordRunTargetFactsCalls: Array<{
@@ -833,7 +832,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       runId: string;
       repositoryId: string;
       selectionReason: string;
-      mergeOrder: number;
     }) => {
       recordRunTargetCalls.push(input);
       return `target-${input.runId}-${input.repositoryId}`;

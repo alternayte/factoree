@@ -38,7 +38,7 @@ describe("buildImplementerInput", () => {
   it("states the Action Policy in the prompt as information, not as the boundary", () => {
     const input = buildImplementerInput(base);
     expect(input.prompt).toContain("deny: write a reference repository");
-    expect(input.prompt).toContain("Factoree enforces these rules outside this prompt.");
+    expect(input.prompt).toContain("Each rule names the mechanism that holds it outside this prompt.");
   });
 
   it("stamps the prompt version, because SDD section 56 requires prompt versioning", () => {

@@ -4,7 +4,7 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-Start W-6 on branch `hardening/review-fixes`: map each Action Policy action to its mechanism, and turn off repository MCP and settings for the agent CLIs.
+Start W-8 on branch `hardening/review-fixes`: prove preview exposure on a live Sprite (H-2), then run `just live` (B-1).
 
 ## Work queue
 
@@ -15,9 +15,9 @@ Start W-6 on branch `hardening/review-fixes`: map each Action Policy action to i
 | W-3 | DONE | Build `docs/specs/check-isolation.md`. | W-1 | DI-14.5 to DI-14.7, B-2. `prepareCheckSandbox` tests in `tests/unit/prepare-sandbox-activity.test.ts`, AT-16 check sprite assertions. The draft PR for a marked patch lands with W-4. Unit, integration 286 and workflow pass. |
 | W-4 | DONE | Build `docs/specs/autonomy-levels.md`, plus R-4 (the Product owns the network allow list). | W-1 | DI-14.8 to DI-14.11. `tests/workflow/autonomy-levels.test.ts`, the route, risk, delegation, Proof Pack and runtime-config tests. `just verify` exit 0: unit 1285, integration 286, workflow 109. |
 | W-5 | DONE | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | DI-14.12 to DI-14.15. `tests/unit/refiner-proposal.test.ts`, `tests/unit/propose-refinement-activity.test.ts`, `tests/workflow/refiner.workflow.test.ts`. The flaky target-selection wait is fixed. `just verify` exit 0: unit 1296, integration 286, workflow 112. |
-| W-6 | IN_PROGRESS | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | |
-| W-7 | OPEN | Remove the Change Set leftovers (H-4). | W-1 | |
-| W-8 | OPEN | Preview exposure on Fly (H-2), then the §66 live proof (B-1). | W-3, W-5 | |
+| W-6 | DONE | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | DI-14.16, B-3. `tests/unit/action-policy.test.ts`, runner and prompt tests. |
+| W-7 | DONE | Remove the Change Set leftovers (H-4). | W-1 | Migration `20261102120000_drop_run_target_change_set_columns`. `RunTarget.role`, `RunTarget.mergeOrder` and the Proof Pack merge order line are gone. `select-targets.ts` already selects one target. |
+| W-8 | IN_PROGRESS | Preview exposure on Fly (H-2), then the §66 live proof (B-1). | W-3, W-5 | |
 
 ## State at the last commit
 
@@ -45,7 +45,8 @@ Each item names the SDD section that it affects. The adversarial review of 2026-
 - H-1 §8, §24, §56 (decided: `docs/specs/refiner-agent.md`): refinement, conflict detection and the Validation Contract builder are deterministic (DI-4.1, DI-4.7, DI-6.2). A ticket without acceptance criteria produces questions, not criteria, and an assertion that no rule classifies becomes `manual`, which ends an L3 Run `VALIDATION_MANUAL_REQUIRED` (DI-6.4, DI-7.5). §56 names six prompt files. Three exist, as TypeScript in `src/prompts/`.
 - H-2 §31, §37: `FlySpriteSandbox.exposeService` throws (DI-2.9). On the production sandbox every browser and HTTP assertion is `BLOCKED`, so an L3 Run with such an assertion cannot reach `READY_FOR_HUMAN`. Prove `ServiceRequest.httpPort` and `sprite.url` against a live Sprite, or run the preview client inside the Sprite.
 - H-3 §48: SDD §48 lists 18 states. The code adds `BLOCKED_ROUTING`, `BLOCKED_TARGET` and `BLOCKED_STALE_SET` from `docs/specs/multi-repo-tenancy.md` §17, and AT-39 and AT-43 use them. §48 and §49 do not.
-- H-4 §4, §71: Change Sets are Version 2 (H-A2). Remove `RunTarget.role` and `RunTarget.mergeOrder`, and the target-set branches of `src/domain/routing/select-targets.ts` that serve more than one target.
+- H-4 §4, §71: Change Sets are Version 2 (H-A2). W-7 removed the leftovers.
+- H-15 AT-46, AT-47: `buildSiblingCloner` has tests and no production caller. No agent tool exposes `clone_sibling`, and the tenancy spec puts that tool out of scope.
 - H-5 §42, §67: DI-3.9 makes every repair a fresh Implementer run. The §67 item "Implementer can resume for repair" is marked PASS in the old audit. `AgentRunner.resume` exists in the interface, and the workflow does not use it.
 - H-6 §33: `CliAgentRunner.sessions` is worker-local. On two workers, `completeRun` can run on worker B, and `releaseRun` frees nothing on worker A. Pin a session to its worker, or move session state out of the process.
 - H-7 §50: the timeout is checked between stages only. With `IMPLEMENT_MARGIN_MS` of five minutes an agent can run about five minutes past the deadline.

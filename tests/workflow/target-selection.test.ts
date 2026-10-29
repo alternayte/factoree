@@ -72,7 +72,6 @@ describe("target selection and the RunTarget row", () => {
         expect.objectContaining({
           repositoryId: "repository-1",
           selectionReason: "sole member",
-          mergeOrder: 1,
         }),
       ]);
       expect(noticesOf("run-ses-target-sole")).toEqual([]);
@@ -102,7 +101,6 @@ describe("target selection and the RunTarget row", () => {
         expect.objectContaining({
           repositoryId: "repository-web",
           selectionReason: "the change is in the checkout form",
-          mergeOrder: 1,
         }),
       ]);
       expect(noticesOf("run-ses-target-confident")).toEqual([
@@ -163,7 +161,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-ambiguous")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-web", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-web" }),
       ]);
     });
   });
@@ -181,7 +179,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-prefix")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-checkout-api-gateway", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-checkout-api-gateway" }),
       ]);
     });
   });
@@ -199,7 +197,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-case")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-web", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-web" }),
       ]);
     });
   });
@@ -238,7 +236,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-unmatched")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-checkout-api", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-checkout-api" }),
       ]);
     });
   });

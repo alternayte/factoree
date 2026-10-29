@@ -407,14 +407,11 @@ model RunTarget {
   run             Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
   repositoryId    String
   repository      Repository @relation(fields: [repositoryId], references: [id])
-  // "primary" or "secondary". A single-target Run holds one primary row.
-  role            String     @default("primary")
   selectionReason String
   baseSha         String?
   patchSha256     String?
   commitSha       String?
   pullRequestUrl  String?
-  mergeOrder      Int        @default(1)
   createdAt       DateTime   @default(now())
 
   @@unique([runId, repositoryId])

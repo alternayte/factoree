@@ -97,7 +97,6 @@ export interface CreateRunTargetInput {
   runId: string;
   repositoryId: string;
   selectionReason: string;
-  mergeOrder: number;
 }
 
 /** Specification section 5. One `RunTarget` row, with the per-target facts section 14 defines. */
@@ -106,13 +105,11 @@ export interface RunTargetRecord {
   tenantId: string;
   runId: string;
   repositoryId: string;
-  role: string;
   selectionReason: string;
   baseSha: string | null;
   patchSha256: string | null;
   commitSha: string | null;
   pullRequestUrl: string | null;
-  mergeOrder: number;
 }
 
 /**
@@ -181,8 +178,8 @@ export interface RunRepository {
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
   listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
   /**
-   * Specification section 10. Records the repository target selection decided this task. A
-   * single-target Run writes one row, so `mergeOrder` starts at one.
+   * Specification section 10. Records the repository target of the Run. A Version 1 Run has one
+   * target, so it writes one row. Change Sets are Version 2.
    */
   createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }>;
   /**

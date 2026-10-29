@@ -11,13 +11,19 @@ export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
  * The shell script that starts one non-interactive Claude Code session. The prompt reaches the
  * CLI on standard input, so it never appears on a command line and never reaches a process
  * listing. See SDD section 30 and DI-11.10.
+ *
+ * R-3. The repository is untrusted input. `--strict-mcp-config` with no `--mcp-config` starts no
+ * MCP server, and `--setting-sources user` skips the project and local settings files of the
+ * repository, so a repository cannot add a tool, a hook or a permission to the session.
  */
+const ISOLATION_FLAGS = "--strict-mcp-config --setting-sources user";
+
 const START_SCRIPT =
-  'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose';
+  `cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose ${ISOLATION_FLAGS}`;
 
 /** The same script. It continues the session the environment names. */
 const RESUME_SCRIPT =
-  'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose ' +
+  `cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose ${ISOLATION_FLAGS} ` +
   '--resume "$FACTOREE_CLAUDE_SESSION"';
 
 /**

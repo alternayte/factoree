@@ -109,14 +109,50 @@ export const decideSiblingAction = (input: SiblingActionInput): ActionDecision =
   return input.members.includes(input.fullName) ? "allow" : "deny";
 };
 
-export class ActionDeniedError extends Error {
-  constructor(readonly action: AgentAction) {
-    super(`The Action Policy denies this action: ${LABELS[action]}.`);
-    this.name = "ActionDeniedError";
-  }
-}
 
 /** SDD section 58. Thrown by `assertMcpTool` when the Project did not allow-list the tool. */
+/**
+ * R-3. The mechanism outside the prompt that holds each rule. A rule with no mechanism would be a
+ * prompt instruction, and a prompt is not a security boundary (SDD section 29).
+ */
+const MECHANISMS: Record<AgentAction, { allow: string; deny: string }> = {
+  readPrimaryRepository: { allow: "the work sprite holds the checkout", deny: "no checkout exists" },
+  writePrimaryWorktree: {
+    allow: "the captured patch is the only output of the work sprite",
+    deny: "a worktree fingerprint and the publication hash gate refuse any change",
+  },
+  readReferenceRepository: { allow: "the work sprite holds the checkout", deny: "no checkout exists" },
+  writeReferenceRepository: {
+    allow: "the checkout is writable",
+    deny: "the check sprite checks out every reference again, so a write reaches no check and no patch",
+  },
+  runProjectCommands: { allow: "inside the sandbox only", deny: "no shell runs" },
+  installApprovedDependencies: { allow: "through the Product network allow list", deny: "the network policy" },
+  arbitraryOutboundNetwork: {
+    allow: "the network policy",
+    deny: "the sandbox network policy denies every host outside the Product allow list",
+  },
+  approvedRegistries: { allow: "the Product network allow list", deny: "the network policy" },
+  approvedTestServices: { allow: "the Product network allow list", deny: "the network policy" },
+  stagingRead: {
+    allow: "the Product configured staging read",
+    deny: "no staging host is in the allow list, and no staging credential reaches the sandbox",
+  },
+  stagingWrite: {
+    allow: "the Product network allow list",
+    deny: "no staging host is in the allow list, and no staging credential reaches the sandbox",
+  },
+  gitRemoteWriteFromAgent: {
+    allow: "a write credential",
+    deny: "no write credential reaches the sandbox, and the checkout has no push URL",
+  },
+  productionAccess: {
+    allow: "a production credential",
+    deny: "no production host is in the allow list, and only test secrets reach the sandbox",
+  },
+  merge: { allow: "a write credential", deny: "no write credential reaches the sandbox, and Factoree never merges" },
+};
+
 export class McpToolDeniedError extends Error {
   constructor(readonly toolName: string) {
     super(
@@ -129,8 +165,7 @@ export class McpToolDeniedError extends Error {
 
 export interface ActionPolicy {
   decide(action: AgentAction): ActionDecision;
-  assertAllowed(action: AgentAction): void;
-  /** One line per action, for the Implementer prompt. The prompt is not the boundary. */
+  /** One line per action, with the mechanism that holds it. The prompt is not the boundary. */
   describe(): string[];
   /**
    * SDD section 58. MCP is an extension mechanism, not an unrestricted trust boundary. Every
@@ -157,10 +192,10 @@ export const buildActionPolicy = (overrides: ActionPolicyOverrides = {}): Action
 
   return {
     decide: (action) => table[action],
-    assertAllowed: (action) => {
-      if (table[action] === "deny") throw new ActionDeniedError(action);
-    },
-    describe: () => AGENT_ACTIONS.map((action) => `${table[action]}: ${LABELS[action]}`),
+    describe: () =>
+      AGENT_ACTIONS.map(
+        (action) => `${table[action]}: ${LABELS[action]} (${MECHANISMS[action][table[action]]})`,
+      ),
     decideMcpTool,
     assertMcpTool: (name) => {
       if (decideMcpTool(name) === "deny") throw new McpToolDeniedError(name);

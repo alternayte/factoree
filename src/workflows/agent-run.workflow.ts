@@ -1046,7 +1046,6 @@ export async function agentRunWorkflow(
           runId: id,
           repositoryId: repository.id,
           selectionReason: reason,
-          mergeOrder: 1,
         });
         if (notice) {
           await notify(() =>

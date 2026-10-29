@@ -244,7 +244,6 @@ export class PrismaRunRepository implements RunRepository {
         runId: input.runId,
         repositoryId: input.repositoryId,
         selectionReason: input.selectionReason,
-        mergeOrder: input.mergeOrder,
       },
     });
     return { id: row.id };
@@ -273,20 +272,18 @@ export class PrismaRunRepository implements RunRepository {
   async listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]> {
     const rows = await this.prisma.runTarget.findMany({
       where: { runId, tenantId },
-      orderBy: { mergeOrder: "asc" },
+      orderBy: { createdAt: "asc" },
     });
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenantId,
       runId: row.runId,
       repositoryId: row.repositoryId,
-      role: row.role,
       selectionReason: row.selectionReason,
       baseSha: row.baseSha,
       patchSha256: row.patchSha256,
       commitSha: row.commitSha,
       pullRequestUrl: row.pullRequestUrl,
-      mergeOrder: row.mergeOrder,
     }));
   }
 
