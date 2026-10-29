@@ -80,7 +80,7 @@ const input = {
   productId: "project-1",
   primary: { url: "https://github.com/acme/app.git", ref: "main" },
   references: [],
-  defaults: DEFAULT_PROJECT_DEFAULTS,
+  defaults: { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["registry.npmjs.org"] },
 };
 
 describe("SandboxManager.prepare", () => {
@@ -269,7 +269,7 @@ describe("repository configuration and staged network policy", () => {
       productId: "project-1",
       primary: { url: "https://git.test/owner/app.git", ref: "main" },
       references: [],
-      defaults: { stagingRead: false, spriteRetentionHours: 24 },
+      defaults: { stagingRead: false, spriteRetentionHours: 24, allowedDomains: ["registry.npmjs.org"] },
     });
 
   it("applies three policies and never runs the agent under a wider one", async () => {
@@ -353,7 +353,7 @@ describe("repository configuration and staged network policy", () => {
       productId: "project-1",
       primary: { url: "https://git.test/owner/app.git", ref: "main" },
       references: [{ url: "https://other.test/owner/design.git", ref: "main" }],
-      defaults: { stagingRead: false, spriteRetentionHours: 24 },
+      defaults: { stagingRead: false, spriteRetentionHours: 24, allowedDomains: ["registry.npmjs.org"] },
     });
     expect(sandbox.networkPolicies).toEqual([
       { allowedDomains: ["git.test", "other.test"] },

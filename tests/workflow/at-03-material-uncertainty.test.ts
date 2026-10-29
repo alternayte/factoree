@@ -91,6 +91,7 @@ describe("AT-03 — a material uncertainty stops the Run before any implementati
       risks: [],
       unresolvedQuestions: [],
       autonomyLevel: "L3",
+      autonomyReasons: [],
     }));
 
     const result = await runWorker(async () => {
@@ -123,6 +124,7 @@ describe("AT-03 — a material uncertainty stops the Run before any implementati
         { id: "Q-1", question: "Which channel do we use?", whyMaterial: "The Work Item is open." },
       ],
       autonomyLevel: "L2",
+      autonomyReasons: [],
     }));
 
     const before = elicitations.length;

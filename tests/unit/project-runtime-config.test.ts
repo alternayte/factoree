@@ -17,7 +17,7 @@ describe("toProjectRuntimeConfig", () => {
         "repair:\n  maxAttempts: 1\n" +
         "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n",
     );
-    const resolved = toProjectRuntimeConfig(config, { stagingRead: true, spriteRetentionHours: 48 });
+    const resolved = toProjectRuntimeConfig(config, { stagingRead: true, spriteRetentionHours: 48, allowedDomains: ["registry.npmjs.org"] });
     expect(resolved.runtime).toEqual({
       bootstrapCommand: "npm ci",
       allowedDomains: ["registry.npmjs.org"],
@@ -46,9 +46,35 @@ describe("toProjectRuntimeConfig", () => {
     const config = parseFactoreeConfig(
       `${minimum}sandbox:\n  allowedDomains:\n    - Registry.NPMJS.org\n    - registry.npmjs.org\n`,
     );
-    expect(toProjectRuntimeConfig(config, DEFAULT_PROJECT_DEFAULTS).runtime.allowedDomains).toEqual([
+    expect(
+      toProjectRuntimeConfig(config, { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["registry.npmjs.org"] })
+        .runtime.allowedDomains,
+    ).toEqual(["registry.npmjs.org"]);
+  });
+
+  it("lets the repository narrow the Product allow list, never widen it (R-4)", () => {
+    const config = parseFactoreeConfig(
+      `${minimum}sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n    - evil.example\n    - api.acme.test\n`,
+    );
+    const defaults = { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["registry.npmjs.org", "*.acme.test"] };
+    expect(toProjectRuntimeConfig(config, defaults).runtime.allowedDomains).toEqual([
+      "api.acme.test",
       "registry.npmjs.org",
     ]);
+  });
+
+  it("gives a repository that declares no allow list the Product ceiling", () => {
+    const defaults = { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["registry.npmjs.org"] };
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(minimum), defaults).runtime.allowedDomains).toEqual([
+      "registry.npmjs.org",
+    ]);
+  });
+
+  it("refuses a wildcard that names one label, such as *.com", () => {
+    const config = parseFactoreeConfig(`${minimum}sandbox:\n  allowedDomains:\n    - "*.com"\n`);
+    expect(() =>
+      toProjectRuntimeConfig(config, { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["*.com"] }),
+    ).toThrow(/at least two labels/);
   });
 
   it("carries the preview block of the repository configuration", () => {

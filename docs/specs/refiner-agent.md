@@ -6,7 +6,7 @@ Amends `docs/factoree-sdd.md` §8, §24, §49, §53 and §56. Supersedes DI-4.1,
 Before the contracts freeze, a fresh refiner agent reads the code in the run's sprite and proposes what done means and how to prove it. Factoree validates each proposal with deterministic rules and freezes only what passes. When a proposal needs a human, Factoree asks one question in Linear with a proposed answer, so the human can reply "yes". An L3 run never starts the implementer while an assertion is manual.
 
 ## Decisions
-- The sprite is created and the primary repository is checked out before refinement. The §49 order becomes route, prepare, refine, resolve context, build the validation contract, implement — an agent needs a sandbox to read code.
+- The §49 order becomes route, refine (deterministic parse), resolve context, prepare the work sprite, run the refiner, build and freeze the validation contract, implement — context resolution pins the SHAs the sprite checks out, and the refiner needs the sprite to read code. The contract still freezes before implementation.
 - The refiner is a fourth agent role. It has its own versioned prompt in `src/prompts` and its own agent execution row — §56 names the refiner prompt.
 - The refiner writes one proposal file. It writes nothing in the primary worktree, and the worktree fingerprint before and after proves it — the reviewer guard already works this way.
 - A proposal holds criteria, a method and a runnable target for each assertion (a command, a test path, an HTTP request or a browser route), the files that show existing patterns, and open questions.
@@ -18,6 +18,7 @@ Before the contracts freeze, a fresh refiner agent reads the code in the run's s
 - Authority rules and conflict resolution stay deterministic. The refiner can report a suspected conflict, and the gate records it as a question — P-05 forbids a guess.
 - A refiner that writes no valid proposal ends the run with REFINEMENT_UNAVAILABLE — a repair cannot fix a broken proposal.
 - The refiner reads the same skills as the implementer — the skills describe how the repository works.
+- The refiner runs on the validator runner of `.factoree/config.yaml` — the validator already writes plans as data, and it is not the implementer model.
 
 ## Out
 - Any question from the implementer, the user validator or the reviewer to a human.

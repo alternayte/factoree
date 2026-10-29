@@ -56,6 +56,7 @@ const activities = {
     constraints: [],
     unresolvedQuestions: [],
     autonomyLevel: "L2",
+    autonomyReasons: [],
   }),
   resolveContext: async (input: { primaryRepository: { slug: string } }) => ({
     sha256: "c".repeat(64),
@@ -258,6 +259,8 @@ describe("AT-35 worker restart", () => {
             stagingRead: false,
             spriteRetentionHours: 24,
             defaultAutonomy: "L2",
+            riskCaps: null,
+            allowedDomains: [],
             organizationSkillsRepository: null,
           },
           repositoryProposal: null,

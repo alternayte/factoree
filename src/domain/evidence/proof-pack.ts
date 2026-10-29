@@ -138,6 +138,11 @@ export interface ProofPackInput {
   commitSha: string;
   repairCount: number;
   repairLimit: number;
+  /** docs/specs/autonomy-levels.md. The level of the Run, and one sentence for each cap that applied. */
+  autonomyLevel?: string;
+  autonomyReasons?: string[];
+  /** docs/specs/check-isolation.md. Changed files that define a check. A human reads them first. */
+  checkDefiningFiles?: string[];
   /** SDD section 18. Present only for a Run that a routed Product produced. */
   routing?: ProofPackRouting;
 }
@@ -238,7 +243,16 @@ const conflictSection = (input: ProofPackInput): string[] =>
 const changeSection = (input: ProofPackInput): string[] => {
   const listed = input.changedFiles.slice(0, MAX_LISTED_CHANGED_FILES);
   const remainder = input.changedFiles.length - listed.length;
+  const checkDefining = input.checkDefiningFiles ?? [];
   return [
+    ...(checkDefining.length === 0
+      ? []
+      : [
+          "This change edits files that define a check, so the pull request is a draft. Read these first:",
+          "",
+          ...checkDefining.map((file) => `- ${cell(file)}`),
+          "",
+        ]),
     `${input.changedFiles.length} ${input.changedFiles.length === 1 ? "file" : "files"}, ` +
       `${input.patchByteLength} patch bytes.`,
     "",
@@ -298,6 +312,12 @@ const metadataSection = (input: ProofPackInput): string[] => [
   `- Patch SHA-256: ${input.patchSha256}`,
   `- Commit: ${input.commitSha}`,
   `- Repairs: ${input.repairCount} of ${input.repairLimit}`,
+  ...(input.autonomyLevel === undefined
+    ? []
+    : [
+        `- Autonomy level: ${input.autonomyLevel}` +
+          ((input.autonomyReasons ?? []).length === 0 ? "" : `. ${(input.autonomyReasons ?? []).join(" ")}`),
+      ]),
 ];
 
 /** SDD section 47. One Proof Pack, in the exact section order the SDD fixes. */

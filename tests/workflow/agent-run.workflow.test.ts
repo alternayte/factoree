@@ -466,9 +466,10 @@ describe("the refinement result the Run records", () => {
     expect(autonomyLevels.slice(before)).toEqual(["L2"]);
   });
 
-  it("continues the Run at the Project default when the label read fails (SDD section 28)", async () => {
+  it("continues the Run at L2 at most when the label read fails (autonomy-levels.md)", async () => {
     // A transport fault the retry policy has already exhausted must not fail the Run over a
-    // label read. The Run continues, and the autonomy level stays the Project default.
+    // label read. The Run continues. The risk cap is a security control, so it fails closed: an
+    // L3 Product runs this Run at L2.
     const before = autonomyLevels.length;
     const progressBefore = postedProgress.length;
     failingLabelReads.add("ses-label-fault");
@@ -481,7 +482,7 @@ describe("the refinement result the Run records", () => {
             {
               ...input("ses-label-fault"),
               autonomyLevel: "L2",
-              product: { ...productInput, defaultAutonomy: "L2" },
+              product: { ...productInput, defaultAutonomy: "L3" },
             },
           ],
         });
@@ -496,7 +497,7 @@ describe("the refinement result the Run records", () => {
           .slice(progressBefore)
           .some(
             (message) =>
-              message.includes("could not read the labels") && message.includes("risk cap"),
+              message.includes("could not read the labels") && message.includes("at L2 at most"),
           ),
       ).toBe(true);
     } finally {

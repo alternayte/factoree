@@ -61,6 +61,8 @@ class FakeProductRegistry implements ProductRegistry {
       linearTeamKey: input.linearTeamKey,
       linearTeamId: input.linearTeamId,
       defaultAutonomy: "L0",
+      riskCaps: null,
+      allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       createdAt: new Date(),
@@ -101,6 +103,10 @@ class FakeProductRegistry implements ProductRegistry {
 
   updateOrganizationSkillsRepository(): Promise<ProductRecord | null> {
     throw new Error("not used by this test");
+  }
+
+  updatePolicy(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
   }
 
   update(): Promise<ProductRecord | null> {
@@ -828,6 +834,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       reviewedChangedFiles: ["README.md"],
       reviewedWorktreeSha: stagedTreeSha,
       verifiedPatchSha256: verified.patchSha256,
+      draft: false,
       workItemTitle: "Change the README",
       workItemUrl: null,
       verificationSummary: "every deterministic check passed on attempt 1",

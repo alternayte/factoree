@@ -12,6 +12,9 @@ export const RUN_STATUSES = [
   "REPAIRING",
   "PUBLISHING",
   "READY_FOR_HUMAN",
+  // docs/specs/autonomy-levels.md. An L0 or L1 Run ends here. It posted its report, and by its
+  // level it opens no pull request.
+  "REPORTED",
   "STALE_BASE",
   "FAILED_CONFIGURATION",
   "FAILED",
@@ -32,6 +35,7 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 
 export const TERMINAL_RUN_STATUSES = [
   "READY_FOR_HUMAN",
+  "REPORTED",
   "STALE_BASE",
   "FAILED_CONFIGURATION",
   "FAILED",

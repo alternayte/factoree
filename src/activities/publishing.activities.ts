@@ -87,6 +87,8 @@ export interface PublishActivityInput {
    * before any project code ran there. Publication must capture exactly this patch.
    */
   verifiedPatchSha256: string;
+  /** docs/specs/autonomy-levels.md. True for L2, and for a patch that changes a check-defining file. */
+  draft: boolean;
   workItemTitle: string;
   workItemUrl: string | null;
   verificationSummary: string;
@@ -424,6 +426,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           slug: input.repositorySlug,
           headBranch: branch,
           baseBranch: input.baseBranch,
+          draft: input.draft,
           title,
           body: buildPullRequestBody({
             workItemTitle: input.workItemTitle,

@@ -28,7 +28,7 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
 };
 
 import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
-import { normalizeNetworkPolicy } from "./sandbox.js";
+import { narrowAllowList } from "./sandbox.js";
 
 /** SDD section 35. One configured deterministic verification command. */
 export interface VerificationCommand {
@@ -45,11 +45,14 @@ export interface VerificationCommand {
 export interface ProjectDefaults {
   stagingRead: boolean;
   spriteRetentionHours: number;
+  /** R-4. The egress ceiling of the Product. The repository file can only narrow it. */
+  allowedDomains: string[];
 }
 
 export const DEFAULT_PROJECT_DEFAULTS: ProjectDefaults = {
   stagingRead: false,
   spriteRetentionHours: 24,
+  allowedDomains: [],
 };
 
 /** SDD section 15 and SDD section 37. The preview the User Validator starts. */
@@ -82,7 +85,7 @@ export const toProjectRuntimeConfig = (
     bootstrapCommand: config.bootstrap?.command ?? null,
     // The same normalisation the sandbox applies, so the value carried on the Run and the value
     // sent to the adapter can never differ.
-    allowedDomains: normalizeNetworkPolicy({ allowedDomains: config.sandbox.allowedDomains }).allowedDomains,
+    allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),
     implementerRunner: config.agents.implementer,
     validatorRunner: config.agents.validator,
     reviewerRunner: config.agents.reviewer,

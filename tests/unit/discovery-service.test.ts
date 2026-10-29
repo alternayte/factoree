@@ -30,6 +30,8 @@ class FakeProductRegistry implements ProductRegistry {
       linearTeamKey: input.linearTeamKey,
       linearTeamId: input.linearTeamId,
       defaultAutonomy: "L0",
+      riskCaps: null,
+      allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       createdAt: new Date(),
@@ -81,6 +83,10 @@ class FakeProductRegistry implements ProductRegistry {
     if (row === undefined) return Promise.resolve(null);
     row.organizationSkillsRepository = organizationSkillsRepository;
     return Promise.resolve(row);
+  }
+
+  updatePolicy(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
   }
 
   update(): Promise<ProductRecord | null> {

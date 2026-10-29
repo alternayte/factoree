@@ -257,6 +257,9 @@ const input: PublishProofPackActivityInput = {
   reviewVerdict: "pass",
   reviewPasses: 2,
   reviewAttempt: 2,
+  autonomyLevel: "L3",
+  autonomyReasons: [],
+  checkDefiningFiles: [],
 };
 
 describe("publishProofPack", () => {

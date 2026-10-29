@@ -332,6 +332,9 @@ const seedProvedRun = async (
     reviewVerdict: "pass",
     reviewPasses: 2,
     reviewAttempt: 2,
+    autonomyLevel: "L3",
+    autonomyReasons: [],
+    checkDefiningFiles: [],
   };
 
   return { tenantId, runId, productId, activities, input, runs };

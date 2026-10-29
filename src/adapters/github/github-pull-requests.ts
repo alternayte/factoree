@@ -130,6 +130,7 @@ export class GitHubPullRequests implements PullRequestPort {
           body: input.body,
           head: input.headBranch,
           base: input.baseBranch,
+          draft: input.draft,
         }),
       },
       githubInstallationId,

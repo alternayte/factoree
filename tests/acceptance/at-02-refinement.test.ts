@@ -52,6 +52,7 @@ describe("AT-02 — refinement of a vague Work Item", () => {
         primaryRepository: PRIMARY_SLUG,
         referenceRepositories: [REFERENCE_SLUG],
         defaultAutonomy: "L3",
+        riskCaps: null,
       },
       decisions: [],
     });

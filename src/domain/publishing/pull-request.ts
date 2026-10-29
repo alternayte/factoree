@@ -17,6 +17,8 @@ export interface CreatePullRequestInput {
   baseBranch: string;
   title: string;
   body: string;
+  /** docs/specs/autonomy-levels.md. A draft pull request marks a change a human must promote. */
+  draft: boolean;
 }
 
 /**

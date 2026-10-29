@@ -167,6 +167,26 @@ export class NetworkPolicyNotEnforcedError extends Error {
 // wildcard label with no dot such as `*example.com`, have no defined meaning and stay rejected.
 const HOST_NAME = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
+/** True when `allowed` permits `domain`: the same host, or a wildcard that covers it. */
+const covers = (allowed: string, domain: string): boolean => {
+  if (allowed === domain) return true;
+  if (!allowed.startsWith("*.")) return false;
+  const suffix = allowed.slice(1);
+  const host = domain.startsWith("*.") ? domain.slice(1) : `.${domain}`;
+  return host.endsWith(suffix) && host !== suffix;
+};
+
+/**
+ * R-4. The Product owns the egress ceiling. A repository can only narrow it: the result keeps the
+ * repository entries the ceiling covers. A repository that declares nothing gets the ceiling.
+ */
+export const narrowAllowList = (repository: string[], ceiling: string[]): string[] => {
+  const product = normalizeNetworkPolicy({ allowedDomains: ceiling }).allowedDomains;
+  if (repository.length === 0) return product;
+  const requested = normalizeNetworkPolicy({ allowedDomains: repository }).allowedDomains;
+  return requested.filter((domain) => product.some((allowed) => covers(allowed, domain)));
+};
+
 /** Produces a stable, comparable policy. Two equal policies always produce one document. */
 export const normalizeNetworkPolicy = (policy: NetworkPolicy): NetworkPolicy => {
   const domains = new Set<string>();
@@ -174,6 +194,10 @@ export const normalizeNetworkPolicy = (policy: NetworkPolicy): NetworkPolicy => 
     const domain = raw.trim().toLowerCase();
     if (!HOST_NAME.test(domain)) {
       throw new Error(`domain must be a host name, received "${raw}"`);
+    }
+    // R-4. `*.com` would allow most of the internet. A wildcard must name at least two labels.
+    if (domain.startsWith("*.") && !domain.slice(2).includes(".")) {
+      throw new Error(`a wildcard domain must name at least two labels, received "${raw}"`);
     }
     domains.add(domain);
   }

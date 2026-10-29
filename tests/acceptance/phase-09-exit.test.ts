@@ -163,6 +163,7 @@ const publishInputFor = (runId: string, reviewedChangedFiles: string[]): Publish
   reviewedChangedFiles,
   reviewedWorktreeSha: treeSha,
   verifiedPatchSha256: patchSha256,
+  draft: false,
   workItemTitle: "Change the target file",
   workItemUrl: null,
   verificationSummary: "every deterministic check passed",

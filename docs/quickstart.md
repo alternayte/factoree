@@ -170,6 +170,40 @@ combination, because SDD section 30 permits the mark on a `test` secret only.
 Free models need no credential at all. opencode answers with its own
 `opencode/big-pickle` model when the Product holds no runner credential.
 
+## 4b2. Raise or lower a Product's autonomy, and set its network allow list
+
+`docs/specs/autonomy-levels.md` defines the levels. L0 reports, L1 checks and opens no pull
+request, L2 opens a draft pull request, and L3 opens a pull request that is ready for review.
+Only an operator raises a Product. A Linear label lowers one ticket.
+
+1. Read the current policy:
+
+       curl -sS -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+         "$API_BASE/admin/products/$PRODUCT_ID?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID"
+
+2. Set the default level, the risk caps, the allow list, or any of them:
+
+       curl -sS -X PUT -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+         -H "Content-Type: application/json" \
+         "$API_BASE/admin/products/$PRODUCT_ID?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
+         -d '{"defaultAutonomy":"L3","riskCaps":{"payments":"L2","database-migration":"L3"},"allowedDomains":["registry.npmjs.org"]}'
+
+   - `defaultAutonomy` takes `L0`, `L1`, `L2` or `L3`. Factoree refuses `L4` with 422.
+   - `riskCaps` maps a Linear label to the highest level a ticket with that label can reach. A
+     new Product uses the SDD section 28 labels, each capped at L2. To trust a label fully, set
+     its cap to `L3`.
+   - `allowedDomains` is the egress ceiling of every sandbox of the Product. The repository file
+     can only narrow it. An empty list allows the repository hosts only. A wildcard must name at
+     least two labels, so `*.com` is refused.
+
+3. The response holds the new policy. Factoree writes one `ProductPolicyChange` row for each
+   field that changed.
+
+4. The next delegated Run uses the new values. A Run that has already started keeps its level.
+
+To lower the level of one ticket, add the Linear label `factoree:l0`, `factoree:l1` or
+`factoree:l2`. A label never raises the level.
+
 ## 4c. Keep the Linear token alive
 
 A Linear access token lives for twenty-four hours. On the next day every Run fails at its first

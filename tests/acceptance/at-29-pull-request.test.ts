@@ -192,6 +192,7 @@ beforeAll(async () => {
     reviewedChangedFiles: ["added.txt", "target.txt"],
     reviewedWorktreeSha: stagedTreeSha,
     verifiedPatchSha256: verified.patchSha256,
+    draft: false,
     workItemTitle: "Rename the target file content",
     workItemUrl: "https://linear.app/acme/issue/ENG-29",
     verificationSummary: VERIFICATION_SUMMARY,

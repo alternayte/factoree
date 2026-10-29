@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
+import { normalizeNetworkPolicy } from "~/domain/runs/sandbox.js";
 import { z } from "zod";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -24,18 +25,34 @@ const createSchema = z
   })
   .strict();
 
+// docs/specs/autonomy-levels.md. SDD section 27 reserves L4, and Version 1 never merges, so no
+// operator can set it.
+const autonomyLevel = z.enum(["L0", "L1", "L2", "L3"]);
+
 const updateSchema = z
   .object({
     name: z.string().min(1),
     maxRunMinutes: z.number().int().positive().max(600),
     organizationSkillsRepository: z.string().regex(/^[^/]+\/[^/]+$/).nullable(),
+    defaultAutonomy: autonomyLevel,
+    // The highest level each Linear label allows. A label that is absent has no cap.
+    riskCaps: z.record(z.string().min(1).transform((label) => label.trim().toLowerCase()), autonomyLevel),
+    // R-4. The egress ceiling of every sandbox of this Product. A repository can only narrow it.
+    allowedDomains: z.array(z.string().min(1)).transform((domains, context) => {
+      try {
+        return normalizeNetworkPolicy({ allowedDomains: domains }).allowedDomains;
+      } catch (error) {
+        context.addIssue({ code: "custom", message: (error as Error).message });
+        return z.NEVER;
+      }
+    }),
   })
   .partial()
   .strict();
 
 const activateSchema = z
   .object({
-    defaultAutonomy: z.enum(["L0", "L1", "L2", "L3", "L4"]),
+    defaultAutonomy: autonomyLevel,
   })
   .strict();
 
@@ -125,7 +142,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
   app.put<{ Params: { id: string } }>("/admin/products/:id", async (request, reply) => {
     const query = tenantQuerySchema.safeParse(request.query);
     const body = updateSchema.safeParse(request.body);
-    if (!query.success || !body.success) return reply.code(400).send({ error: "invalid request" });
+    if (!query.success) return reply.code(400).send({ error: "invalid request" });
+    if (!body.success) return reply.code(422).send({ error: body.error.flatten() });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
     // F8. The replaced `PUT /admin/projects/:id` route let an operator change the name and the
@@ -135,6 +153,18 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       product = await dependencies.products.update(tenant.id, request.params.id, {
         ...(body.data.name === undefined ? {} : { name: body.data.name }),
         ...(body.data.maxRunMinutes === undefined ? {} : { maxRunMinutes: body.data.maxRunMinutes }),
+      });
+      if (!product) return reply.code(404).send({ error: "product not found" });
+    }
+    if (
+      body.data.defaultAutonomy !== undefined ||
+      body.data.riskCaps !== undefined ||
+      body.data.allowedDomains !== undefined
+    ) {
+      product = await dependencies.products.updatePolicy(tenant.id, request.params.id, {
+        ...(body.data.defaultAutonomy === undefined ? {} : { defaultAutonomy: body.data.defaultAutonomy }),
+        ...(body.data.riskCaps === undefined ? {} : { riskCaps: body.data.riskCaps }),
+        ...(body.data.allowedDomains === undefined ? {} : { allowedDomains: body.data.allowedDomains }),
       });
       if (!product) return reply.code(404).send({ error: "product not found" });
     }
@@ -183,6 +213,11 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!query.success || !body.success) return reply.code(400).send({ error: "invalid request" });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    // The level change leaves a policy history row, the same as a later raise does.
+    const updated = await dependencies.products.updatePolicy(tenant.id, request.params.id, {
+      defaultAutonomy: body.data.defaultAutonomy,
+    });
+    if (!updated) return reply.code(404).send({ error: "product not found" });
     const product = await dependencies.products.activate(tenant.id, request.params.id, body.data.defaultAutonomy);
     if (!product) return reply.code(404).send({ error: "product not found" });
     return product;

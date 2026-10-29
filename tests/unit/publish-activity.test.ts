@@ -164,6 +164,7 @@ const input: PublishActivityInput = {
   reviewedChangedFiles: ["src/a.ts"],
   reviewedWorktreeSha: TREE,
   verifiedPatchSha256: createHash("sha256").update(PATCH_TEXT).digest("hex"),
+  draft: false,
   workItemTitle: "Rename a project",
   workItemUrl: "https://linear.app/acme/issue/ENG-1",
   verificationSummary: "every check passed",

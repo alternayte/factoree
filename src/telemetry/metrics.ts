@@ -20,6 +20,12 @@ export const metrics = {
     labelNames,
     registers: [registry],
   }),
+  runsReported: new Counter({
+    name: "factoree_runs_reported_total",
+    help: "L0 and L1 Runs that posted their report and ended REPORTED",
+    labelNames,
+    registers: [registry],
+  }),
   runsFailed: new Counter({
     name: "factoree_runs_failed_total",
     help: "Runs that reached a failure state",

@@ -95,6 +95,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       metrics.activeRuns.dec(labels);
       metrics.runDuration.observe(labels, (completedAt.getTime() - run.createdAt.getTime()) / 1000);
       if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
+      else if (input.status === "REPORTED") metrics.runsReported.inc(labels);
       else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);
       else
         metrics.runsFailed.inc({

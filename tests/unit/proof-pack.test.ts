@@ -336,4 +336,18 @@ describe("the Proof Pack renderer", () => {
     expect(hashProofPack(body)).not.toBe(hashProofPack(`${body} `));
     expect(hashProofPack(body)).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it("names the autonomy level and every cap that applied (autonomy-levels.md)", () => {
+    const body = renderProofPack(
+      input({ autonomyLevel: "L2", autonomyReasons: ['The label "payments" caps this Run at L2.'] }),
+    );
+    expect(body).toContain('- Autonomy level: L2. The label "payments" caps this Run at L2.');
+  });
+
+  it("lists the check-defining files first in the change summary (check-isolation.md)", () => {
+    const body = renderProofPack(input({ changedFiles: ["src/a.ts", "package.json"], checkDefiningFiles: ["package.json"] }));
+    const summary = body.slice(body.indexOf("### Change summary"));
+    expect(summary.indexOf("- package.json")).toBeLessThan(summary.indexOf("- src/a.ts"));
+    expect(summary).toContain("so the pull request is a draft");
+  });
 });

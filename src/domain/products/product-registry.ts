@@ -7,6 +7,10 @@ export interface ProductRecord {
   linearTeamKey: string;
   linearTeamId: string;
   defaultAutonomy: string;
+  /** docs/specs/autonomy-levels.md. The highest level each label allows. Null means the SDD defaults. */
+  riskCaps: Record<string, string> | null;
+  /** R-4. The egress ceiling of every sandbox of this Product. */
+  allowedDomains: string[];
   maxRunMinutes: number;
   /** Specification section 16. The organization-wide skills repository slug, or null. */
   organizationSkillsRepository: string | null;
@@ -69,4 +73,15 @@ export interface ProductRegistry {
    * of that tenant and id exists.
    */
   remove(tenantId: string, id: string): Promise<boolean>;
+  /**
+   * docs/specs/autonomy-levels.md. Changes the default level and the risk caps, and writes one
+   * policy history row for each field whose value changed, in one transaction.
+   */
+  updatePolicy(tenantId: string, id: string, policy: ProductPolicyUpdate): Promise<ProductRecord | null>;
+}
+
+export interface ProductPolicyUpdate {
+  defaultAutonomy?: string;
+  riskCaps?: Record<string, string>;
+  allowedDomains?: string[];
 }

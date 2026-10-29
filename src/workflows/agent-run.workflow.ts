@@ -58,7 +58,12 @@ import { selectTarget } from "../domain/routing/select-targets.js";
 export interface AgentRunProductInput {
   productId: string;
   productSlug: string;
+  /** The Product default level. Delegation sends L0 for a pending Product. */
   defaultAutonomy: string;
+  /** docs/specs/autonomy-levels.md. The risk caps of the Product. Null means the SDD defaults. */
+  riskCaps: Record<string, string> | null;
+  /** R-4. The egress ceiling of every sandbox of this Product. */
+  allowedDomains: string[];
   /**
    * Every repository the Product owns. Task 10 selects the target repository of the Run from
    * this list. Until then, the workflow treats the first entry as the target.
@@ -842,6 +847,20 @@ export async function agentRunWorkflow(
     );
   };
 
+  // docs/specs/autonomy-levels.md. An L0 or L1 Run posts its report as the final response and
+  // ends REPORTED. By its level it opens no pull request.
+  const endReported = async (body: string): Promise<AgentRunWorkflowResult> => {
+    status = "REPORTED";
+    await completeRun({
+      tenantId: input.tenantId,
+      runId: id,
+      status,
+      completedAt: new Date(Date.now()).toISOString(),
+    });
+    await notify(() => activities.postFinalResponse({ sessionId: input.agentSessionId, body }));
+    return { runId: id, status };
+  };
+
   // SDD section 50: a stop must terminate the active agent process, and no change is published.
   const cancelRun = async (): Promise<AgentRunWorkflowResult> => {
     const session = implementerSession;
@@ -888,10 +907,12 @@ export async function agentRunWorkflow(
 
       // SDD section 28. The webhook carries no label, so the labels come from the Linear API
       // before Refinement classifies the risk of this Work Item. A read that never recovers,
-      // after the activity's own retry policy is exhausted, must not fail the Run: it yields no
-      // label, and the Run then runs at its Project default, the same as an issue with no label
-      // does. A cancellation is not a label-read fault, so it still propagates.
+      // after the activity's own retry policy is exhausted, must not fail the Run. The risk cap is
+      // a security control, so it fails closed: the Run then runs at L2 at most.
+      // docs/specs/autonomy-levels.md. A cancellation is not a label-read fault, so it still
+      // propagates.
       let labels = input.workItem.labels;
+      let labelsUnreadable = false;
       const issueId = input.workItem.issueId;
       if (issueId !== null) {
         try {
@@ -900,15 +921,15 @@ export async function agentRunWorkflow(
           if (isCancellation(error)) throw error;
           // The webhook labels are never worse than an empty list, so the fallback keeps them.
           labels = input.workItem.labels;
+          labelsUnreadable = true;
           // The cap of SDD section 28 is a security control, so a degraded cap must be visible.
           // A Linear fault must not fail the Run either, so the post stays inside `notify`.
           await notify(() =>
             activities.postProgress({
               sessionId: input.agentSessionId,
               message:
-                "Factoree could not read the labels of this Work Item. The risk cap of the " +
-                "autonomy level could not be applied. The Run continues at the autonomy level " +
-                "of the Project.",
+                "Factoree could not read the labels of this Work Item, so it runs this Run at L2 " +
+                "at most and opens a draft pull request.",
             }),
           );
         }
@@ -925,7 +946,9 @@ export async function agentRunWorkflow(
           primaryRepository: primaryRepositorySlug,
           referenceRepositories: referenceRepositorySlugs,
           defaultAutonomy: input.product.defaultAutonomy,
+          riskCaps: input.product.riskCaps,
         },
+        labelsUnreadable,
         decisions,
       });
 
@@ -1172,6 +1195,28 @@ export async function agentRunWorkflow(
         baseSha: resolvedContext.primary.sha,
       });
 
+      // docs/specs/autonomy-levels.md. L0 reads and reports. The Context Contract is the report,
+      // and no sandbox starts.
+      if (refined.autonomyLevel === "L0") {
+        return await endReported(
+          [
+            "## Factoree report",
+            "",
+            `Status: REPORTED at L0. ${autonomyNote(refined.autonomyReasons)}`,
+            "",
+            "### Context",
+            "",
+            resolvedContext.summary,
+            "",
+            "### Risks",
+            "",
+            refined.risks.length === 0 ? "None." : refined.risks.map((risk) => `- ${risk}`).join("\n"),
+            "",
+            "Factoree changed nothing and opened no pull request.",
+          ].join("\n"),
+        );
+      }
+
       // SDD section 49 places the Validation Contract between context resolution and sandbox
       // preparation. SDD section 24 requires the contract to freeze before implementation starts.
       // The loop ends because `askAndWait` is bounded by the question rounds and by the budget.
@@ -1273,6 +1318,7 @@ export async function agentRunWorkflow(
         defaults: {
           stagingRead: input.product.stagingRead,
           spriteRetentionHours: input.product.spriteRetentionHours,
+          allowedDomains: input.product.allowedDomains,
         },
         organizationSkills:
           input.product.organizationSkillsRepository === null
@@ -1729,6 +1775,32 @@ export async function agentRunWorkflow(
         );
       }
 
+      // docs/specs/autonomy-levels.md. L1 implements and checks, and returns the evidence with no
+      // pull request.
+      if (refined.autonomyLevel === "L1") {
+        return await endReported(
+          [
+            "## Factoree report",
+            "",
+            `Status: REPORTED at L1. ${autonomyNote(refined.autonomyReasons)}`,
+            "",
+            "### Deterministic verification",
+            "",
+            publishedVerificationSummary,
+            "",
+            "### Independent review",
+            "",
+            `Verdict: ${publishedReviewVerdict}. Blocking findings: ${String(publishedBlockingCount)}.`,
+            "",
+            "### Change",
+            "",
+            publishedChangedFiles.length === 0 ? "No file changed." : publishedChangedFiles.map((file) => `- ${file}`).join("\n"),
+            "",
+            "Every check passed. By its level, this Run opens no pull request.",
+          ].join("\n"),
+        );
+      }
+
       status = "PUBLISHING";
       await activities.setRunStatus({ runId: id, status });
 
@@ -1750,6 +1822,9 @@ export async function agentRunWorkflow(
         workspacePath: published.workspacePath,
         primaryPath: published.primaryPath,
         verifiedPatchSha256: published.patchSha256,
+        // docs/specs/autonomy-levels.md and check-isolation.md. L2 opens a draft. So does a patch
+        // that changes a file that defines a check.
+        draft: refined.autonomyLevel !== "L3" || published.checkDefiningFiles.length > 0,
         repositorySlug: resolvedContext.primary.slug,
         repositoryBaseUrl: input.product.repositoryBaseUrl,
         baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),
@@ -1876,6 +1951,9 @@ export async function agentRunWorkflow(
           reviewVerdict: publishedReviewVerdict,
           reviewPasses: publishedReviewPasses,
           reviewAttempt: publishedReviewAttempt,
+          autonomyLevel: refined.autonomyLevel,
+          autonomyReasons: refined.autonomyReasons,
+          checkDefiningFiles: published.checkDefiningFiles,
         });
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -1951,6 +2029,10 @@ export async function agentRunWorkflow(
     throw ApplicationFailure.fromError(error, { nonRetryable: true });
   }
 }
+
+/** One sentence that names the level rules that applied, or none. */
+const autonomyNote = (reasons: string[]): string =>
+  reasons.length === 0 ? "The Product default level applies." : reasons.join(" ");
 
 // A Linear notification failure must not abort the workflow after the durable state is written.
 const notify = async (send: () => Promise<void>): Promise<void> => {

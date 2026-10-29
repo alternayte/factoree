@@ -387,6 +387,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         source: input.source,
         project: input.project,
         decisions: input.decisions,
+        ...(input.labelsUnreadable === undefined ? {} : { labelsUnreadable: input.labelsUnreadable }),
       });
       return {
         status: output.status,
@@ -404,6 +405,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         constraints: output.workItem.constraints,
         unresolvedQuestions: output.unresolvedQuestions,
         autonomyLevel: output.autonomyLevel,
+        autonomyReasons: output.autonomyReasons,
       };
     },
     resolveContext: async (input: ResolveContextActivityInput) => {
@@ -864,6 +866,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
     spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
     defaultAutonomy: "L2",
+    riskCaps: null,
+    allowedDomains: [],
     organizationSkillsRepository: null,
   };
 

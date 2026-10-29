@@ -15,6 +15,8 @@ export interface RefineActivityInput {
   source: WorkItemSource;
   project: RefinementProject;
   decisions: RecordedDecision[];
+  /** True when the labels of the Work Item could not be read. */
+  labelsUnreadable?: boolean;
 }
 
 export interface RefineActivityOutput {
@@ -38,6 +40,8 @@ export interface RefineActivityOutput {
   constraints: string[];
   unresolvedQuestions: RefinementQuestion[];
   autonomyLevel: string;
+  /** docs/specs/autonomy-levels.md. One sentence for each rule that lowered the level. */
+  autonomyReasons: string[];
 }
 
 export interface RefinementActivityDependencies {
@@ -57,6 +61,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       source: input.source,
       project: input.project,
       decisions: input.decisions,
+      ...(input.labelsUnreadable === undefined ? {} : { labelsUnreadable: input.labelsUnreadable }),
     });
     // A Temporal workflow must stay deterministic, so the metric belongs here.
     metrics.refinementDuration.observe(
@@ -86,6 +91,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       constraints: output.workItem.constraints,
       unresolvedQuestions: output.unresolvedQuestions,
       autonomyLevel: output.autonomyLevel,
+      autonomyReasons: output.autonomyReasons,
     });
   },
 });

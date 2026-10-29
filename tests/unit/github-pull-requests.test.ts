@@ -38,6 +38,7 @@ describe("GitHubPullRequests", () => {
       {
         slug: "o/r",
         headBranch: "factoree/run-1",
+        draft: false,
         baseBranch: "main",
         title: "Factoree: x",
         body: "body",
@@ -73,7 +74,7 @@ describe("GitHubPullRequests", () => {
   it("refuses an answer that carries no head SHA", async () => {
     const { port } = client(() => json(201, { number: 7, html_url: "https://github.com/o/r/pull/7" }));
     await expect(
-      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b" }, "42"),
+      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b", draft: false }, "42"),
     ).rejects.toThrow(/head SHA/);
   });
 
@@ -85,10 +86,10 @@ describe("GitHubPullRequests", () => {
   it("never places the token in an error message", async () => {
     const { port } = client(() => json(422, { message: "Validation failed" }));
     await expect(
-      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b" }, "42"),
+      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b", draft: false }, "42"),
     ).rejects.toThrow(/422/);
     await expect(
-      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b" }, "42"),
+      port.create({ slug: "o/r", headBranch: "h", baseBranch: "main", title: "t", body: "b", draft: false }, "42"),
     ).rejects.not.toThrow(/ghp_x/);
   });
 

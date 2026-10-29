@@ -22,6 +22,8 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   linearTeamKey: "TEAM",
   linearTeamId: "team-1",
   defaultAutonomy: "L2",
+  riskCaps: null,
+  allowedDomains: [],
   maxRunMinutes: 90,
   organizationSkillsRepository,
   createdAt: new Date(),
@@ -137,6 +139,15 @@ describe("DelegationService", () => {
       autonomyLevel: "L2",
       maxRunMinutes: 90,
     });
+  });
+
+  it("runs a pending Product at L0, whatever level its row holds (autonomy-levels.md)", async () => {
+    const pending: ProductRecord = { ...defaultProduct, status: "pending", defaultAutonomy: "L3" };
+    const { service, starter } = build({ products: [pending] });
+    await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-1");
+    const call = starter.start.mock.calls[0]?.[0] as unknown as { args: [AgentRunWorkflowInput] };
+    expect(call.args[0].autonomyLevel).toBe("L0");
+    expect(call.args[0].product.defaultAutonomy).toBe("L0");
   });
 
   it("does not start a second workflow for a duplicate delivery", async () => {
@@ -259,6 +270,8 @@ describe("DelegationService", () => {
       stagingRead: false,
       spriteRetentionHours: 24,
       defaultAutonomy: "L2",
+      riskCaps: null,
+      allowedDomains: [],
       organizationSkillsRepository: null,
     });
     expect(started.args[0]?.workItem).toMatchObject({

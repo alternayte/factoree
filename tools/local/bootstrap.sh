@@ -96,6 +96,13 @@ echo "Product id: ${product_id}"
 api POST "/admin/products/${product_id}/activate${query_only}" "$(jq -n \
     --arg a "${SETUP_DEFAULT_AUTONOMY:-L2}" '{defaultAutonomy:$a}')" > /dev/null
 
+# R-4. The Product owns the egress ceiling of its sandboxes. A repository can only narrow it. An
+# empty list allows the repository hosts only, so a bootstrap that installs packages needs its
+# registry here. SETUP_ALLOWED_DOMAINS is a comma-separated list.
+api PUT "/admin/products/${product_id}${query_only}" "$(jq -n \
+    --arg d "${SETUP_ALLOWED_DOMAINS:-registry.npmjs.org}" \
+    '{allowedDomains: ($d | split(",") | map(select(length > 0)))}')" > /dev/null
+
 # SDD section 30. Each credential carries a kind, and the kind decides which carrier holds the
 # value. It takes no injection mark, and the API refuses that combination.
 if [[ -n "${SETUP_RUNNER_CREDENTIAL:-}" && -n "${SETUP_RUNNER_CREDENTIAL_NAME:-}" ]]; then

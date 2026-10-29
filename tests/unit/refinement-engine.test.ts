@@ -20,6 +20,7 @@ const input = (over: Partial<RefinementInput> = {}): RefinementInput => ({
     primaryRepository: "acme/webhook-service",
     referenceRepositories: ["acme/notification-service"],
     defaultAutonomy: "L3",
+    riskCaps: null,
   },
   decisions: [],
   ...over,
