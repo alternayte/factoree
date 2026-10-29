@@ -296,7 +296,8 @@ that session. Run `gh auth status` to check.
 ### Credentials
 
 Copy `.env.example` to `.env`. Fill the four Group B values. Set
-`SANDBOX_ADAPTER=local`. Leave `DATABASE_URL`, `TEMPORAL_ADDRESS`, and
+`SANDBOX_ADAPTER=local` and `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`. The worker refuses
+the local sandbox without that flag, because it isolates nothing. Leave `DATABASE_URL`, `TEMPORAL_ADDRESS`, and
 `TEMPORAL_NAMESPACE` at their defaults unless you change a port.
 
 | Variable | Dependency | Value |

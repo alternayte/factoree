@@ -6,7 +6,9 @@ container. `docs/live-acceptance.md` calls this Path A-Sprite. It is not SDD
 section 66 proof.
 
 For the local process sandbox instead of a Fly Sprite, set
-`SANDBOX_ADAPTER=local` and run `just live-local` at the end.
+`SANDBOX_ADAPTER=local` and `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`, and run
+`just live-local` at the end. The local sandbox isolates nothing. Use it on a
+development machine only.
 
 ## 1. Accounts
 
