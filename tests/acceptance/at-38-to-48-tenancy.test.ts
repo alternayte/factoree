@@ -543,7 +543,7 @@ class FakeTenantRegistry implements TenantRegistry {
     throw new Error("not used by AT-38");
   }
 
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by AT-38");
   }
 }

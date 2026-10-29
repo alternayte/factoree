@@ -565,6 +565,29 @@ describe("the GitHub installation binding endpoint", () => {
     expect(renamedRow.accountLogin).toBe("acme-renamed");
   });
 
+  it("refuses to move an installation that another tenant holds", async () => {
+    await tenants.ensureTenant("ws-github-owner", "Owner");
+    await tenants.ensureTenant("ws-github-thief", "Thief");
+    const owned = await app.inject({
+      method: "PUT",
+      url: "/admin/github-installations",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-github-owner", githubInstallationId: "9010", accountLogin: "acme" },
+    });
+    expect(owned.statusCode).toBe(200);
+
+    const moved = await app.inject({
+      method: "PUT",
+      url: "/admin/github-installations",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-github-thief", githubInstallationId: "9010", accountLogin: "acme" },
+    });
+    expect(moved.statusCode).toBe(409);
+    const row = await prisma.gitHubInstallation.findUniqueOrThrow({ where: { githubInstallationId: "9010" } });
+    const owner = await tenants.findByWorkspace("ws-github-owner");
+    expect(row.tenantId).toBe(owner?.id);
+  });
+
   it("answers 404 for a tenant that does not exist", async () => {
     const response = await app.inject({
       method: "PUT",

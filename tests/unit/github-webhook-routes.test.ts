@@ -41,7 +41,7 @@ class FakeTenantRegistry implements TenantRegistry {
   findByGitHubInstallation(githubInstallationId: string): Promise<TenantRecord | null> {
     return Promise.resolve(this.installationsById.get(githubInstallationId) ?? null);
   }
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by this route");
   }
 }

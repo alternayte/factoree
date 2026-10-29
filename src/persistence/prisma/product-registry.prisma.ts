@@ -370,11 +370,17 @@ export class PrismaTenantRegistry implements TenantRegistry {
     tenantId: string,
     githubInstallationId: string,
     accountLogin: string,
-  ): Promise<void> {
-    await this.prisma.gitHubInstallation.upsert({
-      where: { githubInstallationId },
-      create: { tenantId, githubInstallationId, accountLogin },
-      update: { tenantId, accountLogin },
+  ): Promise<"bound" | "held_by_another_tenant"> {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.gitHubInstallation.findUnique({ where: { githubInstallationId } });
+      // A rebind would silently give one tenant's repositories to another tenant.
+      if (existing !== null && existing.tenantId !== tenantId) return "held_by_another_tenant";
+      await tx.gitHubInstallation.upsert({
+        where: { githubInstallationId },
+        create: { tenantId, githubInstallationId, accountLogin },
+        update: { accountLogin },
+      });
+      return "bound";
     });
   }
 }

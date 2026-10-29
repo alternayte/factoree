@@ -29,9 +29,21 @@ const scopeKey = (scope: GitHubTokenScope | undefined): string =>
     Object.entries(scope ?? {}).sort(([left], [right]) => left.localeCompare(right)),
   );
 
-/** The cache key and the in-flight key of one installation, mixed with one scope. */
-const cacheKey = (githubInstallationId: string, scope: GitHubTokenScope | undefined): string =>
-  `${githubInstallationId}::${scopeKey(scope)}`;
+/**
+ * The repository names GitHub expects: the name without the owner, because an installation
+ * belongs to one account. Sorted and unique, so one set always gives one key.
+ */
+const repositoryNames = (repositories: readonly string[] | undefined): string[] | undefined =>
+  repositories === undefined
+    ? undefined
+    : [...new Set(repositories.map((full) => full.split("/").pop() ?? full))].sort();
+
+/** The cache key and the in-flight key of one installation, mixed with one scope and one repository set. */
+const cacheKey = (
+  githubInstallationId: string,
+  scope: GitHubTokenScope | undefined,
+  repositories: string[] | undefined,
+): string => `${githubInstallationId}::${scopeKey(scope)}::${(repositories ?? ["*"]).join(",")}`;
 
 type CacheEntry = { token: string; expiresAtMs: number };
 
@@ -60,9 +72,14 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
 
   constructor(private readonly options: GitHubAppTokenProviderOptions) {}
 
-  async tokenForInstallation(githubInstallationId: string, scope?: GitHubTokenScope): Promise<string> {
+  async tokenForInstallation(
+    githubInstallationId: string,
+    scope?: GitHubTokenScope,
+    repositories?: readonly string[],
+  ): Promise<string> {
     const now = this.options.now?.() ?? Date.now();
-    const key = cacheKey(githubInstallationId, scope);
+    const names = repositoryNames(repositories);
+    const key = cacheKey(githubInstallationId, scope, names);
     const cached = this.cache.get(key);
     if (cached !== undefined && cached.expiresAtMs - now > REFRESH_MARGIN_MS) return cached.token;
 
@@ -72,7 +89,7 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
       return minted.token;
     }
 
-    const mintPromise = this.mint(githubInstallationId, now, scope).finally(() => {
+    const mintPromise = this.mint(githubInstallationId, now, scope, names).finally(() => {
       this.inflight.delete(key);
     });
     this.inflight.set(key, mintPromise);
@@ -96,7 +113,12 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
     return `${header}.${payload}.${base64Url(signer.sign(key))}`;
   }
 
-  private async mint(githubInstallationId: string, nowMs: number, scope?: GitHubTokenScope): Promise<CacheEntry> {
+  private async mint(
+    githubInstallationId: string,
+    nowMs: number,
+    scope: GitHubTokenScope | undefined,
+    repositories: string[] | undefined,
+  ): Promise<CacheEntry> {
     const base = (this.options.apiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
     const url = `${base}/app/installations/${githubInstallationId}/access_tokens`;
     const fetchImpl = this.options.fetch ?? fetch;
@@ -106,9 +128,16 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
         authorization: `Bearer ${this.signJwt(nowMs)}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
-        ...(scope === undefined ? {} : { "content-type": "application/json" }),
+        ...(scope === undefined && repositories === undefined ? {} : { "content-type": "application/json" }),
       },
-      ...(scope === undefined ? {} : { body: JSON.stringify({ permissions: scope }) }),
+      ...(scope === undefined && repositories === undefined
+        ? {}
+        : {
+            body: JSON.stringify({
+              ...(scope === undefined ? {} : { permissions: scope }),
+              ...(repositories === undefined ? {} : { repositories }),
+            }),
+          }),
     });
     if (response.status !== 201) {
       throw new GitHubAppAuthError(

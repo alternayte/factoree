@@ -6,7 +6,7 @@ const reader = (sha: string): RepositoryReader => ({
   resolveRef: () => Promise.resolve(sha),
   listTree: () => Promise.resolve({ entries: [], truncated: false }),
   readBlob: () => Promise.resolve(null),
-  useCredential: () => undefined,
+  withCredential: (_credential, work) => work(),
 });
 
 describe("checkBase", () => {

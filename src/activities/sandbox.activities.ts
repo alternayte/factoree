@@ -1,3 +1,4 @@
+import { repositoryNamesOf } from "~/activities/repository-credential.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
@@ -124,9 +125,17 @@ const prepare = async (
     repositoryCredential = null;
   } else {
     try {
-      repositoryCredential = await dependencies.tokens.tokenForInstallation(input.githubInstallationId, {
-        contents: "read",
-      });
+      // The clone credential reads the repositories this sandbox checks out, and no other
+      // repository of the installation.
+      repositoryCredential = await dependencies.tokens.tokenForInstallation(
+        input.githubInstallationId,
+        { contents: "read" },
+        repositoryNamesOf([
+          input.primary.url,
+          ...input.references.map((reference) => reference.url),
+          ...(input.organizationSkills === null ? [] : [input.organizationSkills.url]),
+        ]),
+      );
     } catch (error) {
       // A rejected mint of the clone credential is a configuration fault, not an
       // infrastructure fault, so it must map to the same `RunConfigurationError` the publish

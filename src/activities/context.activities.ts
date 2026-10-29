@@ -12,6 +12,7 @@ import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import { readCredential } from "~/activities/repository-credential.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -68,20 +69,7 @@ export interface ContextActivityDependencies {
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
 
-/**
- * Wraps a `GitHubTokenProvider` so every token it mints reaches the redactor before the caller
- * can spend it. `GitRepositoryReader` mints immediately before the git command that uses the
- * token, so this wrapper is the only point between the mint and that command. A token must never
- * reach output by design, and the redactor is the guarantee that survives a later edit by someone
- * who does not know the rule.
- */
-const redactingTokens = (tokens: GitHubTokenProvider, redactor: Redactor): GitHubTokenProvider => ({
-  tokenForInstallation: async (githubInstallationId, scope) => {
-    const token = await tokens.tokenForInstallation(githubInstallationId, scope);
-    redactor.addSecret(token);
-    return token;
-  },
-});
+
 
 /**
  * Specification section 8. The cached routing table can drift from the file at the commit a Run
@@ -123,55 +111,48 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     // private repository needs the read-only credential here as well as in the checkout. The
     // installation id names the source of the credential, and a Project can move a repository
     // between two installations between two Runs, so this activity reads the id fresh every time.
-    if (input.githubInstallationId !== "") {
-      try {
-        const origin = new URL(input.primaryRepository.url).origin;
-        // The provider mints on demand, immediately before the git command that spends the
-        // token, so no token outlives the single command. The scope stays read-only. SDD
-        // section 30 forbids a write credential here, and this path never asks for one.
-        dependencies.repositoryReader.useCredential(
-          origin,
-          redactingTokens(dependencies.tokens, dependencies.redactor),
-          input.githubInstallationId,
-        );
-      } catch {
-        // A local path carries no origin, and it needs no credential either.
-      }
-    }
+    const credential = readCredential(
+      input.primaryRepository.url,
+      input.githubInstallationId,
+      dependencies,
+    );
 
     // SDD section 15 and DI-5.2. The `context` block governs discovery, and
     // discovery runs before the sandbox exists, so the file is read at the pinned primary SHA.
     //
-    // Discovery reads the repository through the credential `useCredential` registered above, so
-    // a rejected mint of that credential surfaces from one of these calls, not from the mint
-    // call itself. A deterministic rejection must map to the identical `RunConfigurationError`
-    // every other mint site produces, so this block converts it here.
-    let contextConfiguration;
-    let sources;
+    // Discovery reads the repository through `credential`, so a rejected mint of that credential
+    // surfaces from one of these calls, not from the mint call itself. A deterministic rejection
+    // must map to the identical `RunConfigurationError` every other mint site produces, so this
+    // block converts it here.
     let resolved;
     try {
-      contextConfiguration = await readRepositoryContextConfiguration(
-        dependencies.repositoryReader,
-        input.primaryRepository.url,
-        input.primaryRepository.ref,
+      resolved = await dependencies.repositoryReader.withCredential(
+        credential,
+        async () => {
+          const contextConfiguration = await readRepositoryContextConfiguration(
+            dependencies.repositoryReader,
+            input.primaryRepository.url,
+            input.primaryRepository.ref,
+          );
+          const sources = await dependencies.sources.sourcesFor({
+            tenantId: input.tenantId,
+            productId: input.productId,
+            contextConfiguration,
+          });
+          const resolved = await dependencies.resolver.resolve({
+            runId: input.runId,
+            goal: input.goal,
+            acceptanceCriteria: input.acceptanceCriteria,
+            primaryRepository: input.primaryRepository,
+            referenceRepositories: input.referenceRepositories,
+            workItemReferences: input.workItemReferences,
+            decisions: input.decisions,
+            sources,
+            contextConfiguration,
+          });
+          return resolved;
+        },
       );
-      sources = await dependencies.sources.sourcesFor({
-        tenantId: input.tenantId,
-        productId: input.productId,
-        contextConfiguration,
-      });
-
-      resolved = await dependencies.resolver.resolve({
-        runId: input.runId,
-        goal: input.goal,
-        acceptanceCriteria: input.acceptanceCriteria,
-        primaryRepository: input.primaryRepository,
-        referenceRepositories: input.referenceRepositories,
-        workItemReferences: input.workItemReferences,
-        decisions: input.decisions,
-        sources,
-        contextConfiguration,
-      });
     } catch (error) {
       throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
     }
@@ -282,28 +263,13 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
   async verifyTargetIdentity(
     input: VerifyTargetIdentityActivityInput,
   ): Promise<VerifyTargetIdentityActivityOutput> {
-    if (input.githubInstallationId !== "") {
-      try {
-        const origin = new URL(input.repositoryUrl).origin;
-        dependencies.repositoryReader.useCredential(
-          origin,
-          redactingTokens(dependencies.tokens, dependencies.redactor),
-          input.githubInstallationId,
-        );
-      } catch {
-        // A local path carries no origin, and it needs no credential either.
-      }
-    }
-
-    // The read spends the credential `useCredential` registered above, so a rejected mint
-    // surfaces from this call. It must map to the identical `RunConfigurationError` every other
-    // mint site produces.
+    // The read spends `credential`, so a rejected mint surfaces from this call. It must map to the
+    // identical `RunConfigurationError` every other mint site produces.
+    const credential = readCredential(input.repositoryUrl, input.githubInstallationId, dependencies);
     let text: string | null;
     try {
-      text = await dependencies.repositoryReader.readBlob(
-        input.repositoryUrl,
-        input.baseSha,
-        FACTOREE_CONFIG_PATH,
+      text = await dependencies.repositoryReader.withCredential(credential, () =>
+        dependencies.repositoryReader.readBlob(input.repositoryUrl, input.baseSha, FACTOREE_CONFIG_PATH),
       );
     } catch (error) {
       throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);

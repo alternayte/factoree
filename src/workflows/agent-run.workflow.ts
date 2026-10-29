@@ -1659,6 +1659,7 @@ export async function agentRunWorkflow(
           repositoryBaseUrl: publishInput.repositoryBaseUrl,
           branch: publishInput.baseBranch,
           baseSha: publishInput.baseSha,
+          githubInstallationId: publishInput.githubInstallationId,
         });
       } catch (error) {
         if (isCancellation(error)) throw error;

@@ -66,7 +66,7 @@ const baseRepositoryReader = (sha: () => string): RepositoryReader & { urls: str
     },
     listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
     readBlob: (): Promise<string | null> => Promise.resolve(null),
-    useCredential: () => undefined,
+    withCredential: (_credential, work) => work(),
   };
 };
 
@@ -79,7 +79,7 @@ const forbiddenRepositoryReader = (): RepositoryReader => ({
     Promise.reject(new Error("the publish activity must not read the repository")),
   listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
   readBlob: (): Promise<string | null> => Promise.resolve(null),
-  useCredential: () => undefined,
+  withCredential: (_credential, work) => work(),
 });
 
 interface PublicationRow {

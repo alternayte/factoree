@@ -79,7 +79,7 @@ const recordingRepositoryReader = (targetSha: string): RecordingReader => {
     readBlob(): Promise<string | null> {
       return Promise.resolve(null);
     },
-    useCredential(): void {},
+    withCredential: (_credential, work) => work(),
   };
 };
 

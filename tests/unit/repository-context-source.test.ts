@@ -200,7 +200,7 @@ describe("RepositoryContextSource", () => {
       resolveRef: () => Promise.reject(error),
       listTree: (url: string, sha: string) => base.listTree(url, sha),
       readBlob: (url: string, sha: string, path: string) => base.readBlob(url, sha, path),
-      useCredential: () => undefined,
+      withCredential: (_credential, work) => work(),
     };
   };
 

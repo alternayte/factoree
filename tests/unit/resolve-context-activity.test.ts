@@ -284,7 +284,7 @@ describe("resolveContext, a rejected mint of the discovery-read credential", () 
    * bare `GitHubAppAuthError` publish-time tests already cover.
    */
   const rejectingReader = (authError: GitHubAppAuthError): RepositoryReader => ({
-    useCredential: () => undefined,
+    withCredential: (_credential, work) => work(),
     resolveRef: () =>
       Promise.reject(
         new RepositoryReadError(`could not resolve the ref: ${authError.message}`, { cause: authError }),
@@ -355,7 +355,7 @@ describe("resolveContext, a rejected mint of the discovery-read credential", () 
       "install-1",
     );
     const reader: RepositoryReader = {
-      useCredential: () => undefined,
+      withCredential: (_credential, work) => work(),
       resolveRef: () => Promise.reject(new Error("not used")),
       listTree: () => Promise.reject(new Error("not used")),
       readBlob: () =>

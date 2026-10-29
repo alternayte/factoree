@@ -34,7 +34,7 @@ class FakeTenantRegistry implements TenantRegistry {
   findByGitHubInstallation(): Promise<TenantRecord | null> {
     throw new Error("not used by this route");
   }
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by this route");
   }
 }

@@ -473,7 +473,7 @@ class SingleInstallationTenantRegistry implements TenantRegistry {
     return Promise.resolve(githubInstallationId === this.boundInstallationId ? this.tenant : null);
   }
 
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by this route");
   }
 }
@@ -783,7 +783,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       resolveRef: () => Promise.resolve(remote.baseSha),
       listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
       readBlob: (): Promise<string | null> => Promise.resolve(null),
-      useCredential: () => undefined,
+      withCredential: (_credential, work) => work(),
     };
 
     const runs: RunRepository = {
