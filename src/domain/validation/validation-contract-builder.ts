@@ -59,7 +59,7 @@ const REVIEW_WORDS = ["code review", "reviewed", "review confirms"] as const;
  * confidence. `HTTP_CALL` names an explicit method and a path. This signal is the strongest a
  * statement carries, and it beats every other signal. `HTTP_WORDS` is weak word evidence, such as
  * "endpoint" or "returns 200". This weak signal must not beat a plainly stated page interaction:
- * when the statement carries a browser word too, the method is `browser`. Controller decision 4
+ * when the statement carries a browser word too, the method is `browser`. DI-6.4
  * makes `manual` the default: an unrecognized statement is still observable by a human, and
  * Factoree must not claim an automated proof it cannot produce.
  */
@@ -138,7 +138,7 @@ const assertionsOf = (criteria: ValidationCriterion[]): ValidationAssertion[] =>
 /**
  * SDD section 24. The builder is deterministic, so one input always freezes to one hash. It
  * invents no behavior: every assertion restates one acceptance criterion, and it records that
- * criterion identifier. See controller decision 2.
+ * criterion identifier. See DI-6.2.
  */
 export const buildValidationContract = (
   input: BuildValidationContractInput,

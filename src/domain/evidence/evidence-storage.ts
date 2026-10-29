@@ -20,7 +20,7 @@ export interface PutArtifactInput {
 /**
  * SDD section 39. Version 1 SHOULD store user-facing evidence through Linear private file
  * storage where practical. The port keeps that choice out of the domain, and it keeps every
- * test free of a live Linear account. See controller decision 8.
+ * test free of a live Linear account. See DI-7.8.
  */
 export interface EvidenceStorage {
   readonly name: string;

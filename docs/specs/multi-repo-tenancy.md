@@ -2,9 +2,9 @@
 
 **Document type:** Design specification
 **Date:** 2026-09-03
-**Status:** Approved, ready for an implementation plan
+**Status:** Built. Change Sets (sections 12 to 15, the multi-target rows of section 10, AT-44, AT-45) are Version 2, as SDD §4 and §71 state. A Version 1 Run has exactly one target repository.
 **Style:** STE100-style controlled English
-**Amends:** `docs/sdd.md` sections 15, 27, 29, 44, 45, 47, 48, 52, 53, 63, 64, 71
+**Amends:** `docs/factoree-sdd.md` sections 15, 27, 29, 44, 45, 47, 48, 52, 53, 63, 64, 71
 
 ---
 

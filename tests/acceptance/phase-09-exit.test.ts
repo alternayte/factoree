@@ -175,7 +175,7 @@ describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {
     const publication = await publishToBranch(trustedInput({ branch }));
 
     expect(publication.publishedPatchSha256).toBe(patchSha256);
-    // Controller decision 12. The trusted checkout produced the tree the sandbox staged.
+    // DI-9.12. The trusted checkout produced the tree the sandbox staged.
     expect(publication.treeSha).toBe(treeSha);
     expect(remote.refSha(branch)).toBe(publication.commitSha);
     expect(changedFiles).toEqual(["added.txt", "target.txt"]);

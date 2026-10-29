@@ -156,7 +156,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
     try {
       // SDD section 25. A frozen contract is the contract of this Run. A retry, and any later
-      // call, must return that contract and must never rebuild it. See controller decision 7.
+      // call, must return that contract and must never rebuild it. See DI-6.7.
       const existing = await dependencies.contracts.findByRun(input.tenantId, input.runId);
       if (existing !== null) {
         // A repeat write here repairs a Run row that an interrupted earlier attempt left without
@@ -194,7 +194,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       });
 
       // SDD section 9 item 5. No observable success assertion exists, so the readiness gate
-      // fails and nothing freezes. See controller decision 3.
+      // fails and nothing freezes. See DI-6.3.
       if (built.contract.assertions.length === 0) {
         dependencies.logger.info("validation contract needs input", {
           tenant_id: input.tenantId,
@@ -298,7 +298,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         );
       }
 
-      // Step 3. Controller decision 6: the validator role denies `writePrimaryWorktree`. The
+      // Step 3. DI-7.14: the validator role denies `writePrimaryWorktree`. The
       // `role` control is not a Project override; SDD section 29 permits exactly one, staging
       // read, and this is the role of the session instead.
       const actionPolicy = buildActionPolicy({ role: "validator" });

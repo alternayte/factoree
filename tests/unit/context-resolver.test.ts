@@ -718,7 +718,7 @@ describe("automatic reference repository discovery", () => {
   });
 
   it("drops a discovered repository the reader cannot read, and keeps the readable one", async () => {
-    // Controller decision 13 and SDD section 19. A stale catalog entry names a repository the
+    // DI-5.13 and SDD section 19. A stale catalog entry names a repository the
     // reader cannot read. That entry must not fail the Run, and it must not lose the second
     // repository the same catalog named.
     const reader = new FakeRepositoryReader({
@@ -894,7 +894,7 @@ describe("automatic reference repository discovery", () => {
   });
 
   it("drops a duplicate reference a source offers, so no source can fail a Run", async () => {
-    // Controller decision 13 and SDD section 21. Two candidates with one reference would fail the
+    // DI-5.13 and SDD section 21. Two candidates with one reference would fail the
     // contract validation, and the Run with it.
     const twice: ContextSource = {
       id: () => "twice",

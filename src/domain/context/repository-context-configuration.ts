@@ -23,7 +23,7 @@ export const DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION: RepositoryContextConfigur
  * Reads the block. A missing file, an invalid file, and an unreachable repository all yield the
  * defaults. SDD section 15 is enforced against the real checkout in `SandboxManager`, which
  * fails the Run there. A second enforcement point here would fail a Run twice for one fault, and
- * would let a transient read fault stop a Run that has a valid file. See controller decision 3.
+ * would let a transient read fault stop a Run that has a valid file. See DI-5.3.
  */
 export const readRepositoryContextConfiguration = async (
   reader: RepositoryReader,

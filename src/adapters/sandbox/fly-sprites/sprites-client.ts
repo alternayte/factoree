@@ -34,7 +34,7 @@ export interface SpritesSpriteHandle {
    * client disconnects. `FlySpriteSandbox.startProcess` uses this only to launch its shell
    * wrapper. It tracks the wrapper's progress through files the wrapper writes, not through a
    * session identifier, so this returns nothing. See
-   * docs/build/evidence/phase-02-sprites-sdk.md, item 4.
+   * docs/build/decisions.md, DI-2.10.
    */
   startDetached: (file: string, args: string[], options: SpritesExecOptions) => Promise<void>;
   createCheckpoint: (comment: string) => Promise<{ id: string }>;

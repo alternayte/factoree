@@ -3,7 +3,7 @@ import { readTextWithCap } from "~/adapters/http/capped-response-body.js";
 
 /**
  * SDD section 17 and SDD section 10. One MCP server, reached over JSON-RPC 2.0 on HTTP.
- * Controller decision 9: this is a small hand-written JSON-RPC client over `fetch`, not an npm
+ * DI-5.9: this is a small hand-written JSON-RPC client over `fetch`, not an npm
  * dependency. SDD section 60 forbids the token in any error message or log line, so no message
  * built here interpolates it.
  */

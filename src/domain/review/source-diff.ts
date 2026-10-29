@@ -65,10 +65,10 @@ const git = async (
 /**
  * SDD section 44 fixes this command pair for the verified patch. Phase 8 reads it for the
  * Reviewer, and Phase 9 hashes the same output, so the change under review and the change under
- * publication can never differ. See controller decision 12.
+ * publication can never differ. See DI-8.12.
  *
  * `--binary` is deliberately absent. A binary file appears in the changed-file list by name, and
- * binary bytes help no Reviewer. See controller decision 14.
+ * binary bytes help no Reviewer. See DI-8.14.
  */
 export const captureSourceDiff = async (
   dependencies: SourceDiffDependencies,

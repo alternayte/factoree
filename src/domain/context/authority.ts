@@ -5,7 +5,7 @@
  * Those two domains therefore have one rung, and `compareAuthority` reports `equal` for a pair
  * inside them. The members of those two domains are combined evidence under SDD section 22, so
  * they do not conflict with one another. `detectConflicts` skips such a pair. This corrects
- * controller decision 8, which the controller overturned in the Task 7 review.
+ * DI-4.8, which a review overturned.
  */
 
 export type AuthorityDomain =

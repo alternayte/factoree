@@ -177,7 +177,7 @@ const buildContextActivities = (budgetMs: number) =>
  * SDD section 8 and SDD section 23 put no bound on the elicitation loop. An unbounded loop is a
  * workflow that never ends. Five rounds cover a realistic clarification, and then Factoree stops.
  * Refinement and conflict resolution share the five rounds. The Run budget of SDD section 50
- * bounds the loop as well. See controller decision 6.
+ * bounds the loop as well. See DI-4.6.
  */
 export const MAX_QUESTION_ROUNDS = 5;
 
@@ -308,7 +308,7 @@ const buildVerifyActivities = (budgetMs: number) =>
 /**
  * SDD section 46. The publication clones the repository, applies the patch, pushes, and calls
  * GitHub. A slow network must not fail it, and every step of it is idempotent, so a retry is
- * safe. Controller decision 8 keeps the branch name and the pull request lookup deterministic.
+ * safe. DI-9.8 keeps the branch name and the pull request lookup deterministic.
  * SDD section 49 forbids a semantic failure to consume the infrastructure retry policy, so the
  * four semantic types below fail fast.
  */
@@ -780,7 +780,7 @@ export async function agentRunWorkflow(
 
   /**
    * One Reviewer pass. SDD section 40 and section 42. Every pass starts a new session, so no
-   * session reference passes between attempts. See controller decision 11.
+   * session reference passes between attempts. See DI-8.11.
    */
   const runReview = async (attemptInput: {
     prepared: PrepareSandboxActivityOutput;
@@ -1238,7 +1238,7 @@ export async function agentRunWorkflow(
                   input.product.organizationSkillsRepository,
                 ),
                 // No discovery step resolves a skills repository, so the target repository default
-                // branch is the only defined ref. See controller decision 3.
+                // branch is the only defined ref. See DI-11.3.
                 ref: defaultBranchForSlug(primaryRepositorySlug),
               },
         goal: refined.goal,
@@ -1572,7 +1572,7 @@ export async function agentRunWorkflow(
 
         if (stopRequested) return await cancelRun();
 
-        // Controller decision 7. A report Factoree cannot read proves nothing, and a repair
+        // DI-8.7. A report Factoree cannot read proves nothing, and a repair
         // cannot fix it. SDD section 68 forbids completion without a review, so the Run ends.
         if (!review.reportUsable) {
           return await failRun(

@@ -143,7 +143,7 @@ const activities = {
     fresh: true,
     currentTargetSha: input.baseSha,
   }),
-  // Controller decision 8. The branch name and the pull request lookup are deterministic, so a
+  // DI-9.8. The branch name and the pull request lookup are deterministic, so a
   // second call after a worker restart finds the pull request the first call opened. The double
   // returns the same pull request record every time. Only the first call reports a creation.
   publish: async (input: { runId: string }) => {
@@ -258,7 +258,7 @@ describe("AT-35 worker restart", () => {
 
     // Wait until the Run published, then restart the worker a second time. A publication whose
     // result did not reach the history repeats on the third worker, so this restart exercises
-    // the idempotency of SDD section 46 and of controller decision 8.
+    // the idempotency of SDD section 46 and of DI-9.8.
     // The first shutdown left a workflow task open. The budget must cover the workflow
     // task timeout on a loaded machine.
     for (let attempt = 0; attempt < 1200 && publishCalls.length === 0; attempt += 1) {

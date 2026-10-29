@@ -69,7 +69,7 @@ const hostOf = (url: string): string | null => {
 };
 
 /**
- * SDD section 20 and controller decision 7. A repository a source discovers becomes a real
+ * SDD section 20 and DI-5.7. A repository a source discovers becomes a real
  * reference repository of the Run, with an explicit SHA, so the checkout and the Context
  * Contract name the same commit. Each one costs a mirror clone, so the count is bounded.
  */
@@ -96,7 +96,7 @@ export class ContextResolver {
 
     const sources = input.sources.all();
     const candidates: ContextCandidate[] = [];
-    // SDD section 21 keeps every `ref` in one contract unique, and controller decision 13 keeps a
+    // SDD section 21 keeps every `ref` in one contract unique, and DI-5.13 keeps a
     // source fault from failing a Run. A source that offers one reference twice would therefore
     // fail the contract validation and fail the Run, so the first occurrence wins here and the
     // duplicate is dropped.
@@ -112,7 +112,7 @@ export class ContextResolver {
 
     // The primary host is the only host the workflow can rebuild a clone URL for, because it
     // composes `repositoryBaseUrl` with a slug. A repository elsewhere stays a recorded item.
-    // See controller decision 8. `hostOf` returns `null` on a parse failure, and `null === null`
+    // See DI-5.8. `hostOf` returns `null` on a parse failure, and `null === null`
     // in JavaScript, so a primary URL that fails to parse must be treated as trusting no host at
     // all. Otherwise an unparsable discovered URL would match it.
     const primaryHost = hostOf(input.primaryRepository.url);
@@ -137,7 +137,7 @@ export class ContextResolver {
     // primary, so the merge drops a reference it already holds. The reader caches one mirror per
     // URL, so the repeat costs no second clone.
     //
-    // Controller decision 13 and SDD section 19. A Backstage catalog entry can name a repository
+    // DI-5.13 and SDD section 19. A Backstage catalog entry can name a repository
     // that is private, archived, renamed, gone, or on another default branch. That repository is
     // not a repository the operator chose, so it must never fail the Run. One pass per repository
     // keeps a bad entry from losing the good ones: the failed repository drops out of the

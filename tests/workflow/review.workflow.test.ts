@@ -52,7 +52,7 @@ const blocking: Partial<ReviewActivityOutput> = {
   failures: [REVIEW_FAILURE_TEXT],
 };
 
-/** The unusable report outcome. Controller decision 7 owns this path. */
+/** The unusable report outcome. DI-8.7 owns this path. */
 const unusable: Partial<ReviewActivityOutput> = {
   passed: false,
   verdict: "fail",
@@ -160,7 +160,7 @@ describe("REVIEWING", () => {
       return handle.result();
     });
 
-    // Controller decision 7. A report Factoree cannot read proves nothing, and a repair cannot
+    // DI-8.7. A report Factoree cannot read proves nothing, and a repair cannot
     // fix it, so the Run starts none.
     expect(statusesOf(runId)).not.toContain("REPAIRING");
     expect(reviewsOf(runId)).toHaveLength(1);

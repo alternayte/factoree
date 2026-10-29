@@ -14,7 +14,7 @@ export interface RecordReviewFindingInput {
   requirement: string;
   evidence: string;
   description: string;
-  /** Factoree's own decision. SDD section 41 and controller decision 2. */
+  /** Factoree's own decision. SDD section 41 and DI-8.2. */
   blocking: boolean;
   decisionReason: string;
 }

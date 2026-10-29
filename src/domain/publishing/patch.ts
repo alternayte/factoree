@@ -3,7 +3,7 @@ import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
 /**
- * Every git configuration value that can change the bytes of a diff. Controller decision 3. The
+ * Every git configuration value that can change the bytes of a diff. DI-9.3. The
  * sandbox capture and the control-plane recomputation both use this list. A git configuration on
  * either machine therefore cannot break the SDD section 46 hash assertion for the wrong reason.
  */
@@ -59,12 +59,12 @@ export class EmptyPatchError extends Error {
 const SHA = /^[0-9a-f]{40}$/;
 
 export interface VerifiedPatch {
-  /** The patch bytes, base64 encoded. Controller decision 4 explains the encoding. */
+  /** The patch bytes, base64 encoded. DI-9.4 explains the encoding. */
   patchBase64: string;
   /** The SHA-256 of the decoded patch bytes. SDD section 44 names this value `patch_sha256`. */
   patchSha256: string;
   changedFiles: string[];
-  /** The git tree object of the staged worktree. Controller decision 12. */
+  /** The git tree object of the staged worktree. DI-9.12. */
   treeSha: string;
   byteLength: number;
   /**
@@ -107,7 +107,7 @@ const git = async (
 /**
  * SDD section 44. Captures the verified implementation artifact of one Run.
  *
- * The patch is never redacted. Controller decision 5. A redacted patch does not apply and its
+ * The patch is never redacted. DI-9.5. A redacted patch does not apply and its
  * hash does not match, so redaction here would break the SDD section 46 assertion.
  */
 export const capturePatch = async (
@@ -136,7 +136,7 @@ export const capturePatch = async (
     .filter((line) => line !== "")
     .sort();
 
-  // Controller decision 12. The tree object of the staged worktree. It is recorded beside the
+  // DI-9.12. The tree object of the staged worktree. It is recorded beside the
   // patch hash, and it never replaces the SDD section 46 assertion.
   const treeSha = (await git(dependencies, input, [...at, "write-tree"])).trim();
 
@@ -144,7 +144,7 @@ export const capturePatch = async (
   // diff texts, and a mismatch message needs the version of each git binary that produced one.
   const gitVersion = (await git(dependencies, input, [...at, "--version"])).trim();
 
-  // Controller decision 4. `Sandbox.exec` decodes stdout as UTF-8, so a binary hunk cannot
+  // DI-9.4. `Sandbox.exec` decodes stdout as UTF-8, so a binary hunk cannot
   // travel through stdout. The patch goes to a file, and `base64` carries it back intact.
   const patchPath = `${input.ref.workspacePath}/patch.diff`;
   const written = await dependencies.sandbox.exec(input.ref, {
@@ -191,7 +191,7 @@ export const capturePatch = async (
 };
 
 /**
- * Controller decision 2. The change under review and the change under publication must name the
+ * DI-9.2. The change under review and the change under publication must name the
  * same files. This check fails closed. An extra file stops the publication, and a missing file
  * stops it too.
  */

@@ -97,7 +97,7 @@ export class FlySpriteSandbox implements Sandbox {
     supportsCheckpoints: true,
     // The Fly Sprites SDK version 0.2.0 has no documented API that publishes a port to a
     // reachable URL. `exposeService` throws a clear error instead of a claim of success.
-    // See docs/build/evidence/phase-02-sprites-sdk.md, item 7.
+    // See docs/build/decisions.md, DI-2.9.
     supportsExposedServices: false,
   };
 
@@ -216,7 +216,7 @@ export class FlySpriteSandbox implements Sandbox {
    * sends standard output to an `out` file and standard error to an `err` file, and writes the
    * numeric exit code to an `exit` file last, so that file's presence is the signal that the
    * process finished. `readProcess` and `cancelProcess` read these files back with `exec`. See
-   * docs/build/evidence/phase-02-sprites-sdk.md, items 4 and 5.
+   * docs/build/decisions.md, DI-2.10.
    */
   async startProcess(ref: SandboxRef, command: Command): Promise<ProcessRef> {
     const id = `proc-${randomUUID().slice(0, 8)}`;
@@ -282,7 +282,7 @@ export class FlySpriteSandbox implements Sandbox {
    * narrows the remaining gap, between the wrapper's marker check and its `pid` write, with a
    * bounded reread of the `pid` file. That remaining gap is not eliminated: on a sprite slow
    * enough to miss every reread, the process still starts. See
-   * docs/build/evidence/phase-02-sprites-sdk.md, item 4.
+   * docs/build/decisions.md, DI-2.10.
    */
   async cancelProcess(ref: SandboxRef, process: ProcessRef): Promise<void> {
     const dir = this.procDir(ref, process.id);
@@ -321,7 +321,7 @@ export class FlySpriteSandbox implements Sandbox {
   }
 
   // The Fly Sprites SDK version 0.2.0 has no documented API that publishes a port to a
-  // reachable URL. See docs/build/evidence/phase-02-sprites-sdk.md, item 7. This method
+  // reachable URL. See docs/build/decisions.md, DI-2.9. This method
   // throws rather than pretend, so it stays honest with `capabilities.supportsExposedServices`
   // regardless of which gateway implementation backs it.
   exposeService(_ref: SandboxRef, port: number): Promise<ServiceRef> {

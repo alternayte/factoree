@@ -93,7 +93,7 @@ export interface PublishActivityOutput {
   pullRequestUrl: string;
   pullRequestNumber: number;
   branch: string;
-  /** False when a pull request for this head branch already existed. Controller decision 8. */
+  /** False when a pull request for this head branch already existed. DI-9.8. */
   created: boolean;
   /** SDD section 47. The size of the verified patch, for the human change summary. */
   patchByteLength: number;
@@ -269,7 +269,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         { ref, primaryPath: input.primaryPath, baseSha: input.baseSha },
       );
 
-      // Step 6. Controller decision 2. This check runs before any network call, so a mismatch
+      // Step 6. DI-9.2. This check runs before any network call, so a mismatch
       // costs no remote work.
       assertSameChangedFiles(input.reviewedChangedFiles, patch.changedFiles);
 

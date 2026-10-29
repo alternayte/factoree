@@ -74,7 +74,7 @@ export const RUN_FAILURE_REASONS = [
   // repair budget of SDD section 42 is spent.
   "REVIEW_BLOCKING_FINDINGS",
   // SDD section 40. Factoree could not obtain a usable review, so it proved nothing about the
-  // change. A repair cannot help. See controller decision 7.
+  // change. A repair cannot help. See DI-8.7.
   "REVIEW_UNAVAILABLE",
   // SDD section 46 step 5. The patch of the trusted checkout did not reproduce the verified
   // hash, so publication is blocked. A repair cannot help.

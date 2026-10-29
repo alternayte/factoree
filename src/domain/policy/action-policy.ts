@@ -58,7 +58,7 @@ const LABELS: Record<AgentAction, string> = {
 /**
  * SDD section 29 permits exactly one Project override: staging read. SDD section 58 adds a
  * second, separate override: the exact MCP tool names a Project allow-lists. An empty list, the
- * default, denies every tool. See controller decision 10.
+ * default, denies every tool. See DI-5.10.
  */
 export interface ActionPolicyOverrides {
   stagingRead?: boolean;
@@ -66,7 +66,7 @@ export interface ActionPolicyOverrides {
   /**
    * The session role. This is not a Project override; it is the role of the session, so it does
    * not count against the one Project override SDD section 29 permits. `implementer` writes the
-   * primary worktree; no other role does. See controller decision 14.
+   * primary worktree; no other role does. See DI-7.14.
    */
   role?: AgentRole;
 }
@@ -136,7 +136,7 @@ export interface ActionPolicy {
    * SDD section 58. MCP is an extension mechanism, not an unrestricted trust boundary. Every
    * tool call passes this decision, and an Implementer receives no organization-wide access by
    * default, because the allow list starts empty. A name is matched exactly: a pattern would
-   * reintroduce the broad access the specification forbids. See controller decision 10.
+   * reintroduce the broad access the specification forbids. See DI-5.10.
    */
   decideMcpTool(name: string): ActionDecision;
   assertMcpTool(name: string): void;

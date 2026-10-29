@@ -131,7 +131,7 @@ export class RefinementEngine {
 
     // SDD section 8 forbids Refinement to override an explicit user decision. The Project record
     // is that decision, so a slug the record does not list is reported and not used. See
-    // controller decision 16.
+    // DI-4.16.
     const unconfigured = namedSlugs.filter(
       (slug) => !configured.has(slug) && slug !== input.project.primaryRepository,
     );
