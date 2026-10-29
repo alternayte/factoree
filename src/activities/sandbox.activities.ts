@@ -3,7 +3,11 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
-import type { Sandbox } from "~/domain/runs/sandbox.js";
+import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import type { PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
+import type { VerifiedPatch } from "~/domain/publishing/patch.js";
+import { applyPatch, capturePatch, PatchError } from "~/domain/publishing/patch.js";
+import { checkDefiningFilesOf } from "~/domain/runs/check-defining-files.js";
 import type {
   PreviewConfig,
   ProjectDefaults,
@@ -72,6 +76,33 @@ export interface PrepareSandboxActivityOutput {
   organizationSkillsSha?: string;
 }
 
+/** The work sprite of the Run, where the Implementer wrote the change. */
+export interface WorkSandbox {
+  spriteId: string;
+  adapter: string;
+  workspacePath: string;
+  primaryPath: string;
+  baseSha: string;
+}
+
+/** docs/specs/check-isolation.md. The preparation input of the Run, and the work sprite to read. */
+export interface PrepareCheckSandboxActivityInput extends PrepareSandboxActivityInput {
+  work: WorkSandbox;
+  /** The check sprite of the previous attempt, destroyed once the new one exists. */
+  previous: { spriteId: string; adapter: string; workspacePath: string } | null;
+  attempt: number;
+}
+
+export interface PrepareCheckSandboxActivityOutput extends PrepareSandboxActivityOutput {
+  /** The SHA-256 of the captured patch. Publication must reproduce it. */
+  patchSha256: string;
+  /** The tree of base SHA plus the patch, before any project code ran in the check sprite. */
+  treeSha: string;
+  changedFiles: string[];
+  /** The changed files that define a check. docs/specs/check-isolation.md. */
+  checkDefiningFiles: string[];
+}
+
 const MILLISECONDS_PER_HOUR = 3_600_000;
 
 /**
@@ -102,10 +133,11 @@ const release = async (
  * The body of `prepareSandbox`. It sits outside the activity, so the activity itself holds only
  * the redaction boundary of SDD section 60 and one path for every error the preparation raises.
  */
-const prepare = async (
+const build = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
-): Promise<PrepareSandboxActivityOutput> => {
+  beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
+): Promise<PreparedSandbox> => {
   // SDD section 30. A model provider credential of the coding agent reaches the sandbox from the
   // Project secret store, never from a workflow argument, so no Temporal history holds its value.
   // The workflow passes an empty environment, and this activity fills it.
@@ -146,7 +178,8 @@ const prepare = async (
   }
   if (repositoryCredential !== null) dependencies.redactor.addSecret(repositoryCredential);
 
-  const prepared = await dependencies.sandboxManager.prepare({
+  const prepared = await dependencies.sandboxManager.prepare(
+    {
     runId: input.runId,
     tenantId: input.tenantId,
     productId: input.productId,
@@ -156,7 +189,9 @@ const prepare = async (
     environment: { ...input.environment, ...runnerEnvironment },
     ...(repositoryCredential === null ? {} : { repositoryCredential }),
     ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
-  });
+    },
+    beforeBootstrap,
+  );
 
   // SDD section 14. A runner name the repository configured must resolve to a registered
   // adapter. This fault is a configuration fault, so the Run ends `CONFIGURATION_INVALID`.
@@ -170,6 +205,35 @@ const prepare = async (
     );
     throw error;
   }
+  return prepared;
+};
+
+const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
+  spriteId: prepared.ref.id,
+  adapter: prepared.ref.adapter,
+  workspacePath: prepared.ref.workspacePath,
+  primaryPath: prepared.checkout.primary.path,
+  baseSha: prepared.checkout.primary.baseSha,
+  referencePaths: prepared.checkout.references.map((entry) => entry.path),
+  // SDD section 55 requires the recorded SHA of every reference repository, not only the
+  // primary one.
+  referenceBaseShas: prepared.checkout.references.map((entry) => entry.baseSha),
+  baselineCheckpointId: prepared.baselineCheckpoint?.id ?? null,
+  runtime: prepared.runtime,
+  verifyCommands: prepared.verifyCommands,
+  preview: prepared.preview,
+  repositoryInstructions: prepared.repositoryInstructions,
+  skills: prepared.skills,
+  ...(prepared.organizationSkillsSha === undefined
+    ? {}
+    : { organizationSkillsSha: prepared.organizationSkillsSha }),
+});
+
+const prepare = async (
+  dependencies: SandboxActivityDependencies,
+  input: PrepareSandboxActivityInput,
+): Promise<PrepareSandboxActivityOutput> => {
+  const prepared = await build(dependencies, input);
 
   // SDD section 51. The Run keeps the sandbox reference and the retention deadline, so
   // `SpriteReaper` can delete the sandbox after the window ends. The workflow never deletes
@@ -233,26 +297,7 @@ const prepare = async (
     step: "prepare",
   });
 
-  return {
-    spriteId: prepared.ref.id,
-    adapter: prepared.ref.adapter,
-    workspacePath: prepared.ref.workspacePath,
-    primaryPath: prepared.checkout.primary.path,
-    baseSha: prepared.checkout.primary.baseSha,
-    referencePaths: prepared.checkout.references.map((entry) => entry.path),
-    // SDD section 55 requires the recorded SHA of every reference repository, not only the
-    // primary one. This closes the Phase 2 carried finding.
-    referenceBaseShas: prepared.checkout.references.map((entry) => entry.baseSha),
-    baselineCheckpointId: prepared.baselineCheckpoint?.id ?? null,
-    runtime: prepared.runtime,
-    verifyCommands: prepared.verifyCommands,
-    preview: prepared.preview,
-    repositoryInstructions: prepared.repositoryInstructions,
-    skills: prepared.skills,
-    ...(prepared.organizationSkillsSha === undefined
-      ? {}
-      : { organizationSkillsSha: prepared.organizationSkillsSha }),
-  };
+  return toOutput(prepared);
 };
 
 export const createSandboxActivities = (dependencies: SandboxActivityDependencies) => ({
@@ -282,6 +327,116 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
       }
       throw error;
     }
+  },
+
+  /**
+   * docs/specs/check-isolation.md. Captures the patch of the work sprite with Factoree's own git,
+   * builds a new check sprite at the base SHA, applies the patch before the bootstrap, and proves
+   * that the check sprite holds the same patch. Verification, user validation, review and
+   * publication then run in the check sprite, which no agent has touched.
+   */
+  async prepareCheckSandbox(
+    input: PrepareCheckSandboxActivityInput,
+  ): Promise<PrepareCheckSandboxActivityOutput> {
+    await registerProjectSecrets(
+      dependencies.redactor,
+      dependencies.secrets,
+      input.tenantId,
+      input.productId,
+      dependencies.logger,
+    );
+    const patchDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
+
+    try {
+      const captured = await capturePatch(patchDependencies, {
+        ref: { id: input.work.spriteId, adapter: input.work.adapter, workspacePath: input.work.workspacePath },
+        primaryPath: input.work.primaryPath,
+        baseSha: input.work.baseSha,
+      });
+
+      let applied: VerifiedPatch | null = null;
+      const prepared = await build(dependencies, input, async (ref, primaryPath) => {
+        await applyPatch(patchDependencies, {
+          ref,
+          primaryPath,
+          baseSha: input.work.baseSha,
+          patchBase64: captured.patchBase64,
+        });
+        applied = await capturePatch(patchDependencies, { ref, primaryPath, baseSha: input.work.baseSha });
+        if (applied.patchSha256 !== captured.patchSha256) {
+          throw new PatchError(
+            `the check sprite holds patch ${applied.patchSha256}, and the work sprite holds patch ` +
+              `${captured.patchSha256}. Factoree checks only the patch it captured.`,
+          );
+        }
+      });
+      const recaptured = applied as VerifiedPatch | null;
+      if (recaptured === null || prepared.checkout.primary.baseSha !== input.work.baseSha) {
+        await release(dependencies, prepared.ref.id, prepared.ref.adapter, () =>
+          dependencies.sandboxManager.release(prepared),
+        );
+        throw new PatchError("the check sprite did not check out the base SHA of the work sprite");
+      }
+
+      if (input.previous !== null) {
+        const previous = input.previous;
+        const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
+          dependencies.sandbox.destroy({
+            id: previous.spriteId,
+            adapter: previous.adapter,
+            workspacePath: previous.workspacePath,
+          }),
+        );
+        if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
+      }
+
+      metrics.sandboxesCreated.inc({
+        tenant_id: input.tenantId,
+        product_id: input.productId,
+        adapter: prepared.ref.adapter,
+      });
+      dependencies.logger.info("check sandbox prepared", {
+        tenant_id: input.tenantId,
+        product_id: input.productId,
+        run_id: input.runId,
+        sprite_id: prepared.ref.id,
+        work_sprite_id: input.work.spriteId,
+        attempt: input.attempt,
+        patch_sha256: captured.patchSha256,
+        step: "prepare_check",
+      });
+
+      return {
+        ...toOutput(prepared),
+        patchSha256: captured.patchSha256,
+        treeSha: recaptured.treeSha,
+        changedFiles: captured.changedFiles,
+        checkDefiningFiles: checkDefiningFilesOf(captured.changedFiles),
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        error.message = dependencies.redactor.redactText(error.message);
+        if (error.stack !== undefined) error.stack = dependencies.redactor.redactText(error.stack);
+      }
+      throw error;
+    }
+  },
+
+  /** docs/specs/check-isolation.md. Deletes the last check sprite when the Run ends. */
+  async releaseCheckSandbox(input: {
+    runId: string;
+    spriteId: string;
+    adapter: string;
+    workspacePath: string;
+  }): Promise<void> {
+    const destroyed = await release(dependencies, input.spriteId, input.adapter, () =>
+      dependencies.sandbox.destroy({
+        id: input.spriteId,
+        adapter: input.adapter,
+        workspacePath: input.workspacePath,
+      }),
+    );
+    if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: input.adapter, reason: "RUN_COMPLETE" });
   },
 
   /**

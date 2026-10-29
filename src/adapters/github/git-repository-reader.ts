@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
-import { credentialEnvironment } from "~/domain/security/git-credential-environment.js";
+import { credentialEnvironment, isolatedGitEnvironment } from "~/domain/security/git-credential-environment.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 
 const run = promisify(execFile);
@@ -189,7 +189,7 @@ export class GitRepositoryReader implements RepositoryReader {
         // A private repository must fail immediately instead of a wait for a password. No
         // interactive helper runs.
         env: {
-          ...process.env,
+          ...isolatedGitEnvironment(tmpdir()),
           GIT_TERMINAL_PROMPT: "0",
           GIT_ASKPASS: "true",
           GCM_INTERACTIVE: "never",
@@ -223,7 +223,7 @@ export class GitRepositoryReader implements RepositoryReader {
         timeout: GIT_READ_TIMEOUT_MS,
         maxBuffer: MAX_OUTPUT_BYTES,
         encoding: "utf8",
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+        env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
       });
       return { exitCode: 0, stdout, stderr: "" };
     } catch (error) {
@@ -296,7 +296,7 @@ export class GitRepositoryReader implements RepositoryReader {
       cwd: path,
       // A private repository must fail immediately instead of a wait for a password. No
       // interactive helper runs.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+      env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

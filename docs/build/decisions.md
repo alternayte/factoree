@@ -128,6 +128,7 @@
 | DI-14.4 | 2026-10-29 | `docs/specs/refiner-agent.md` | Before the refiner exists, a frozen contract with a `manual` or `code_review` assertion ends the Run `VALIDATION_MANUAL_REQUIRED` before preparation. The human rewrites the ticket and delegates again. | Rule 3 of the refiner gate. The question round arrives with the refiner. |
 | DI-14.5 | 2026-10-29 | `docs/specs/check-isolation.md` | The check sprite applies the patch after the config read and before the bootstrap, then recaptures it. The recaptured hash must equal the work sprite hash. Publication captures from the check sprite and must reproduce that same hash. | The config comes from the base SHA. The bootstrap needs the patched dependencies. Only the hash crosses the workflow, so no patch bytes reach Temporal history. |
 | DI-14.6 | 2026-10-29 | `docs/specs/check-isolation.md` | The check sprite of a superseded attempt is destroyed when the next attempt starts. The last one is destroyed at the terminal write. The check sprite ID is logged with the run ID. | The Run row holds one sprite for the reaper. A second table for check sprites adds no guarantee. |
+| DI-14.7 | 2026-10-29 | `docs/specs/check-isolation.md` | The publish hash gate replaces the tree checks before user validation and review. | Any change after the patch entered the check sprite changes the captured hash, so one gate covers every stage. A forged tree check could only report "unchanged", which the hash gate still catches. |
 
 ## Blocked
 

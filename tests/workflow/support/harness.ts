@@ -19,7 +19,10 @@ import type {
 } from "~/activities/refinement.activities.js";
 import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
-import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
+import type {
+  PrepareCheckSandboxActivityInput,
+  PrepareSandboxActivityInput,
+} from "~/activities/sandbox.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
 import type { VerifyActivityInput } from "~/activities/verification.activities.js";
 import type {
@@ -152,6 +155,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const verifyCalls: VerifyActivityInput[] = [];
   const cancelledSessions: Array<{ runnerName: string; session: { sessionId: string } }> = [];
   const destroyed: string[] = [];
+  /** docs/specs/check-isolation.md. The check sprite preparations, and the check sprites released. */
+  const checkPrepared: PrepareCheckSandboxActivityInput[] = [];
+  const releasedChecks: string[] = [];
   /** A run id in this map holds preparation open until the test resolves the promise. */
   const heldPreparations = new Map<string, Promise<void>>();
   /** A run id in this map holds the Implementer open, the same way a real agent run does. */
@@ -493,6 +499,37 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         preview: null,
         repositoryInstructions: "Use the existing test idiom.",
       };
+    },
+    // docs/specs/check-isolation.md. Every attempt gets its own check sprite, named after the
+    // attempt, so a test can prove which sprite a later stage used.
+    prepareCheckSandbox: async (activityInput: PrepareCheckSandboxActivityInput) => {
+      activityOrder.push("prepareCheckSandbox");
+      checkPrepared.push(activityInput);
+      return {
+        spriteId: `check-${activityInput.runId}-${activityInput.attempt}`,
+        adapter: "fake",
+        workspacePath: "/workspace",
+        primaryPath: "/workspace/primary",
+        baseSha: "a".repeat(40),
+        referencePaths: [],
+        referenceBaseShas: [],
+        baselineCheckpointId: null,
+        runtime: {
+          ...DEFAULT_PROJECT_RUNTIME_CONFIG,
+          ...(runtimeOverrides.get(activityInput.runId) ?? {}),
+        },
+        verifyCommands: DEFAULT_VERIFY_COMMANDS,
+        preview: null,
+        repositoryInstructions: "Use the existing test idiom.",
+        skills: [],
+        patchSha256: "d".repeat(64),
+        treeSha: "b".repeat(40),
+        changedFiles: ["src/a.ts"],
+        checkDefiningFiles: [],
+      };
+    },
+    releaseCheckSandbox: async (activityInput: { spriteId: string }) => {
+      releasedChecks.push(activityInput.spriteId);
     },
     destroySandbox: async (activityInput: { spriteId: string }) => {
       destroyed.push(activityInput.spriteId);
@@ -875,6 +912,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     verifyCalls,
     cancelledSessions,
     destroyed,
+    checkPrepared,
+    releasedChecks,
     heldPreparations,
     heldImplementations,
     heldVerifications,

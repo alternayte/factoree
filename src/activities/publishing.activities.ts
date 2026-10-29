@@ -82,6 +82,11 @@ export interface PublishActivityInput {
    * tree it captures itself. An empty value is a mismatch, so this check fails closed.
    */
   reviewedWorktreeSha: string;
+  /**
+   * docs/specs/check-isolation.md. The hash of the patch the check sprite received, captured
+   * before any project code ran there. Publication must capture exactly this patch.
+   */
+  verifiedPatchSha256: string;
   workItemTitle: string;
   workItemUrl: string | null;
   verificationSummary: string;
@@ -297,6 +302,17 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       // Step 7. An empty patch publishes nothing.
       if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
+
+      // Step 7b. The bootstrap and the checks ran project code in the check sprite. The patch that
+      // leaves it must be the patch that entered it, before that code ran.
+      if (patch.patchSha256 !== input.verifiedPatchSha256) {
+        throw new PatchHashMismatchError(
+          input.verifiedPatchSha256,
+          patch.patchSha256,
+          patch.gitVersion,
+          patch.gitVersion,
+        );
+      }
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);

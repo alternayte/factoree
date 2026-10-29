@@ -4,7 +4,7 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-Continue W-3 on branch `hardening/review-fixes`: build the check sprite per DI-14.5 and DI-14.6.
+Start W-4 on branch `hardening/review-fixes`: build `docs/specs/autonomy-levels.md`, and open a draft PR for a patch with check-defining files.
 
 ## Work queue
 
@@ -12,8 +12,8 @@ Continue W-3 on branch `hardening/review-fixes`: build the check sprite per DI-1
 |---|---|---|---|---|
 | W-1 | DONE | `just verify` on the docs branch, then merge it into `main`. | — | Unit 1264 passed and 7 skipped, integration 285, workflow 101. |
 | W-2 | DONE | Safety fixes: R-5, R-6, R-7, R-8, R-12, and rule 3 of the refiner gate (stop an L3 Run before implementation when an assertion is manual). | W-1 | `f96aa0f`, `aca8700`, and the R-8/R-12 commit. DI-14.1 to DI-14.4. Unit 1270, integration 286, workflow 103. |
-| W-3 | IN_PROGRESS | Build `docs/specs/check-isolation.md`. | W-1 | |
-| W-4 | OPEN | Build `docs/specs/autonomy-levels.md`, plus R-4 (the Product owns the network allow list). | W-1 | |
+| W-3 | DONE | Build `docs/specs/check-isolation.md`. | W-1 | DI-14.5 to DI-14.7, B-2. `prepareCheckSandbox` tests in `tests/unit/prepare-sandbox-activity.test.ts`, AT-16 check sprite assertions. The draft PR for a marked patch lands with W-4. Unit, integration 286 and workflow pass. |
+| W-4 | IN_PROGRESS | Build `docs/specs/autonomy-levels.md`, plus R-4 (the Product owns the network allow list). | W-1 | |
 | W-5 | OPEN | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | |
 | W-6 | OPEN | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | |
 | W-7 | OPEN | Remove the Change Set leftovers (H-4). | W-1 | |

@@ -144,6 +144,7 @@ describe("the Validation Contract state of the Run workflow", () => {
       "buildValidationContract",
       "prepareSandbox",
       "implement",
+      "prepareCheckSandbox",
       "verify",
     ]);
   });

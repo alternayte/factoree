@@ -13,7 +13,10 @@ import {
 } from "@temporalio/workflow";
 import type { RunStatus } from "~/domain/runs/run-status.js";
 import type { Activities } from "~/activities/index.js";
-import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activities.js";
+import type {
+  PrepareCheckSandboxActivityOutput,
+  PrepareSandboxActivityOutput,
+} from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
@@ -400,6 +403,9 @@ export async function agentRunWorkflow(
   const humanInputs: string[] = [];
   let stopRequested = false;
   let sprite: PrepareSandboxActivityOutput | null = null;
+  // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
+  // validation, review and publication run there, never in the sprite the Implementer used.
+  let checkSandbox: PrepareCheckSandboxActivityOutput | null = null;
   let implementerSession: AgentSessionRef | null = null;
   /** True once the implement activity itself has cancelled the live session. */
   let implementerCancelled = false;
@@ -471,7 +477,21 @@ export async function agentRunWorkflow(
   // A terminal write must run even when the workflow scope is cancelled, or the Run row stays in
   // a working state while the workflow has already ended.
   const completeRun = (args: Parameters<Activities["completeRun"]>[0]): Promise<void> =>
-    CancellationScope.nonCancellable(() => activities.completeRun(args));
+    CancellationScope.nonCancellable(async () => {
+      const check = checkSandbox;
+      if (check !== null) {
+        // The last check sprite goes with the Run. A failed delete is logged by the activity.
+        await notify(() =>
+          cancelActivities.releaseCheckSandbox({
+            runId: id,
+            spriteId: check.spriteId,
+            adapter: check.adapter,
+            workspacePath: check.workspacePath,
+          }),
+        );
+      }
+      await activities.completeRun(args);
+    });
 
   const failRun = async (
     failureReason:
@@ -1273,6 +1293,18 @@ export async function agentRunWorkflow(
       await activities.setRunStatus({ runId: id, status });
 
       const sandboxActivities = buildSandboxActivities(remainingMs());
+      // The work sprite and every check sprite are prepared from the same input.
+      const prepareInput = {
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        primary: sandbox.primary,
+        references: sandbox.references,
+        defaults: sandbox.defaults,
+        environment: {},
+        organizationSkills: sandbox.organizationSkills,
+        githubInstallationId: primaryRepositoryInstallationId,
+      };
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
       // retention window of SDD section 51 has passed.
@@ -1280,17 +1312,7 @@ export async function agentRunWorkflow(
       // closure.
       let preparedSandbox: PrepareSandboxActivityOutput;
       try {
-        preparedSandbox = await sandboxActivities.prepareSandbox({
-          runId: id,
-          tenantId: input.tenantId,
-          productId: input.productId,
-          primary: sandbox.primary,
-          references: sandbox.references,
-          defaults: sandbox.defaults,
-          environment: {},
-          organizationSkills: sandbox.organizationSkills,
-          githubInstallationId: primaryRepositoryInstallationId,
-        });
+        preparedSandbox = await sandboxActivities.prepareSandbox(prepareInput);
       } catch (error) {
         // A configuration fault is not an infrastructure fault. The Run ends in
         // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
@@ -1387,6 +1409,45 @@ export async function agentRunWorkflow(
         // follows. Only the configured commands do.
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+        // docs/specs/check-isolation.md. The Implementer controlled the work sprite. Every check
+        // runs in a new sprite built from the base SHA plus the captured patch.
+        const previousCheck: PrepareCheckSandboxActivityOutput | null = checkSandbox;
+        let checked: PrepareCheckSandboxActivityOutput;
+        try {
+          checked = await buildSandboxActivities(remainingMs()).prepareCheckSandbox({
+            ...prepareInput,
+            work: {
+              spriteId: preparedSandbox.spriteId,
+              adapter: preparedSandbox.adapter,
+              workspacePath: preparedSandbox.workspacePath,
+              primaryPath: preparedSandbox.primaryPath,
+              baseSha: preparedSandbox.baseSha,
+            },
+            previous:
+              previousCheck === null
+                ? null
+                : {
+                    spriteId: previousCheck.spriteId,
+                    adapter: previousCheck.adapter,
+                    workspacePath: previousCheck.workspacePath,
+                  },
+            attempt,
+          });
+        } catch (error) {
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not prepare the check sandbox, because the Run configuration is " +
+                "invalid. Repair the bootstrap command or the repository reference.",
+            );
+          }
+          if (remainingMs() > 0) throw error;
+          return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+        checkSandbox = checked;
+        if (stopRequested) return await cancelRun();
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
         status = "VERIFYING";
         await activities.setRunStatus({ runId: id, status });
 
@@ -1397,11 +1458,11 @@ export async function agentRunWorkflow(
             runId: id,
             tenantId: input.tenantId,
             productId: input.productId,
-            spriteId: preparedSandbox.spriteId,
-            adapter: preparedSandbox.adapter,
-            workspacePath: preparedSandbox.workspacePath,
-            primaryPath: preparedSandbox.primaryPath,
-            commands: preparedSandbox.verifyCommands,
+            spriteId: checked.spriteId,
+            adapter: checked.adapter,
+            workspacePath: checked.workspacePath,
+            primaryPath: checked.primaryPath,
+            commands: checked.verifyCommands,
             timeoutMs: remainingMs(),
             attempt,
           });
@@ -1457,7 +1518,7 @@ export async function agentRunWorkflow(
         let userValidation: UserValidateActivityOutput;
         try {
           const result = await runUserValidate({
-            prepared: preparedSandbox,
+            prepared: checked,
             goal: sandbox.goal,
             attempt,
           });
@@ -1560,7 +1621,7 @@ export async function agentRunWorkflow(
         let review: ReviewActivityOutput;
         try {
           const result = await runReview({
-            prepared: preparedSandbox,
+            prepared: checked,
             goal: sandbox.goal,
             attempt,
             contextContract: resolvedContext.document,
@@ -1671,14 +1732,24 @@ export async function agentRunWorkflow(
       status = "PUBLISHING";
       await activities.setRunStatus({ runId: id, status });
 
+      // docs/specs/check-isolation.md. Publication captures from the check sprite, and the patch
+      // it captures must be the patch that entered that sprite.
+      const published = checkSandbox;
+      if (published === null) {
+        return await failRun(
+          "COMPLETION_INVARIANT_UNMET",
+          "Factoree has no check sandbox for this change, so it published nothing.",
+        );
+      }
       const publishInput = {
         runId: id,
         tenantId: input.tenantId,
         productId: input.productId,
-        spriteId: preparedSandbox.spriteId,
-        adapter: preparedSandbox.adapter,
-        workspacePath: preparedSandbox.workspacePath,
-        primaryPath: preparedSandbox.primaryPath,
+        spriteId: published.spriteId,
+        adapter: published.adapter,
+        workspacePath: published.workspacePath,
+        primaryPath: published.primaryPath,
+        verifiedPatchSha256: published.patchSha256,
         repositorySlug: resolvedContext.primary.slug,
         repositoryBaseUrl: input.product.repositoryBaseUrl,
         baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),

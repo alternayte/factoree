@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createSandboxActivities } from "~/activities/sandbox.activities.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
@@ -352,5 +353,87 @@ describe("the prepareSandbox activity and skills", () => {
     const { activities } = build({ spriteId: null, adapter: null });
     const output = await activities.prepareSandbox(input);
     expect(output.skills).toEqual([]);
+  });
+});
+
+describe("the prepareCheckSandbox activity", () => {
+  const PATCH = "diff --git a/package.json b/package.json\n+changed\n";
+  const work = {
+    spriteId: "work-1",
+    adapter: "fake",
+    workspacePath: "/workspace",
+    primaryPath: "/workspace/primary",
+    baseSha: HEAD,
+  };
+
+  /** Serves the five commands of a patch capture. `patchFor` decides the patch of each capture. */
+  const captureOverrides = (patchFor: (capture: number) => string): Scripted[] => {
+    let captures = 0;
+    return [
+      { matcher: /--name-only/, result: { stdout: "package.json\nsrc/a.ts\n" } },
+      { matcher: /write-tree/, result: { stdout: `${"b".repeat(40)}\n` } },
+      { matcher: /git --version|core.sshCommand=false -C \S+ --version/, result: { stdout: "git version 2.0.0\n" } },
+      {
+        matcher: /base64 < "\$0"/,
+        get result() {
+          captures += 1;
+          return { stdout: Buffer.from(patchFor(captures)).toString("base64") };
+        },
+      },
+    ];
+  };
+
+  it("applies the patch after the config read and before the bootstrap, in a new sprite, with Factoree's own git", async () => {
+    const sandbox = sandboxWithConfig(BOOTSTRAP_CONFIG_YAML, captureOverrides(() => PATCH));
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
+
+    const checked = await activities.prepareCheckSandbox({ ...input, work, previous: null, attempt: 1 });
+
+    expect(checked.spriteId).not.toBe("work-1");
+    const lines = sandbox.commands.map((command) => [command.file, ...command.args].join(" "));
+    const configRead = lines.findIndex((line) => line.startsWith("cat") && line.endsWith(".factoree/config.yaml"));
+    const apply = lines.findIndex((line) => line.includes(" apply --binary"));
+    const bootstrap = lines.findIndex((line) => line.includes("npm ci"));
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(apply).toBeGreaterThan(configRead);
+    expect(bootstrap).toBeGreaterThan(apply);
+    // Every git command of the capture and the apply runs by absolute path, with no user config.
+    const gitCommands = sandbox.commands.filter((command) => command.args.includes("core.fsmonitor=false"));
+    expect(gitCommands.length).toBeGreaterThan(0);
+    for (const command of gitCommands.filter((entry) => entry.file !== "/bin/sh")) {
+      expect(command.file).toBe("/usr/bin/git");
+      expect(command.isolated).toBe(true);
+      expect(command.env?.PATH).toBe("/usr/bin:/bin");
+    }
+    expect(checked.patchSha256).toBe(createHash("sha256").update(PATCH).digest("hex"));
+    expect(checked.checkDefiningFiles).toEqual(["package.json"]);
+  });
+
+  it("refuses a check sprite that does not hold the captured patch, and deletes it", async () => {
+    const sandbox = sandboxWithConfig(
+      DEFAULT_CONFIG_YAML,
+      captureOverrides((capture) => (capture === 1 ? PATCH : `${PATCH}+tampered\n`)),
+    );
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
+
+    await expect(
+      activities.prepareCheckSandbox({ ...input, work, previous: null, attempt: 1 }),
+    ).rejects.toThrow(/Factoree checks only the patch it captured/);
+    expect(sandbox.destroyed).toHaveLength(1);
+    expect(sandbox.destroyed[0]).not.toBe("work-1");
+  });
+
+  it("deletes the check sprite of the previous attempt, never the work sprite", async () => {
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML, captureOverrides(() => PATCH));
+    const { activities } = build({ spriteId: null, adapter: null }, {}, sandbox);
+
+    await activities.prepareCheckSandbox({
+      ...input,
+      work,
+      previous: { spriteId: "check-old", adapter: "fake", workspacePath: "/workspace" },
+      attempt: 2,
+    });
+
+    expect(sandbox.destroyed).toEqual(["check-old"]);
   });
 });

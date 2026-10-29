@@ -95,6 +95,26 @@ const activities = {
     // literal, so `npm run typecheck` cannot catch a missing field here.
     preview: null,
   }),
+  // docs/specs/check-isolation.md. The checks run in a check sprite built from the patch.
+  prepareCheckSandbox: async (input: { runId: string; attempt: number }) => ({
+    spriteId: `check-${input.runId}-${input.attempt}`,
+    adapter: "fake",
+    workspacePath: "/workspace",
+    primaryPath: "/workspace/primary",
+    baseSha: "b".repeat(40),
+    referencePaths: [],
+    referenceBaseShas: [],
+    baselineCheckpointId: null,
+    runtime: DEFAULT_PROJECT_RUNTIME_CONFIG,
+    verifyCommands: [],
+    repositoryInstructions: "",
+    preview: null,
+    patchSha256: "d".repeat(64),
+    treeSha: "b".repeat(40),
+    changedFiles: [],
+    checkDefiningFiles: [],
+  }),
+  releaseCheckSandbox: async () => undefined,
   implement: async (input: { runnerName: string }) => ({
     sessionId: "ses_fake",
     processId: "process-fake",

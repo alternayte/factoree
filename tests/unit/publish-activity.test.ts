@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { ApplicationFailure } from "@temporalio/common";
@@ -162,6 +163,7 @@ const input: PublishActivityInput = {
   baseSha: BASE,
   reviewedChangedFiles: ["src/a.ts"],
   reviewedWorktreeSha: TREE,
+  verifiedPatchSha256: createHash("sha256").update(PATCH_TEXT).digest("hex"),
   workItemTitle: "Rename a project",
   workItemUrl: "https://linear.app/acme/issue/ENG-1",
   verificationSummary: "every check passed",

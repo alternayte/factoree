@@ -22,6 +22,28 @@ export const PATCH_GIT_OPTIONS = [
   "-c", "diff.orderFile=/dev/null",
 ];
 
+/**
+ * docs/specs/check-isolation.md. Factoree runs its own git by absolute path, with no user
+ * configuration, so a shim on the agent PATH or a config the agent wrote cannot run during a
+ * capture or an apply. The repository config can still name a filter or a monitor, so the
+ * options below switch those off for every command.
+ */
+export const TRUSTED_GIT = "/usr/bin/git";
+
+const TRUSTED_ENVIRONMENT: Record<string, string> = {
+  PATH: "/usr/bin:/bin",
+  HOME: "/tmp",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0",
+};
+
+const TRUSTED_GIT_OPTIONS = [
+  "-c", "core.fsmonitor=false",
+  "-c", "core.hooksPath=/dev/null",
+  "-c", "core.sshCommand=false",
+];
+
 /** SDD section 44. The diff of the staged tree against the base SHA, in an applicable form. */
 export const PATCH_DIFF_ARGS = [
   "diff",
@@ -94,7 +116,12 @@ const git = async (
   input: PatchInput,
   args: string[],
 ): Promise<string> => {
-  const result = await dependencies.sandbox.exec(input.ref, { file: "git", args });
+  const result = await dependencies.sandbox.exec(input.ref, {
+    file: TRUSTED_GIT,
+    args: [...TRUSTED_GIT_OPTIONS, ...args],
+    env: TRUSTED_ENVIRONMENT,
+    isolated: true,
+  });
   if (result.exitCode !== 0) {
     throw new PatchError(
       `git ${args.join(" ")} failed with exit code ${result.exitCode}: ` +
@@ -148,16 +175,19 @@ export const capturePatch = async (
   // travel through stdout. The patch goes to a file, and `base64` carries it back intact.
   const patchPath = `${input.ref.workspacePath}/patch.diff`;
   const written = await dependencies.sandbox.exec(input.ref, {
-    file: "sh",
+    file: "/bin/sh",
     args: [
       "-c",
-      `git "$@" > "$0"`,
+      `${TRUSTED_GIT} "$@" > "$0"`,
       patchPath,
+      ...TRUSTED_GIT_OPTIONS,
       ...at,
       ...PATCH_GIT_OPTIONS,
       ...PATCH_DIFF_ARGS,
       input.baseSha,
     ],
+    env: TRUSTED_ENVIRONMENT,
+    isolated: true,
   });
   if (written.exitCode !== 0) {
     throw new PatchError(
@@ -169,8 +199,10 @@ export const capturePatch = async (
   // The command reads the file through standard input. The GNU form and the BSD form both accept
   // that, so a host with either coreutils runs the same capture.
   const encoded = await dependencies.sandbox.exec(input.ref, {
-    file: "sh",
+    file: "/bin/sh",
     args: ["-c", 'base64 < "$0"', patchPath],
+    env: TRUSTED_ENVIRONMENT,
+    isolated: true,
   });
   if (encoded.exitCode !== 0) {
     throw new PatchError(
@@ -188,6 +220,34 @@ export const capturePatch = async (
     byteLength: Buffer.from(patchBase64, "base64").byteLength,
     gitVersion,
   };
+};
+
+/**
+ * docs/specs/check-isolation.md. Applies a captured patch to a fresh checkout at the base SHA.
+ * The patch travels as base64 text, because `Sandbox.writeFile` writes text, and the sandbox
+ * decodes it. An empty patch changes nothing.
+ */
+export const applyPatch = async (
+  dependencies: PatchDependencies,
+  input: PatchInput & { patchBase64: string },
+): Promise<void> => {
+  if (input.patchBase64 === "") return;
+  const encodedPath = `${input.ref.workspacePath}/patch.b64`;
+  const patchPath = `${input.ref.workspacePath}/patch.diff`;
+  await dependencies.sandbox.writeFile(input.ref, encodedPath, input.patchBase64);
+  const decoded = await dependencies.sandbox.exec(input.ref, {
+    file: "/bin/sh",
+    args: ["-c", 'base64 -d < "$0" > "$1"', encodedPath, patchPath],
+    env: TRUSTED_ENVIRONMENT,
+    isolated: true,
+  });
+  if (decoded.exitCode !== 0) {
+    throw new PatchError(
+      `the patch could not be decoded with exit code ${decoded.exitCode}: ` +
+        dependencies.redactor.redactText(decoded.stderr.trim()),
+    );
+  }
+  await git(dependencies, input, ["-C", input.primaryPath, "apply", "--binary", "--whitespace=nowarn", patchPath]);
 };
 
 /**

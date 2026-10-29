@@ -31,3 +31,16 @@ export const credentialEnvironment = (
     GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
   };
 };
+
+/**
+ * The environment of a git command on the worker. The worker environment holds the App private
+ * key, the secret key and the admin token, so git and anything git starts receive none of it,
+ * and no global or system git config applies.
+ */
+export const isolatedGitEnvironment = (home: string): Record<string, string> => ({
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  HOME: home,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0",
+});

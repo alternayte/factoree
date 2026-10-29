@@ -36,6 +36,7 @@ import type { SandboxRef } from "~/domain/runs/sandbox.js";
 import { createLogger } from "~/telemetry/logger.js";
 import type { Logger, LogFields } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
+import { capturePatch } from "~/domain/publishing/patch.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { createBareRemote, type BareRemote } from "./support/bare-remote.js";
 
@@ -795,6 +796,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       args: ["-c", 'git -C "$1" add -A && git -C "$1" write-tree', "sh", primaryPath],
     });
     const stagedTreeSha = staged.stdout.trim();
+    const verified = await capturePatch({ sandbox, redactor }, { ref, primaryPath, baseSha: remote.baseSha });
 
     const activities = createPublishingActivities({
       sandbox,
@@ -825,6 +827,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       baseSha: remote.baseSha,
       reviewedChangedFiles: ["README.md"],
       reviewedWorktreeSha: stagedTreeSha,
+      verifiedPatchSha256: verified.patchSha256,
       workItemTitle: "Change the README",
       workItemUrl: null,
       verificationSummary: "every deterministic check passed on attempt 1",
