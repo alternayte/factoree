@@ -122,11 +122,18 @@
 | DI-12.11 | 2026-08-26 | §50 | `AgentRunner.cancel` returns `"cancelled"` or `"no-live-session"`. `cancelImplementer` throws on the second, so the activity retry can reach the worker that owns the session. | A silent cancel let the workflow record §50 obligation 1 as met while an agent ran. |
 | DI-13.1 | 2026-09-05 | §52, §53 | `Project` is split into `Product` and `Repository`. A Linear team maps to one Product, and routing refuses rather than guesses. | `docs/specs/multi-repo-tenancy.md`. |
 | DI-13.2 | 2026-09-05 | §30, §59 | Repositories register through GitHub App events. A Run mints its clone and publish tokens from the installation. | `docs/specs/github-app-discovery-wiring.md`. |
+| DI-14.1 | 2026-10-29 | R-5 | `SANDBOX_ADAPTER=local` needs `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`. A secret key or an admin token made of one repeated character, or holding "change-me", is refused. | The local sandbox lets the agent read the worker environment. A copied `.env.example` must not boot. |
+| DI-14.2 | 2026-10-29 | R-6, R-7 | `RepositoryReader.withCredential` holds the credential in an `AsyncLocalStorage` context, not per origin. A mirror is keyed by installation and URL. Every minted token names the repositories it may reach. | All GitHub repositories share one origin, so a per-origin credential mixed tenants. |
+| DI-14.3 | 2026-10-29 | R-8 | `prePublicationFailures` checks the §68 clauses that hold before publication. The workflow runs it before `checkBase`. | A broken clause must stop the Run before a pull request exists. |
+| DI-14.4 | 2026-10-29 | `docs/specs/refiner-agent.md` | Before the refiner exists, a frozen contract with a `manual` or `code_review` assertion ends the Run `VALIDATION_MANUAL_REQUIRED` before preparation. The human rewrites the ticket and delegates again. | Rule 3 of the refiner gate. The question round arrives with the refiner. |
+| DI-14.5 | 2026-10-29 | `docs/specs/check-isolation.md` | The check sprite applies the patch after the config read and before the bootstrap, then recaptures it. The recaptured hash must equal the work sprite hash. Publication captures from the check sprite and must reproduce that same hash. | The config comes from the base SHA. The bootstrap needs the patched dependencies. Only the hash crosses the workflow, so no patch bytes reach Temporal history. |
+| DI-14.6 | 2026-10-29 | `docs/specs/check-isolation.md` | The check sprite of a superseded attempt is destroyed when the next attempt starts. The last one is destroyed at the terminal write. The check sprite ID is logged with the run ID. | The Run row holds one sprite for the reaper. A second table for check sprites adds no guarantee. |
 
 ## Blocked
 
 | ID | Date | Question | Default |
 |---|---|---|---|
+| B-2 | 2026-10-29 | `docs/specs/check-isolation.md` asks for runner CLIs in a root-owned directory. The Sprite user installs the CLIs in user directories, and the repository bootstrap can install them. The bootstrap runs project code in the check sprite before the validator and the reviewer. | Factoree calls git by absolute path with a clean environment, and the publish hash gate catches any change to the tested patch. A shim can still fake the validator or the reviewer verdict. Close it with a Sprite image that holds root-owned runner CLIs. |
 | B-1 | 2026-08-26 | §66 live acceptance needs a Linear test workspace, a GitHub fixture repository with the App installed, a Fly Sprites token, Temporal, a runner credential, Backstage and MCP test endpoints. | 11 §67 "Live proof" items stay `BLOCKED_EXTERNAL`. |
 
 ## Human answers

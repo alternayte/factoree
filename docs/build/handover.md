@@ -4,15 +4,15 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-Start W-2 on branch `hardening/review-fixes`.
+Continue W-3 on branch `hardening/review-fixes`: build the check sprite per DI-14.5 and DI-14.6.
 
 ## Work queue
 
 | ID | Status | Item | Depends on | Evidence |
 |---|---|---|---|---|
 | W-1 | DONE | `just verify` on the docs branch, then merge it into `main`. | — | Unit 1264 passed and 7 skipped, integration 285, workflow 101. |
-| W-2 | OPEN | Safety fixes: R-5, R-6, R-7, R-8, R-12, and rule 3 of the refiner gate (stop an L3 Run before implementation when an assertion is manual). | W-1 | |
-| W-3 | OPEN | Build `docs/specs/check-isolation.md`. | W-1 | |
+| W-2 | DONE | Safety fixes: R-5, R-6, R-7, R-8, R-12, and rule 3 of the refiner gate (stop an L3 Run before implementation when an assertion is manual). | W-1 | `f96aa0f`, `aca8700`, and the R-8/R-12 commit. DI-14.1 to DI-14.4. Unit 1270, integration 286, workflow 103. |
+| W-3 | IN_PROGRESS | Build `docs/specs/check-isolation.md`. | W-1 | |
 | W-4 | OPEN | Build `docs/specs/autonomy-levels.md`, plus R-4 (the Product owns the network allow list). | W-1 | |
 | W-5 | OPEN | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | |
 | W-6 | OPEN | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | |
@@ -69,7 +69,7 @@ Each item names the SDD section that it affects. The adversarial review of 2026-
 ## Known test behaviour
 
 - The integration suite drives a real Chromium. Run `npx playwright install chromium` once per machine, as CI does.
-- Never run two suites at the same time. Docker and Temporal test servers compete, and a whole verification run was lost this way.
+- Never run two suites at the same time. Another project's testcontainers on the same Docker daemon can reset the shared PostgreSQL connection (`read ECONNRESET`), so rerun the stage alone before you debug it. Docker and Temporal test servers compete, and a whole verification run was lost this way.
 - `vitest.integration.config.ts` runs `tests/integration` and `tests/acceptance` with one PostgreSQL container per run. `global-setup.ts` migrates a template database, and each test gets a copy.
 - `vitest.workflow.config.ts` bundles the two workflows once in `global-setup.ts`. The workflow suite takes about 140 s.
 - `waitFor` in `tests/workflow/support/harness.ts` takes an optional `describe` callback. On a timeout it reports the poll count and the last observed value.
