@@ -98,7 +98,7 @@ export class FlySpriteSandbox implements Sandbox {
     // The Fly Sprites SDK version 0.2.0 has no documented API that publishes a port to a
     // reachable URL. `exposeService` throws a clear error instead of a claim of success.
     // See docs/build/decisions.md, DI-2.9.
-    supportsExposedServices: false,
+    supportsExposedServices: true,
   };
 
   private readonly workspacePath: string;
@@ -320,17 +320,15 @@ export class FlySpriteSandbox implements Sandbox {
     return { id: created.id, name };
   }
 
-  // The Fly Sprites SDK version 0.2.0 has no documented API that publishes a port to a
-  // reachable URL. See docs/build/decisions.md, DI-2.9. This method
-  // throws rather than pretend, so it stays honest with `capabilities.supportsExposedServices`
-  // regardless of which gateway implementation backs it.
-  exposeService(_ref: SandboxRef, port: number): Promise<ServiceRef> {
-    return Promise.reject(
-      new SandboxError(
-        `fly-sprites has no documented API that publishes port ${port} to a reachable URL`,
-        this.name,
-      ),
-    );
+  // H-2 and DI-14.17. A live probe proved that a service declaring `httpPort` routes the sprite
+  // URL to that port. The URL is the base URL of the preview for the User Validator.
+  async exposeService(ref: SandboxRef, port: number): Promise<ServiceRef> {
+    try {
+      const url = await this.options.gateway.sprite(ref.id).publishPort(port);
+      return { port, url: url.replace(/\/+$/, "") };
+    } catch (error) {
+      throw new SandboxError(`fly-sprites could not publish port ${port}: ${String(error)}`, this.name);
+    }
   }
 
   async destroy(ref: SandboxRef): Promise<void> {

@@ -39,6 +39,12 @@ export interface SpritesSpriteHandle {
   startDetached: (file: string, args: string[], options: SpritesExecOptions) => Promise<void>;
   createCheckpoint: (comment: string) => Promise<{ id: string }>;
   updateNetworkPolicy: (policy: { rules: Array<{ domain: string; action: "allow" | "deny" }> }) => Promise<void>;
+  /**
+   * H-2. Routes the sprite URL to one port and returns that URL. A live probe proved the
+   * mechanism: a service that declares `httpPort` routes the sprite URL to that port, whichever
+   * process listens there. See docs/build/decisions.md, DI-14.17.
+   */
+  publishPort: (port: number) => Promise<string>;
   delete: () => Promise<void>;
 }
 
@@ -117,7 +123,26 @@ const pickLatestCheckpoint = (checkpoints: Checkpoint[], comment: string): Check
  * Wraps one SDK sprite as the narrow handle above. It is exported so a test can drive it with a
  * fake sprite, which is the only way to reproduce the event behaviour of a broken connection.
  */
-export const wrapSprite = (sprite: Sprite): SpritesSpriteHandle => ({
+export const wrapSprite = (sprite: Sprite, client: SpritesClient): SpritesSpriteHandle => ({
+  publishPort: async (port) => {
+    // The service only declares the route. `sleep` keeps it alive, and the preview process the
+    // User Validator starts listens on the port.
+    const logs = await sprite.createService(`factoree-route-${String(port)}`, {
+      cmd: "sleep",
+      args: ["86400"],
+      httpPort: port,
+    });
+    logs.close();
+    // The Playwright browser on the worker holds no Sprites credential, and the token must never
+    // reach the preview. The URL is public for the life of this sprite, and its name holds the
+    // Run identifier, so it cannot be guessed.
+    await sprite.updateURLSettings({ auth: "public" });
+    const described = await client.getSprite(sprite.name);
+    if (described.url === undefined || described.url === "") {
+      throw new Error(`the sprite ${sprite.name} reports no URL`);
+    }
+    return described.url;
+  },
   writeFile: async (path, content) => {
     await sprite.filesystem("/").writeFile(path, content);
   },
@@ -206,8 +231,8 @@ export const createSpritesGateway = (options: SpritesGatewayOptions): SpritesGat
         ...(createOptions.environment === undefined ? {} : { environment: createOptions.environment }),
         waitForCapacity: true,
       });
-      return { name: sprite.name, handle: wrapSprite(sprite) };
+      return { name: sprite.name, handle: wrapSprite(sprite, client) };
     },
-    sprite: (name) => wrapSprite(client.sprite(name)),
+    sprite: (name) => wrapSprite(client.sprite(name), client),
   };
 };
