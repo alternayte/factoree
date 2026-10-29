@@ -134,16 +134,16 @@ describe("agentRunWorkflow", () => {
       await handle.signal(stopSignal);
       return handle.result();
     });
-    // Verification now follows the implementation, so the sequence of this Run is longer than
-    // it was in Phase 2. Phase 4 puts REFINING and RESOLVING_CONTEXT before PREPARING, per SDD
-    // section 49. Phase 6 adds BUILDING_VALIDATION_CONTRACT between them. The first states of
-    // this Run are still exactly these, in this order.
-    expect(statusesOf("run-session-f").slice(0, 6)).toEqual([
+    // docs/specs/refiner-agent.md fixes this order: the deterministic parse and the context
+    // resolution first, then the work sprite, the refiner session (REFINING again), the frozen
+    // Validation Contract, and only then the Implementer.
+    expect(statusesOf("run-session-f").slice(0, 7)).toEqual([
       "RECEIVED",
       "REFINING",
       "RESOLVING_CONTEXT",
-      "BUILDING_VALIDATION_CONTRACT",
       "PREPARING",
+      "REFINING",
+      "BUILDING_VALIDATION_CONTRACT",
       "IMPLEMENTING",
     ]);
     expect(implementCalls.at(-1)?.runnerName).toBe(DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner);

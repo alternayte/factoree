@@ -13,6 +13,13 @@ export interface ValidationCriterion {
   id: string;
   statement: string;
   source: string;
+  /**
+   * docs/specs/refiner-agent.md. The method the gate kept for a refiner criterion. Absent for a
+   * stated criterion, which the keyword rules classify.
+   */
+  method?: ValidationMethod;
+  /** The runnable check the refiner named: a command, a test path, "METHOD /path", or a route. */
+  target?: string;
 }
 
 export interface BuildValidationContractInput {
@@ -119,13 +126,14 @@ const assertionsOf = (criteria: ValidationCriterion[]): ValidationAssertion[] =>
     const raw = criterion.statement.trim();
     if (raw === "") continue;
     const split = splitPrecondition(raw);
-    const method = methodFor(split.statement);
+    const method = criterion.method ?? methodFor(split.statement);
     const next = (counters.get(method) ?? 0) + 1;
     counters.set(method, next);
     assertions.push({
       id: `VAL-${PREFIX_FOR[method]}-${String(next).padStart(3, "0")}`,
       requirement: criterion.id,
-      statement: split.statement,
+      // The target reaches the contract text, so the validator and the Reviewer read the check.
+      statement: criterion.target === undefined ? split.statement : `${split.statement} Check: ${criterion.target}`,
       method,
       evidence: [...EVIDENCE_FOR[method]],
       preconditions: split.preconditions,

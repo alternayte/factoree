@@ -120,11 +120,11 @@ describe("deterministic verification in the workflow", () => {
     });
     heldReviews.delete("run-ses-v3");
 
-    // The first six states are RECEIVED, REFINING, RESOLVING_CONTEXT,
-    // BUILDING_VALIDATION_CONTRACT, PREPARING, and IMPLEMENTING. The repair loop follows them.
+    // The first seven states are RECEIVED, REFINING, RESOLVING_CONTEXT, PREPARING, REFINING
+    // (the refiner), BUILDING_VALIDATION_CONTRACT, and IMPLEMENTING. The repair loop follows them.
     // The second verification passes, so the Run enters USER_VALIDATING and then REVIEWING, and
     // the stop signal cancels the Run once the default passing review double returns.
-    expect(statusesOf("run-ses-v3").slice(6)).toEqual([
+    expect(statusesOf("run-ses-v3").slice(7)).toEqual([
       "VERIFYING",
       "REPAIRING",
       "IMPLEMENTING",

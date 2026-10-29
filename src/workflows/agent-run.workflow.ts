@@ -18,6 +18,8 @@ import type {
   PrepareSandboxActivityOutput,
 } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
+import type { ProposeRefinementActivityOutput } from "~/activities/refinement.activities.js";
+import { acceptsProposal } from "../domain/refinement/accepts-proposal.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
@@ -505,6 +507,7 @@ export async function agentRunWorkflow(
       | "CONFIGURATION_INVALID"
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
+      | "REFINEMENT_UNAVAILABLE"
       | "TARGET_UNRESOLVED"
       | "CONTEXT_UNRESOLVED"
       | "VALIDATION_UNRESOLVED"
@@ -1217,90 +1220,6 @@ export async function agentRunWorkflow(
         );
       }
 
-      // SDD section 49 places the Validation Contract between context resolution and sandbox
-      // preparation. SDD section 24 requires the contract to freeze before implementation starts.
-      // The loop ends because `askAndWait` is bounded by the question rounds and by the budget.
-      const validationAnswers: string[] = [];
-      let validation: Awaited<ReturnType<Activities["buildValidationContract"]>>;
-      for (;;) {
-        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-
-        status = "BUILDING_VALIDATION_CONTRACT";
-        await activities.setRunStatus({ runId: id, status });
-
-        validation = await validationActivities.buildValidationContract({
-          runId: id,
-          tenantId: input.tenantId,
-          productId: input.productId,
-          workItem: input.workItem.issueId ?? id,
-          goal: refined.goal,
-          acceptanceCriteria: refined.criteria,
-          humanAssertions: validationAnswers,
-        });
-
-        if (validation.status === "ready") {
-          // The output type permits a `ready` result with a null `sha256`. The workflow must not
-          // start implementation on that combination, because no confirmed frozen contract exists.
-          if (validation.sha256 === null) {
-            return await failRun(
-              "VALIDATION_UNRESOLVED",
-              "Factoree could not confirm the Validation Contract froze, so it published nothing.",
-            );
-          }
-          validationContractVersion = validation.sha256;
-          break;
-        }
-
-        await notify(() =>
-          activities.postProgress({
-            sessionId: input.agentSessionId,
-            message: validation.summary,
-          }),
-        );
-
-        // SDD section 9 item 5. No observable success assertion exists, so implementation must
-        // not start. The human states one, and it becomes an assertion of the contract.
-        const question = validation.question;
-        if (question === null) {
-          return await failRun(
-            "VALIDATION_UNRESOLVED",
-            "Factoree could not define success for this Work Item, and it published nothing.",
-          );
-        }
-        const proceeded = await askAndWait(question.id, question.question);
-        if (stopRequested) return await cancelRun();
-        if (!proceeded) {
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-          return await failRun(
-            "VALIDATION_UNRESOLVED",
-            "Factoree could not start, because this Work Item states no observable success " +
-              "assertion. Factoree must not invent product behavior, so it published nothing.",
-          );
-        }
-        const answer = decisions[decisions.length - 1]?.answer ?? "";
-        if (answer.trim() !== "") validationAnswers.push(answer);
-      }
-
-      await notify(() =>
-        activities.postProgress({ sessionId: input.agentSessionId, message: validation.summary }),
-      );
-
-      // docs/specs/refiner-agent.md. An assertion that no automated check can answer ends an L3
-      // Run with VALIDATION_MANUAL_REQUIRED anyway. Stopping here spends no agent time on it.
-      if (validation.manualAssertionIds.length > 0) {
-        return await failRun(
-          "VALIDATION_MANUAL_REQUIRED",
-          "Factoree cannot check these assertions automatically: " +
-            `${validation.manualAssertionIds.join(", ")}. Rewrite each one as an observable result ` +
-            "(a command, an HTTP response, or a page state) and delegate again. Factoree started no " +
-            "implementation and published nothing.",
-        );
-      }
-
-      // A stop that arrived while the contract was built must prevent preparation.
-      if (stopRequested) return await cancelRun();
-      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-
       // SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the
       // primary repository. Only the values a repository must not own travel from here.
       const sandbox = {
@@ -1380,6 +1299,158 @@ export async function agentRunWorkflow(
       if (stopRequested) return await cancelRun();
       // Preparation can consume the whole budget. The Run must end here rather than start work
       // it cannot finish.
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+      // docs/specs/refiner-agent.md. A fresh refiner reads the work sprite and proposes what done
+      // means and how to prove it. The gate decides what freezes. A criterion the refiner inferred,
+      // and each of its questions, reach a human as one question with a proposed answer.
+      status = "REFINING";
+      await activities.setRunStatus({ runId: id, status });
+      let proposal: ProposeRefinementActivityOutput | null;
+      try {
+        proposal = await runAgentActivity(() =>
+          buildUserValidateActivities(remainingMs()).proposeRefinement({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runnerName: preparedSandbox.runtime.validatorRunner,
+            spriteId: preparedSandbox.spriteId,
+            adapter: preparedSandbox.adapter,
+            workspacePath: preparedSandbox.workspacePath,
+            primaryPath: preparedSandbox.primaryPath,
+            workItemText: `${input.workItem.title}\n\n${input.workItem.description}`,
+            goal: refined.goal,
+            statedCriteria: refined.acceptanceCriteria,
+            contextContract: resolvedContext.document,
+            skills: preparedSandbox.skills,
+            timeoutMs: remainingMs(),
+          }),
+        );
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            "Factoree could not start the Refiner, because the Run configuration is invalid. " +
+              "Repair `validator_runner` in `.factoree/config.yaml`.",
+          );
+        }
+        if (remainingMs() > 0) throw error;
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      }
+      if (stopRequested) return await cancelRun();
+      if (proposal === null) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        return await failRun("REFINEMENT_UNAVAILABLE", "The Refiner did not finish, so Factoree published nothing.");
+      }
+      if (proposal.status !== "proposed") {
+        return await failRun(
+          "REFINEMENT_UNAVAILABLE",
+          `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
+        );
+      }
+      // A refiner that proposes nothing leaves the criteria the Work Item states.
+      let contractCriteria =
+        proposal.accepted.length + proposal.inferred.length === 0 ? refined.criteria : proposal.accepted;
+      const validationAnswers: string[] = [];
+      if (proposal.question !== null) {
+        const proceeded = await askAndWait(REFINER_QUESTION_ID, proposal.question);
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "REFINEMENT_UNRESOLVED",
+            "Factoree could not start, because a proposed acceptance criterion is not confirmed. " +
+              "Factoree must not invent product behavior, so it published nothing.",
+          );
+        }
+        const answer = decisions[decisions.length - 1]?.answer ?? "";
+        if (acceptsProposal(answer)) contractCriteria = [...proposal.accepted, ...proposal.inferred];
+        else if (answer.trim() !== "") validationAnswers.push(answer);
+      }
+
+      // docs/specs/refiner-agent.md. The Validation Contract freezes after the refiner and before
+      // the Implementer. SDD section 24 requires the contract to freeze before implementation
+      // starts. The loop ends because `askAndWait` is bounded by the question rounds and by the
+      // budget.
+      let validation: Awaited<ReturnType<Activities["buildValidationContract"]>>;
+      for (;;) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+        status = "BUILDING_VALIDATION_CONTRACT";
+        await activities.setRunStatus({ runId: id, status });
+
+        validation = await validationActivities.buildValidationContract({
+          runId: id,
+          tenantId: input.tenantId,
+          productId: input.productId,
+          workItem: input.workItem.issueId ?? id,
+          goal: refined.goal,
+          acceptanceCriteria: contractCriteria,
+          humanAssertions: validationAnswers,
+        });
+
+        if (validation.status === "ready") {
+          // The output type permits a `ready` result with a null `sha256`. The workflow must not
+          // start implementation on that combination, because no confirmed frozen contract exists.
+          if (validation.sha256 === null) {
+            return await failRun(
+              "VALIDATION_UNRESOLVED",
+              "Factoree could not confirm the Validation Contract froze, so it published nothing.",
+            );
+          }
+          validationContractVersion = validation.sha256;
+          break;
+        }
+
+        await notify(() =>
+          activities.postProgress({
+            sessionId: input.agentSessionId,
+            message: validation.summary,
+          }),
+        );
+
+        // SDD section 9 item 5. No observable success assertion exists, so implementation must
+        // not start. The human states one, and it becomes an assertion of the contract.
+        const question = validation.question;
+        if (question === null) {
+          return await failRun(
+            "VALIDATION_UNRESOLVED",
+            "Factoree could not define success for this Work Item, and it published nothing.",
+          );
+        }
+        const proceeded = await askAndWait(question.id, question.question);
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "VALIDATION_UNRESOLVED",
+            "Factoree could not start, because this Work Item states no observable success " +
+              "assertion. Factoree must not invent product behavior, so it published nothing.",
+          );
+        }
+        const answer = decisions[decisions.length - 1]?.answer ?? "";
+        if (answer.trim() !== "") validationAnswers.push(answer);
+      }
+
+      await notify(() =>
+        activities.postProgress({ sessionId: input.agentSessionId, message: validation.summary }),
+      );
+
+      // docs/specs/refiner-agent.md. An assertion that no automated check can answer ends an L3
+      // Run with VALIDATION_MANUAL_REQUIRED anyway. Stopping here spends no agent time on it.
+      if (validation.manualAssertionIds.length > 0) {
+        return await failRun(
+          "VALIDATION_MANUAL_REQUIRED",
+          "Factoree cannot check these assertions automatically: " +
+            `${validation.manualAssertionIds.join(", ")}. Rewrite each one as an observable result ` +
+            "(a command, an HTTP response, or a page state) and delegate again. Factoree started no " +
+            "implementation and published nothing.",
+        );
+      }
+
+      // A stop that arrived while the contract was built must prevent the Implementer.
+      if (stopRequested) return await cancelRun();
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
       // One Implementer attempt plus its verification. SDD section 42 bounds the number of
@@ -2029,6 +2100,9 @@ export async function agentRunWorkflow(
     throw ApplicationFailure.fromError(error, { nonRetryable: true });
   }
 }
+
+/** docs/specs/refiner-agent.md. The question identifier of the refiner confirmation. */
+const REFINER_QUESTION_ID = "REFINER-Q-1";
 
 /** One sentence that names the level rules that applied, or none. */
 const autonomyNote = (reasons: string[]): string =>

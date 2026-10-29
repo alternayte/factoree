@@ -32,16 +32,17 @@ describe("Phase 12 — a Run that exhausts its budget", () => {
     const release = hold(harness.heldImplementations, runId);
 
     const status = await harness.runWorker(async () => {
-      const handle = await harness.start("session-timeout", { maxRunMinutes: 1 / 60 });
+      const handle = await harness.start("session-timeout", { maxRunMinutes: 5 / 60 });
       await waitFor(
         () => harness.implementCalls.length === 1,
         "the Implementer to start",
         30_000,
       );
 
-      // The budget floors at 1,000 milliseconds. This margin guarantees the deadline passed
+      // The budget is 5,000 milliseconds, because the work sprite, the refiner and the contract
+      // freeze now precede the Implementer. This margin guarantees the deadline passed
       // before the release, without depending on how fast the machine schedules the test.
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      await new Promise((resolve) => setTimeout(resolve, 5_200));
       release();
       return await handle.result();
     });

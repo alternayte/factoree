@@ -59,6 +59,9 @@ export const RUN_FAILURE_REASONS = [
   "VERIFICATION_FAILED",
   // SDD section 8. A material product question stayed open after the bounded question rounds.
   "REFINEMENT_UNRESOLVED",
+  // docs/specs/refiner-agent.md. The refiner wrote no valid proposal, or it changed the primary
+  // worktree. A repair cannot fix either.
+  "REFINEMENT_UNAVAILABLE",
   // SDD section 23. A conflict with no authority winner stayed open after the bounded rounds.
   "CONTEXT_UNRESOLVED",
   // SDD section 9 item 5. The Work Item states no observable success assertion, and the bounded

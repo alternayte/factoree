@@ -116,6 +116,7 @@ const activities = {
     checkDefiningFiles: [],
   }),
   releaseCheckSandbox: async () => undefined,
+  proposeRefinement: async () => ({ status: "proposed", accepted: [], inferred: [], question: null, reason: "" }),
   implement: async (input: { runnerName: string }) => ({
     sessionId: "ses_fake",
     processId: "process-fake",

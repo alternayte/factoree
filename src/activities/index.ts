@@ -112,6 +112,13 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
   ...createRefinementActivities({
     refinement: dependencies.refinement,
     logger: dependencies.logger,
+    agent: {
+      sandbox: dependencies.sandbox,
+      runners: dependencies.runners,
+      executions: dependencies.executions,
+      secrets: dependencies.secrets,
+      redactor: dependencies.redactor,
+    },
   }),
   ...createContextActivities({
     resolver: dependencies.contextResolver,

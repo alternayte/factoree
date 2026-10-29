@@ -4,7 +4,7 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-Start W-5 on branch `hardening/review-fixes`: build `docs/specs/refiner-agent.md`.
+Start W-6 on branch `hardening/review-fixes`: map each Action Policy action to its mechanism, and turn off repository MCP and settings for the agent CLIs.
 
 ## Work queue
 
@@ -14,15 +14,15 @@ Start W-5 on branch `hardening/review-fixes`: build `docs/specs/refiner-agent.md
 | W-2 | DONE | Safety fixes: R-5, R-6, R-7, R-8, R-12, and rule 3 of the refiner gate (stop an L3 Run before implementation when an assertion is manual). | W-1 | `f96aa0f`, `aca8700`, and the R-8/R-12 commit. DI-14.1 to DI-14.4. Unit 1270, integration 286, workflow 103. |
 | W-3 | DONE | Build `docs/specs/check-isolation.md`. | W-1 | DI-14.5 to DI-14.7, B-2. `prepareCheckSandbox` tests in `tests/unit/prepare-sandbox-activity.test.ts`, AT-16 check sprite assertions. The draft PR for a marked patch lands with W-4. Unit, integration 286 and workflow pass. |
 | W-4 | DONE | Build `docs/specs/autonomy-levels.md`, plus R-4 (the Product owns the network allow list). | W-1 | DI-14.8 to DI-14.11. `tests/workflow/autonomy-levels.test.ts`, the route, risk, delegation, Proof Pack and runtime-config tests. `just verify` exit 0: unit 1285, integration 286, workflow 109. |
-| W-5 | IN_PROGRESS | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | |
-| W-6 | OPEN | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | |
+| W-5 | DONE | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | DI-14.12 to DI-14.15. `tests/unit/refiner-proposal.test.ts`, `tests/unit/propose-refinement-activity.test.ts`, `tests/workflow/refiner.workflow.test.ts`. The flaky target-selection wait is fixed. `just verify` exit 0: unit 1296, integration 286, workflow 112. |
+| W-6 | IN_PROGRESS | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | |
 | W-7 | OPEN | Remove the Change Set leftovers (H-4). | W-1 | |
 | W-8 | OPEN | Preview exposure on Fly (H-2), then the §66 live proof (B-1). | W-3, W-5 | |
 
 ## State at the last commit
 
 - Status: SDD §69 phases 1 to 12 are complete, and the two specs in `docs/specs/` are built except Change Sets (AT-44, AT-45). Version 1 is not done: 88 of the 99 §67 items pass, and the 11 "Live proof" items are `BLOCKED_EXTERNAL` (B-1).
-- Last verified run: `just verify` exit 0 on `hardening/review-fixes` after W-4 (2026-10-29). Unit 1285 passed and 7 skipped, integration 286, workflow 109.
+- Last verified run: `just verify` exit 0 on `hardening/review-fixes` after W-5 (2026-10-29). Unit 1296 passed and 7 skipped, integration 286, workflow 112.
 - The repository has the remote `origin`. No phase has pushed to it. Ask the human before a push.
 
 ## Open work

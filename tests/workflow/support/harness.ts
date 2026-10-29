@@ -20,6 +20,10 @@ import type {
 import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import type {
+  ProposeRefinementActivityInput,
+  ProposeRefinementActivityOutput,
+} from "~/activities/refinement.activities.js";
+import type {
   PrepareCheckSandboxActivityInput,
   PrepareSandboxActivityInput,
 } from "~/activities/sandbox.activities.js";
@@ -157,6 +161,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const destroyed: string[] = [];
   /** docs/specs/check-isolation.md. The check sprite preparations, and the check sprites released. */
   const checkPrepared: PrepareCheckSandboxActivityInput[] = [];
+  /** docs/specs/refiner-agent.md. The refiner sessions, and the proposal a test sets per Run. */
+  const refinerCalls: ProposeRefinementActivityInput[] = [];
+  const refinerOutcomes = new Map<string, ProposeRefinementActivityOutput>();
   const releasedChecks: string[] = [];
   /** A run id in this map holds preparation open until the test resolves the promise. */
   const heldPreparations = new Map<string, Promise<void>>();
@@ -529,6 +536,15 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         changedFiles: ["src/a.ts"],
         checkDefiningFiles: [],
       };
+    },
+    // docs/specs/refiner-agent.md. The default refiner proposes nothing, so the Run keeps the
+    // criteria the Work Item states. A test sets its own proposal per Run.
+    proposeRefinement: async (activityInput: ProposeRefinementActivityInput) => {
+      activityOrder.push("proposeRefinement");
+      refinerCalls.push(activityInput);
+      const outcome = refinerOutcomes.get(activityInput.runId);
+      if (outcome !== undefined) return outcome;
+      return { status: "proposed" as const, accepted: [], inferred: [], question: null, reason: "" };
     },
     releaseCheckSandbox: async (activityInput: { spriteId: string }) => {
       releasedChecks.push(activityInput.spriteId);
@@ -918,6 +934,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     destroyed,
     checkPrepared,
     releasedChecks,
+    refinerCalls,
+    refinerOutcomes,
     heldPreparations,
     heldImplementations,
     heldVerifications,
