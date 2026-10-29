@@ -1,6 +1,23 @@
 # Build handover
 
-This file records where the build stopped. `decisions.md` is the authoritative record of decisions. `docs/factoree-sdd.md` is the design, and the specs in `docs/specs/` amend it. SDD §67 defines done.
+This file records where the build stopped. `decisions.md` is the authoritative record of decisions. `docs/factoree-sdd.md` is the design, and the specs in `docs/specs/` amend it. SDD §67 defines done. `BUILD.md` is the session prompt.
+
+## Next step
+
+Run `just verify` on branch `docs/build-records`, then start W-1.
+
+## Work queue
+
+| ID | Status | Item | Depends on | Evidence |
+|---|---|---|---|---|
+| W-1 | OPEN | `just verify` on the docs branch, then merge it into `main`. | — | |
+| W-2 | OPEN | Safety fixes: R-5, R-6, R-7, R-8, R-12, and rule 3 of the refiner gate (stop an L3 Run before implementation when an assertion is manual). | W-1 | |
+| W-3 | OPEN | Build `docs/specs/check-isolation.md`. | W-1 | |
+| W-4 | OPEN | Build `docs/specs/autonomy-levels.md`, plus R-4 (the Product owns the network allow list). | W-1 | |
+| W-5 | OPEN | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | |
+| W-6 | OPEN | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | |
+| W-7 | OPEN | Remove the Change Set leftovers (H-4). | W-1 | |
+| W-8 | OPEN | Preview exposure on Fly (H-2), then the §66 live proof (B-1). | W-3, W-5 | |
 
 ## State at the last commit
 
