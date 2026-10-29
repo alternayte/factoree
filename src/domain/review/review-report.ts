@@ -38,7 +38,7 @@ export interface ReviewFinding {
 /** SDD section 41. The whole Reviewer output. */
 export interface ReviewReport {
   version: 1;
-  /** The agent claim. It is recorded and it never decides. See controller decision 2. */
+  /** The agent claim. It is recorded and it never decides. See DI-8.2. */
   verdict: "pass" | "fail";
   findings: ReviewFinding[];
 }

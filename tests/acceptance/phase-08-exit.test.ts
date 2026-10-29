@@ -124,7 +124,7 @@ const CLEAN_REPORT = JSON.stringify({
 
 /**
  * Negative case 1. The Reviewer claims a pass verdict and reports a valid high finding in the
- * same document. SDD section 41 and controller decision 2: the agent claim decides nothing.
+ * same document. SDD section 41 and DI-8.2: the agent claim decides nothing.
  */
 const LYING_REPORT = JSON.stringify({
   version: 1,
@@ -804,7 +804,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       expect(rig.reviewOutputs[0]?.reportUsable).toBe(false);
       expect(rig.reviewOutputs[0]?.reportProblem).toBe("The Reviewer wrote no report.");
 
-      // The Run ended, and the reason is the one SDD section 68 and controller decision 7
+      // The Run ended, and the reason is the one SDD section 68 and DI-8.7
       // require. The workflow took that decision itself.
       const completion = rig.harness.completions.find((entry) => entry.runId === rig.runId);
       expect(completion?.status).toBe("FAILED");

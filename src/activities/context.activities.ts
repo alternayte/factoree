@@ -139,7 +139,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       }
     }
 
-    // SDD section 15 and controller decision 2. The `context` block governs discovery, and
+    // SDD section 15 and DI-5.2. The `context` block governs discovery, and
     // discovery runs before the sandbox exists, so the file is read at the pinned primary SHA.
     //
     // Discovery reads the repository through the credential `useCredential` registered above, so

@@ -2,10 +2,10 @@
 
 **Document type:** Design specification
 **Date:** 2026-09-04
-**Status:** Approved, ready for an implementation plan
+**Status:** Built
 **Style:** STE100-style controlled English
-**Follows:** `docs/superpowers/specs/2026-09-03-multi-repo-tenancy-design.md`
-**Amends:** `docs/sdd.md` sections 15, 30, 46, 62, 64
+**Follows:** `docs/specs/multi-repo-tenancy.md`
+**Amends:** `docs/factoree-sdd.md` sections 15, 30, 46, 62, 64
 
 ---
 

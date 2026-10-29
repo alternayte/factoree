@@ -10,7 +10,7 @@ export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
 /**
  * The shell script that starts one non-interactive Claude Code session. The prompt reaches the
  * CLI on standard input, so it never appears on a command line and never reaches a process
- * listing. See SDD section 30 and controller decision 10.
+ * listing. See SDD section 30 and DI-11.10.
  */
 const START_SCRIPT =
   'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_CLAUDE_BIN" --print --output-format stream-json --verbose';

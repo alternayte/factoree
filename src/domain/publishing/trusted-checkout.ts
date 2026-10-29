@@ -218,7 +218,7 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
     // stops the patch file path from being read as a git option.
     await git(checkout, ["apply", "--binary", "--index", "--whitespace=nowarn", "--", patchFile]);
 
-    // Step 4. Recalculate the patch hash from the applied tree. Controller decision 3 pins every
+    // Step 4. Recalculate the patch hash from the applied tree. DI-9.3 pins every
     // option, so a git configuration cannot change the bytes.
     const recomputed = await gitBuffer(checkout, [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, input.baseSha]);
     const publishedPatchSha256 = sha256OfBase64(recomputed.toString("base64"));

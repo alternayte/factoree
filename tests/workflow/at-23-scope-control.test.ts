@@ -27,7 +27,7 @@ const startRun = async (sessionId: string) =>
 /**
  * AT-23, SDD section 64: "A style-only medium finding does not block." SDD section 41: a style
  * finding does not block at any severity, so this file proves the medium case and the blocker
- * case both. Controller decision 6 owns the second case.
+ * case both. DI-8.6 owns the second case.
  */
 describe("AT-23 — a style-only finding never blocks the Run", () => {
   it.each([
@@ -70,7 +70,7 @@ describe("AT-23 — a style-only finding never blocks the Run", () => {
     expect(decisions[0]?.decisions[0]?.reason).toContain("SDD section 41");
     // A medium finding never reaches the category check: its severity alone already does not
     // block. A blocker finding does reach the category check, and the style category is what
-    // stops it there. Controller decision 6 is this second case.
+    // stops it there. DI-8.6 is this second case.
     if (severity === "blocker") {
       expect(decisions[0]?.decisions[0]?.reason).toContain("style");
     } else {

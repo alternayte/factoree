@@ -35,7 +35,7 @@ export interface SaveValidationContractInput {
 /**
  * SDD section 25 forbids a change to the active Validation Contract, so the port offers no update
  * and no delete. `save` is idempotent. A second call for the same Run returns the contract already
- * stored, so a Temporal activity retry can never write a second version. See controller decision 7.
+ * stored, so a Temporal activity retry can never write a second version. See DI-6.7.
  */
 export interface ValidationContractStore {
   save(input: SaveValidationContractInput): Promise<StoredValidationContract>;

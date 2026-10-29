@@ -169,7 +169,7 @@ model ContextContract {
   runId       String   @unique
   run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   // SDD section 21 fixes the document schema version. `Run.contextContractVersion` holds the
-  // SHA-256 below, because that value identifies the exact contract. See controller decision 11.
+  // SHA-256 below, because that value identifies the exact contract. See DI-4.11.
   version     Int
   sha256      String
   // The rendered contract. SDD section 55 forbids a copy of a repository. This text names paths
@@ -304,7 +304,7 @@ model ReviewFinding {
   requirement    String
   evidence       String
   description    String
-  // Factoree's own decision. SDD section 41 and controller decision 2.
+  // Factoree's own decision. SDD section 41 and DI-8.2.
   blocking       Boolean
   decisionReason String
   createdAt      DateTime @default(now())

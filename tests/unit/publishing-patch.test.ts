@@ -53,7 +53,7 @@ describe("capturePatch", () => {
     expect(result.treeSha).toBe("b".repeat(40));
     // SDD section 44 fixes `git add -A` first.
     expect(calls[0]?.args).toEqual(["-C", "/w/primary", "add", "-A"]);
-    // The patch command carries --binary. Controller decision 1.
+    // The patch command carries --binary. DI-9.1.
     const patchCall = calls.find((call) => call.args.includes("--binary"));
     expect(patchCall).toBeDefined();
     expect(PATCH_DIFF_ARGS).toContain("--binary");

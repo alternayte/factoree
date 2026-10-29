@@ -30,7 +30,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * SDD section 58. Every path from this class into `tools.callTool` is preceded by
  * `policy.assertMcpTool` for the exact tool name it is about to call. The server is untrusted
  * on the answer side too: a malformed JSON body, a non-array `items`, a non-object item, or a
- * bad `sizeBytes` is handled without a crash and without a wrong value. Controller decision 13:
+ * bad `sizeBytes` is handled without a crash and without a wrong value. DI-5.13:
  * a transport fault or a policy denial degrades the Run to no candidate, never fails it.
  */
 export class McpContextSource implements ContextSource {
@@ -72,7 +72,7 @@ export class McpContextSource implements ContextSource {
     if (!isRecord(parsed) || !Array.isArray(parsed["items"])) return [];
 
     const candidates: ContextCandidate[] = [];
-    // SDD section 21 keeps every `ref` of one Context Contract unique, and controller decision 13
+    // SDD section 21 keeps every `ref` of one Context Contract unique, and DI-5.13
     // keeps an MCP fault from failing a Run. A server that names one item twice must therefore
     // yield one candidate. The first occurrence wins, the same way the Backstage walk works.
     const seen = new Set<string>();

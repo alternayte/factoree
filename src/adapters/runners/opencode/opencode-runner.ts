@@ -20,7 +20,7 @@ const OPENCODE_CONFIG = JSON.stringify({ permission: { external_directory: "allo
 /**
  * The shell script that starts one non-interactive opencode session. `opencode run` reads the
  * message from standard input when the command line names none, so the prompt never appears in
- * a process listing. See SDD section 30 and controller decision 10.
+ * a process listing. See SDD section 30 and DI-11.10.
  */
 const START_SCRIPT =
   'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_OPENCODE_BIN" run --print-logs --format json "$@"';

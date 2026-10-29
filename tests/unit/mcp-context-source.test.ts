@@ -159,7 +159,7 @@ describe("McpContextSource", () => {
     ).rejects.toThrow(/never offered/);
   });
   it("drops a duplicate reference, so one MCP answer never fails a Run", async () => {
-    // Controller decision 13 and SDD section 21. Two items with one `ref` would make two
+    // DI-5.13 and SDD section 21. Two items with one `ref` would make two
     // candidates with one contract reference, and the contract validation would fail the Run.
     const answer = JSON.stringify({
       items: [

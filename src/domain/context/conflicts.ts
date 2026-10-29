@@ -72,7 +72,7 @@ const DECISION_REASON = "a recorded human decision settles this subject";
  * evidence, so the members combine and never compete. Source code and an executable test tell one
  * story about the same behavior. A pair inside such a domain is therefore no conflict at all.
  * AT-08 reserves the human question for two equally authoritative architecture decisions. This
- * corrects controller decision 8, which the controller overturned in the Task 7 review.
+ * corrects DI-4.8, which a review overturned.
  */
 const COMBINED_EVIDENCE_DOMAINS = new Set(["current_implementation", "system_topology"]);
 

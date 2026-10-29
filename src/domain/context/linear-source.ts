@@ -11,7 +11,7 @@ import { linearDecisionRef } from "./decision-ref.js";
 /**
  * SDD section 17 requires a Linear context source. The Work Item is the product intent of the
  * Run. SDD section 22 gives an explicit Work Item decision the highest product-intent authority.
- * SDD section 23 requires a human answer to persist as a Run decision, and controller decision 4
+ * SDD section 23 requires a human answer to persist as a Run decision, and DI-4.4
  * persists it here, as a Context Item of the same authority.
  *
  * The source holds every document it offers. It needs no network call and cannot fail.

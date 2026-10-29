@@ -41,7 +41,7 @@ export interface ConfiguredContextSourceProviderOptions {
 
 /**
  * Builds the context sources of one Run. SDD section 53 makes a source a per-Project record, so
- * the registry cannot be built once per worker. See controller decision 1.
+ * the registry cannot be built once per worker. See DI-5.1.
  */
 export class ConfiguredContextSourceProvider implements ContextSourceProvider {
   constructor(private readonly options: ConfiguredContextSourceProviderOptions) {}
@@ -53,7 +53,7 @@ export class ConfiguredContextSourceProvider implements ContextSourceProvider {
     for (const record of records) {
       if (!record.enabled) continue;
       // SDD section 19. Backstage needs the administrator endpoint and the repository opt in.
-      // See controller decision 4.
+      // See DI-5.4.
       if (record.kind === "backstage" && !scope.contextConfiguration.backstageEnabled) continue;
 
       let credential: string | null = null;
@@ -64,7 +64,7 @@ export class ConfiguredContextSourceProvider implements ContextSourceProvider {
           record.secretName,
         );
         // A source that needs a credential and has none must not run without one. Leaving it out
-        // degrades the Run, which controller decision 13 permits, and it never sends an
+        // degrades the Run, which DI-5.13 permits, and it never sends an
         // unauthenticated request in its place.
         if (credential === null) continue;
       }

@@ -203,15 +203,14 @@ const discoveryLinearTeams = new TenantScopedLinearTeamLookup(
 
 const discoveryService = new DiscoveryService(discoveryClient, products, repositories, discoveryLinearTeams, logger);
 
-// Controller decision 1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
+// DI-5.1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
 // the real `SecretStore` answers it directly through `get`, which already takes a tenant and a
 // Product.
 const contextSecrets: ContextSourceSecretReader = {
   read: (tenantId, productId, name) => secrets.get(tenantId, productId, name),
 };
 
-// Controller decision 2. Task 5 built the real Backstage source. Task 8 builds the MCP source.
-// Until then a configured MCP row must fail loudly instead of silently building nothing.
+// DI-5.1. The Backstage and MCP sources are built per Run from the Product configuration.
 const contextSources = new ConfiguredContextSourceProvider({
   configurations: new PrismaContextSourceConfigurationStore(prisma),
   secrets: contextSecrets,

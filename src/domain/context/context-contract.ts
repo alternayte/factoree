@@ -10,7 +10,7 @@ export const CONTEXT_CONTRACT_VERSION = 1 as const;
  * SDD section 18 disables organization-wide unbounded retrieval by default. AT-09 keeps a large
  * repository available through a tool, and out of the initial prompt. These two values are that
  * default. The resolver demotes an item past the budget to `discoverable`. It never drops the
- * item, so the contract still explains it. See controller decision 12.
+ * item, so the contract still explains it. See DI-4.12.
  */
 export const CONTEXT_REQUIRED_MAX_ITEMS = 20;
 export const CONTEXT_REQUIRED_MAX_BYTES = 64 * 1024;

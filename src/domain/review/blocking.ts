@@ -11,7 +11,7 @@ const BLOCKING_SEVERITIES = new Set<ReviewSeverity>(["blocker", "high"]);
 
 /**
  * SDD section 41. A style preference does not block, whatever severity the Reviewer gave it.
- * See controller decision 6.
+ * See DI-8.6.
  */
 const NON_BLOCKING_CATEGORIES = new Set<ReviewCategory>(["style"]);
 
@@ -98,7 +98,7 @@ const requirementIdentifierOf = (requirement: string): string =>
 
 const requirementIsResolvable = (requirement: string, contract: ValidationContract): boolean => {
   const text = requirement.trim();
-  // Controller decision 4. A Reviewer that invents an assertion identifier names no mandatory
+  // DI-8.4. A Reviewer that invents an assertion identifier names no mandatory
   // requirement. Any other text names a repository rule or a constraint, and Factoree cannot
   // enumerate those deterministically.
   if (!text.startsWith("VAL-")) return true;
@@ -170,7 +170,7 @@ export const failureLine = (decision: FindingDecision): string =>
 
 /**
  * SDD section 41. Factoree decides which findings block. The agent `verdict` field is carried
- * on the report and decides nothing. See controller decision 2.
+ * on the report and decides nothing. See DI-8.2.
  */
 export const decideReview = (input: {
   report: ReviewReport;

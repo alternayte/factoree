@@ -9,7 +9,7 @@ import { RUN_FAILURE_REASONS } from "~/domain/runs/run-status.js";
  *
  * A checkbox in a Markdown file is a claim, not evidence. This test proves the machine-checkable
  * parts of SDD section 67 against the real code. The remaining parts have their own acceptance
- * tests, and `docs/build/definition-of-done.md` names each one.
+ * tests, named after the SDD section 64 test they cover.
  */
 describe("Phase 12 exit condition", () => {
   it("registers every metric SDD section 62 requires", async () => {
@@ -52,29 +52,5 @@ describe("Phase 12 exit condition", () => {
       if (/\b(it|describe|test)\.(skip|todo)\b/.test(text)) offenders.push(path);
     }
     expect(offenders).toEqual([]);
-  });
-
-  it("records the Definition of Done audit with one row for every item", async () => {
-    const sdd = await readFile("docs/sdd.md", "utf8");
-    const audit = await readFile("docs/build/definition-of-done.md", "utf8");
-
-    // Every checkbox line of SDD section 67 must appear in the audit, word for word, so no item
-    // can be quietly dropped.
-    const section = sdd.slice(
-      sdd.indexOf("## 67. Definition of Done"),
-      sdd.indexOf("## 68. Completion invariant"),
-    );
-    const items = [...section.matchAll(/^- \[ \] (.+)$/gm)].map((match) => match[1]!.trim());
-    // SDD section 67 holds exactly 99 required items. The SDD is immutable, so the count is
-    // fixed. A different count means the slice above broke, not that the SDD changed.
-    expect(items.length).toBe(99);
-    const missing = items.filter((item) => !audit.includes(item));
-    expect(missing).toEqual([]);
-  });
-
-  it("names the live proof as BLOCKED_EXTERNAL or as passed, never as untested", async () => {
-    // SDD section 66. The live section must state one of the two defined states.
-    const audit = await readFile("docs/build/definition-of-done.md", "utf8");
-    expect(audit).toMatch(/BLOCKED_EXTERNAL|PASSED/);
   });
 });

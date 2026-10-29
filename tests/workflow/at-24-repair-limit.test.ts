@@ -55,7 +55,7 @@ const blockingReport = () => ({
 /**
  * AT-24, SDD section 64: "No third repair starts when maximum repairs is two." SDD section 42
  * bounds repairs per Run, not per stage, so the second case mixes a verification repair with
- * two review repairs and proves the counter is shared. Controller decision 9 owns that case.
+ * two review repairs and proves the counter is shared. DI-8.9 owns that case.
  */
 describe("AT-24 — the repair limit stops the third repair", () => {
   it("stops after two review repairs, with three implement calls and FAILED_REVIEW", async () => {

@@ -64,7 +64,7 @@ export interface ReviewActivityOutput {
   summary: string;
   failures: string[];
   sessionId: string;
-  /** False when the report is absent or fails to parse. Controller decision 7 owns this path. */
+  /** False when the report is absent or fails to parse. DI-8.7 owns this path. */
   reportUsable: boolean;
   reportProblem: string | null;
   /** Every path the change touched, relative to the primary worktree. */
@@ -161,7 +161,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         );
       }
 
-      // Step 3. Controller decision: the reviewer role denies `writePrimaryWorktree`. The
+      // Step 3. DI-8.15: the reviewer role denies `writePrimaryWorktree`. The
       // Reviewer writes only into the review directory, never into the primary worktree.
       const actionPolicy = buildActionPolicy({ role: "reviewer" });
 
@@ -463,7 +463,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         changedFiles: diff.changedFiles,
       });
 
-      // Step 16. Every finding is persisted, blocking and non-blocking. Controller decision 17
+      // Step 16. Every finding is persisted, blocking and non-blocking. DI-8.17
       // owns this. `decideReview` already decided `blocking` above, on the unredacted finding,
       // so redacting here cannot change which finding blocks. Only the values that leave this
       // activity are redacted: the persisted row, the returned failure lines below, and the log

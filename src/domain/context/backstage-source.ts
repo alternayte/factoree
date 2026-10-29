@@ -55,7 +55,7 @@ const renderEntity = (entity: BackstageEntity): string => {
  * SDD section 19. Backstage is a topology source: it helps Factoree decide where to look. SDD
  * section 18 gives an ownership or dependency relation priority 3 and an API relation priority 4,
  * and it forbids organization-wide unbounded retrieval, so discovery is one hop from the entity
- * of the primary repository and stops at a hard cap. See controller decisions 5 and 6.
+ * of the primary repository and stops at a hard cap. See DI-5.5 and DI-5.6.
  */
 export class BackstageContextSource implements ContextSource {
   private readonly documents = new Map<string, { content: string; sourceVersion: string }>();
@@ -91,7 +91,7 @@ export class BackstageContextSource implements ContextSource {
       suggestedClassification: "reference",
     };
 
-    // SDD section 20 and controller decision 7. A repository location becomes a reference
+    // SDD section 20 and DI-5.7. A repository location becomes a reference
     // repository only when the primary repository asked for automatic discovery.
     if (
       request.contextConfiguration.automaticReferenceDiscovery &&
@@ -110,7 +110,7 @@ export class BackstageContextSource implements ContextSource {
     try {
       return await this.walk(request);
     } catch {
-      // Controller decision 13. Backstage is not required for a Run to proceed, so a catalog
+      // DI-5.13. Backstage is not required for a Run to proceed, so a catalog
       // fault degrades the Run and never fails it.
       return [];
     }

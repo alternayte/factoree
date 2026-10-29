@@ -138,7 +138,7 @@ export interface RepositoryContextSourceOptions {
  * every recorded item. Discovery therefore pins a SHA before it lists anything.
  *
  * The source runs on the control plane through a read-only git port. It executes no repository
- * code. See controller decision 2.
+ * code. See DI-4.2.
  */
 export class RepositoryContextSource implements ContextSource {
   private readonly urls = new Map<string, string>();

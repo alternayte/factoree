@@ -85,7 +85,7 @@ describe("BackstageContextSource", () => {
       path: null,
     });
     expect(root?.sourceVersion).toBe("etag-1");
-    // SDD section 19 and controller decision 5. The catalog never outranks code or an ADR.
+    // SDD section 19 and DI-5.5. The catalog never outranks code or an ADR.
     expect(root?.authority).toBe("declarative_catalog");
     expect(root?.reason).toBe(
       'the Backstage catalog entity of the primary repository "acme/manuscript-service"',

@@ -7,7 +7,7 @@
  *
  * The command reads `FACTOREE_LIVE_PROFILE` first. The default profile is `full`, the strict
  * profile SDD section 66 demands. The `local` profile is a convenience for the scenario code.
- * A `local` pass is NOT SDD section 66 proof. Read `docs/build/local-harness-plan.md`.
+ * A `local` pass is NOT SDD section 66 proof. Read `docs/live-acceptance.md`.
  */
 import { unmetRequirementsFor } from "./required-credentials.js";
 import { PROFILE_BANNER, credentialsFor, resolveProfile } from "./profile.js";
