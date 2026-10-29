@@ -6,6 +6,7 @@ import {
   defineSignal,
   ApplicationFailure,
   isCancellation,
+  TemporalFailure,
   proxyActivities,
   setHandler,
   sleep,
@@ -46,7 +47,7 @@ import { buildRepositoryUrl } from "../domain/products/repository-url.js";
 import { renderRisks } from "../domain/refinement/risk.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { completionInvariantFailures } from "../domain/runs/completion-invariant.js";
+import { completionInvariantFailures, prePublicationFailures } from "../domain/runs/completion-invariant.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { selectTarget } from "../domain/routing/select-targets.js";
@@ -467,6 +468,11 @@ export async function agentRunWorkflow(
   const deadline = Date.now() + runBudgetMs;
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
+  // A terminal write must run even when the workflow scope is cancelled, or the Run row stays in
+  // a working state while the workflow has already ended.
+  const completeRun = (args: Parameters<Activities["completeRun"]>[0]): Promise<void> =>
+    CancellationScope.nonCancellable(() => activities.completeRun(args));
+
   const failRun = async (
     failureReason:
       | "RUN_TIMEOUT"
@@ -507,7 +513,7 @@ export async function agentRunWorkflow(
           ? "FAILED_REVIEW"
           : "FAILED";
     // Write the durable terminal state first. A Linear outage must not leave the Run open.
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -529,7 +535,7 @@ export async function agentRunWorkflow(
     currentTargetSha: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = "STALE_BASE";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -558,7 +564,7 @@ export async function agentRunWorkflow(
     declaredProductSlug: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = "BLOCKED_ROUTING";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -827,7 +833,7 @@ export async function agentRunWorkflow(
       );
     }
     status = "CANCELLED";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -911,7 +917,14 @@ export async function agentRunWorkflow(
       // this loop always ends.
       while (refined.status === "needs_input") {
         const question = refined.unresolvedQuestions[0];
-        if (question === undefined) break;
+        // A `needs_input` result with no question names nothing a human can answer. The Run must
+        // not continue as if refinement were ready.
+        if (question === undefined) {
+          return await failRun(
+            "REFINEMENT_UNRESOLVED",
+            "Refinement needs input but named no question, so Factoree cannot continue.",
+          );
+        }
         const proceeded = await askAndWait(question.id, question.question);
         if (stopRequested) return await cancelRun();
         if (!proceeded) {
@@ -1207,6 +1220,18 @@ export async function agentRunWorkflow(
         activities.postProgress({ sessionId: input.agentSessionId, message: validation.summary }),
       );
 
+      // docs/specs/refiner-agent.md. An assertion that no automated check can answer ends an L3
+      // Run with VALIDATION_MANUAL_REQUIRED anyway. Stopping here spends no agent time on it.
+      if (validation.manualAssertionIds.length > 0) {
+        return await failRun(
+          "VALIDATION_MANUAL_REQUIRED",
+          "Factoree cannot check these assertions automatically: " +
+            `${validation.manualAssertionIds.join(", ")}. Rewrite each one as an observable result ` +
+            "(a command, an HTTP response, or a page state) and delegate again. Factoree started no " +
+            "implementation and published nothing.",
+        );
+      }
+
       // A stop that arrived while the contract was built must prevent preparation.
       if (stopRequested) return await cancelRun();
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -1441,7 +1466,7 @@ export async function agentRunWorkflow(
           if (result === null) {
             // The pass ended with no result and no stop signal. The budget decides why.
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-            throw new Error("the userValidate activity returned no result");
+            throw ApplicationFailure.nonRetryable("the userValidate activity returned no result");
           }
           userValidation = result;
         } catch (error) {
@@ -1548,7 +1573,7 @@ export async function agentRunWorkflow(
           if (stopRequested) return await cancelRun();
           if (result === null) {
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-            throw new Error("the review activity returned no result");
+            throw ApplicationFailure.nonRetryable("the review activity returned no result");
           }
           review = result;
         } catch (error) {
@@ -1620,6 +1645,28 @@ export async function agentRunWorkflow(
       // an agent.
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
       if (stopRequested) return await cancelRun();
+
+      // SDD section 68. Every clause that can hold before publication is checked here, so a broken
+      // clause stops the Run before a pull request exists, not after.
+      const unmetBeforePublication = prePublicationFailures({
+        workItemReady: refined.status === "ready",
+        contextContractVersion,
+        unresolvedConflict: resolvedContext.unresolvedConflict !== null,
+        validationContractVersion,
+        validationContractFrozenAt: validation.frozenAt,
+        implementationStartedAt,
+        validationPassed: publishedValidationPassed,
+        verificationPassed: publishedVerificationPassed,
+        blockingFindingCount: publishedBlockingCount,
+        repairCount,
+        repairLimit: maxRepairs,
+      });
+      if (unmetBeforePublication.length > 0) {
+        return await failRun(
+          "COMPLETION_INVARIANT_UNMET",
+          `Factoree cannot prove this change, so it published nothing. ${unmetBeforePublication.join(" ")}`,
+        );
+      }
 
       status = "PUBLISHING";
       await activities.setRunStatus({ runId: id, status });
@@ -1805,7 +1852,7 @@ export async function agentRunWorkflow(
       // SDD section 48. The Run is complete. This is the one success terminal state, and the
       // completion invariant above is the only gate that reaches it.
       status = "READY_FOR_HUMAN";
-      await activities.completeRun({
+      await completeRun({
         tenantId: input.tenantId,
         runId: id,
         status,
@@ -1820,14 +1867,17 @@ export async function agentRunWorkflow(
   } catch (error) {
     // Any unhandled activity failure must still drive the Run to a terminal state.
     status = "FAILED";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
       failureReason: "INTERNAL_ERROR",
       completedAt: new Date(Date.now()).toISOString(),
     });
-    throw error;
+    // A plain error fails the workflow task, and Temporal retries that task for ever while the
+    // row says FAILED. A Temporal failure ends the workflow.
+    if (error instanceof TemporalFailure) throw error;
+    throw ApplicationFailure.fromError(error, { nonRetryable: true });
   }
 }
 

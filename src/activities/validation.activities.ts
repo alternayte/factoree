@@ -48,6 +48,11 @@ export interface BuildValidationContractActivityOutput {
   question: { id: string; question: string } | null;
   /** The line Factoree posts to Linear. */
   summary: string;
+  /**
+   * The frozen assertions no automated check can answer (`manual` and `code_review`). An L3 Run
+   * cannot pass with one, so the workflow stops before implementation instead of after it.
+   */
+  manualAssertionIds: string[];
 }
 
 /**
@@ -146,6 +151,12 @@ const summaryOf = (assertions: number, sha256: string): string =>
   `${assertions === 1 ? "assertion" : "assertions"}. Version ${sha256.slice(0, 12)}. ` +
   "It cannot change while this Run implements the work.";
 
+/** SDD section 36 and DI-7.5. The methods whose result is always `MANUAL_REQUIRED`. */
+const manualIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>): string[] =>
+  assertions
+    .filter((assertion) => assertion.method === "manual" || assertion.method === "code_review")
+    .map((assertion) => assertion.id);
+
 /** SDD section 63 names this file. */
 export const createValidationActivities = (dependencies: ValidationActivityDependencies) => ({
   async buildValidationContract(
@@ -182,6 +193,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           frozenAt: existing.createdAt.toISOString(),
           question: null,
           summary: summaryOf(existing.assertions.length, existing.sha256),
+          manualAssertionIds: manualIdsOf(existing.assertions),
         };
       }
 
@@ -210,6 +222,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           assertionCount: 0,
           frozenAt: null,
           question: { id: QUESTION_ID, question: QUESTION },
+          manualAssertionIds: [],
           summary:
             "Factoree cannot define success for this Work Item. It needs one observable " +
             "assertion before it can start implementation.",
@@ -252,6 +265,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         frozenAt: stored.createdAt.toISOString(),
         question: null,
         summary: summaryOf(stored.assertions.length, stored.sha256),
+        manualAssertionIds: manualIdsOf(stored.assertions),
       };
     } finally {
       metrics.validationContractDuration.observe(labels, (Date.now() - started) / 1000);

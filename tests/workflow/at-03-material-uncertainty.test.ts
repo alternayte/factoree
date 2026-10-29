@@ -77,6 +77,33 @@ describe("AT-03 — a material uncertainty stops the Run before any implementati
     });
   });
 
+  it("fails the Run when refinement needs input but names no question", async () => {
+    // A needs_input result with an empty question list once fell through to implementation.
+    refineOverrides.set("run-ses-at03e", (input) => ({
+      status: "needs_input",
+      goal: "Send one.",
+      primaryRepository: input.project.primaryRepository,
+      referenceRepositories: input.project.referenceRepositories,
+      acceptanceCriteria: [],
+      criteria: [],
+      workItemReferences: [],
+      constraints: [],
+      risks: [],
+      unresolvedQuestions: [],
+      autonomyLevel: "L3",
+    }));
+
+    const result = await runWorker(async () => {
+      const handle = await start("ses-at03e", { workItem: openQuestionWorkItem });
+      return handle.result();
+    });
+    refineOverrides.delete("run-ses-at03e");
+
+    expect(result.status).toBe("FAILED");
+    expect(completionsOf("run-ses-at03e").at(-1)?.failureReason).toBe("REFINEMENT_UNRESOLVED");
+    expect(implementsOf("run-ses-at03e")).toEqual([]);
+  });
+
   it("fails the Run with REFINEMENT_UNRESOLVED when the rounds are spent", async () => {
     // The Refinement engine numbers a question by its position in the source Work Item, so a
     // recorded answer resolves that question for good. A fixture Work Item can therefore never

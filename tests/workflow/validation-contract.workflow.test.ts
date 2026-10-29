@@ -55,6 +55,7 @@ const NEEDS_INPUT: BuildValidationContractActivityOutput = {
   frozenAt: null,
   question: { id: "VAL-Q-1", question: "What observable behavior proves this work is done?" },
   summary: "Factoree cannot define success for this Work Item.",
+  manualAssertionIds: [],
 };
 
 /** The result the double reports once one assertion exists and the contract froze. */
@@ -66,6 +67,7 @@ const READY: BuildValidationContractActivityOutput = {
   frozenAt: "2026-01-01T00:00:00.000Z",
   question: null,
   summary: "Factoree froze the Validation Contract with 1 assertion.",
+  manualAssertionIds: [],
 };
 
 describe("the Validation Contract state of the Run workflow", () => {
@@ -247,6 +249,7 @@ describe("the Validation Contract state of the Run workflow", () => {
       frozenAt: "2026-01-01T00:00:00.000Z",
       question: null,
       summary: "Factoree froze the Validation Contract with 1 assertion.",
+      manualAssertionIds: [],
     };
     validationOutcomes.set("run-ses-val-h", () => readyWithNoHash);
 
@@ -260,6 +263,23 @@ describe("the Validation Contract state of the Run workflow", () => {
     expect(completionsOf("run-ses-val-h").at(-1)?.failureReason).toBe("VALIDATION_UNRESOLVED");
     expect(preparedOf("run-ses-val-h")).toEqual([]);
     expect(implementsOf("run-ses-val-h")).toEqual([]);
+  });
+
+  it("fails with VALIDATION_MANUAL_REQUIRED before any sandbox exists when an assertion is manual", async () => {
+    // docs/specs/refiner-agent.md. A manual assertion ends an L3 Run anyway, so the Run must stop
+    // before it spends agent time on an implementation that cannot pass.
+    validationOutcomes.set("run-ses-val-m", () => ({ ...READY, manualAssertionIds: ["VAL-MAN-001"] }));
+
+    const result = await runWorker(async () => {
+      const handle = await start("ses-val-m");
+      return handle.result();
+    });
+    validationOutcomes.delete("run-ses-val-m");
+
+    expect(result.status).toBe("FAILED");
+    expect(completionsOf("run-ses-val-m").at(-1)?.failureReason).toBe("VALIDATION_MANUAL_REQUIRED");
+    expect(preparedOf("run-ses-val-m")).toEqual([]);
+    expect(implementsOf("run-ses-val-m")).toEqual([]);
   });
 
   it("prepares no sandbox when a stop arrives while the contract is built", async () => {

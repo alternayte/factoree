@@ -439,6 +439,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
     frozenAt: "2026-01-01T00:00:00.000Z",
     question: null,
     summary: "Factoree froze the Validation Contract with 2 assertions.",
+    manualAssertionIds: [],
   }));
 
   const reviewInputs: ReviewActivityInput[] = [];
