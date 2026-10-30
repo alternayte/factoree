@@ -130,6 +130,34 @@ Bootstrap does not create a Repository row. Discovery creates it from the
 `.factoree/config.yaml` file of the fixture repository, when the GitHub App
 reports the repository push to Factoree.
 
+Discovery reads the file when the App is installed on the repository, and on each push to
+the default branch that changes the file. The Sprite holds Claude Code and no opencode, so a
+repository that uses opencode installs it in its bootstrap. The Sprite runs npm 12, which runs
+no install script, so the bootstrap also runs the opencode postinstall (DI-14.19). This file
+runs a Run on the free opencode model:
+
+    version: 1
+    identity:
+      product: <SETUP_PRODUCT_SLUG>
+      linear:
+        teamKey: <SETUP_LINEAR_TEAM_KEY>
+    bootstrap:
+      command: npm install -g --prefix /home/sprite/.local opencode-ai && cd /home/sprite/.local/lib/node_modules/opencode-ai && node postinstall.mjs
+    verify:
+      commands:
+        - name: tree-clean
+          run: git diff --check HEAD
+    agents:
+      implementer: opencode
+      validator: opencode
+      reviewer: opencode
+    sandbox:
+      allowedDomains: [registry.npmjs.org, opencode.ai, models.dev]
+
+Set `SETUP_ALLOWED_DOMAINS=registry.npmjs.org,opencode.ai,models.dev` in `.env` before
+`just bootstrap`. The Product allow list is the ceiling, so the repository list cannot add a
+host the Product does not allow.
+
 The two context source rows point at the local stubs of `just stubs`. You
 need no real Backstage instance and no real MCP server for this path.
 `tests/live/scenario.ts` refuses to start unless the Product carries one

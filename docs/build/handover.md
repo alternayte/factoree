@@ -4,7 +4,7 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-The owner resolves B-1 (create and install the GitHub App, generate the two secrets, free port 5432). Then run `just up`, `just migrate`, `just bootstrap` and `just live`, and record the result in W-8.
+The work queue is done. The owner reviews `hardening/review-fixes` and decides the merge. Open work R-10 and H-3, H-5 to H-15 stays below.
 
 ## Work queue
 
@@ -17,7 +17,7 @@ The owner resolves B-1 (create and install the GitHub App, generate the two secr
 | W-5 | DONE | Build `docs/specs/refiner-agent.md`. | W-3, W-4 | DI-14.12 to DI-14.15. `tests/unit/refiner-proposal.test.ts`, `tests/unit/propose-refinement-activity.test.ts`, `tests/workflow/refiner.workflow.test.ts`. The flaky target-selection wait is fixed. `just verify` exit 0: unit 1296, integration 286, workflow 112. |
 | W-6 | DONE | Action Policy (R-3): a mechanism for each action, or remove the action. Turn off repository MCP and settings files for the agent CLIs. | W-1 | DI-14.16, B-3. `tests/unit/action-policy.test.ts`, runner and prompt tests. |
 | W-7 | DONE | Remove the Change Set leftovers (H-4). | W-1 | Migration `20261102120000_drop_run_target_change_set_columns`. `RunTarget.role`, `RunTarget.mergeOrder` and the Proof Pack merge order line are gone. `select-targets.ts` already selects one target. |
-| W-8 | BLOCKED | Preview exposure on Fly (H-2), then the §66 live proof (B-1). | W-3, W-5 | H-2 DONE: DI-14.17, live probe on 2026-10-29, `tests/unit/fly-sprite-sandbox.test.ts`. The live proof is blocked: B-1 names the missing GitHub App identity and the placeholder secrets. |
+| W-8 | DONE | Preview exposure on Fly (H-2), then the §66 live proof (B-1). | W-3, W-5 | H-2: DI-14.17. Live proof on 2026-10-30: `just live` passed all 11 §67 checks on FAC-39, Run 45223b40, draft pull request alternayte/factoree-live-fixture#1 (L2). The run found and fixed the strict GitHub webhook schemas (DI-14.18) and the opencode install on the sprite (DI-14.19). |
 
 ## State at the last commit
 
