@@ -84,14 +84,13 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         parsed.data.installation.account.login,
       );
       if (tenantId !== null) {
-        for (const repository of parsed.data.repositories_added) {
-          const outcome = await dependencies.discovery.syncRepository(
+        // The event names no default branch, so the installation sync reads each granted
+        // repository from the API, the same path as the installation event.
+        if (parsed.data.repositories_added.length > 0) {
+          await dependencies.startInstallationSync({
             tenantId,
-            repository.full_name,
-            repository.default_branch,
-            String(parsed.data.installation.id),
-          );
-          logDiscoveryOutcome(dependencies, repository.full_name, outcome);
+            githubInstallationId: String(parsed.data.installation.id),
+          });
         }
         for (const repository of parsed.data.repositories_removed ?? []) {
           await dependencies.discovery.markAbsent(tenantId, repository.full_name);

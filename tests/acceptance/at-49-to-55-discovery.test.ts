@@ -528,7 +528,7 @@ describe("AT-50 and AT-51: the real GitHub webhook route", () => {
     const payload = {
       action: "added",
       installation: { id: 42, account: { login: "acme" } },
-      repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+      repositories_added: [{ full_name: "acme/api" }],
     };
     const body = JSON.stringify(payload);
 
@@ -554,7 +554,7 @@ describe("AT-50 and AT-51: the real GitHub webhook route", () => {
     const payload = {
       action: "added",
       installation: { id: 99, account: { login: "acme" } },
-      repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+      repositories_added: [{ full_name: "acme/api" }],
     };
     const body = JSON.stringify(payload);
 
