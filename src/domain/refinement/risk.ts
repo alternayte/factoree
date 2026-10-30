@@ -24,16 +24,70 @@ export const highRiskLabelsOf = (labels: string[]): string[] => {
 const rankOf = (level: string): number => AUTONOMY_LEVELS.indexOf(level as AutonomyLevel);
 
 /**
- * SDD section 28. A high-risk label caps autonomy at L2 unless Project policy overrides the cap,
- * and no Project policy override exists in Version 1. SDD section 27 reserves L4 for a future
- * version, so L4 can never survive. An unrecognised level falls back to L2, because a lower
- * level is always the safe direction.
+ * docs/specs/autonomy-levels.md. The SDD section 28 caps a Product starts with: each default
+ * high-risk label allows L2 at most. An operator changes them through the administration API.
  */
-export const capAutonomy = (level: string, highRisk: boolean): AutonomyLevel => {
-  const rank = rankOf(level);
-  if (rank < 0) return "L2";
-  const ceiling = highRisk ? rankOf("L2") : rankOf("L3");
-  return AUTONOMY_LEVELS[Math.min(rank, ceiling)] ?? "L2";
+export const DEFAULT_RISK_CAPS: Readonly<Record<string, AutonomyLevel>> = Object.fromEntries(
+  HIGH_RISK_LABELS.map((label) => [label, "L2"]),
+);
+
+/** A Linear label that lowers the level of one Work Item. No label raises it. */
+const LOWERING_LABELS: Readonly<Record<string, AutonomyLevel>> = {
+  "factoree:l0": "L0",
+  "factoree:l1": "L1",
+  "factoree:l2": "L2",
+};
+
+/** Version 1 never merges, so L3 is the highest level a Run can reach. SDD section 27. */
+const HIGHEST = "L3";
+
+export interface AutonomyInput {
+  /** The Product default level. A pending Product is L0. */
+  defaultLevel: string;
+  labels: string[];
+  /** The caps of the Product, by label. Null means `DEFAULT_RISK_CAPS`. */
+  riskCaps: Readonly<Record<string, string>> | null;
+  /** True when the labels of the Work Item could not be read. The cap then fails closed. */
+  labelsUnreadable: boolean;
+}
+
+export interface AutonomyDecision {
+  level: AutonomyLevel;
+  /** One sentence for each rule that lowered the level. The Proof Pack shows them. */
+  reasons: string[];
+}
+
+/**
+ * docs/specs/autonomy-levels.md. The level of one Run. Every rule can only lower the level, so
+ * the result is never above the Product default and never above L3.
+ */
+export const decideAutonomy = (input: AutonomyInput): AutonomyDecision => {
+  const reasons: string[] = [];
+  const known = rankOf(input.defaultLevel);
+  // An unrecognised level falls back to L2, because a lower level is always the safe direction.
+  let rank = known < 0 ? rankOf("L2") : Math.min(known, rankOf(HIGHEST));
+  const lower = (to: string, reason: string) => {
+    const target = rankOf(to);
+    if (target >= 0 && target < rank) {
+      rank = target;
+      reasons.push(reason);
+    }
+  };
+
+  if (input.labelsUnreadable) {
+    lower("L2", "Factoree could not read the labels of this Work Item, so it runs this Run at L2.");
+  }
+  const caps = input.riskCaps ?? DEFAULT_RISK_CAPS;
+  const labels = [...new Set(input.labels.map((label) => label.trim().toLowerCase()))];
+  for (const label of labels) {
+    const cap = caps[label];
+    if (cap !== undefined) lower(cap, `The label "${label}" caps this Run at ${cap}.`);
+  }
+  for (const label of labels) {
+    const lowered = LOWERING_LABELS[label];
+    if (lowered !== undefined) lower(lowered, `The label "${label}" lowers this Run to ${lowered}.`);
+  }
+  return { level: AUTONOMY_LEVELS[rank] ?? "L2", reasons };
 };
 
 const UNCONFIGURED_REPOSITORY = "unconfigured-repository:";
@@ -54,10 +108,7 @@ export const describeRisk = (risk: string): string => {
     );
   }
   if ((HIGH_RISK_LABELS as readonly string[]).includes(risk)) {
-    return (
-      `The Work Item carries the high-risk label "${risk}". Factoree caps the autonomy level ` +
-      "of this Run at L2, so a human must approve the result."
-    );
+    return `The Work Item carries the high-risk label "${risk}".`;
   }
   return risk;
 };

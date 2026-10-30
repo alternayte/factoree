@@ -4,7 +4,8 @@
  * it takes no agent claim. It reports every broken clause, because an operator must repair all
  * of them, not only the first one.
  */
-export interface CompletionInvariantInput {
+/** The clauses that hold before publication. A Run that breaks one of them must publish nothing. */
+export interface PrePublicationInput {
   workItemReady: boolean;
   contextContractVersion: string | null;
   unresolvedConflict: boolean;
@@ -22,6 +23,9 @@ export interface CompletionInvariantInput {
   blockingFindingCount: number;
   repairCount: number;
   repairLimit: number;
+}
+
+export interface CompletionInvariantInput extends PrePublicationInput {
   /**
    * SDD section 44 and section 46. The publication reproduced this hash inside the trusted
    * checkout before it created a branch, so one recorded value proves both sides of the clause
@@ -35,7 +39,11 @@ export interface CompletionInvariantInput {
 
 const SHA256 = /^[0-9a-f]{64}$/;
 
-export const completionInvariantFailures = (input: CompletionInvariantInput): string[] => {
+/**
+ * The clauses of SDD section 68 that hold before publication. The workflow checks them before it
+ * pushes, so a broken clause stops the Run before a pull request exists.
+ */
+export const prePublicationFailures = (input: PrePublicationInput): string[] => {
   const failures: string[] = [];
   if (!input.workItemReady) failures.push("The Work Item is not ready.");
   if (input.contextContractVersion === null) failures.push("No Context Contract exists.");
@@ -56,6 +64,11 @@ export const completionInvariantFailures = (input: CompletionInvariantInput): st
   if (input.repairCount > input.repairLimit) {
     failures.push(`The repair count ${input.repairCount} exceeds the limit ${input.repairLimit}.`);
   }
+  return failures;
+};
+
+export const completionInvariantFailures = (input: CompletionInvariantInput): string[] => {
+  const failures = prePublicationFailures(input);
   if (!SHA256.test(input.patchSha256)) failures.push("No verified patch hash exists.");
   if (!input.baseUnchanged) failures.push("The target base SHA changed.");
   if (input.pullRequestUrl === null || input.pullRequestUrl.trim() === "") {

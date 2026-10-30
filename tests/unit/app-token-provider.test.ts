@@ -168,6 +168,34 @@ describe("GitHubAppTokenProvider", () => {
     expect(JSON.parse(bodies[0] ?? "{}")).toEqual({ permissions: { contents: "read" } });
   });
 
+  it("limits the token to the named repositories, and keeps one cache entry per repository set", async () => {
+    const bodies: string[] = [];
+    let minted = 0;
+    const provider = new GitHubAppTokenProvider({
+      appId: "123456",
+      privateKeyBase64,
+      now: () => 0,
+      fetch: ((_url: string, init: RequestInit) => {
+        bodies.push(typeof init.body === "string" ? init.body : "");
+        minted += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ token: `ghs_${minted}`, expires_at: new Date(3_600_000).toISOString() }),
+            { status: 201 },
+          ),
+        );
+      }) as unknown as typeof fetch,
+    });
+
+    const api = await provider.tokenForInstallation("42", { contents: "write" }, ["acme/api"]);
+    const web = await provider.tokenForInstallation("42", { contents: "write" }, ["acme/web"]);
+
+    // GitHub takes the repository name without the owner, because an installation has one owner.
+    expect(JSON.parse(bodies[0] ?? "{}")).toEqual({ permissions: { contents: "write" }, repositories: ["api"] });
+    expect(JSON.parse(bodies[1] ?? "{}")).toEqual({ permissions: { contents: "write" }, repositories: ["web"] });
+    expect(api).not.toBe(web);
+  });
+
   it("never returns a cached write-scoped token for a read request", async () => {
     let minted = 0;
     const provider = new GitHubAppTokenProvider({

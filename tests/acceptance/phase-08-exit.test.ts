@@ -439,6 +439,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
     frozenAt: "2026-01-01T00:00:00.000Z",
     question: null,
     summary: "Factoree froze the Validation Contract with 2 assertions.",
+    manualAssertionIds: [],
   }));
 
   const reviewInputs: ReviewActivityInput[] = [];
@@ -470,6 +471,16 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
         },
         repositoryInstructions: REVIEW_FIXTURE_RULE,
       }),
+    // This exit test proves review and repair, not check isolation, so the check stages run in
+    // the same local sandbox the Implementer wrote. docs/specs/check-isolation.md has its own tests.
+    prepareCheckSandbox: async () => ({
+      ...(await (activities.prepareSandbox as () => Promise<object>)()),
+      patchSha256: "d".repeat(64),
+      treeSha: "",
+      changedFiles: [],
+      checkDefiningFiles: [],
+    }),
+    releaseCheckSandbox: () => Promise.resolve(),
     implement: async (input: ImplementActivityInput) => {
       implementCalls.push(input);
       // Attempt 1 writes the known defect. Every repair attempt writes the second revision.

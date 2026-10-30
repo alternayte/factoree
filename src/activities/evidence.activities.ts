@@ -178,6 +178,11 @@ export interface PublishProofPackActivityInput {
    * caller knows it, and without it a repaired blocker of an earlier attempt is reported as open.
    */
   reviewAttempt: number;
+  /** docs/specs/autonomy-levels.md. The level of the Run, and the caps that applied. */
+  autonomyLevel: string;
+  autonomyReasons: string[];
+  /** docs/specs/check-isolation.md. Changed files that define a check. */
+  checkDefiningFiles: string[];
 }
 
 export interface PublishProofPackActivityOutput {
@@ -354,7 +359,6 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
               fullName: fullNameById.get(target.repositoryId) ?? target.repositoryId,
               baseSha: target.baseSha ?? "",
               pullRequestUrl: target.pullRequestUrl ?? "",
-              mergeOrder: target.mergeOrder,
             })),
             siblingsRead: [...siblingReads.values()],
             selectionReason: runTargets[0]?.selectionReason ?? "sole member",
@@ -399,6 +403,9 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         commitSha: input.commitSha,
         repairCount: input.repairCount,
         repairLimit: input.repairLimit,
+        autonomyLevel: input.autonomyLevel,
+        autonomyReasons: input.autonomyReasons,
+        checkDefiningFiles: input.checkDefiningFiles,
         ...(routing === undefined ? {} : { routing }),
       }),
     );

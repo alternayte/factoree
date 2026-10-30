@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ActionDeniedError,
   buildActionPolicy,
   decideSiblingAction,
   McpToolDeniedError,
@@ -36,18 +35,15 @@ describe("buildActionPolicy", () => {
     expect(policy.decide("gitRemoteWriteFromAgent")).toBe("deny");
   });
 
-  it("throws ActionDeniedError from assertAllowed for a denied action", () => {
-    expect(() => buildActionPolicy().assertAllowed("gitRemoteWriteFromAgent")).toThrow(ActionDeniedError);
-  });
-
-  it("returns without throwing from assertAllowed for an allowed action", () => {
-    expect(() => buildActionPolicy().assertAllowed("writePrimaryWorktree")).not.toThrow();
-  });
-
   it("exposes a human readable table for the Implementer prompt", () => {
     const lines = buildActionPolicy().describe();
-    expect(lines).toContain("deny: write a reference repository");
-    expect(lines).toContain("allow: write the primary worktree");
+    // R-3. Every line names the mechanism that holds it, so the prompt promises nothing a
+    // mechanism does not keep.
+    expect(lines).toContain(
+      "deny: write a reference repository (the check sprite checks out every reference again, so a write reaches no check and no patch)",
+    );
+    expect(lines).toContain("allow: write the primary worktree (the captured patch is the only output of the work sprite)");
+    expect(lines.every((line) => /\(.+\)$/.test(line))).toBe(true);
   });
 });
 

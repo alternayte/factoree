@@ -254,7 +254,7 @@ describe("the userValidate activity", () => {
     );
 
     expect(runner.runs[0]?.role).toBe("validator");
-    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@1" });
+    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@2" });
     expect(output.sessionId).toBe("ses_fake");
   });
 

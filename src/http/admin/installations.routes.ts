@@ -48,19 +48,22 @@ export const registerInstallationRoutes = (
     return reply.code(200).send({ tenantId: tenant.id, linearWorkspaceId: tenant.linearWorkspaceId });
   });
 
-  // Task 7 added the GitHubInstallation model. No route wrote a row, so an unbound installation
-  // only logged a warning. This route binds one to a tenant, by the numeric installation id
-  // GitHub sends. It never resolves anything from the account login.
+  // This route binds a GitHub App installation to a tenant, by the numeric installation id GitHub
+  // sends. It never resolves anything from the account login, and it never moves an installation
+  // that another tenant holds.
   app.put("/admin/github-installations", async (request, reply) => {
     const parsed = gitHubInstallationSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const tenant = await dependencies.tenants.findByWorkspace(parsed.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
-    await dependencies.tenants.putGitHubInstallation(
+    const outcome = await dependencies.tenants.putGitHubInstallation(
       tenant.id,
       parsed.data.githubInstallationId,
       parsed.data.accountLogin,
     );
+    if (outcome === "held_by_another_tenant") {
+      return reply.code(409).send({ error: "the installation is bound to another tenant" });
+    }
     return reply.code(200).send({ tenantId: tenant.id, githubInstallationId: parsed.data.githubInstallationId });
   });
 };

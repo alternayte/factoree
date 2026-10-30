@@ -1,4 +1,24 @@
+import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
+import type { Redactor } from "~/telemetry/redaction.js";
+import type { Sandbox } from "~/domain/runs/sandbox.js";
+import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
+import type { SecretStore } from "~/domain/products/secret-store.js";
+import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
+import { buildActionPolicy } from "~/domain/policy/action-policy.js";
+import { worktreeFingerprint } from "~/domain/review/source-diff.js";
+import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
+import {
+  confirmationQuestion,
+  gateRefinerProposal,
+  parseRefinerProposal,
+  REFINER_PROPOSAL_SCHEMA,
+} from "~/domain/refinement/refiner-proposal.js";
+import { REFINER_PROMPT_VERSION, renderRefinerPrompt } from "~/prompts/refiner.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type {
   RecordedDecision,
@@ -15,6 +35,8 @@ export interface RefineActivityInput {
   source: WorkItemSource;
   project: RefinementProject;
   decisions: RecordedDecision[];
+  /** True when the labels of the Work Item could not be read. */
+  labelsUnreadable?: boolean;
 }
 
 export interface RefineActivityOutput {
@@ -38,12 +60,65 @@ export interface RefineActivityOutput {
   constraints: string[];
   unresolvedQuestions: RefinementQuestion[];
   autonomyLevel: string;
+  /** docs/specs/autonomy-levels.md. One sentence for each rule that lowered the level. */
+  autonomyReasons: string[];
 }
 
 export interface RefinementActivityDependencies {
   refinement: RefinementEngine;
   logger: Logger;
+  /** docs/specs/refiner-agent.md. The ports the refiner agent session needs. */
+  agent?: {
+    sandbox: Sandbox;
+    runners: AgentRunnerRegistry;
+    executions: AgentExecutionRepository;
+    secrets: SecretStore;
+    redactor: Redactor;
+  };
 }
+
+/** docs/specs/refiner-agent.md. One refiner session in the work sprite. */
+export interface ProposeRefinementActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  runnerName: string;
+  spriteId: string;
+  adapter: string;
+  workspacePath: string;
+  primaryPath: string;
+  /** The ticket title and description, as Linear holds them. The gate checks quotes against it. */
+  workItemText: string;
+  goal: string;
+  statedCriteria: string[];
+  contextContract: string;
+  skills: string[];
+  timeoutMs: number;
+}
+
+export interface ProposeRefinementActivityOutput {
+  /**
+   * `unavailable`: the refiner wrote no valid proposal. `worktree_changed`: it changed a file of
+   * the primary worktree, which the refiner role must never do.
+   */
+  status: "proposed" | "unavailable" | "worktree_changed";
+  accepted: ValidationCriterion[];
+  inferred: ValidationCriterion[];
+  /** One question in the grill format, or null when nothing needs a human. */
+  question: string | null;
+  reason: string;
+}
+
+const REFINER_HEARTBEAT_INTERVAL_MS = 10_000;
+
+interface RunnerWithActiveSession {
+  activeSession(runId: string): AgentSessionRef | undefined;
+}
+
+const activeSessionOf = (runner: AgentRunner, runId: string): AgentSessionRef | undefined => {
+  const candidate = runner as Partial<RunnerWithActiveSession>;
+  return typeof candidate.activeSession === "function" ? candidate.activeSession(runId) : undefined;
+};
 
 /**
  * SDD section 63 names this file. SDD section 8 puts Refinement before the readiness gate and
@@ -57,6 +132,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       source: input.source,
       project: input.project,
       decisions: input.decisions,
+      ...(input.labelsUnreadable === undefined ? {} : { labelsUnreadable: input.labelsUnreadable }),
     });
     // A Temporal workflow must stay deterministic, so the metric belongs here.
     metrics.refinementDuration.observe(
@@ -86,6 +162,142 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       constraints: output.workItem.constraints,
       unresolvedQuestions: output.unresolvedQuestions,
       autonomyLevel: output.autonomyLevel,
+      autonomyReasons: output.autonomyReasons,
     });
+  },
+
+  /**
+   * docs/specs/refiner-agent.md. A fresh refiner session reads the work sprite and writes one
+   * proposal. The gate decides what of it may freeze. The session must not change the primary
+   * worktree, and the fingerprint before and after proves it.
+   */
+  async proposeRefinement(input: ProposeRefinementActivityInput): Promise<ProposeRefinementActivityOutput> {
+    const agent = dependencies.agent;
+    if (agent === undefined) {
+      throw new Error("the refiner activity needs the agent ports, and this worker holds none");
+    }
+    await registerProjectSecrets(agent.redactor, agent.secrets, input.tenantId, input.productId, dependencies.logger);
+
+    let runner: AgentRunner;
+    try {
+      runner = agent.runners.get(input.runnerName);
+    } catch (error) {
+      if (!(error instanceof UnknownAgentRunnerError)) throw error;
+      throw new RunConfigurationError(
+        `The Project configures the validator runner "${input.runnerName}", which the refiner uses, ` +
+          `and it is not registered. Registered runners: ${agent.runners.names().join(", ")}. ` +
+          "Repair `validator_runner` in `.factoree/config.yaml`.",
+      );
+    }
+
+    const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+    await attachRunnerEnvironment(agent.sandbox, ref, agent.secrets, input.tenantId, input.productId);
+    const directory = `${input.workspacePath}/refinement`;
+    await agent.sandbox.exec(ref, { file: "mkdir", args: ["-p", directory] });
+    const proposalPath = `${directory}/proposal.json`;
+    const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
+    const before = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
+
+    const actionPolicy = buildActionPolicy({ role: "refiner" });
+    const prompt = renderRefinerPrompt({
+      workItem: input.workItemText,
+      goal: input.goal,
+      statedCriteria: input.statedCriteria,
+      contextContract: input.contextContract,
+      primaryRepositoryPath: input.primaryPath,
+      proposalPath,
+      proposalSchema: REFINER_PROPOSAL_SCHEMA,
+      skills: input.skills,
+    });
+
+    const context = Context.current();
+    const heartbeat = setInterval(() => context.heartbeat(), REFINER_HEARTBEAT_INTERVAL_MS);
+    const onCancel = (): void => {
+      const session = activeSessionOf(runner, input.runId);
+      if (session !== undefined) void runner.cancel(session).catch(() => undefined);
+    };
+    if (context.cancellationSignal.aborted) onCancel();
+    else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
+
+    let result;
+    try {
+      result = await runner.run({
+        runId: input.runId,
+        tenantId: input.tenantId,
+        role: "refiner",
+        sandbox: agent.sandbox,
+        ref,
+        workingDirectory: directory,
+        repositoryPath: input.primaryPath,
+        prompt,
+        promptVersion: REFINER_PROMPT_VERSION,
+        environment: {},
+        actionPolicy,
+        timeoutMs: input.timeoutMs,
+      });
+      let read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
+      if (read.exitCode !== 0 && !context.cancellationSignal.aborted) {
+        // A session can answer in a message and forget the file. One reminder recovers it.
+        await runner.resume(result.session, {
+          prompt: `You wrote no proposal. Write it now, as one JSON document, to ${proposalPath}. Write the file and nothing else.`,
+          timeoutMs: input.timeoutMs,
+        });
+        read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
+      }
+
+      await agent.executions.record({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        role: "refiner",
+        runner: runner.name,
+        model: null,
+        sessionRef: result.session.sessionId,
+        promptVersion: REFINER_PROMPT_VERSION,
+        durationMs: result.durationMs,
+        finalResult: {
+          completed: result.completed,
+          exitCode: result.exitCode,
+          cancelled: result.cancelled,
+          summary: result.summary,
+        },
+        idempotencyKey: `run:${input.runId}:refiner`,
+      });
+
+      const after = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
+      const empty = { accepted: [], inferred: [], question: null };
+      if (after !== before) {
+        return {
+          status: "worktree_changed",
+          ...empty,
+          reason: `The refiner changed the primary worktree. Tree before: ${before}. Tree after: ${after}.`,
+        };
+      }
+      if (read.exitCode !== 0) {
+        return { status: "unavailable", ...empty, reason: "The refiner wrote no proposal." };
+      }
+      let gated;
+      try {
+        gated = gateRefinerProposal(parseRefinerProposal(read.stdout), input.workItemText);
+      } catch (error) {
+        return { status: "unavailable", ...empty, reason: agent.redactor.redactText(String(error)) };
+      }
+      dependencies.logger.info("refinement proposed", {
+        tenant_id: input.tenantId,
+        run_id: input.runId,
+        step: "propose_refinement",
+        accepted: gated.accepted.length,
+        inferred: gated.inferred.length,
+      });
+      return {
+        status: "proposed",
+        accepted: gated.accepted,
+        inferred: gated.inferred,
+        question: confirmationQuestion(gated),
+        reason: "",
+      };
+    } finally {
+      clearInterval(heartbeat);
+      context.cancellationSignal.removeEventListener("abort", onCancel);
+    }
   },
 });

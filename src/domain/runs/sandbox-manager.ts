@@ -121,7 +121,16 @@ const checkoutHosts = (specs: RepositorySpec[]): string[] => {
 export class SandboxManager {
   constructor(private readonly options: SandboxManagerOptions) {}
 
-  async prepare(input: PrepareSandboxInput): Promise<PreparedSandbox> {
+  /**
+   * `beforeBootstrap` runs after the primary checkout and the read of `.factoree/config.yaml`,
+   * and before the reference checkouts and the bootstrap. A check sprite applies the captured
+   * patch there: the configuration comes from the base SHA, and the bootstrap installs the
+   * patched dependencies. See docs/specs/check-isolation.md.
+   */
+  async prepare(
+    input: PrepareSandboxInput,
+    beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
+  ): Promise<PreparedSandbox> {
     if (!this.options.sandbox.capabilities.enforcesNetworkPolicy && this.options.allowUnenforcedNetwork !== true) {
       throw new NetworkPolicyNotEnforcedError(this.options.sandbox.name);
     }
@@ -167,6 +176,8 @@ export class SandboxManager {
       // SDD section 15. The primary repository owns the configuration of the Run.
       const file = await readRepositoryConfig(sandbox, ref, primary.path);
       const { runtime, verifyCommands, preview } = toProjectRuntimeConfig(file, input.defaults);
+
+      if (beforeBootstrap !== undefined) await beforeBootstrap(ref, primary.path);
 
       // Policy two. The configured allow list joined with the repository hosts, so the reference
       // checkouts and the bootstrap command both work.

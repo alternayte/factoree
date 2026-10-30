@@ -3,8 +3,8 @@ import { loadEnv } from "~/config/env.js";
 
 const base = {
   DATABASE_URL: "postgresql://factoree:factoree@localhost:5432/factoree",
-  FACTOREE_SECRET_KEY: "0".repeat(64),
-  ADMIN_API_TOKEN: "a".repeat(32),
+  FACTOREE_SECRET_KEY: "3f9a1c7e52b04d86a1e9c3f7b2d50e48".repeat(2),
+  ADMIN_API_TOKEN: "k3Jx9QvT2mWb7RzL5nYc8HdF4pGs1AeU",
   LINEAR_WEBHOOK_SECRET: "webhook-secret",
   SPRITES_TOKEN: "sprites-token",
   GITHUB_APP_ID: "123456",
@@ -47,9 +47,30 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...base, SPRITES_TOKEN: undefined, SANDBOX_ADAPTER: "fly-sprites" })).toThrow();
   });
 
-  it("accepts a local sandbox adapter with no sprites token", () => {
-    const env = loadEnv({ ...base, SPRITES_TOKEN: undefined, SANDBOX_ADAPTER: "local" });
+  it("accepts a local sandbox adapter with no sprites token when the unsafe flag is set", () => {
+    const env = loadEnv({
+      ...base,
+      SPRITES_TOKEN: undefined,
+      SANDBOX_ADAPTER: "local",
+      FACTOREE_UNSAFE_LOCAL_SANDBOX: "1",
+    });
     expect(env.SANDBOX_ADAPTER).toBe("local");
+  });
+
+  it("refuses the local sandbox adapter without the unsafe flag", () => {
+    // The local sandbox runs the agent as the worker user, which can read the worker environment.
+    expect(() => loadEnv({ ...base, SANDBOX_ADAPTER: "local" })).toThrow(/FACTOREE_UNSAFE_LOCAL_SANDBOX/);
+  });
+
+  it("refuses the placeholder secret key of .env.example", () => {
+    expect(() => loadEnv({ ...base, FACTOREE_SECRET_KEY: "0".repeat(64) })).toThrow(/placeholder/);
+  });
+
+  it("refuses the placeholder administration token of .env.example", () => {
+    expect(() =>
+      loadEnv({ ...base, ADMIN_API_TOKEN: "change-me-to-a-token-of-32-characters" }),
+    ).toThrow(/placeholder/);
+    expect(() => loadEnv({ ...base, ADMIN_API_TOKEN: "a".repeat(32) })).toThrow(/placeholder/);
   });
 
   it("defaults the GitHub base URL", () => {

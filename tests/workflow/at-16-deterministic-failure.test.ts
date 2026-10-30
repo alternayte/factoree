@@ -131,6 +131,19 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     expect(attempts).toHaveLength(2);
     expect(attempts[1]?.repairFindings).toEqual([VERIFY_FAILURE_TEXT]);
 
+    // docs/specs/check-isolation.md. The Implementer wrote in the work sprite. Every check of an
+    // attempt ran in that attempt's own check sprite, the repair deleted the first check sprite,
+    // and the end of the Run deleted the second.
+    expect(verifiesOf("run-ses-at16a").map((entry) => entry.spriteId)).toEqual([
+      "check-run-ses-at16a-1",
+      "check-run-ses-at16a-2",
+    ]);
+    expect(attempts.every((entry) => entry.spriteId === "sprite-run-ses-at16a")).toBe(true);
+    const checks = harness.checkPrepared.filter((entry) => entry.runId === "run-ses-at16a");
+    expect(checks.map((entry) => entry.previous?.spriteId ?? null)).toEqual([null, "check-run-ses-at16a-1"]);
+    expect(checks.every((entry) => entry.work.spriteId === "sprite-run-ses-at16a")).toBe(true);
+    expect(harness.releasedChecks).toContain("check-run-ses-at16a-2");
+
     // Nothing was published. The Run invoked exactly these activities, in this order. A new
     // activity on this path changes the list, so the reader must judge it again.
     expect(namesFor("run-ses-at16a")).toEqual([
@@ -144,22 +157,27 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "verifyTargetIdentity",
       "recordRunTargetFacts",
       "setRunStatus",
-      "buildValidationContract",
-      "setRunStatus",
       "prepareSandbox",
       "setRunStatus",
+      "proposeRefinement",
+      "setRunStatus",
+      "buildValidationContract",
+      "setRunStatus",
       "implement",
+      "prepareCheckSandbox",
       "setRunStatus",
       "verify",
       "setRunStatus",
       "setRunStatus",
       "implement",
+      "prepareCheckSandbox",
       "setRunStatus",
       "verify",
       "setRunStatus",
       "userValidate",
       "setRunStatus",
       "review",
+      "releaseCheckSandbox",
       "completeRun",
     ]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);
@@ -196,23 +214,29 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "verifyTargetIdentity",
       "recordRunTargetFacts",
       "setRunStatus",
-      "buildValidationContract",
-      "setRunStatus",
       "prepareSandbox",
       "setRunStatus",
+      "proposeRefinement",
+      "setRunStatus",
+      "buildValidationContract",
+      "setRunStatus",
       "implement",
+      "prepareCheckSandbox",
       "setRunStatus",
       "verify",
       "setRunStatus",
       "setRunStatus",
       "implement",
+      "prepareCheckSandbox",
       "setRunStatus",
       "verify",
       "setRunStatus",
       "setRunStatus",
       "implement",
+      "prepareCheckSandbox",
       "setRunStatus",
       "verify",
+      "releaseCheckSandbox",
       "completeRun",
     ]);
     expect(namesFor("run-ses-at16b").filter(isPublishingName)).toEqual([]);

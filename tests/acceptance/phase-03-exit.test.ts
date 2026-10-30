@@ -82,7 +82,7 @@ describe("Phase 3 exit condition — a false agent success claim cannot bypass a
       productId: "project-1",
       primary: { url: primaryPath, ref: "main" },
       references: [],
-      defaults: DEFAULT_PROJECT_DEFAULTS,
+      defaults: { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["api.example.com", "registry.npmjs.org"] },
     });
     return { sandbox, manager, prepared };
   };

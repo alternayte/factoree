@@ -57,13 +57,14 @@ export const startGitHubFixtureApi = async (
 
   app.post("/repos/:owner/:repo/pulls", (request, reply) => {
     const parameters = request.params as { owner: string; repo: string };
-    const body = request.body as { title?: string; body?: string; head?: string; base?: string };
+    const body = request.body as { title?: string; body?: string; head?: string; base?: string; draft?: boolean };
     const headBranch = body.head ?? "";
     created.push({
       slug: `${parameters.owner}/${parameters.repo}`,
       headBranch,
       baseBranch: body.base ?? "",
       title: body.title ?? "",
+      draft: body.draft === true,
       body: body.body ?? "",
     });
     const number = store.length + 1;

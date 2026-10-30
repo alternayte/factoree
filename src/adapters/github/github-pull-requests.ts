@@ -80,6 +80,7 @@ export class GitHubPullRequests implements PullRequestPort {
       `${this.base}/repos/${slug}/pulls?${query.toString()}`,
       { method: "GET" },
       githubInstallationId,
+      slug,
     );
     if (!Array.isArray(body) || body.length === 0) return null;
     return this.toRecord(body[0] as GitHubPullRequestBody, headBranch);
@@ -105,6 +106,7 @@ export class GitHubPullRequests implements PullRequestPort {
         `${this.base}/repos/${slug}/pulls/${number}`,
         { method: "GET" },
         githubInstallationId,
+        slug,
       );
     } catch (error) {
       // A pull request that does not exist is an answer, not a fault.
@@ -128,9 +130,11 @@ export class GitHubPullRequests implements PullRequestPort {
           body: input.body,
           head: input.headBranch,
           base: input.baseBranch,
+          draft: input.draft,
         }),
       },
       githubInstallationId,
+      input.slug,
     );
     return this.toRecord(body as GitHubPullRequestBody, input.headBranch);
   }
@@ -150,8 +154,18 @@ export class GitHubPullRequests implements PullRequestPort {
     return { number, url, headBranch, headSha };
   }
 
-  private async call(url: string, init: RequestInit, githubInstallationId: string): Promise<unknown> {
-    const token = await this.tokens.tokenForInstallation(githubInstallationId);
+  private async call(
+    url: string,
+    init: RequestInit,
+    githubInstallationId: string,
+    slug: string,
+  ): Promise<unknown> {
+    // The token reads and writes the pull requests of this one repository, and nothing else.
+    const token = await this.tokens.tokenForInstallation(
+      githubInstallationId,
+      { pull_requests: "write" },
+      [slug],
+    );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GITHUB_API_TIMEOUT_MS);
     timer.unref();

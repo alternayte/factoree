@@ -14,6 +14,7 @@ model Tenant {
   installations     LinearInstallation[]
   githubInstallations GitHubInstallation[]
   products          Product[]
+  productPolicyChanges ProductPolicyChange[]
   runs              Run[]
   webhooks          ProcessedWebhook[]
 }
@@ -335,6 +336,11 @@ model Product {
   linearTeamKey  String
   linearTeamId   String
   defaultAutonomy String  @default("L0")
+  // docs/specs/autonomy-levels.md. The highest level each Linear label allows, by label. Null
+  // means the SDD section 28 list, each label capped at L2.
+  riskCaps       Json?
+  // R-4. The egress ceiling of every sandbox of this Product. A repository can only narrow it.
+  allowedDomains String[] @default([])
   maxRunMinutes  Int      @default(90)
   // SDD section 16. A Product can define one organization-wide skills repository. The value is
   // an owner and repository slug, the same shape a Repository's `fullName` uses.
@@ -345,6 +351,7 @@ model Product {
   secrets        ProductSecret[]
   contextSources ContextSourceConfiguration[]
   runs           Run[]
+  policyChanges  ProductPolicyChange[]
 
   @@unique([tenantId, slug])
   // One Linear team maps to at most one Product. This constraint makes the routing rule of
@@ -400,17 +407,31 @@ model RunTarget {
   run             Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
   repositoryId    String
   repository      Repository @relation(fields: [repositoryId], references: [id])
-  // "primary" or "secondary". A single-target Run holds one primary row.
-  role            String     @default("primary")
   selectionReason String
   baseSha         String?
   patchSha256     String?
   commitSha       String?
   pullRequestUrl  String?
-  mergeOrder      Int        @default(1)
   createdAt       DateTime   @default(now())
 
   @@unique([runId, repositoryId])
   @@index([runId])
+  @@index([tenantId])
+}
+
+// docs/specs/autonomy-levels.md. One row for each change of a Product policy field, so raising
+// trust leaves an audit trail.
+model ProductPolicyChange {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  field     String
+  oldValue  Json?
+  newValue  Json?
+  changedAt DateTime @default(now())
+
+  @@index([productId])
   @@index([tenantId])
 }

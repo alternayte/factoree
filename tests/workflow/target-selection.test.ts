@@ -72,7 +72,6 @@ describe("target selection and the RunTarget row", () => {
         expect.objectContaining({
           repositoryId: "repository-1",
           selectionReason: "sole member",
-          mergeOrder: 1,
         }),
       ]);
       expect(noticesOf("run-ses-target-sole")).toEqual([]);
@@ -102,7 +101,6 @@ describe("target selection and the RunTarget row", () => {
         expect.objectContaining({
           repositoryId: "repository-web",
           selectionReason: "the change is in the checkout form",
-          mergeOrder: 1,
         }),
       ]);
       expect(noticesOf("run-ses-target-confident")).toEqual([
@@ -163,7 +161,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-ambiguous")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-web", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-web" }),
       ]);
     });
   });
@@ -181,7 +179,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-prefix")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-checkout-api-gateway", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-checkout-api-gateway" }),
       ]);
     });
   });
@@ -199,18 +197,23 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-case")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-web", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-web" }),
       ]);
     });
   });
 
   it("keeps the Run blocked when a reply matches no candidate by whole token", async () => {
     await runWorker(async () => {
+      const startedWith = elicitations.length;
       const handle = await start("ses-target-unmatched", {
         product: { ...productInput, repositories: prefixRepositories },
         repositoryProposal: null,
       });
       await waitForStatus(handle, "BLOCKED_TARGET");
+      // The status turns BLOCKED_TARGET before the question is posted. The count below must start
+      // after the first question exists, or the first and the repeated question can both land
+      // between two polls and the count never equals the target.
+      await waitFor(() => elicitations.length > startedWith, "the first target question of target-unmatched");
 
       // This reply names no candidate by whole token. `acme/checkout-api` is a substring of
       // the longer name, not a token of this sentence. `acme/checkout-api-gatewayyy` is a typo
@@ -221,7 +224,7 @@ describe("target selection and the RunTarget row", () => {
       // The workflow asks again. The Run stayed blocked. It made no selection from the
       // unmatched reply.
       await waitFor(
-        () => elicitations.length === questionsBefore + 1,
+        () => elicitations.length >= questionsBefore + 1,
         "the repeated target question of target-unmatched",
       );
       const blocked = await handle.query(runStatusQuery);
@@ -233,7 +236,7 @@ describe("target selection and the RunTarget row", () => {
       const result = await handle.result();
       expect(result.status).not.toBe("BLOCKED_TARGET");
       expect(targetsOf("run-ses-target-unmatched")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-checkout-api", mergeOrder: 1 }),
+        expect.objectContaining({ repositoryId: "repository-checkout-api" }),
       ]);
     });
   });

@@ -34,7 +34,7 @@ class FakeTenantRegistry implements TenantRegistry {
   findByGitHubInstallation(): Promise<TenantRecord | null> {
     throw new Error("not used by this route");
   }
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by this route");
   }
 }
@@ -54,6 +54,8 @@ class FakeProductRegistry implements ProductRegistry {
       linearTeamKey: input.linearTeamKey,
       linearTeamId: input.linearTeamId,
       defaultAutonomy: "L2",
+      riskCaps: null,
+      allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 90,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       createdAt: new Date(),
@@ -115,6 +117,28 @@ class FakeProductRegistry implements ProductRegistry {
       ...row,
       ...(fields.name === undefined ? {} : { name: fields.name }),
       ...(fields.maxRunMinutes === undefined ? {} : { maxRunMinutes: fields.maxRunMinutes }),
+    };
+    this.rows.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
+  readonly policyChanges: Array<{ field: string; newValue: unknown }> = [];
+
+  updatePolicy(
+    tenantId: string,
+    id: string,
+    policy: { defaultAutonomy?: string; riskCaps?: Record<string, string> },
+  ): Promise<ProductRecord | null> {
+    const row = this.rows.get(id);
+    if (!row || row.tenantId !== tenantId) return Promise.resolve(null);
+    if (policy.defaultAutonomy !== undefined && policy.defaultAutonomy !== row.defaultAutonomy) {
+      this.policyChanges.push({ field: "defaultAutonomy", newValue: policy.defaultAutonomy });
+    }
+    if (policy.riskCaps !== undefined) this.policyChanges.push({ field: "riskCaps", newValue: policy.riskCaps });
+    const updated = {
+      ...row,
+      ...(policy.defaultAutonomy === undefined ? {} : { defaultAutonomy: policy.defaultAutonomy }),
+      ...(policy.riskCaps === undefined ? {} : { riskCaps: policy.riskCaps }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
@@ -329,7 +353,53 @@ describe("Products administration API", () => {
     expect(activated.json<{ status: string; defaultAutonomy: string }>()).toMatchObject({
       status: "active",
       defaultAutonomy: "L3",
+      riskCaps: null,
+      allowedDomains: [],
     });
+  });
+
+  it("raises the default level and sets risk caps, and records each change (autonomy-levels.md)", async () => {
+    const { app, products } = build({});
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: { linearWorkspaceId: "ws-1", slug: "caps", name: "Caps", linearTeamKey: "CAP" },
+    });
+    const product = created.json<{ id: string }>();
+
+    const raised = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
+      payload: { defaultAutonomy: "L3", riskCaps: { Payments: "L2", "database-migration": "L3" } },
+    });
+
+    expect(raised.statusCode).toBe(200);
+    expect(raised.json<{ defaultAutonomy: string; riskCaps: Record<string, string> }>()).toMatchObject({
+      defaultAutonomy: "L3",
+      riskCaps: { payments: "L2", "database-migration": "L3" },
+    });
+    expect(products.policyChanges.map((change) => change.field)).toEqual(["defaultAutonomy", "riskCaps"]);
+  });
+
+  it("refuses L4 with 422 and changes nothing, because Version 1 never merges", async () => {
+    const { app, products } = build({});
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: { linearWorkspaceId: "ws-1", slug: "merge", name: "Merge", linearTeamKey: "MRG" },
+    });
+    const product = created.json<{ id: string }>();
+    const before = products.rows.get(product.id)?.defaultAutonomy;
+
+    const refused = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
+      payload: { defaultAutonomy: "L4" },
+    });
+
+    expect(refused.statusCode).toBe(422);
+    expect(products.policyChanges).toEqual([]);
+    expect(products.rows.get(product.id)?.defaultAutonomy).toBe(before);
   });
 
   it("lists repositories of a product, read only", async () => {

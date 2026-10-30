@@ -95,6 +95,8 @@ describe("AT-33 tenant isolation", () => {
         "LinearInstallation",
         "ProcessedWebhook",
         "Product",
+        // docs/specs/autonomy-levels.md. One row for each Product policy change.
+        "ProductPolicyChange",
         "ProductSecret",
         "Repository",
         // SDD section 53 and SDD section 52. Phase 8 added the ReviewFinding table, and it is

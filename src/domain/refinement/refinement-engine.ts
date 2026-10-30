@@ -2,7 +2,7 @@ import type { AuthorityDomain } from "~/domain/context/authority.js";
 import type { AcceptanceCriterion, WorkItem, WorkItemSource } from "./work-item.js";
 import { parseWorkItem } from "./work-item.js";
 import type { AutonomyLevel } from "./risk.js";
-import { capAutonomy, highRiskLabelsOf } from "./risk.js";
+import { decideAutonomy, highRiskLabelsOf } from "./risk.js";
 
 /** SDD section 8. One decision a human must take before implementation can start safely. */
 export interface RefinementQuestion {
@@ -35,12 +35,16 @@ export interface RefinementProject {
   primaryRepository: string;
   referenceRepositories: string[];
   defaultAutonomy: string;
+  /** The risk caps of the Product, by label. Null means the SDD section 28 defaults. */
+  riskCaps: Record<string, string> | null;
 }
 
 export interface RefinementInput {
   source: WorkItemSource;
   project: RefinementProject;
   decisions: RecordedDecision[];
+  /** True when the labels of the Work Item could not be read. The risk cap then fails closed. */
+  labelsUnreadable?: boolean;
 }
 
 /** SDD section 8 fixes this output shape. */
@@ -54,6 +58,8 @@ export interface RefinementOutput {
   risks: string[];
   unresolvedQuestions: RefinementQuestion[];
   autonomyLevel: AutonomyLevel;
+  /** docs/specs/autonomy-levels.md. One sentence for each rule that lowered the level. */
+  autonomyReasons: string[];
   decisions: RecordedDecision[];
 }
 
@@ -147,6 +153,13 @@ export class RefinementEngine {
       ...unconfigured.map((slug) => `unconfigured-repository:${slug}`),
     ];
 
+    const autonomy = decideAutonomy({
+      defaultLevel: input.project.defaultAutonomy,
+      labels: workItem.labels,
+      riskCaps: input.project.riskCaps,
+      labelsUnreadable: input.labelsUnreadable === true,
+    });
+
     return {
       status: unresolvedQuestions.length > 0 ? "needs_input" : "ready",
       workItem,
@@ -156,7 +169,8 @@ export class RefinementEngine {
       proposedAcceptanceCriteria,
       risks,
       unresolvedQuestions,
-      autonomyLevel: capAutonomy(input.project.defaultAutonomy, highRisk.length > 0),
+      autonomyLevel: autonomy.level,
+      autonomyReasons: autonomy.reasons,
       decisions: [...input.decisions],
     };
   }

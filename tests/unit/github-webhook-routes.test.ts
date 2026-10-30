@@ -41,7 +41,7 @@ class FakeTenantRegistry implements TenantRegistry {
   findByGitHubInstallation(githubInstallationId: string): Promise<TenantRecord | null> {
     return Promise.resolve(this.installationsById.get(githubInstallationId) ?? null);
   }
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by this route");
   }
 }
@@ -110,18 +110,45 @@ describe("GitHub webhook route", () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it("syncs each repository that an installation adds", async () => {
-    const { app, synced } = build({});
-    await app.inject({
+  it("starts an installation sync when an installation adds a repository, because the event names no default branch", async () => {
+    const { app, synced, started } = build({});
+    const response = await app.inject({
       method: "POST",
       url: "/webhooks/github",
       headers: { "x-github-event": "installation_repositories" },
       payload: {
         action: "added",
-        installation: { id: 42, account: { login: "acme" } },
-        repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+        installation: { id: 42, account: { login: "acme", id: 7, type: "User" }, app_id: 1 },
+        repositories_added: [{ id: 1, node_id: "R_1", name: "api", full_name: "acme/api", private: false }],
+        repositories_removed: [],
+        repository_selection: "selected",
+        sender: { login: "acme" },
       },
     });
+    expect(response.json()).toEqual({ status: "handled" });
+    expect(started).toEqual([{ tenantId: "tenant-1", githubInstallationId: "42" }]);
+    expect(synced).toEqual([]);
+  });
+
+  it("handles a push that carries the fields of a real GitHub delivery", async () => {
+    const { app, synced } = build({});
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "push" },
+      payload: {
+        ref: "refs/heads/main",
+        before: "a",
+        after: "b",
+        installation: { id: 42, node_id: "MDIz" },
+        repository: { id: 1, name: "api", full_name: "acme/api", default_branch: "main", private: false },
+        pusher: { name: "acme" },
+        sender: { login: "acme" },
+        commits: [{ id: "b", message: "m", added: [], modified: [".factoree/config.yaml"], removed: [] }],
+        head_commit: null,
+      },
+    });
+    expect(response.json()).toEqual({ status: "handled" });
     expect(synced).toEqual([["acme/api", "main", "42"]]);
   });
 
@@ -134,11 +161,12 @@ describe("GitHub webhook route", () => {
     await app.inject({
       method: "POST",
       url: "/webhooks/github",
-      headers: { "x-github-event": "installation_repositories" },
+      headers: { "x-github-event": "push" },
       payload: {
-        action: "added",
-        installation: { id: 42, account: { login: "acme" } },
-        repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+        ref: "refs/heads/main",
+        installation: { id: 42 },
+        repository: { full_name: "acme/api", default_branch: "main" },
+        commits: [{ modified: [".factoree/config.yaml"], added: [], removed: [] }],
       },
     });
     expect(logger.warnCalls).toHaveLength(1);
@@ -226,7 +254,7 @@ describe("GitHub webhook route", () => {
   });
 
   it("answers 200 and does no work for an installation Factoree has no tenant for", async () => {
-    const { app, synced, absent, logger } = build({ tenantBound: false });
+    const { app, synced, absent, logger, started } = build({ tenantBound: false });
     const response = await app.inject({
       method: "POST",
       url: "/webhooks/github",
@@ -234,10 +262,11 @@ describe("GitHub webhook route", () => {
       payload: {
         action: "added",
         installation: { id: 42, account: { login: "acme" } },
-        repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+        repositories_added: [{ full_name: "acme/api" }],
       },
     });
     expect(response.statusCode).toBe(200);
+    expect(started).toEqual([]);
     expect(synced).toEqual([]);
     expect(absent).toEqual([]);
     expect(logger.warnCalls).toHaveLength(1);

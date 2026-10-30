@@ -28,5 +28,13 @@ export type GitHubTokenScope = Partial<Record<GitHubPermissionName, GitHubPermis
  * answered to a read request would carry write access into a place ruling 2 forbids it.
  */
 export interface GitHubTokenProvider {
-  tokenForInstallation(githubInstallationId: string, scope?: GitHubTokenScope): Promise<string>;
+  /**
+   * `repositories` names the `owner/repo` repositories the token may reach. An absent list
+   * reaches every repository of the installation, which only installation-wide work needs.
+   */
+  tokenForInstallation(
+    githubInstallationId: string,
+    scope?: GitHubTokenScope,
+    repositories?: readonly string[],
+  ): Promise<string>;
 }

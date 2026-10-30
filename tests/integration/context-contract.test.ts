@@ -248,6 +248,7 @@ describe("PrismaRunRepository.setAutonomyLevel", () => {
         primaryRepository: "acme/demo",
         referenceRepositories: [],
         defaultAutonomy: "L3",
+        riskCaps: null,
       },
       decisions: [],
     });

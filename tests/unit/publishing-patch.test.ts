@@ -51,8 +51,15 @@ describe("capturePatch", () => {
     expect(result.patchSha256).toBe(sha256OfBase64(Buffer.from(patch).toString("base64")));
     expect(result.changedFiles).toEqual(["src/a.ts"]);
     expect(result.treeSha).toBe("b".repeat(40));
-    // SDD section 44 fixes `git add -A` first.
-    expect(calls[0]?.args).toEqual(["-C", "/w/primary", "add", "-A"]);
+    // SDD section 44 fixes `git add -A` first. Factoree's own git runs it, with no user config,
+    // so a filter, a monitor or a hook of the repository config cannot run. check-isolation.md.
+    expect(calls[0]?.file).toBe("/usr/bin/git");
+    expect(calls[0]?.args).toEqual([
+      "-c", "core.fsmonitor=false",
+      "-c", "core.hooksPath=/dev/null",
+      "-c", "core.sshCommand=false",
+      "-C", "/w/primary", "add", "-A",
+    ]);
     // The patch command carries --binary. DI-9.1.
     const patchCall = calls.find((call) => call.args.includes("--binary"));
     expect(patchCall).toBeDefined();

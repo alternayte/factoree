@@ -233,7 +233,6 @@ describe("the Proof Pack renderer", () => {
               fullName: "acme/checkout-api",
               baseSha: "4f21c9e",
               pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-              mergeOrder: 1,
             },
           ],
           siblingsRead: [{ fullName: "acme/checkout-events", commitSha: "1b7d004" }],
@@ -261,7 +260,6 @@ describe("the Proof Pack renderer", () => {
               fullName: "acme/checkout-api",
               baseSha: "4f21c9e",
               pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-              mergeOrder: 1,
             },
           ],
           siblingsRead: [],
@@ -287,7 +285,6 @@ describe("the Proof Pack renderer", () => {
               fullName: "acme/checkout-api",
               baseSha: "4f21c9e",
               pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-              mergeOrder: 1,
             },
           ],
           siblingsRead: [],
@@ -300,40 +297,24 @@ describe("the Proof Pack renderer", () => {
     expect(markdown).toContain("Sibling repositories read: none.");
   });
 
-  it("renders the Merge order line when the Run touched several targets", () => {
-    const markdown = renderProofPack(
-      input({
-        routing: {
-          productSlug: "checkout-platform",
-          linearTeamKey: "PAY",
-          targets: [
-            {
-              fullName: "acme/checkout-api",
-              baseSha: "4f21c9e",
-              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-              mergeOrder: 1,
-            },
-            {
-              fullName: "acme/checkout-web",
-              baseSha: "88a0f2b",
-              pullRequestUrl: "https://github.com/acme/checkout-web/pull/341",
-              mergeOrder: 2,
-            },
-          ],
-          siblingsRead: [{ fullName: "acme/checkout-events", commitSha: "1b7d004" }],
-          selectionReason: "declared coupling",
-        },
-      }),
-    );
-
-    expect(markdown).toContain("2. acme/checkout-web @ 88a0f2b -> PR #341");
-    expect(markdown).toContain("Merge order: checkout-api, then checkout-web");
-  });
-
   it("hashes one body to one value and two bodies to two values", () => {
     const body = renderProofPack(input());
     expect(hashProofPack(body)).toBe(hashProofPack(body));
     expect(hashProofPack(body)).not.toBe(hashProofPack(`${body} `));
     expect(hashProofPack(body)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("names the autonomy level and every cap that applied (autonomy-levels.md)", () => {
+    const body = renderProofPack(
+      input({ autonomyLevel: "L2", autonomyReasons: ['The label "payments" caps this Run at L2.'] }),
+    );
+    expect(body).toContain('- Autonomy level: L2. The label "payments" caps this Run at L2.');
+  });
+
+  it("lists the check-defining files first in the change summary (check-isolation.md)", () => {
+    const body = renderProofPack(input({ changedFiles: ["src/a.ts", "package.json"], checkDefiningFiles: ["package.json"] }));
+    const summary = body.slice(body.indexOf("### Change summary"));
+    expect(summary.indexOf("- package.json")).toBeLessThan(summary.indexOf("- src/a.ts"));
+    expect(summary).toContain("so the pull request is a draft");
   });
 });

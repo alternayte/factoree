@@ -30,101 +30,109 @@ const mintedIdentity = (env: Record<string, string>): string | null => {
   return Buffer.from(encoded, "base64").toString("utf8");
 };
 
+const provider = (asked: Array<{ id: string; scope?: unknown; repositories?: readonly string[] }>) => ({
+  tokenForInstallation: (id: string, scope?: unknown, repositories?: readonly string[]) => {
+    asked.push({ id, scope, ...(repositories === undefined ? {} : { repositories }) });
+    return Promise.resolve(`ghs_${id}_${asked.length}`);
+  },
+});
+
 describe("GitRepositoryReader credential minting", () => {
   it("mints a token immediately before the git command that needs it", async () => {
     calls.length = 0;
-    const asked: string[] = [];
+    const asked: Array<{ id: string }> = [];
     const reader = new GitRepositoryReader();
-    reader.useCredential(
-      "https://example.test",
-      { tokenForInstallation: (id: string) => {
-        asked.push(id);
-        return Promise.resolve(`ghs_${id}`);
-      } },
-      "111",
+
+    await reader.withCredential(
+      { origin: "https://example.test", tokens: provider(asked), githubInstallationId: "111" },
+      () => reader.resolveRef("https://example.test/o/r.git", "main"),
+    );
+
+    expect(asked.map((entry) => entry.id)).toEqual(["111"]);
+    expect(mintedIdentity(calls[0]?.env ?? {})).toBe("x-access-token:ghs_111_1");
+  });
+
+  it("gives two Runs on one origin their own installation, even when they read at the same time", async () => {
+    calls.length = 0;
+    const asked: Array<{ id: string }> = [];
+    const reader = new GitRepositoryReader();
+    const tokens = provider(asked);
+
+    // Both Runs read github.com. A credential held per origin let the later Run mint for the
+    // earlier one. Each read must carry the installation of its own async context.
+    await Promise.all([
+      reader.withCredential({ origin: "https://example.test", tokens, githubInstallationId: "111" }, () =>
+        reader.resolveRef("https://example.test/a/r.git", "main"),
+      ),
+      reader.withCredential({ origin: "https://example.test", tokens, githubInstallationId: "222" }, () =>
+        reader.resolveRef("https://example.test/b/r.git", "main"),
+      ),
+    ]);
+
+    const byRepository = new Map(
+      calls.map((call) => [call.args.find((arg) => arg.startsWith("https://")) ?? "", mintedIdentity(call.env)]),
+    );
+    expect(byRepository.get("https://example.test/a/r.git")).toMatch(/^x-access-token:ghs_111_/);
+    expect(byRepository.get("https://example.test/b/r.git")).toMatch(/^x-access-token:ghs_222_/);
+  });
+
+  it("reads anonymously outside a credential context", async () => {
+    calls.length = 0;
+    const asked: Array<{ id: string }> = [];
+    const reader = new GitRepositoryReader();
+    await reader.withCredential(
+      { origin: "https://example.test", tokens: provider(asked), githubInstallationId: "111" },
+      () => Promise.resolve(),
     );
 
     await reader.resolveRef("https://example.test/o/r.git", "main");
 
-    expect(asked).toEqual(["111"]);
-    expect(mintedIdentity(calls[0]?.env ?? {})).toBe("x-access-token:ghs_111");
-  });
-
-  it("mints against each installation's own id, and neither call receives the other's token", async () => {
-    calls.length = 0;
-    const asked: string[] = [];
-    const reader = new GitRepositoryReader();
-    reader.useCredential(
-      "https://a.test",
-      { tokenForInstallation: (id: string) => {
-        asked.push(id);
-        return Promise.resolve(`ghs_${id}`);
-      } },
-      "111",
-    );
-    reader.useCredential(
-      "https://b.test",
-      { tokenForInstallation: (id: string) => {
-        asked.push(id);
-        return Promise.resolve(`ghs_${id}`);
-      } },
-      "222",
-    );
-
-    await reader.resolveRef("https://a.test/o/r.git", "main");
-    await reader.resolveRef("https://b.test/o/r.git", "main");
-
-    expect(asked).toEqual(["111", "222"]);
-    expect(mintedIdentity(calls[0]?.env ?? {})).toBe("x-access-token:ghs_111");
-    expect(mintedIdentity(calls[1]?.env ?? {})).toBe("x-access-token:ghs_222");
-    expect(mintedIdentity(calls[1]?.env ?? {})).not.toBe(mintedIdentity(calls[0]?.env ?? {}));
+    expect(asked).toEqual([]);
+    expect(mintedIdentity(calls[0]?.env ?? {})).toBeNull();
   });
 
   it("mints per call, not once, so a later call carries a fresh token", async () => {
     calls.length = 0;
-    const asked: string[] = [];
-    let mintCount = 0;
+    const asked: Array<{ id: string }> = [];
     const reader = new GitRepositoryReader();
-    reader.useCredential(
-      "https://example.test",
-      { tokenForInstallation: (id: string) => {
-        asked.push(id);
-        mintCount += 1;
-        return Promise.resolve(`ghs_${id}_${mintCount}`);
-      } },
-      "111",
+
+    await reader.withCredential(
+      { origin: "https://example.test", tokens: provider(asked), githubInstallationId: "111" },
+      async () => {
+        await reader.resolveRef("https://example.test/o/r.git", "main");
+        await reader.resolveRef("https://example.test/o/r.git", "main");
+      },
     );
 
-    await reader.resolveRef("https://example.test/o/r.git", "main");
-    await reader.resolveRef("https://example.test/o/r.git", "main");
-
-    // Two calls, two mints. A future change that caches the resolved environment on
-    // `credentialSources` and mints once leaves `asked` at length one. That change fails here.
-    expect(asked).toEqual(["111", "111"]);
-    const first = mintedIdentity(calls[0]?.env ?? {});
-    const second = mintedIdentity(calls[1]?.env ?? {});
-    expect(first).toBe("x-access-token:ghs_111_1");
-    expect(second).toBe("x-access-token:ghs_111_2");
-    expect(second).not.toBe(first);
+    expect(asked.map((entry) => entry.id)).toEqual(["111", "111"]);
+    expect(mintedIdentity(calls[0]?.env ?? {})).toBe("x-access-token:ghs_111_1");
+    expect(mintedIdentity(calls[1]?.env ?? {})).toBe("x-access-token:ghs_111_2");
   });
 
-  it("mints a read-only scope, never a write scope. Ruling 2 forbids a write credential here", async () => {
+  it("mints a read-only token for the one repository the command reads", async () => {
     calls.length = 0;
-    const scopes: Array<Record<string, string> | undefined> = [];
+    const asked: Array<{ id: string; scope?: unknown; repositories?: readonly string[] }> = [];
     const reader = new GitRepositoryReader();
-    reader.useCredential(
-      "https://example.test",
-      {
-        tokenForInstallation: (id: string, scope?: Record<string, string>) => {
-          scopes.push(scope);
-          return Promise.resolve(`ghs_${id}`);
-        },
-      },
-      "111",
+
+    await reader.withCredential(
+      { origin: "https://example.test", tokens: provider(asked), githubInstallationId: "111" },
+      () => reader.resolveRef("https://example.test/acme/api.git", "main"),
     );
 
-    await reader.resolveRef("https://example.test/o/r.git", "main");
+    expect(asked).toEqual([{ id: "111", scope: { contents: "read" }, repositories: ["acme/api"] }]);
+  });
 
-    expect(scopes).toEqual([{ contents: "read" }]);
+  it("sends no credential to a URL on another origin", async () => {
+    calls.length = 0;
+    const asked: Array<{ id: string }> = [];
+    const reader = new GitRepositoryReader();
+
+    await reader.withCredential(
+      { origin: "https://example.test", tokens: provider(asked), githubInstallationId: "111" },
+      () => reader.resolveRef("https://elsewhere.test/o/r.git", "main"),
+    );
+
+    expect(asked).toEqual([]);
+    expect(mintedIdentity(calls[0]?.env ?? {})).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import type { ActionPolicy } from "~/domain/policy/action-policy.js";
 import type { Sandbox, SandboxRef } from "./sandbox.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
 
-export type AgentRole = "implementer" | "validator" | "reviewer";
+export type AgentRole = "implementer" | "validator" | "reviewer" | "refiner";
 
 export interface AgentSessionRef {
   /** The runner-scoped session identifier. Factoree uses it to resume and to cancel. */

@@ -61,6 +61,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
         primaryRepository: "acme/reports",
         referenceRepositories: [],
         defaultAutonomy: "L2",
+        riskCaps: null,
       },
       decisions: [],
     });
@@ -144,6 +145,7 @@ describe("Phase 6 exit — every implementation starts after a frozen Validation
         primaryRepository: "acme/reports",
         referenceRepositories: [],
         defaultAutonomy: "L2",
+        riskCaps: null,
       },
       decisions: [],
     });

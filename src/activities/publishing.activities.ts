@@ -1,5 +1,6 @@
 import { ApplicationFailure } from "@temporalio/activity";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import { readCredential } from "~/activities/repository-credential.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
@@ -54,6 +55,8 @@ export interface CheckBaseActivityInput {
   repositoryBaseUrl: string;
   branch: string;
   baseSha: string;
+  /** The GitHub App installation that grants the repository. Empty when it holds none. */
+  githubInstallationId: string;
 }
 
 export interface CheckBaseActivityOutput {
@@ -79,6 +82,13 @@ export interface PublishActivityInput {
    * tree it captures itself. An empty value is a mismatch, so this check fails closed.
    */
   reviewedWorktreeSha: string;
+  /**
+   * docs/specs/check-isolation.md. The hash of the patch the check sprite received, captured
+   * before any project code ran there. Publication must capture exactly this patch.
+   */
+  verifiedPatchSha256: string;
+  /** docs/specs/autonomy-levels.md. True for L2, and for a patch that changes a check-defining file. */
+  draft: boolean;
   workItemTitle: string;
   workItemUrl: string | null;
   verificationSummary: string;
@@ -193,11 +203,17 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
     try {
       const url = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
-      const result = await checkBaseFreshness(dependencies.repositoryReader, {
-        url,
-        branch: input.branch,
-        runBaseSha: input.baseSha,
-      });
+      // A private repository needs the read credential here too. A worker restart between context
+      // resolution and this check must not leave the check without one.
+      const result = await dependencies.repositoryReader.withCredential(
+        readCredential(url, input.githubInstallationId, dependencies),
+        () =>
+          checkBaseFreshness(dependencies.repositoryReader, {
+            url,
+            branch: input.branch,
+            runBaseSha: input.baseSha,
+          }),
+      );
 
       dependencies.logger.info("base freshness checked", {
         tenant_id: input.tenantId,
@@ -249,6 +265,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       const token = await dependencies.tokens.tokenForInstallation(
         input.githubInstallationId,
         PUBLISH_TOKEN_SCOPE,
+        [input.repositorySlug],
       );
 
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
@@ -287,6 +304,17 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       // Step 7. An empty patch publishes nothing.
       if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
+
+      // Step 7b. The bootstrap and the checks ran project code in the check sprite. The patch that
+      // leaves it must be the patch that entered it, before that code ran.
+      if (patch.patchSha256 !== input.verifiedPatchSha256) {
+        throw new PatchHashMismatchError(
+          input.verifiedPatchSha256,
+          patch.patchSha256,
+          patch.gitVersion,
+          patch.gitVersion,
+        );
+      }
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
@@ -336,11 +364,15 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       //
       // The check reads the PLAIN URL, because `git ls-remote` puts its URL on the process
       // argument list. SDD section 30 forbids a credential there.
-      const freshness = await checkBaseFreshness(dependencies.repositoryReader, {
-        url: plainUrl,
-        branch: input.baseBranch,
-        runBaseSha: input.baseSha,
-      });
+      const freshness = await dependencies.repositoryReader.withCredential(
+        readCredential(plainUrl, input.githubInstallationId, dependencies),
+        () =>
+          checkBaseFreshness(dependencies.repositoryReader, {
+            url: plainUrl,
+            branch: input.baseBranch,
+            runBaseSha: input.baseSha,
+          }),
+      );
       if (!freshness.fresh) {
         throw new PatchError(
           `the target branch "${input.baseBranch}" moved after this Run started. Run base: ` +
@@ -394,6 +426,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           slug: input.repositorySlug,
           headBranch: branch,
           baseBranch: input.baseBranch,
+          draft: input.draft,
           title,
           body: buildPullRequestBody({
             workItemTitle: input.workItemTitle,

@@ -36,6 +36,7 @@ import type { SandboxRef } from "~/domain/runs/sandbox.js";
 import { createLogger } from "~/telemetry/logger.js";
 import type { Logger, LogFields } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
+import { capturePatch } from "~/domain/publishing/patch.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { createBareRemote, type BareRemote } from "./support/bare-remote.js";
 
@@ -60,6 +61,8 @@ class FakeProductRegistry implements ProductRegistry {
       linearTeamKey: input.linearTeamKey,
       linearTeamId: input.linearTeamId,
       defaultAutonomy: "L0",
+      riskCaps: null,
+      allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       createdAt: new Date(),
@@ -100,6 +103,10 @@ class FakeProductRegistry implements ProductRegistry {
 
   updateOrganizationSkillsRepository(): Promise<ProductRecord | null> {
     throw new Error("not used by this test");
+  }
+
+  updatePolicy(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
   }
 
   update(): Promise<ProductRecord | null> {
@@ -473,7 +480,7 @@ class SingleInstallationTenantRegistry implements TenantRegistry {
     return Promise.resolve(githubInstallationId === this.boundInstallationId ? this.tenant : null);
   }
 
-  putGitHubInstallation(): Promise<void> {
+  putGitHubInstallation(): Promise<"bound"> {
     throw new Error("not used by this route");
   }
 }
@@ -521,7 +528,7 @@ describe("AT-50 and AT-51: the real GitHub webhook route", () => {
     const payload = {
       action: "added",
       installation: { id: 42, account: { login: "acme" } },
-      repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+      repositories_added: [{ full_name: "acme/api" }],
     };
     const body = JSON.stringify(payload);
 
@@ -547,7 +554,7 @@ describe("AT-50 and AT-51: the real GitHub webhook route", () => {
     const payload = {
       action: "added",
       installation: { id: 99, account: { login: "acme" } },
-      repositories_added: [{ full_name: "acme/api", default_branch: "main" }],
+      repositories_added: [{ full_name: "acme/api" }],
     };
     const body = JSON.stringify(payload);
 
@@ -783,7 +790,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       resolveRef: () => Promise.resolve(remote.baseSha),
       listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
       readBlob: (): Promise<string | null> => Promise.resolve(null),
-      useCredential: () => undefined,
+      withCredential: (_credential, work) => work(),
     };
 
     const runs: RunRepository = {
@@ -795,6 +802,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       args: ["-c", 'git -C "$1" add -A && git -C "$1" write-tree', "sh", primaryPath],
     });
     const stagedTreeSha = staged.stdout.trim();
+    const verified = await capturePatch({ sandbox, redactor }, { ref, primaryPath, baseSha: remote.baseSha });
 
     const activities = createPublishingActivities({
       sandbox,
@@ -825,6 +833,8 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       baseSha: remote.baseSha,
       reviewedChangedFiles: ["README.md"],
       reviewedWorktreeSha: stagedTreeSha,
+      verifiedPatchSha256: verified.patchSha256,
+      draft: false,
       workItemTitle: "Change the README",
       workItemUrl: null,
       verificationSummary: "every deterministic check passed on attempt 1",

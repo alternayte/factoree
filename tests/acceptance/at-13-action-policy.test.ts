@@ -29,6 +29,7 @@ const recordingGateway = (sent: unknown[]): SpritesGateway => {
     execFile: () => Promise.resolve(ok),
     startDetached: () => Promise.resolve(),
     createCheckpoint: () => Promise.resolve({ id: "checkpoint-1" }),
+    publishPort: () => Promise.resolve("https://sprite.test"),
     updateNetworkPolicy: (policy) => {
       sent.push(policy);
       return Promise.resolve();

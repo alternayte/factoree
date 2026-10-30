@@ -13,6 +13,8 @@ const product = (id: string, linearTeamId: string): ProductRecord => ({
   linearTeamKey: "PAY",
   linearTeamId,
   defaultAutonomy: "L3",
+  riskCaps: null,
+  allowedDomains: [],
   maxRunMinutes: 90,
   organizationSkillsRepository: null,
   createdAt: new Date(),

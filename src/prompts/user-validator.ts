@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@1";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@2";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -52,7 +52,7 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
     section(
       "Action Policy",
       `${list(fields.actionPolicy, "None supplied.")}\n\n` +
-        "Factoree enforces these rules outside this prompt. A rule you cannot see still applies.",
+        "Each rule names the mechanism that holds it outside this prompt. A rule you cannot see still applies.",
     ),
     section(
       "Rules",

@@ -95,6 +95,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       metrics.activeRuns.dec(labels);
       metrics.runDuration.observe(labels, (completedAt.getTime() - run.createdAt.getTime()) / 1000);
       if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
+      else if (input.status === "REPORTED") metrics.runsReported.inc(labels);
       else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);
       else
         metrics.runsFailed.inc({
@@ -116,15 +117,14 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   },
 
   /**
-   * Specification section 10. Records the repository target selection the workflow decided.
-   * `mergeOrder` starts at one, because Task 10 selects one target only.
+   * Specification section 10. Records the repository target the workflow selected. A Version 1
+   * Run has one target.
    */
   async recordRunTarget(input: {
     tenantId: string;
     runId: string;
     repositoryId: string;
     selectionReason: string;
-    mergeOrder: number;
   }): Promise<string> {
     const target = await dependencies.runs.createRunTarget(input);
     dependencies.logger.info("run target recorded", {

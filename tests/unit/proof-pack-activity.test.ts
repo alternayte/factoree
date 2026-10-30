@@ -257,6 +257,9 @@ const input: PublishProofPackActivityInput = {
   reviewVerdict: "pass",
   reviewPasses: 2,
   reviewAttempt: 2,
+  autonomyLevel: "L3",
+  autonomyReasons: [],
+  checkDefiningFiles: [],
 };
 
 describe("publishProofPack", () => {
@@ -387,13 +390,11 @@ describe("publishProofPack", () => {
             tenantId: "t1",
             runId: "run-1",
             repositoryId: "repo-1",
-            role: "primary",
             selectionReason: "sole member",
             baseSha: "3".repeat(40),
             patchSha256: "2".repeat(64),
             commitSha: "1".repeat(40),
             pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-            mergeOrder: 1,
           },
         ],
       },

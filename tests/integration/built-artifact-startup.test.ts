@@ -42,8 +42,8 @@ const listTsFiles = async (dir: string): Promise<string[]> => {
 const dummyEnv = (port: number, temporalAddress: string): NodeJS.ProcessEnv => ({
   ...process.env,
   DATABASE_URL: "postgresql://factoree:factoree@localhost:5432/factoree_dummy",
-  FACTOREE_SECRET_KEY: "0".repeat(64),
-  ADMIN_API_TOKEN: "a".repeat(32),
+  FACTOREE_SECRET_KEY: "3f9a1c7e52b04d86a1e9c3f7b2d50e48".repeat(2),
+  ADMIN_API_TOKEN: "k3Jx9QvT2mWb7RzL5nYc8HdF4pGs1AeU",
   LINEAR_WEBHOOK_SECRET: "dummy-webhook-secret",
   SPRITES_TOKEN: "dummy-sprites-token",
   GITHUB_APP_ID: "123456",

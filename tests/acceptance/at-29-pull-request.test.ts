@@ -22,6 +22,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxRef } from "~/domain/runs/sandbox.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
+import { capturePatch } from "~/domain/publishing/patch.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { createBareRemote, type BareRemote } from "./support/bare-remote.js";
 import { startGitHubFixtureApi, type GitHubFixtureApi } from "./support/github-fixture-api.js";
@@ -66,7 +67,7 @@ const baseRepositoryReader = (sha: () => string): RepositoryReader & { urls: str
     },
     listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
     readBlob: (): Promise<string | null> => Promise.resolve(null),
-    useCredential: () => undefined,
+    withCredential: (_credential, work) => work(),
   };
 };
 
@@ -79,7 +80,7 @@ const forbiddenRepositoryReader = (): RepositoryReader => ({
     Promise.reject(new Error("the publish activity must not read the repository")),
   listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
   readBlob: (): Promise<string | null> => Promise.resolve(null),
-  useCredential: () => undefined,
+  withCredential: (_credential, work) => work(),
 });
 
 interface PublicationRow {
@@ -172,6 +173,8 @@ beforeAll(async () => {
   });
   expect(staged.exitCode).toBe(0);
   const stagedTreeSha = staged.stdout.trim();
+  // The patch the check sprite received. Publication must capture exactly this patch.
+  const verified = await capturePatch({ sandbox, redactor }, { ref, primaryPath, baseSha: remote.baseSha });
 
   branch = publishBranchName(RUN_ID);
   input = {
@@ -188,6 +191,8 @@ beforeAll(async () => {
     baseSha: remote.baseSha,
     reviewedChangedFiles: ["added.txt", "target.txt"],
     reviewedWorktreeSha: stagedTreeSha,
+    verifiedPatchSha256: verified.patchSha256,
+    draft: false,
     workItemTitle: "Rename the target file content",
     workItemUrl: "https://linear.app/acme/issue/ENG-29",
     verificationSummary: VERIFICATION_SUMMARY,

@@ -56,6 +56,7 @@ const activities = {
     constraints: [],
     unresolvedQuestions: [],
     autonomyLevel: "L2",
+    autonomyReasons: [],
   }),
   resolveContext: async (input: { primaryRepository: { slug: string } }) => ({
     sha256: "c".repeat(64),
@@ -77,6 +78,7 @@ const activities = {
     frozenAt: "2026-01-01T00:00:00.000Z",
     question: null,
     summary: "Factoree froze the Validation Contract with 1 assertion.",
+    manualAssertionIds: [],
   }),
   prepareSandbox: async (input: { runId: string }) => ({
     spriteId: `sprite-${input.runId}`,
@@ -94,6 +96,27 @@ const activities = {
     // literal, so `npm run typecheck` cannot catch a missing field here.
     preview: null,
   }),
+  // docs/specs/check-isolation.md. The checks run in a check sprite built from the patch.
+  prepareCheckSandbox: async (input: { runId: string; attempt: number }) => ({
+    spriteId: `check-${input.runId}-${input.attempt}`,
+    adapter: "fake",
+    workspacePath: "/workspace",
+    primaryPath: "/workspace/primary",
+    baseSha: "b".repeat(40),
+    referencePaths: [],
+    referenceBaseShas: [],
+    baselineCheckpointId: null,
+    runtime: DEFAULT_PROJECT_RUNTIME_CONFIG,
+    verifyCommands: [],
+    repositoryInstructions: "",
+    preview: null,
+    patchSha256: "d".repeat(64),
+    treeSha: "b".repeat(40),
+    changedFiles: [],
+    checkDefiningFiles: [],
+  }),
+  releaseCheckSandbox: async () => undefined,
+  proposeRefinement: async () => ({ status: "proposed", accepted: [], inferred: [], question: null, reason: "" }),
   implement: async (input: { runnerName: string }) => ({
     sessionId: "ses_fake",
     processId: "process-fake",
@@ -237,6 +260,8 @@ describe("AT-35 worker restart", () => {
             stagingRead: false,
             spriteRetentionHours: 24,
             defaultAutonomy: "L2",
+            riskCaps: null,
+            allowedDomains: [],
             organizationSkillsRepository: null,
           },
           repositoryProposal: null,

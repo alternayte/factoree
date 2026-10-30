@@ -6,9 +6,10 @@ import { promisify } from "node:util";
 import { isDeterministicRemoteFailure } from "~/adapters/github/git-repository-reader.js";
 import { withoutUrlCredentials } from "~/domain/runs/checkout.js";
 import { PATCH_DIFF_ARGS, PATCH_GIT_OPTIONS, sha256OfBase64 } from "./patch.js";
+
 // The one copy of the credential environment builder. See the module comment for why it lives
 // in `src/domain/security` rather than here.
-import { credentialEnvironment } from "~/domain/security/git-credential-environment.js";
+import { credentialEnvironment, isolatedGitEnvironment } from "~/domain/security/git-credential-environment.js";
 
 export { credentialEnvironment };
 
@@ -180,7 +181,7 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
         cwd,
         timeout: PUBLISH_GIT_TIMEOUT_MS,
         maxBuffer: MAX_OUTPUT_BYTES,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
+        env: { ...isolatedGitEnvironment(tmpdir()), ...extraEnv },
       });
       return result.stdout;
     } catch (error) {
@@ -197,7 +198,7 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
         timeout: PUBLISH_GIT_TIMEOUT_MS,
         maxBuffer: MAX_OUTPUT_BYTES,
         encoding: "buffer",
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        env: isolatedGitEnvironment(tmpdir()),
       });
       return Buffer.from(result.stdout);
     } catch (error) {

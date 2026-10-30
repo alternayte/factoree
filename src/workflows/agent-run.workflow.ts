@@ -6,14 +6,20 @@ import {
   defineSignal,
   ApplicationFailure,
   isCancellation,
+  TemporalFailure,
   proxyActivities,
   setHandler,
   sleep,
 } from "@temporalio/workflow";
 import type { RunStatus } from "~/domain/runs/run-status.js";
 import type { Activities } from "~/activities/index.js";
-import type { PrepareSandboxActivityOutput } from "~/activities/sandbox.activities.js";
+import type {
+  PrepareCheckSandboxActivityOutput,
+  PrepareSandboxActivityOutput,
+} from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
+import type { ProposeRefinementActivityOutput } from "~/activities/refinement.activities.js";
+import { acceptsProposal } from "../domain/refinement/accepts-proposal.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
@@ -46,7 +52,7 @@ import { buildRepositoryUrl } from "../domain/products/repository-url.js";
 import { renderRisks } from "../domain/refinement/risk.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { completionInvariantFailures } from "../domain/runs/completion-invariant.js";
+import { completionInvariantFailures, prePublicationFailures } from "../domain/runs/completion-invariant.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { selectTarget } from "../domain/routing/select-targets.js";
@@ -54,7 +60,12 @@ import { selectTarget } from "../domain/routing/select-targets.js";
 export interface AgentRunProductInput {
   productId: string;
   productSlug: string;
+  /** The Product default level. Delegation sends L0 for a pending Product. */
   defaultAutonomy: string;
+  /** docs/specs/autonomy-levels.md. The risk caps of the Product. Null means the SDD defaults. */
+  riskCaps: Record<string, string> | null;
+  /** R-4. The egress ceiling of every sandbox of this Product. */
+  allowedDomains: string[];
   /**
    * Every repository the Product owns. Task 10 selects the target repository of the Run from
    * this list. Until then, the workflow treats the first entry as the target.
@@ -399,6 +410,9 @@ export async function agentRunWorkflow(
   const humanInputs: string[] = [];
   let stopRequested = false;
   let sprite: PrepareSandboxActivityOutput | null = null;
+  // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
+  // validation, review and publication run there, never in the sprite the Implementer used.
+  let checkSandbox: PrepareCheckSandboxActivityOutput | null = null;
   let implementerSession: AgentSessionRef | null = null;
   /** True once the implement activity itself has cancelled the live session. */
   let implementerCancelled = false;
@@ -467,6 +481,25 @@ export async function agentRunWorkflow(
   const deadline = Date.now() + runBudgetMs;
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
+  // A terminal write must run even when the workflow scope is cancelled, or the Run row stays in
+  // a working state while the workflow has already ended.
+  const completeRun = (args: Parameters<Activities["completeRun"]>[0]): Promise<void> =>
+    CancellationScope.nonCancellable(async () => {
+      const check = checkSandbox;
+      if (check !== null) {
+        // The last check sprite goes with the Run. A failed delete is logged by the activity.
+        await notify(() =>
+          cancelActivities.releaseCheckSandbox({
+            runId: id,
+            spriteId: check.spriteId,
+            adapter: check.adapter,
+            workspacePath: check.workspacePath,
+          }),
+        );
+      }
+      await activities.completeRun(args);
+    });
+
   const failRun = async (
     failureReason:
       | "RUN_TIMEOUT"
@@ -474,6 +507,7 @@ export async function agentRunWorkflow(
       | "CONFIGURATION_INVALID"
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
+      | "REFINEMENT_UNAVAILABLE"
       | "TARGET_UNRESOLVED"
       | "CONTEXT_UNRESOLVED"
       | "VALIDATION_UNRESOLVED"
@@ -507,7 +541,7 @@ export async function agentRunWorkflow(
           ? "FAILED_REVIEW"
           : "FAILED";
     // Write the durable terminal state first. A Linear outage must not leave the Run open.
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -529,7 +563,7 @@ export async function agentRunWorkflow(
     currentTargetSha: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = "STALE_BASE";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -558,7 +592,7 @@ export async function agentRunWorkflow(
     declaredProductSlug: string,
   ): Promise<AgentRunWorkflowResult> => {
     status = "BLOCKED_ROUTING";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -816,6 +850,20 @@ export async function agentRunWorkflow(
     );
   };
 
+  // docs/specs/autonomy-levels.md. An L0 or L1 Run posts its report as the final response and
+  // ends REPORTED. By its level it opens no pull request.
+  const endReported = async (body: string): Promise<AgentRunWorkflowResult> => {
+    status = "REPORTED";
+    await completeRun({
+      tenantId: input.tenantId,
+      runId: id,
+      status,
+      completedAt: new Date(Date.now()).toISOString(),
+    });
+    await notify(() => activities.postFinalResponse({ sessionId: input.agentSessionId, body }));
+    return { runId: id, status };
+  };
+
   // SDD section 50: a stop must terminate the active agent process, and no change is published.
   const cancelRun = async (): Promise<AgentRunWorkflowResult> => {
     const session = implementerSession;
@@ -827,7 +875,7 @@ export async function agentRunWorkflow(
       );
     }
     status = "CANCELLED";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
@@ -862,10 +910,12 @@ export async function agentRunWorkflow(
 
       // SDD section 28. The webhook carries no label, so the labels come from the Linear API
       // before Refinement classifies the risk of this Work Item. A read that never recovers,
-      // after the activity's own retry policy is exhausted, must not fail the Run: it yields no
-      // label, and the Run then runs at its Project default, the same as an issue with no label
-      // does. A cancellation is not a label-read fault, so it still propagates.
+      // after the activity's own retry policy is exhausted, must not fail the Run. The risk cap is
+      // a security control, so it fails closed: the Run then runs at L2 at most.
+      // docs/specs/autonomy-levels.md. A cancellation is not a label-read fault, so it still
+      // propagates.
       let labels = input.workItem.labels;
+      let labelsUnreadable = false;
       const issueId = input.workItem.issueId;
       if (issueId !== null) {
         try {
@@ -874,15 +924,15 @@ export async function agentRunWorkflow(
           if (isCancellation(error)) throw error;
           // The webhook labels are never worse than an empty list, so the fallback keeps them.
           labels = input.workItem.labels;
+          labelsUnreadable = true;
           // The cap of SDD section 28 is a security control, so a degraded cap must be visible.
           // A Linear fault must not fail the Run either, so the post stays inside `notify`.
           await notify(() =>
             activities.postProgress({
               sessionId: input.agentSessionId,
               message:
-                "Factoree could not read the labels of this Work Item. The risk cap of the " +
-                "autonomy level could not be applied. The Run continues at the autonomy level " +
-                "of the Project.",
+                "Factoree could not read the labels of this Work Item, so it runs this Run at L2 " +
+                "at most and opens a draft pull request.",
             }),
           );
         }
@@ -899,7 +949,9 @@ export async function agentRunWorkflow(
           primaryRepository: primaryRepositorySlug,
           referenceRepositories: referenceRepositorySlugs,
           defaultAutonomy: input.product.defaultAutonomy,
+          riskCaps: input.product.riskCaps,
         },
+        labelsUnreadable,
         decisions,
       });
 
@@ -911,7 +963,14 @@ export async function agentRunWorkflow(
       // this loop always ends.
       while (refined.status === "needs_input") {
         const question = refined.unresolvedQuestions[0];
-        if (question === undefined) break;
+        // A `needs_input` result with no question names nothing a human can answer. The Run must
+        // not continue as if refinement were ready.
+        if (question === undefined) {
+          return await failRun(
+            "REFINEMENT_UNRESOLVED",
+            "Refinement needs input but named no question, so Factoree cannot continue.",
+          );
+        }
         const proceeded = await askAndWait(question.id, question.question);
         if (stopRequested) return await cancelRun();
         if (!proceeded) {
@@ -987,7 +1046,6 @@ export async function agentRunWorkflow(
           runId: id,
           repositoryId: repository.id,
           selectionReason: reason,
-          mergeOrder: 1,
         });
         if (notice) {
           await notify(() =>
@@ -1139,10 +1197,181 @@ export async function agentRunWorkflow(
         baseSha: resolvedContext.primary.sha,
       });
 
-      // SDD section 49 places the Validation Contract between context resolution and sandbox
-      // preparation. SDD section 24 requires the contract to freeze before implementation starts.
-      // The loop ends because `askAndWait` is bounded by the question rounds and by the budget.
+      // docs/specs/autonomy-levels.md. L0 reads and reports. The Context Contract is the report,
+      // and no sandbox starts.
+      if (refined.autonomyLevel === "L0") {
+        return await endReported(
+          [
+            "## Factoree report",
+            "",
+            `Status: REPORTED at L0. ${autonomyNote(refined.autonomyReasons)}`,
+            "",
+            "### Context",
+            "",
+            resolvedContext.summary,
+            "",
+            "### Risks",
+            "",
+            refined.risks.length === 0 ? "None." : refined.risks.map((risk) => `- ${risk}`).join("\n"),
+            "",
+            "Factoree changed nothing and opened no pull request.",
+          ].join("\n"),
+        );
+      }
+
+      // SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the
+      // primary repository. Only the values a repository must not own travel from here.
+      const sandbox = {
+        primary: {
+          url: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
+          // SDD section 20. The checkout lands on the SHA discovery pinned. A branch name can
+          // point to a new commit at any time, so the workflow must not use one here. The Run
+          // and the Context Contract then read one state of the repository.
+          ref: resolvedContext.primary.sha,
+        },
+        references: resolvedContext.references.map((repository) => ({
+          url: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.slug),
+          ref: repository.sha,
+        })),
+        defaults: {
+          stagingRead: input.product.stagingRead,
+          spriteRetentionHours: input.product.spriteRetentionHours,
+          allowedDomains: input.product.allowedDomains,
+        },
+        organizationSkills:
+          input.product.organizationSkillsRepository === null
+            ? null
+            : {
+                url: buildRepositoryUrl(
+                  input.product.repositoryBaseUrl,
+                  input.product.organizationSkillsRepository,
+                ),
+                // No discovery step resolves a skills repository, so the target repository default
+                // branch is the only defined ref. See DI-11.3.
+                ref: defaultBranchForSlug(primaryRepositorySlug),
+              },
+        goal: refined.goal,
+      };
+
+      status = "PREPARING";
+      await activities.setRunStatus({ runId: id, status });
+
+      const sandboxActivities = buildSandboxActivities(remainingMs());
+      // The work sprite and every check sprite are prepared from the same input.
+      const prepareInput = {
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        primary: sandbox.primary,
+        references: sandbox.references,
+        defaults: sandbox.defaults,
+        environment: {},
+        organizationSkills: sandbox.organizationSkills,
+        githubInstallationId: primaryRepositoryInstallationId,
+      };
+
+      // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
+      // retention window of SDD section 51 has passed.
+      // A const holds the prepared sandbox, because narrowing of a let does not survive into a
+      // closure.
+      let preparedSandbox: PrepareSandboxActivityOutput;
+      try {
+        preparedSandbox = await sandboxActivities.prepareSandbox(prepareInput);
+      } catch (error) {
+        // A configuration fault is not an infrastructure fault. The Run ends in
+        // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
+              "Repair the repository reference, the reference repositories, or the bootstrap command.",
+          );
+        }
+        // Preparation is bounded by the remaining budget. A budget that ran out during
+        // preparation is a Run timeout, not an internal fault.
+        if (remainingMs() > 0) throw error;
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      }
+      sprite = preparedSandbox;
+
+      // A stop that arrived during preparation must prevent the Implementer from starting.
+      if (stopRequested) return await cancelRun();
+      // Preparation can consume the whole budget. The Run must end here rather than start work
+      // it cannot finish.
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
+      // docs/specs/refiner-agent.md. A fresh refiner reads the work sprite and proposes what done
+      // means and how to prove it. The gate decides what freezes. A criterion the refiner inferred,
+      // and each of its questions, reach a human as one question with a proposed answer.
+      status = "REFINING";
+      await activities.setRunStatus({ runId: id, status });
+      let proposal: ProposeRefinementActivityOutput | null;
+      try {
+        proposal = await runAgentActivity(() =>
+          buildUserValidateActivities(remainingMs()).proposeRefinement({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runnerName: preparedSandbox.runtime.validatorRunner,
+            spriteId: preparedSandbox.spriteId,
+            adapter: preparedSandbox.adapter,
+            workspacePath: preparedSandbox.workspacePath,
+            primaryPath: preparedSandbox.primaryPath,
+            workItemText: `${input.workItem.title}\n\n${input.workItem.description}`,
+            goal: refined.goal,
+            statedCriteria: refined.acceptanceCriteria,
+            contextContract: resolvedContext.document,
+            skills: preparedSandbox.skills,
+            timeoutMs: remainingMs(),
+          }),
+        );
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            "Factoree could not start the Refiner, because the Run configuration is invalid. " +
+              "Repair `validator_runner` in `.factoree/config.yaml`.",
+          );
+        }
+        if (remainingMs() > 0) throw error;
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      }
+      if (stopRequested) return await cancelRun();
+      if (proposal === null) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        return await failRun("REFINEMENT_UNAVAILABLE", "The Refiner did not finish, so Factoree published nothing.");
+      }
+      if (proposal.status !== "proposed") {
+        return await failRun(
+          "REFINEMENT_UNAVAILABLE",
+          `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
+        );
+      }
+      // A refiner that proposes nothing leaves the criteria the Work Item states.
+      let contractCriteria =
+        proposal.accepted.length + proposal.inferred.length === 0 ? refined.criteria : proposal.accepted;
       const validationAnswers: string[] = [];
+      if (proposal.question !== null) {
+        const proceeded = await askAndWait(REFINER_QUESTION_ID, proposal.question);
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "REFINEMENT_UNRESOLVED",
+            "Factoree could not start, because a proposed acceptance criterion is not confirmed. " +
+              "Factoree must not invent product behavior, so it published nothing.",
+          );
+        }
+        const answer = decisions[decisions.length - 1]?.answer ?? "";
+        if (acceptsProposal(answer)) contractCriteria = [...proposal.accepted, ...proposal.inferred];
+        else if (answer.trim() !== "") validationAnswers.push(answer);
+      }
+
+      // docs/specs/refiner-agent.md. The Validation Contract freezes after the refiner and before
+      // the Implementer. SDD section 24 requires the contract to freeze before implementation
+      // starts. The loop ends because `askAndWait` is bounded by the question rounds and by the
+      // budget.
       let validation: Awaited<ReturnType<Activities["buildValidationContract"]>>;
       for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -1156,7 +1385,7 @@ export async function agentRunWorkflow(
           productId: input.productId,
           workItem: input.workItem.issueId ?? id,
           goal: refined.goal,
-          acceptanceCriteria: refined.criteria,
+          acceptanceCriteria: contractCriteria,
           humanAssertions: validationAnswers,
         });
 
@@ -1207,86 +1436,20 @@ export async function agentRunWorkflow(
         activities.postProgress({ sessionId: input.agentSessionId, message: validation.summary }),
       );
 
-      // A stop that arrived while the contract was built must prevent preparation.
-      if (stopRequested) return await cancelRun();
-      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-
-      // SDD section 15. The runtime configuration comes from `.factoree/config.yaml` in the
-      // primary repository. Only the values a repository must not own travel from here.
-      const sandbox = {
-        primary: {
-          url: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
-          // SDD section 20. The checkout lands on the SHA discovery pinned. A branch name can
-          // point to a new commit at any time, so the workflow must not use one here. The Run
-          // and the Context Contract then read one state of the repository.
-          ref: resolvedContext.primary.sha,
-        },
-        references: resolvedContext.references.map((repository) => ({
-          url: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.slug),
-          ref: repository.sha,
-        })),
-        defaults: {
-          stagingRead: input.product.stagingRead,
-          spriteRetentionHours: input.product.spriteRetentionHours,
-        },
-        organizationSkills:
-          input.product.organizationSkillsRepository === null
-            ? null
-            : {
-                url: buildRepositoryUrl(
-                  input.product.repositoryBaseUrl,
-                  input.product.organizationSkillsRepository,
-                ),
-                // No discovery step resolves a skills repository, so the target repository default
-                // branch is the only defined ref. See DI-11.3.
-                ref: defaultBranchForSlug(primaryRepositorySlug),
-              },
-        goal: refined.goal,
-      };
-
-      status = "PREPARING";
-      await activities.setRunStatus({ runId: id, status });
-
-      const sandboxActivities = buildSandboxActivities(remainingMs());
-
-      // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
-      // retention window of SDD section 51 has passed.
-      // A const holds the prepared sandbox, because narrowing of a let does not survive into a
-      // closure.
-      let preparedSandbox: PrepareSandboxActivityOutput;
-      try {
-        preparedSandbox = await sandboxActivities.prepareSandbox({
-          runId: id,
-          tenantId: input.tenantId,
-          productId: input.productId,
-          primary: sandbox.primary,
-          references: sandbox.references,
-          defaults: sandbox.defaults,
-          environment: {},
-          organizationSkills: sandbox.organizationSkills,
-          githubInstallationId: primaryRepositoryInstallationId,
-        });
-      } catch (error) {
-        // A configuration fault is not an infrastructure fault. The Run ends in
-        // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
-        if (isConfigurationFault(error)) {
-          return await failRun(
-            "CONFIGURATION_INVALID",
-            "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
-              "Repair the repository reference, the reference repositories, or the bootstrap command.",
-          );
-        }
-        // Preparation is bounded by the remaining budget. A budget that ran out during
-        // preparation is a Run timeout, not an internal fault.
-        if (remainingMs() > 0) throw error;
-        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      // docs/specs/refiner-agent.md. An assertion that no automated check can answer ends an L3
+      // Run with VALIDATION_MANUAL_REQUIRED anyway. Stopping here spends no agent time on it.
+      if (validation.manualAssertionIds.length > 0) {
+        return await failRun(
+          "VALIDATION_MANUAL_REQUIRED",
+          "Factoree cannot check these assertions automatically: " +
+            `${validation.manualAssertionIds.join(", ")}. Rewrite each one as an observable result ` +
+            "(a command, an HTTP response, or a page state) and delegate again. Factoree started no " +
+            "implementation and published nothing.",
+        );
       }
-      sprite = preparedSandbox;
 
-      // A stop that arrived during preparation must prevent the Implementer from starting.
+      // A stop that arrived while the contract was built must prevent the Implementer.
       if (stopRequested) return await cancelRun();
-      // Preparation can consume the whole budget. The Run must end here rather than start work
-      // it cannot finish.
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
       // One Implementer attempt plus its verification. SDD section 42 bounds the number of
@@ -1362,6 +1525,45 @@ export async function agentRunWorkflow(
         // follows. Only the configured commands do.
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+        // docs/specs/check-isolation.md. The Implementer controlled the work sprite. Every check
+        // runs in a new sprite built from the base SHA plus the captured patch.
+        const previousCheck: PrepareCheckSandboxActivityOutput | null = checkSandbox;
+        let checked: PrepareCheckSandboxActivityOutput;
+        try {
+          checked = await buildSandboxActivities(remainingMs()).prepareCheckSandbox({
+            ...prepareInput,
+            work: {
+              spriteId: preparedSandbox.spriteId,
+              adapter: preparedSandbox.adapter,
+              workspacePath: preparedSandbox.workspacePath,
+              primaryPath: preparedSandbox.primaryPath,
+              baseSha: preparedSandbox.baseSha,
+            },
+            previous:
+              previousCheck === null
+                ? null
+                : {
+                    spriteId: previousCheck.spriteId,
+                    adapter: previousCheck.adapter,
+                    workspacePath: previousCheck.workspacePath,
+                  },
+            attempt,
+          });
+        } catch (error) {
+          if (isConfigurationFault(error)) {
+            return await failRun(
+              "CONFIGURATION_INVALID",
+              "Factoree could not prepare the check sandbox, because the Run configuration is " +
+                "invalid. Repair the bootstrap command or the repository reference.",
+            );
+          }
+          if (remainingMs() > 0) throw error;
+          return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+        checkSandbox = checked;
+        if (stopRequested) return await cancelRun();
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+
         status = "VERIFYING";
         await activities.setRunStatus({ runId: id, status });
 
@@ -1372,11 +1574,11 @@ export async function agentRunWorkflow(
             runId: id,
             tenantId: input.tenantId,
             productId: input.productId,
-            spriteId: preparedSandbox.spriteId,
-            adapter: preparedSandbox.adapter,
-            workspacePath: preparedSandbox.workspacePath,
-            primaryPath: preparedSandbox.primaryPath,
-            commands: preparedSandbox.verifyCommands,
+            spriteId: checked.spriteId,
+            adapter: checked.adapter,
+            workspacePath: checked.workspacePath,
+            primaryPath: checked.primaryPath,
+            commands: checked.verifyCommands,
             timeoutMs: remainingMs(),
             attempt,
           });
@@ -1432,7 +1634,7 @@ export async function agentRunWorkflow(
         let userValidation: UserValidateActivityOutput;
         try {
           const result = await runUserValidate({
-            prepared: preparedSandbox,
+            prepared: checked,
             goal: sandbox.goal,
             attempt,
           });
@@ -1441,7 +1643,7 @@ export async function agentRunWorkflow(
           if (result === null) {
             // The pass ended with no result and no stop signal. The budget decides why.
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-            throw new Error("the userValidate activity returned no result");
+            throw ApplicationFailure.nonRetryable("the userValidate activity returned no result");
           }
           userValidation = result;
         } catch (error) {
@@ -1535,7 +1737,7 @@ export async function agentRunWorkflow(
         let review: ReviewActivityOutput;
         try {
           const result = await runReview({
-            prepared: preparedSandbox,
+            prepared: checked,
             goal: sandbox.goal,
             attempt,
             contextContract: resolvedContext.document,
@@ -1548,7 +1750,7 @@ export async function agentRunWorkflow(
           if (stopRequested) return await cancelRun();
           if (result === null) {
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-            throw new Error("the review activity returned no result");
+            throw ApplicationFailure.nonRetryable("the review activity returned no result");
           }
           review = result;
         } catch (error) {
@@ -1621,17 +1823,78 @@ export async function agentRunWorkflow(
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
       if (stopRequested) return await cancelRun();
 
+      // SDD section 68. Every clause that can hold before publication is checked here, so a broken
+      // clause stops the Run before a pull request exists, not after.
+      const unmetBeforePublication = prePublicationFailures({
+        workItemReady: refined.status === "ready",
+        contextContractVersion,
+        unresolvedConflict: resolvedContext.unresolvedConflict !== null,
+        validationContractVersion,
+        validationContractFrozenAt: validation.frozenAt,
+        implementationStartedAt,
+        validationPassed: publishedValidationPassed,
+        verificationPassed: publishedVerificationPassed,
+        blockingFindingCount: publishedBlockingCount,
+        repairCount,
+        repairLimit: maxRepairs,
+      });
+      if (unmetBeforePublication.length > 0) {
+        return await failRun(
+          "COMPLETION_INVARIANT_UNMET",
+          `Factoree cannot prove this change, so it published nothing. ${unmetBeforePublication.join(" ")}`,
+        );
+      }
+
+      // docs/specs/autonomy-levels.md. L1 implements and checks, and returns the evidence with no
+      // pull request.
+      if (refined.autonomyLevel === "L1") {
+        return await endReported(
+          [
+            "## Factoree report",
+            "",
+            `Status: REPORTED at L1. ${autonomyNote(refined.autonomyReasons)}`,
+            "",
+            "### Deterministic verification",
+            "",
+            publishedVerificationSummary,
+            "",
+            "### Independent review",
+            "",
+            `Verdict: ${publishedReviewVerdict}. Blocking findings: ${String(publishedBlockingCount)}.`,
+            "",
+            "### Change",
+            "",
+            publishedChangedFiles.length === 0 ? "No file changed." : publishedChangedFiles.map((file) => `- ${file}`).join("\n"),
+            "",
+            "Every check passed. By its level, this Run opens no pull request.",
+          ].join("\n"),
+        );
+      }
+
       status = "PUBLISHING";
       await activities.setRunStatus({ runId: id, status });
 
+      // docs/specs/check-isolation.md. Publication captures from the check sprite, and the patch
+      // it captures must be the patch that entered that sprite.
+      const published = checkSandbox;
+      if (published === null) {
+        return await failRun(
+          "COMPLETION_INVARIANT_UNMET",
+          "Factoree has no check sandbox for this change, so it published nothing.",
+        );
+      }
       const publishInput = {
         runId: id,
         tenantId: input.tenantId,
         productId: input.productId,
-        spriteId: preparedSandbox.spriteId,
-        adapter: preparedSandbox.adapter,
-        workspacePath: preparedSandbox.workspacePath,
-        primaryPath: preparedSandbox.primaryPath,
+        spriteId: published.spriteId,
+        adapter: published.adapter,
+        workspacePath: published.workspacePath,
+        primaryPath: published.primaryPath,
+        verifiedPatchSha256: published.patchSha256,
+        // docs/specs/autonomy-levels.md and check-isolation.md. L2 opens a draft. So does a patch
+        // that changes a file that defines a check.
+        draft: refined.autonomyLevel !== "L3" || published.checkDefiningFiles.length > 0,
         repositorySlug: resolvedContext.primary.slug,
         repositoryBaseUrl: input.product.repositoryBaseUrl,
         baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),
@@ -1659,6 +1922,7 @@ export async function agentRunWorkflow(
           repositoryBaseUrl: publishInput.repositoryBaseUrl,
           branch: publishInput.baseBranch,
           baseSha: publishInput.baseSha,
+          githubInstallationId: publishInput.githubInstallationId,
         });
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -1757,6 +2021,9 @@ export async function agentRunWorkflow(
           reviewVerdict: publishedReviewVerdict,
           reviewPasses: publishedReviewPasses,
           reviewAttempt: publishedReviewAttempt,
+          autonomyLevel: refined.autonomyLevel,
+          autonomyReasons: refined.autonomyReasons,
+          checkDefiningFiles: published.checkDefiningFiles,
         });
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -1804,7 +2071,7 @@ export async function agentRunWorkflow(
       // SDD section 48. The Run is complete. This is the one success terminal state, and the
       // completion invariant above is the only gate that reaches it.
       status = "READY_FOR_HUMAN";
-      await activities.completeRun({
+      await completeRun({
         tenantId: input.tenantId,
         runId: id,
         status,
@@ -1819,16 +2086,26 @@ export async function agentRunWorkflow(
   } catch (error) {
     // Any unhandled activity failure must still drive the Run to a terminal state.
     status = "FAILED";
-    await activities.completeRun({
+    await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
       failureReason: "INTERNAL_ERROR",
       completedAt: new Date(Date.now()).toISOString(),
     });
-    throw error;
+    // A plain error fails the workflow task, and Temporal retries that task for ever while the
+    // row says FAILED. A Temporal failure ends the workflow.
+    if (error instanceof TemporalFailure) throw error;
+    throw ApplicationFailure.fromError(error, { nonRetryable: true });
   }
 }
+
+/** docs/specs/refiner-agent.md. The question identifier of the refiner confirmation. */
+const REFINER_QUESTION_ID = "REFINER-Q-1";
+
+/** One sentence that names the level rules that applied, or none. */
+const autonomyNote = (reasons: string[]): string =>
+  reasons.length === 0 ? "The Product default level applies." : reasons.join(" ");
 
 // A Linear notification failure must not abort the workflow after the durable state is written.
 const notify = async (send: () => Promise<void>): Promise<void> => {

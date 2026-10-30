@@ -45,11 +45,12 @@ export interface TenantRegistry {
   /**
    * Binds a GitHub App installation to a tenant. The numeric installation id is the key. The
    * account login is stored for display only. A later call writes a new login over the same
-   * installation id, so an account rename never breaks the binding.
+   * installation id, so an account rename never breaks the binding. An installation that another
+   * tenant holds is never moved: the call answers `"held_by_another_tenant"` and writes nothing.
    */
   putGitHubInstallation(
     tenantId: string,
     githubInstallationId: string,
     accountLogin: string,
-  ): Promise<void>;
+  ): Promise<"bound" | "held_by_another_tenant">;
 }

@@ -14,6 +14,7 @@ const handle = (overrides: Partial<SpritesSpriteHandle> = {}): SpritesSpriteHand
   startDetached: vi.fn().mockResolvedValue(undefined),
   createCheckpoint: vi.fn().mockResolvedValue({ id: "v1" }),
   updateNetworkPolicy: vi.fn().mockResolvedValue(undefined),
+  publishPort: vi.fn().mockResolvedValue("https://factoree-run-1-abc.sprites.app/"),
   delete: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 });
@@ -69,9 +70,8 @@ describe("FlySpriteSandbox", () => {
     expect(sandbox.name).toBe("fly-sprites");
     expect(sandbox.capabilities.enforcesNetworkPolicy).toBe(true);
     expect(sandbox.capabilities.supportsCheckpoints).toBe(true);
-    // The Fly Sprites SDK has no documented API that publishes a port to a reachable URL, so
-    // this flag stays honest at false rather than advertising a capability the adapter lacks.
-    expect(sandbox.capabilities.supportsExposedServices).toBe(false);
+    // H-2. A live probe proved that a service declaring `httpPort` routes the sprite URL.
+    expect(sandbox.capabilities.supportsExposedServices).toBe(true);
   });
 
   it("creates one uniquely named sprite per Run", async () => {
@@ -261,8 +261,16 @@ describe("FlySpriteSandbox", () => {
     expect(checkpoint).toEqual({ id: "v1", name: "baseline" });
   });
 
-  it("rejects exposeService with a SandboxError, regardless of the gateway", async () => {
+  it("publishes the port through the sprite URL (H-2)", async () => {
     const sprite = handle();
+    const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
+    const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
+    expect(await sandbox.exposeService(ref, 8080)).toEqual({ port: 8080, url: "https://factoree-run-1-abc.sprites.app" });
+    expect(sprite.publishPort).toHaveBeenCalledWith(8080);
+  });
+
+  it("reports a failed publication as a SandboxError that names the port", async () => {
+    const sprite = handle({ publishPort: vi.fn().mockRejectedValue(new Error("no capacity")) });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
     await expect(sandbox.exposeService(ref, 8080)).rejects.toThrow(SandboxError);

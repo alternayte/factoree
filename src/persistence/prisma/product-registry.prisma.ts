@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
 import type {
   CreateProductInput,
+  ProductPolicyUpdate,
   ProductRecord,
   ProductRegistry,
 } from "~/domain/products/product-registry.js";
@@ -41,14 +43,27 @@ type ProductRow = {
   linearTeamKey: string;
   linearTeamId: string;
   defaultAutonomy: string;
+  riskCaps: Prisma.JsonValue | null;
+  allowedDomains: string[];
   maxRunMinutes: number;
   organizationSkillsRepository: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
+/** A stored caps value that is not a map of label to level reads as null, the SDD defaults. */
+const toRiskCaps = (value: Prisma.JsonValue | null): Record<string, string> | null => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const caps: Record<string, string> = {};
+  for (const [label, level] of Object.entries(value)) {
+    if (typeof level === "string") caps[label] = level;
+  }
+  return caps;
+};
+
 const toProduct = (row: ProductRow): ProductRecord => ({
   ...row,
+  riskCaps: toRiskCaps(row.riskCaps),
   status: row.status === "active" ? "active" : "pending",
 });
 
@@ -167,6 +182,51 @@ export class PrismaProductRegistry implements ProductRegistry {
       },
     });
     return toProduct(row);
+  }
+
+  async updatePolicy(
+    tenantId: string,
+    id: string,
+    policy: ProductPolicyUpdate,
+  ): Promise<ProductRecord | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.product.findFirst({ where: { id, tenantId } });
+      if (existing === null) return null;
+      const changes: Array<{ field: string; oldValue: Prisma.InputJsonValue | typeof Prisma.JsonNull; newValue: Prisma.InputJsonValue }> = [];
+      if (policy.defaultAutonomy !== undefined && policy.defaultAutonomy !== existing.defaultAutonomy) {
+        changes.push({ field: "defaultAutonomy", oldValue: existing.defaultAutonomy, newValue: policy.defaultAutonomy });
+      }
+      if (
+        policy.riskCaps !== undefined &&
+        JSON.stringify(policy.riskCaps) !== JSON.stringify(toRiskCaps(existing.riskCaps))
+      ) {
+        changes.push({
+          field: "riskCaps",
+          oldValue: existing.riskCaps ?? Prisma.JsonNull,
+          newValue: policy.riskCaps,
+        });
+      }
+      if (
+        policy.allowedDomains !== undefined &&
+        JSON.stringify(policy.allowedDomains) !== JSON.stringify(existing.allowedDomains)
+      ) {
+        changes.push({ field: "allowedDomains", oldValue: existing.allowedDomains, newValue: policy.allowedDomains });
+      }
+      const row = await tx.product.update({
+        where: { id },
+        data: {
+          ...(policy.defaultAutonomy === undefined ? {} : { defaultAutonomy: policy.defaultAutonomy }),
+          ...(policy.riskCaps === undefined ? {} : { riskCaps: policy.riskCaps }),
+          ...(policy.allowedDomains === undefined ? {} : { allowedDomains: policy.allowedDomains }),
+        },
+      });
+      for (const change of changes) {
+        await tx.productPolicyChange.create({
+          data: { tenantId, productId: id, field: change.field, oldValue: change.oldValue, newValue: change.newValue },
+        });
+      }
+      return toProduct(row);
+    });
   }
 
   async remove(tenantId: string, id: string): Promise<boolean> {
@@ -370,11 +430,17 @@ export class PrismaTenantRegistry implements TenantRegistry {
     tenantId: string,
     githubInstallationId: string,
     accountLogin: string,
-  ): Promise<void> {
-    await this.prisma.gitHubInstallation.upsert({
-      where: { githubInstallationId },
-      create: { tenantId, githubInstallationId, accountLogin },
-      update: { tenantId, accountLogin },
+  ): Promise<"bound" | "held_by_another_tenant"> {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.gitHubInstallation.findUnique({ where: { githubInstallationId } });
+      // A rebind would silently give one tenant's repositories to another tenant.
+      if (existing !== null && existing.tenantId !== tenantId) return "held_by_another_tenant";
+      await tx.gitHubInstallation.upsert({
+        where: { githubInstallationId },
+        create: { tenantId, githubInstallationId, accountLogin },
+        update: { accountLogin },
+      });
+      return "bound";
     });
   }
 }

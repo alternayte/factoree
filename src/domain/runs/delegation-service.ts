@@ -145,10 +145,15 @@ export class DelegationService {
     // SDD section 15 and section 16. The Product owns the default autonomy level and the
     // organization skills repository. Every other runtime value comes from
     // `.factoree/config.yaml` inside the target repository, so nothing here reads it.
+    // docs/specs/autonomy-levels.md. A pending Product can investigate and report, nothing
+    // more, whatever level its row holds.
+    const defaultAutonomy = product.status === "pending" ? "L0" : product.defaultAutonomy;
     const workflowProduct: AgentRunProductInput = {
       productId: product.id,
       productSlug: product.slug,
-      defaultAutonomy: product.defaultAutonomy,
+      defaultAutonomy,
+      riskCaps: product.riskCaps,
+      allowedDomains: product.allowedDomains,
       repositories: repositories.map((repository) => ({
         id: repository.id,
         fullName: repository.fullName,
@@ -193,7 +198,7 @@ export class DelegationService {
           productId: product.id,
           linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
           agentSessionId: event.agentSession.id,
-          autonomyLevel: product.defaultAutonomy,
+          autonomyLevel: defaultAutonomy,
           maxRunMinutes: product.maxRunMinutes,
           workItem,
           product: workflowProduct,

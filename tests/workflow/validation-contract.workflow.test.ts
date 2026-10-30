@@ -23,7 +23,6 @@ const {
   heldVerifications,
   implementCalls,
   verifyCalls,
-  prepared,
   runStatusQuery,
   start,
   statusesOf,
@@ -43,7 +42,6 @@ afterAll(async () => {
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const verifyCallsOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
-const preparedOf = (runId: string) => prepared.filter((entry) => entry.runId === runId);
 const validationsOf = (runId: string) => validationCalls.filter((entry) => entry.runId === runId);
 
 /** The result the double reports while the readiness gate of SDD section 9 item 5 fails. */
@@ -55,6 +53,7 @@ const NEEDS_INPUT: BuildValidationContractActivityOutput = {
   frozenAt: null,
   question: { id: "VAL-Q-1", question: "What observable behavior proves this work is done?" },
   summary: "Factoree cannot define success for this Work Item.",
+  manualAssertionIds: [],
 };
 
 /** The result the double reports once one assertion exists and the contract froze. */
@@ -66,6 +65,7 @@ const READY: BuildValidationContractActivityOutput = {
   frozenAt: "2026-01-01T00:00:00.000Z",
   question: null,
   summary: "Factoree froze the Validation Contract with 1 assertion.",
+  manualAssertionIds: [],
 };
 
 describe("the Validation Contract state of the Run workflow", () => {
@@ -91,8 +91,8 @@ describe("the Validation Contract state of the Run workflow", () => {
       // "buildValidationContract", and the assertion below would fail.
       const order = activityOrder.slice(before);
       expect(order).toContain("buildValidationContract");
-      expect(order).toContain("prepareSandbox");
-      expect(order.indexOf("buildValidationContract")).toBeLessThan(order.indexOf("prepareSandbox"));
+      expect(order).toContain("implement");
+      expect(order.indexOf("buildValidationContract")).toBeLessThan(order.indexOf("implement"));
 
       // SDD section 34. The Implementer never received a placeholder: the input already carries
       // the document buildValidationContract froze.
@@ -113,7 +113,7 @@ describe("the Validation Contract state of the Run workflow", () => {
     heldVerifications.delete("run-ses-val-at10");
   });
 
-  it("freezes the Validation Contract after context resolution and before sandbox preparation", async () => {
+  it("freezes the Validation Contract after the refiner and before the Implementer", async () => {
     const before = activityOrder.length;
     // Deterministic verification, and then user validation, both follow the Implementer in the
     // same bounded loop. Holding verification open keeps the stop signal away from that later
@@ -133,15 +133,17 @@ describe("the Validation Contract state of the Run workflow", () => {
     heldVerifications.delete("run-ses-val-a");
 
     const order = activityOrder.slice(before);
-    // SDD section 49 fixes this order. The contract must freeze before any sandbox exists. The
-    // stop signal lands while deterministic verification is held open, so the slice also
-    // carries the Implementer and that verification call, and it stops before user validation.
+    // docs/specs/refiner-agent.md fixes this order. The refiner reads the work sprite, and the
+    // contract freezes before the Implementer starts. The stop signal lands while deterministic
+    // verification is held open, so the slice stops before user validation.
     expect(order).toEqual([
       "resolveContext",
       "verifyTargetIdentity",
-      "buildValidationContract",
       "prepareSandbox",
+      "proposeRefinement",
+      "buildValidationContract",
       "implement",
+      "prepareCheckSandbox",
       "verify",
     ]);
   });
@@ -159,8 +161,8 @@ describe("the Validation Contract state of the Run workflow", () => {
     const building = statuses.indexOf("BUILDING_VALIDATION_CONTRACT");
     const preparing = statuses.indexOf("PREPARING");
     expect(context).toBeGreaterThanOrEqual(0);
-    expect(building).toBeGreaterThan(context);
-    expect(preparing).toBeGreaterThan(building);
+    expect(preparing).toBeGreaterThan(context);
+    expect(building).toBeGreaterThan(preparing);
   });
 
   it("reports the frozen hash in the run status query", async () => {
@@ -194,11 +196,11 @@ describe("the Validation Contract state of the Run workflow", () => {
       const handle = await start("ses-val-e");
       await waitFor(() => elicitations.length === before + 1, "the question of val-e");
       expect(elicitations[before]).toMatch(/observable behavior/);
-      // SDD section 9 item 5. No assertion exists yet, so no sandbox exists yet.
-      expect(preparedOf("run-ses-val-e")).toEqual([]);
+      // SDD section 9 item 5. No assertion exists yet, so no Implementer starts yet.
+      expect(implementsOf("run-ses-val-e")).toEqual([]);
 
       await handle.signal(humanInputSignal, "The /health endpoint answers 200.");
-      await waitFor(() => preparedOf("run-ses-val-e").length === 1, "the sandbox of val-e");
+      await waitFor(() => validationsOf("run-ses-val-e").length === 2, "the second build of val-e");
 
       // The answer travelled into the second build call as a human assertion.
       const second = validationsOf("run-ses-val-e")[1];
@@ -232,7 +234,6 @@ describe("the Validation Contract state of the Run workflow", () => {
     expect(result.status).toBe("FAILED");
     expect(completionsOf("run-ses-val-f").at(-1)?.failureReason).toBe("VALIDATION_UNRESOLVED");
     // SDD section 9 item 5. Implementation must not start, so no sandbox exists.
-    expect(preparedOf("run-ses-val-f")).toEqual([]);
     expect(implementsOf("run-ses-val-f")).toEqual([]);
   });
 
@@ -247,6 +248,7 @@ describe("the Validation Contract state of the Run workflow", () => {
       frozenAt: "2026-01-01T00:00:00.000Z",
       question: null,
       summary: "Factoree froze the Validation Contract with 1 assertion.",
+      manualAssertionIds: [],
     };
     validationOutcomes.set("run-ses-val-h", () => readyWithNoHash);
 
@@ -258,11 +260,26 @@ describe("the Validation Contract state of the Run workflow", () => {
 
     expect(result.status).toBe("FAILED");
     expect(completionsOf("run-ses-val-h").at(-1)?.failureReason).toBe("VALIDATION_UNRESOLVED");
-    expect(preparedOf("run-ses-val-h")).toEqual([]);
     expect(implementsOf("run-ses-val-h")).toEqual([]);
   });
 
-  it("prepares no sandbox when a stop arrives while the contract is built", async () => {
+  it("fails with VALIDATION_MANUAL_REQUIRED before the Implementer starts when an assertion is manual", async () => {
+    // docs/specs/refiner-agent.md. A manual assertion ends an L3 Run anyway, so the Run must stop
+    // before it spends agent time on an implementation that cannot pass.
+    validationOutcomes.set("run-ses-val-m", () => ({ ...READY, manualAssertionIds: ["VAL-MAN-001"] }));
+
+    const result = await runWorker(async () => {
+      const handle = await start("ses-val-m");
+      return handle.result();
+    });
+    validationOutcomes.delete("run-ses-val-m");
+
+    expect(result.status).toBe("FAILED");
+    expect(completionsOf("run-ses-val-m").at(-1)?.failureReason).toBe("VALIDATION_MANUAL_REQUIRED");
+    expect(implementsOf("run-ses-val-m")).toEqual([]);
+  });
+
+  it("starts no Implementer when a stop arrives while the contract is built", async () => {
     const release = hold(heldValidations, "run-ses-val-g");
     const result = await runWorker(async () => {
       const handle = await start("ses-val-g");
@@ -273,9 +290,8 @@ describe("the Validation Contract state of the Run workflow", () => {
     });
     heldValidations.delete("run-ses-val-g");
 
-    // SDD section 50. The stop prevents preparation and prevents publication.
+    // SDD section 50. The stop prevents the Implementer and prevents publication.
     expect(result.status).toBe("CANCELLED");
-    expect(preparedOf("run-ses-val-g")).toEqual([]);
     expect(implementsOf("run-ses-val-g")).toEqual([]);
   });
 });

@@ -12,8 +12,9 @@ import { parseOpenCodeOutput } from "./output-parser.js";
  *
  * The boundary of a Run is the sandbox and the Action Policy, not the working directory of a
  * command, so the session may read across the workspace. `OPENCODE_CONFIG_CONTENT` carries this
- * inline, and it merges over the configuration of the repository, so a repository keeps its own
- * model and needs no setting of Factoree.
+ * inline. R-3: `OPENCODE_DISABLE_PROJECT_CONFIG` makes opencode skip the `opencode.json` of the
+ * repository, so a repository cannot add an MCP server, a plugin or a permission. The repository
+ * therefore cannot choose the model either (B-3).
  */
 const OPENCODE_CONFIG = JSON.stringify({ permission: { external_directory: "allow" } });
 
@@ -70,6 +71,7 @@ export class OpenCodeRunner extends CliAgentRunner {
         FACTOREE_PROMPT_FILE: promptFile,
         FACTOREE_OPENCODE_BIN: this.executable,
         OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       },
     };
   }
@@ -83,6 +85,7 @@ export class OpenCodeRunner extends CliAgentRunner {
         FACTOREE_OPENCODE_BIN: this.executable,
         FACTOREE_OPENCODE_SESSION: sessionId,
         OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       },
     };
   }

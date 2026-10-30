@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import type { Sprite } from "@fly/sprites";
+import type { Sprite, SpritesClient } from "@fly/sprites";
 import { wrapSprite } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
 
 /**
@@ -24,7 +24,7 @@ const options = { cwd: "/home/sprite/workspace", env: { PATH: "/usr/bin" } };
 describe("wrapSprite.startDetached", () => {
   it("returns once the session starts, and closes this side of the connection", async () => {
     const command = new FakeCommand();
-    const handle = wrapSprite(spriteWith(command));
+    const handle = wrapSprite(spriteWith(command), {} as SpritesClient);
 
     const started = handle.startDetached("sh", ["-c", "true"], options);
     command.emit("spawn");
@@ -35,7 +35,7 @@ describe("wrapSprite.startDetached", () => {
 
   it("reports the first error to the caller", async () => {
     const command = new FakeCommand();
-    const handle = wrapSprite(spriteWith(command));
+    const handle = wrapSprite(spriteWith(command), {} as SpritesClient);
 
     const started = handle.startDetached("sh", ["-c", "true"], options);
     command.emit("error", new Error("WebSocket error: TypeError"));
@@ -45,7 +45,7 @@ describe("wrapSprite.startDetached", () => {
 
   it("absorbs a second error, so a broken connection never ends the worker", async () => {
     const command = new FakeCommand();
-    const handle = wrapSprite(spriteWith(command));
+    const handle = wrapSprite(spriteWith(command), {} as SpritesClient);
 
     const started = handle.startDetached("sh", ["-c", "true"], options);
     command.emit("error", new Error("WebSocket error: TypeError"));
@@ -58,7 +58,7 @@ describe("wrapSprite.startDetached", () => {
 
   it("absorbs an error that arrives after the session started", async () => {
     const command = new FakeCommand();
-    const handle = wrapSprite(spriteWith(command));
+    const handle = wrapSprite(spriteWith(command), {} as SpritesClient);
 
     const started = handle.startDetached("sh", ["-c", "true"], options);
     command.emit("spawn");

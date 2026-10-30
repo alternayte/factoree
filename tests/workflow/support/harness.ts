@@ -19,7 +19,14 @@ import type {
 } from "~/activities/refinement.activities.js";
 import type { ResolveContextActivityInput } from "~/activities/context.activities.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
-import type { PrepareSandboxActivityInput } from "~/activities/sandbox.activities.js";
+import type {
+  ProposeRefinementActivityInput,
+  ProposeRefinementActivityOutput,
+} from "~/activities/refinement.activities.js";
+import type {
+  PrepareCheckSandboxActivityInput,
+  PrepareSandboxActivityInput,
+} from "~/activities/sandbox.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
 import type { VerifyActivityInput } from "~/activities/verification.activities.js";
 import type {
@@ -152,6 +159,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const verifyCalls: VerifyActivityInput[] = [];
   const cancelledSessions: Array<{ runnerName: string; session: { sessionId: string } }> = [];
   const destroyed: string[] = [];
+  /** docs/specs/check-isolation.md. The check sprite preparations, and the check sprites released. */
+  const checkPrepared: PrepareCheckSandboxActivityInput[] = [];
+  /** docs/specs/refiner-agent.md. The refiner sessions, and the proposal a test sets per Run. */
+  const refinerCalls: ProposeRefinementActivityInput[] = [];
+  const refinerOutcomes = new Map<string, ProposeRefinementActivityOutput>();
+  const releasedChecks: string[] = [];
   /** A run id in this map holds preparation open until the test resolves the promise. */
   const heldPreparations = new Map<string, Promise<void>>();
   /** A run id in this map holds the Implementer open, the same way a real agent run does. */
@@ -274,7 +287,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     runId: string;
     repositoryId: string;
     selectionReason: string;
-    mergeOrder: number;
   }> = [];
   /** Every recorded `recordRunTargetFacts` call, in order. F2. */
   const recordRunTargetFactsCalls: Array<{
@@ -381,6 +393,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         source: input.source,
         project: input.project,
         decisions: input.decisions,
+        ...(input.labelsUnreadable === undefined ? {} : { labelsUnreadable: input.labelsUnreadable }),
       });
       return {
         status: output.status,
@@ -398,6 +411,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         constraints: output.workItem.constraints,
         unresolvedQuestions: output.unresolvedQuestions,
         autonomyLevel: output.autonomyLevel,
+        autonomyReasons: output.autonomyReasons,
       };
     },
     resolveContext: async (input: ResolveContextActivityInput) => {
@@ -456,6 +470,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         frozenAt: "2026-01-01T00:00:00.000Z",
         question: null,
         summary: "Factoree froze the Validation Contract with 1 assertion.",
+        manualAssertionIds: [],
       };
     },
     postFinalResponse: async (activityInput: { body: string }) => {
@@ -492,6 +507,46 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         preview: null,
         repositoryInstructions: "Use the existing test idiom.",
       };
+    },
+    // docs/specs/check-isolation.md. Every attempt gets its own check sprite, named after the
+    // attempt, so a test can prove which sprite a later stage used.
+    prepareCheckSandbox: async (activityInput: PrepareCheckSandboxActivityInput) => {
+      activityOrder.push("prepareCheckSandbox");
+      checkPrepared.push(activityInput);
+      return {
+        spriteId: `check-${activityInput.runId}-${activityInput.attempt}`,
+        adapter: "fake",
+        workspacePath: "/workspace",
+        primaryPath: "/workspace/primary",
+        baseSha: "a".repeat(40),
+        referencePaths: [],
+        referenceBaseShas: [],
+        baselineCheckpointId: null,
+        runtime: {
+          ...DEFAULT_PROJECT_RUNTIME_CONFIG,
+          ...(runtimeOverrides.get(activityInput.runId) ?? {}),
+        },
+        verifyCommands: DEFAULT_VERIFY_COMMANDS,
+        preview: null,
+        repositoryInstructions: "Use the existing test idiom.",
+        skills: [],
+        patchSha256: "d".repeat(64),
+        treeSha: "b".repeat(40),
+        changedFiles: ["src/a.ts"],
+        checkDefiningFiles: [],
+      };
+    },
+    // docs/specs/refiner-agent.md. The default refiner proposes nothing, so the Run keeps the
+    // criteria the Work Item states. A test sets its own proposal per Run.
+    proposeRefinement: async (activityInput: ProposeRefinementActivityInput) => {
+      activityOrder.push("proposeRefinement");
+      refinerCalls.push(activityInput);
+      const outcome = refinerOutcomes.get(activityInput.runId);
+      if (outcome !== undefined) return outcome;
+      return { status: "proposed" as const, accepted: [], inferred: [], question: null, reason: "" };
+    },
+    releaseCheckSandbox: async (activityInput: { spriteId: string }) => {
+      releasedChecks.push(activityInput.spriteId);
     },
     destroySandbox: async (activityInput: { spriteId: string }) => {
       destroyed.push(activityInput.spriteId);
@@ -777,7 +832,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       runId: string;
       repositoryId: string;
       selectionReason: string;
-      mergeOrder: number;
     }) => {
       recordRunTargetCalls.push(input);
       return `target-${input.runId}-${input.repositoryId}`;
@@ -826,6 +880,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
     spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
     defaultAutonomy: "L2",
+    riskCaps: null,
+    allowedDomains: [],
     organizationSkillsRepository: null,
   };
 
@@ -874,6 +930,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     verifyCalls,
     cancelledSessions,
     destroyed,
+    checkPrepared,
+    releasedChecks,
+    refinerCalls,
+    refinerOutcomes,
     heldPreparations,
     heldImplementations,
     heldVerifications,
