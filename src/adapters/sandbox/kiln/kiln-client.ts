@@ -167,11 +167,12 @@ export class KilnClient {
     return created.snapshot_id;
   }
 
-  async restoreSnapshot(snapshotId: string): Promise<KilnSandbox> {
+  /** Kiln v0.9.7 (alternayte/kiln#19). `metadata` replaces the origin's on the copy. */
+  async restoreSnapshot(snapshotId: string, metadata: Record<string, string>): Promise<KilnSandbox> {
     const copies = await this.json<{ sandboxes: KilnSandbox[] }>(
       "POST",
       `/v1/snapshots/${encodeURIComponent(snapshotId)}/restore`,
-      { count: 1, allow_secret_fork: false },
+      { count: 1, allow_secret_fork: false, metadata },
     );
     const copy = copies.sandboxes[0];
     if (copy === undefined) throw new KilnApiError(500, "internal", "the restore returned no sandbox");

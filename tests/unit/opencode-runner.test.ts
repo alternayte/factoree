@@ -68,6 +68,23 @@ describe("OpenCodeRunner", () => {
     await started;
   });
 
+  it("uses the effort of the session's role over the default (DI-14.40)", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({
+      redactor: new Redactor(),
+      pollIntervalMs: 1,
+      model: "deepseek/deepseek-flash",
+      variant: "max",
+      roleVariants: { validator: "low" },
+    });
+    const started = runner.run({ ...runInput(sandbox, ref), role: "validator" });
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    expect((sandbox.commands.at(-1)?.args ?? []).slice(3, 7)).toEqual(["--model", "deepseek/deepseek-flash", "--variant", "low"]);
+    sandbox.finishProcess("process-2", { stdout: '{"type":"session.start","session":{"id":"ses_1"}}' });
+    await started;
+  });
+
   it("passes the prompt through a file, not through the command line", async () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });

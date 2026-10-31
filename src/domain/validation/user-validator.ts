@@ -53,6 +53,11 @@ export interface UserValidationInput {
   /** Project test secrets only. SDD section 30. */
   environment: Record<string, string>;
   timeoutMs: number;
+  /**
+   * DI-14.41. A preview the caller started while the validator wrote its plan. The pass uses it
+   * instead of starting its own, and stops it on every path, the paths that never need it too.
+   */
+  earlyPreview?: Promise<PreviewHandle>;
 }
 
 const MANUAL_REASON = "SDD section 36: this assertion needs a human. Factoree cannot prove it.";
@@ -300,6 +305,24 @@ export const runUserValidation = async (
   dependencies: UserValidatorDependencies,
   input: UserValidationInput,
 ): Promise<UserValidationOutcome> => {
+  const early = input.earlyPreview;
+  if (early === undefined) return validate(dependencies, input, null);
+  // The pass adopts the early preview only when the plan needs it. Otherwise it stops here.
+  const adoption = { adopted: false };
+  try {
+    return await validate(dependencies, input, { preview: early, adoption });
+  } finally {
+    if (!adoption.adopted) {
+      await early.then((handle) => stopPreview(dependencies.sandbox, input.ref, handle)).catch(() => undefined);
+    }
+  }
+};
+
+const validate = async (
+  dependencies: UserValidatorDependencies,
+  input: UserValidationInput,
+  early: { preview: Promise<PreviewHandle>; adoption: { adopted: boolean } } | null,
+): Promise<UserValidationOutcome> => {
   const { contract } = input;
 
   // Rule 1. A manual or a code_review assertion needs a human. It runs nothing.
@@ -377,16 +400,27 @@ export const runUserValidation = async (
   let handle: PreviewHandle | null = null;
   try {
     if (previewRequired && !previewMisconfigured) {
-      // Rule 5. Start the preview once, for the whole pass.
+      // Rule 5. Start the preview once, for the whole pass. The log names how long the build and
+      // the readiness wait took, because it is the slowest part of a validation of a web app.
+      const previewStarted = Date.now();
       try {
-        handle = await startPreview({
-          sandbox: dependencies.sandbox,
-          ref: input.ref,
-          workingDirectory: input.primaryPath,
-          preview: input.preview!,
-          environment: input.environment,
-          probe: dependencies.probe,
-          redactor: dependencies.redactor,
+        if (early !== null) early.adoption.adopted = true;
+        handle = await (early?.preview ??
+          startPreview({
+            sandbox: dependencies.sandbox,
+            ref: input.ref,
+            workingDirectory: input.primaryPath,
+            preview: input.preview!,
+            environment: input.environment,
+            probe: dependencies.probe,
+            redactor: dependencies.redactor,
+          }));
+        // With an early preview this is only the wait after the plan, not the whole build.
+        dependencies.logger.info("the preview is ready", {
+          run_id: input.runId,
+          step: "user_validate",
+          preview_wait_ms: Date.now() - previewStarted,
+          started_early: early !== null,
         });
       } catch (error) {
         if (!(error instanceof PreviewStartError)) throw error;
@@ -412,6 +446,7 @@ export const runUserValidation = async (
       const entry = planEntries.get(assertion.id)!;
 
       let outcome: AssertionOutcome;
+      const assertionStarted = Date.now();
       if (entry.kind === "http") {
         // Rule 7.
         outcome = await executeHttpAssertion({
@@ -434,6 +469,14 @@ export const runUserValidation = async (
         // Rule 9.
         outcome = await executeCommandAssertion(dependencies, input, assertion, entry);
       }
+
+      dependencies.logger.info("assertion executed", {
+        run_id: input.runId,
+        step: "user_validate",
+        assertion_id: assertion.id,
+        kind: entry.kind,
+        duration_ms: Date.now() - assertionStarted,
+      });
 
       // Rule 10. Enforce the required evidence.
       outcomesById.set(assertion.id, enforceRequiredEvidence(assertion, outcome));

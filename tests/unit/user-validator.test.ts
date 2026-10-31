@@ -12,7 +12,7 @@ import type { ValidationContract, ValidationAssertion } from "~/domain/validatio
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import type { BrowserDriver, BrowserRunResult, BrowserScenario } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
-import type { ReadinessProbe } from "~/domain/runs/preview.js";
+import type { PreviewHandle, ReadinessProbe } from "~/domain/runs/preview.js";
 
 const ref = { id: "sandbox-1", adapter: "fake", workspacePath: "/workspace" };
 
@@ -481,3 +481,32 @@ describe("executeBrowserAssertion", () => {
     expect(browser.calls).toHaveLength(1);
   });
 });
+
+describe("an early preview (DI-14.41)", () => {
+  const early = (): Promise<PreviewHandle> =>
+    Promise.resolve({
+      process: { id: "early-preview" },
+      baseUrl: "https://preview.example.test",
+      port: 3000,
+      readyUrl: "http://localhost:3000/",
+      startedAt: "2026-10-31T00:00:00.000Z",
+      startupLog: "",
+    });
+
+  it("adopts the preview that built while the validator wrote its plan, and stops it once", async () => {
+    const deps = buildDeps();
+    const outcome = await runUserValidation(deps, buildInput({ earlyPreview: early() }));
+    expect(outcome.outcomes.map((entry) => entry.result)).toEqual(["PASS", "PASS", "MANUAL_REQUIRED"]);
+    const sandbox = deps.sandbox as FakeSandbox;
+    // No second build: the pass started no preview process of its own.
+    expect(sandbox.calls.filter((call) => call.startsWith("startProcess"))).toEqual([]);
+    expect(sandbox.calls.filter((call) => call === "cancelProcess")).toHaveLength(1);
+  });
+
+  it("stops an early preview the pass never needs", async () => {
+    const deps = buildDeps();
+    await runUserValidation(deps, buildInput({ planText: null, earlyPreview: early() }));
+    expect((deps.sandbox as FakeSandbox).calls.filter((call) => call === "cancelProcess")).toHaveLength(1);
+  });
+});
+

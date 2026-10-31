@@ -212,3 +212,19 @@ describe("KilnClient retries (a Kiln restart answers 502 for a while)", () => {
     expect(missing.calls).toHaveLength(1);
   });
 });
+
+describe("KilnSandbox warm snapshot restore (issue #5)", () => {
+  it("names the restoring run in the copy's metadata, not the run that took the snapshot", async () => {
+    const { client, calls } = fakeKiln((call) =>
+      call.method === "POST" ? { status: 201, body: { sandboxes: [{ id: "copy-1", state: "running", egress_allow: [] }] } } : undefined,
+    );
+    const sandbox = new KilnSandbox({ client, image: IMAGE, pollMs: 0 });
+    const ref = await sandbox.warmSnapshots.restore({ runId: "run-2", tenantId: "t1", productId: "p1" }, "snap-1");
+    expect(ref.id).toBe("copy-1");
+    expect(calls[0]).toEqual({
+      method: "POST",
+      path: "/v1/snapshots/snap-1/restore",
+      body: { count: 1, allow_secret_fork: false, metadata: { factoree_run_id: "run-2", factoree_tenant_id: "t1" } },
+    });
+  });
+});

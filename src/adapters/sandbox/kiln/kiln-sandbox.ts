@@ -95,7 +95,8 @@ export class KilnSandbox implements Sandbox {
     this.warmSnapshots = {
       take: (ref) => this.options.client.snapshot(ref.id),
       restore: async (input, snapshotId) => {
-        const copy = await this.options.client.restoreSnapshot(snapshotId);
+        // The copy names this run, not the run whose sandbox took the snapshot (issue #5).
+        const copy = await this.options.client.restoreSnapshot(snapshotId, sandboxMetadata(input));
         this.attached.set(copy.id, { ...(input.environment ?? {}) });
         return { id: copy.id, adapter: this.name, workspacePath: DEFAULT_WORKSPACE };
       },
@@ -119,7 +120,7 @@ export class KilnSandbox implements Sandbox {
       template: this.template,
       lifecycle: "persistent",
       idle_seconds: IDLE_SECONDS,
-      metadata: { factoree_run_id: input.runId, factoree_tenant_id: input.tenantId },
+      metadata: sandboxMetadata(input),
     });
     this.attached.set(sandbox.id, { ...(input.environment ?? {}) });
     return { id: sandbox.id, adapter: this.name, workspacePath: DEFAULT_WORKSPACE };
@@ -334,5 +335,11 @@ export const templateName = (image: string): string => {
 };
 
 const outputKey = (ref: SandboxRef, process: ProcessRef): string => `${ref.id}/${process.id}`;
+
+/** How an operator finds the run of a sandbox in Kiln. A create and a restore send the same. */
+const sandboxMetadata = (input: SandboxCreateInput): Record<string, string> => ({
+  factoree_run_id: input.runId,
+  factoree_tenant_id: input.tenantId,
+});
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

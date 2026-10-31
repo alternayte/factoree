@@ -1,7 +1,10 @@
-import { OpenCodeRunner } from "~/adapters/runners/opencode/opencode-runner.js";
+import { OpenCodeRunner, type OpenCodeRunnerOptions } from "~/adapters/runners/opencode/opencode-runner.js";
 import { ClaudeCodeRunner } from "~/adapters/runners/claude-code/claude-code-runner.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { Redactor } from "~/telemetry/redaction.js";
+
+/** The opencode settings of one install. */
+export type OpenCodeSettings = Pick<OpenCodeRunnerOptions, "model" | "variant" | "roleVariants" | "executable">;
 
 /**
  * SDD section 33 names two required adapters. A stock `.factoree/config.yaml` selects `opencode`
@@ -14,6 +17,6 @@ import type { Redactor } from "~/telemetry/redaction.js";
 export const buildAgentRunnerRegistry = (
   redactor: Redactor,
   // docs/specs/kiln-sandbox-provider.md. `executable` is the root-owned CLI of the sandbox image.
-  opencode: { model?: string; variant?: string; executable?: string } = {},
+  opencode: OpenCodeSettings = {},
 ): AgentRunnerRegistry =>
   new AgentRunnerRegistry([new OpenCodeRunner({ redactor, ...opencode }), new ClaudeCodeRunner({ redactor })]);

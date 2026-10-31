@@ -135,6 +135,12 @@ const sandboxManager = new SandboxManager({
 const runners = buildAgentRunnerRegistry(redactor, {
   ...(env.OPENCODE_MODEL === undefined ? {} : { model: env.OPENCODE_MODEL }),
   ...(env.OPENCODE_VARIANT === undefined ? {} : { variant: env.OPENCODE_VARIANT }),
+  roleVariants: {
+    ...(env.OPENCODE_VARIANT_IMPLEMENTER === undefined ? {} : { implementer: env.OPENCODE_VARIANT_IMPLEMENTER }),
+    ...(env.OPENCODE_VARIANT_REFINER === undefined ? {} : { refiner: env.OPENCODE_VARIANT_REFINER }),
+    ...(env.OPENCODE_VARIANT_VALIDATOR === undefined ? {} : { validator: env.OPENCODE_VARIANT_VALIDATOR }),
+    ...(env.OPENCODE_VARIANT_REVIEWER === undefined ? {} : { reviewer: env.OPENCODE_VARIANT_REVIEWER }),
+  },
   // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
   ...(sandbox.capabilities.supportsCustomImage ? { executable: `${KILN_RUNNER_BIN}/opencode` } : {}),
 });

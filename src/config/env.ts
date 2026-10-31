@@ -50,6 +50,11 @@ const schema = z.object({
   // opencode's own default. The provider key is a runner_credential Product secret.
   OPENCODE_MODEL: z.string().min(1).optional(),
   OPENCODE_VARIANT: z.string().min(1).optional(),
+  // DI-14.40. The effort of one role, over OPENCODE_VARIANT. The refiner runs on the validator runner.
+  OPENCODE_VARIANT_IMPLEMENTER: z.string().min(1).optional(),
+  OPENCODE_VARIANT_REFINER: z.string().min(1).optional(),
+  OPENCODE_VARIANT_VALIDATOR: z.string().min(1).optional(),
+  OPENCODE_VARIANT_REVIEWER: z.string().min(1).optional(),
   EVIDENCE_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-evidence"),
   GITHUB_BASE_URL: z.string().url().default("https://github.com"),
   GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),

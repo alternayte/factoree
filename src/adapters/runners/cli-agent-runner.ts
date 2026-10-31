@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentCancelOutcome,
+  AgentRole,
   AgentResumeInput,
   AgentRunInput,
   AgentRunResult,
@@ -56,6 +57,8 @@ interface LiveSession {
   workingDirectory: string;
   repositoryPath?: string;
   environment: Record<string, string>;
+  /** The role of the session. A resume keeps the settings of the role that started it. */
+  role: AgentRole;
   cancelled: boolean;
 }
 
@@ -94,13 +97,14 @@ export abstract class CliAgentRunner implements AgentRunner {
    * session configures itself from. The prompt is a file because Linux carries at most 131072
    * bytes in one environment value, and a real Reviewer prompt measured 202351 bytes.
    */
-  protected abstract startCommand(promptFile: string, repositoryPath?: string): CliAgentCommand;
+  protected abstract startCommand(promptFile: string, repositoryPath: string | undefined, role: AgentRole): CliAgentCommand;
 
   /** The command that continues an existing session with a further prompt. */
   protected abstract resumeCommand(
     sessionId: string,
     promptFile: string,
-    repositoryPath?: string,
+    repositoryPath: string | undefined,
+    role: AgentRole,
   ): CliAgentCommand;
 
   /** Reads the output of the tool. An implementation must never throw. */
@@ -126,7 +130,7 @@ export abstract class CliAgentRunner implements AgentRunner {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const promptFile = await this.writePrompt(input.sandbox, input.ref, input.prompt);
-    const command = this.startCommand(promptFile, input.repositoryPath);
+    const command = this.startCommand(promptFile, input.repositoryPath, input.role);
     const process = await input.sandbox.startProcess(input.ref, {
       file: command.file,
       args: command.args,
@@ -141,6 +145,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       workingDirectory: input.workingDirectory,
       ...(input.repositoryPath === undefined ? {} : { repositoryPath: input.repositoryPath }),
       environment: input.environment,
+      role: input.role,
       cancelled: false,
     };
     this.sessions.set(process.id, live);
@@ -161,7 +166,7 @@ export abstract class CliAgentRunner implements AgentRunner {
     }
 
     const promptFile = await this.writePrompt(previous.sandbox, previous.ref, input.prompt);
-    const command = this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath);
+    const command = this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath, previous.role);
     const process = await previous.sandbox.startProcess(previous.ref, {
       file: command.file,
       args: command.args,

@@ -16,7 +16,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
-import type { ReadinessProbe } from "~/domain/runs/preview.js";
+import { startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -285,9 +285,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
     // The heartbeat covers the whole activity. The preview build and the browser run after the
     // validator session, and a Next.js build outlasted the heartbeat timeout on the FAC-41 run.
     let heartbeat: NodeJS.Timeout | undefined;
+    // DI-14.41. The preview build that runs beside the validator session, until the pass owns it.
+    let earlyPreview: Promise<PreviewHandle> | undefined;
+    const uv = dependencies.userValidation;
 
     try {
-      const uv = dependencies.userValidation;
       if (uv === undefined) {
         throw new Error(
           "userValidate requires ValidationActivityDependencies.userValidation, and none was " +
@@ -341,8 +343,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // Step 5. The prompt needs only the exposed base URL, and an address does not need a
       // running server. `sandbox.exposeService` is the SDD section 37 step 3 call: it computes
       // the URL a client outside the sandbox uses for an already configured port, without
-      // starting or touching the preview process. `runUserValidation` remains the one owner of
-      // the preview lifetime; it starts the actual process later and stops it in its own
+      // starting or touching the preview process. The build starts before the validator session
+      // (DI-14.41), and `runUserValidation` owns it from the pass on and stops it in its own
       // `finally`, at this same URL, because `exposeService` is a pure address computation over
       // one fixed port.
       const needsPreview = storedContract.assertions.some(
@@ -450,6 +452,25 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       if (context.cancellationSignal.aborted) onCancel();
       else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
 
+      // DI-14.41. The contract already says whether a preview is needed, so its build starts now
+      // and runs while the validator writes its plan. The rejection is observed at once, so a
+      // failed build is never an unhandled rejection, and the pass reads the same promise later.
+      if (needsPreview && input.preview !== null && input.preview.enabled) {
+        const building = startPreview({
+          sandbox: uv.sandbox,
+          ref,
+          workingDirectory: input.primaryPath,
+          preview: input.preview,
+          environment: projectTestSecrets,
+          probe: uv.probe,
+          redactor: uv.redactor,
+        });
+        building.catch(() => undefined);
+        earlyPreview = building;
+      }
+
+      // The duration of each part reaches the log, so a slow validation names its slow part.
+      const sessionStarted = Date.now();
       let sessionResult;
       try {
         sessionResult = await runner.run({
@@ -528,6 +549,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         goal: storedContract.goal,
         assertions: storedContract.assertions,
       };
+      const sessionMs = Date.now() - sessionStarted;
+      const executionStarted = Date.now();
+      // From here the pass owns the early preview, and it stops the preview on every path.
+      const handedOver = earlyPreview;
+      earlyPreview = undefined;
       const outcome = await runUserValidation(
         {
           sandbox: uv.sandbox,
@@ -547,6 +573,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           planText,
           environment: projectTestSecrets,
           timeoutMs: input.timeoutMs,
+          ...(handedOver === undefined ? {} : { earlyPreview: handedOver }),
         },
       );
 
@@ -578,6 +605,9 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         run_id: input.runId,
         step: "user_validate",
         passed: outcome.passed,
+        validator_session_ms: sessionMs,
+        execution_ms: Date.now() - executionStarted,
+        total_ms: Date.now() - started,
       });
 
       return {
@@ -599,6 +629,13 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       };
     } finally {
       clearInterval(heartbeat);
+      // A failure before the pass leaves the early preview with nobody to stop it.
+      const orphan = earlyPreview;
+      if (orphan !== undefined && uv !== undefined) {
+        await orphan
+          .then((handle) => stopPreview(uv.sandbox, { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath }, handle))
+          .catch(() => undefined);
+      }
       metrics.validationDuration.observe(labels, (Date.now() - started) / 1000);
     }
   },
