@@ -117,7 +117,7 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
           // single-repository Product; Phase 5 proves a reference repository reaches the
           // contract through the legitimate mechanism, Backstage automatic discovery.
           repositories: [
-            { id: "repository-primary", fullName: PRIMARY_SLUG, defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+            { id: "repository-primary", fullName: PRIMARY_SLUG, defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
           ],
           repositoryBaseUrl: fixture.root,
         },

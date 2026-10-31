@@ -104,6 +104,8 @@ model Run {
   proofPackPostedAt        DateTime?
   // docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document an agent reads.
   proofPackDocument        Json?
+  // docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking.
+  decisions                Json      @default("[]")
   repairCount              Int       @default(0)
   createdAt                DateTime  @default(now())
   startedAt                DateTime?
@@ -388,6 +390,7 @@ model Repository {
   // The commit of `.factoree/config.yaml` that discovery last read.
   configSha            String
   // Names only. A value never reaches this column.
+  linearProjects       String[] @default([])
   requestedSecretNames String[] @default([])
   discoveredAt         DateTime @default(now())
   lastSeenAt           DateTime @default(now())

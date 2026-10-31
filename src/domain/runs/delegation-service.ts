@@ -160,6 +160,7 @@ export class DelegationService {
         defaultBranch: repository.defaultBranch,
         absentSince: repository.absentSince === null ? null : repository.absentSince.toISOString(),
         githubInstallationId: repository.githubInstallationId,
+        linearProjects: repository.linearProjects,
       })),
       repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
@@ -202,9 +203,6 @@ export class DelegationService {
           maxRunMinutes: product.maxRunMinutes,
           workItem,
           product: workflowProduct,
-          // Specification section 10. No proposal producer exists yet, so every delegated Run
-          // asks a human when the Product holds several repositories.
-          repositoryProposal: null,
         },
       ],
     });

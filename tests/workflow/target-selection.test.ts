@@ -9,8 +9,10 @@ const harness = createWorkflowHarness(() => environment);
 const {
   implementCalls,
   recordRunTargetCalls,
-  postTargetNoticeCalls,
+  decisionCalls,
   productInput,
+  workItemInput,
+  workItemProjects,
   runStatusQuery,
   start,
   runWorker,
@@ -32,15 +34,16 @@ afterAll(async () => {
 
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const targetsOf = (runId: string) => recordRunTargetCalls.filter((entry) => entry.runId === runId);
-const noticesOf = (runId: string) => postTargetNoticeCalls.filter((entry) => entry.runId === runId);
+const noticesOf = (runId: string) =>
+  decisionCalls.filter((entry) => entry.runId === runId).map((entry) => entry.decision);
 const identityCallsOf = (runId: string) => targetIdentityCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 const contextCallsOf = (runId: string) => contextCalls.filter((entry) => entry.runId === runId);
 
 /** Specification section 10. Two present repositories of one Product, for the ambiguous cases. */
 const twoRepositories = [
-  { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
-  { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+  { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
+  { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
 ];
 
 /**
@@ -49,13 +52,14 @@ const twoRepositories = [
  * longer one.
  */
 const prefixRepositories = [
-  { id: "repository-checkout-api", fullName: "acme/checkout-api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+  { id: "repository-checkout-api", fullName: "acme/checkout-api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
   {
     id: "repository-checkout-api-gateway",
     fullName: "acme/checkout-api-gateway",
     defaultBranch: "main",
     absentSince: null,
     githubInstallationId: "install-1",
+    linearProjects: [],
   },
 ];
 
@@ -82,15 +86,12 @@ describe("target selection and the RunTarget row", () => {
     });
   });
 
-  it("posts a notice for a confident target among several members", async () => {
+  it("chooses the repository the issue names among several members, and records the decision", async () => {
+    // docs/specs/own-proposals-and-parallel-runs.md, target rule one.
     await runWorker(async () => {
       const handle = await start("ses-target-confident", {
         product: { ...productInput, repositories: twoRepositories },
-        repositoryProposal: {
-          fullName: "acme/web",
-          reason: "the change is in the checkout form",
-          confident: true,
-        },
+        workItem: { ...workItemInput, description: "## Goal\n\nFix the checkout form in web.\n" },
       });
       await waitFor(
         () => implementsOf("run-ses-target-confident").length === 1,
@@ -100,14 +101,11 @@ describe("target selection and the RunTarget row", () => {
       expect(targetsOf("run-ses-target-confident")).toEqual([
         expect.objectContaining({
           repositoryId: "repository-web",
-          selectionReason: "the change is in the checkout form",
+          selectionReason: "the issue names web",
         }),
       ]);
       expect(noticesOf("run-ses-target-confident")).toEqual([
-        expect.objectContaining({
-          fullName: "acme/web",
-          reason: "the change is in the checkout form",
-        }),
+        { kind: "target", statement: "chose acme/web", reason: "the issue names web" },
       ]);
 
       await handle.signal(stopSignal);
@@ -123,11 +121,7 @@ describe("target selection and the RunTarget row", () => {
     await runWorker(async () => {
       const handle = await start("ses-target-no-eager-siblings", {
         product: { ...productInput, repositories: twoRepositories },
-        repositoryProposal: {
-          fullName: "acme/web",
-          reason: "the change is in the checkout form",
-          confident: true,
-        },
+        workItem: { ...workItemInput, description: "## Goal\n\nFix the checkout form in acme/web.\n" },
       });
       await waitFor(
         () => implementsOf("run-ses-target-no-eager-siblings").length === 1,
@@ -144,11 +138,29 @@ describe("target selection and the RunTarget row", () => {
     });
   });
 
+  it("chooses the repository that declares the issue's Linear project", async () => {
+    // docs/specs/own-proposals-and-parallel-runs.md, target rule two.
+    workItemProjects.set("ses-target-project", "Storefront");
+    await runWorker(async () => {
+      const handle = await start("ses-target-project", {
+        product: {
+          ...productInput,
+          repositories: twoRepositories.map((repository) =>
+            repository.fullName === "acme/web" ? { ...repository, linearProjects: ["Storefront"] } : repository,
+          ),
+        },
+      });
+      await waitFor(() => implementsOf("run-ses-target-project").length === 1, "the Implementer of target-project");
+      expect(targetsOf("run-ses-target-project")).toEqual([expect.objectContaining({ repositoryId: "repository-web" })]);
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+  });
+
   it("blocks on an ambiguous target and resumes on a human reply", async () => {
     await runWorker(async () => {
       const handle = await start("ses-target-ambiguous", {
         product: { ...productInput, repositories: twoRepositories },
-        repositoryProposal: null,
       });
       await waitForStatus(handle, "BLOCKED_TARGET");
 
@@ -170,7 +182,6 @@ describe("target selection and the RunTarget row", () => {
     await runWorker(async () => {
       const handle = await start("ses-target-prefix", {
         product: { ...productInput, repositories: prefixRepositories },
-        repositoryProposal: null,
       });
       await waitForStatus(handle, "BLOCKED_TARGET");
 
@@ -188,7 +199,6 @@ describe("target selection and the RunTarget row", () => {
     await runWorker(async () => {
       const handle = await start("ses-target-case", {
         product: { ...productInput, repositories: twoRepositories },
-        repositoryProposal: null,
       });
       await waitForStatus(handle, "BLOCKED_TARGET");
 
@@ -207,7 +217,6 @@ describe("target selection and the RunTarget row", () => {
       const startedWith = elicitations.length;
       const handle = await start("ses-target-unmatched", {
         product: { ...productInput, repositories: prefixRepositories },
-        repositoryProposal: null,
       });
       await waitForStatus(handle, "BLOCKED_TARGET");
       // The status turns BLOCKED_TARGET before the question is posted. The count below must start

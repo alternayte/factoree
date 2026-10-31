@@ -163,6 +163,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       fullName: input.fullName,
       defaultBranch: input.defaultBranch,
       configSha: input.configSha,
+      linearProjects: input.linearProjects,
       requestedSecretNames: input.requestedSecretNames,
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
@@ -418,6 +419,7 @@ describe("Products administration API", () => {
       defaultBranch: "main",
       configSha: "sha1",
       requestedSecretNames: [],
+      linearProjects: [],
       githubInstallationId: "install-1",
     });
 

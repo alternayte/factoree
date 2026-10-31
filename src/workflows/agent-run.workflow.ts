@@ -19,13 +19,11 @@ import type {
 } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { ProposeRefinementActivityOutput } from "~/activities/refinement.activities.js";
-import { acceptsProposal } from "../domain/refinement/accepts-proposal.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
 import type {
-  CheckBaseActivityOutput,
   PublishActivityOutput,
 } from "~/activities/publishing.activities.js";
 import type { PublishProofPackActivityOutput } from "~/activities/evidence.activities.js";
@@ -55,7 +53,8 @@ import { renderRisks } from "../domain/refinement/risk.js";
 import { completionInvariantFailures, prePublicationFailures } from "../domain/runs/completion-invariant.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { selectTarget } from "../domain/routing/select-targets.js";
+import { proposeTarget, selectTarget } from "../domain/routing/select-targets.js";
+import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
 
 export interface AgentRunProductInput {
   productId: string;
@@ -103,12 +102,6 @@ export interface AgentRunWorkflowInput {
   maxRunMinutes: number;
   workItem: AgentRunWorkItemInput;
   product: AgentRunProductInput;
-  /**
-   * Specification section 10. Refinement's future repository-proposal step supplies this value
-   * when the Product holds several repositories. A null value means no proposal exists yet.
-   * `selectTarget` then asks a human whenever more than one repository is present.
-   */
-  repositoryProposal: { fullName: string; reason: string; confident: boolean } | null;
 }
 
 export interface AgentRunWorkflowResult {
@@ -418,6 +411,8 @@ export async function agentRunWorkflow(
   let implementerCancelled = false;
   /** SDD section 23. Every answer a human gave to a question Factoree asked in this Run. */
   const decisions: RecordedDecision[] = [];
+  /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
+  const factoreeDecisions: FactoreeDecision[] = [];
   let openQuestion: string | null = null;
   let contextContractVersion: string | null = null;
   let validationContractVersion: string | null = null;
@@ -553,36 +548,6 @@ export async function agentRunWorkflow(
   };
 
   /**
-   * SDD section 45 and section 48. A moved target branch is not a failure of the change, so it
-   * carries no failure reason. Version 1 must not rebase automatically, so the Run ends here and
-   * publishes nothing. The base SHA arrives as an argument, because the prepared sandbox is out
-   * of scope at this point of the file.
-   */
-  const endStale = async (
-    runBaseSha: string,
-    currentTargetSha: string,
-  ): Promise<AgentRunWorkflowResult> => {
-    status = "STALE_BASE";
-    await completeRun({
-      tenantId: input.tenantId,
-      runId: id,
-      status,
-      completedAt: new Date(Date.now()).toISOString(),
-    });
-    await notify(() =>
-      activities.postError({
-        sessionId: input.agentSessionId,
-        message:
-          "The target branch moved while Factoree worked, so the verified change no longer " +
-          `applies to it. The Run started at ${runBaseSha} and the ` +
-          `branch now points at ${currentTargetSha}. Factoree published nothing, and it did not ` +
-          "rebase. Delegate the Work Item again to rerun it against the new base.",
-      }),
-    );
-    return { runId: id, status };
-  };
-
-  /**
    * Specification section 8 and section 17. The routing table used a cached repository row.
    * A repository that claims a different Product at the base commit is a binding problem. Only
    * an operator can settle it. The Run ends here. This status is terminal.
@@ -676,6 +641,16 @@ export async function agentRunWorkflow(
   };
 
   /**
+   * docs/specs/own-proposals-and-parallel-runs.md. Takes a determined proposal without asking. The
+   * run records it, Linear shows it as one thought, and the proof pack lists it for the reviewer.
+   */
+  const takeDecision = async (decision: FactoreeDecision): Promise<void> => {
+    factoreeDecisions.push(decision);
+    await activities.recordDecision({ tenantId: input.tenantId, runId: id, decision });
+    await notify(() => activities.postProgress({ sessionId: input.agentSessionId, message: describeDecision(decision) }));
+  };
+
+  /**
    * Run one long agent activity under a stop signal. SDD section 50 requires a stop to reach
    * the live agent process, so the activity runs inside a cancellable scope, and a watcher
    * coroutine cancels that scope when the stop arrives. The result is null when the activity
@@ -758,7 +733,9 @@ export async function agentRunWorkflow(
         contextContract: attemptInput.contextContract,
         validationContract: attemptInput.validationContract,
         requiredContext: attemptInput.requiredContext,
-        humanDecisions: humanInputs,
+        // docs/specs/own-proposals-and-parallel-runs.md. The implementer follows Factoree's own
+        // decisions as it follows a human answer.
+        humanDecisions: [...humanInputs, ...factoreeDecisions.map(describeDecision)],
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
         skills: attemptInput.prepared.skills,
         repairFindings: attemptInput.repairFindings,
@@ -920,10 +897,14 @@ export async function agentRunWorkflow(
       // propagates.
       let labels = input.workItem.labels;
       let labelsUnreadable = false;
+      // docs/specs/own-proposals-and-parallel-runs.md. The Linear project can choose the target.
+      let linearProject: string | null = null;
       const issueId = input.workItem.issueId;
       if (issueId !== null) {
         try {
-          labels = await activities.fetchWorkItemLabels({ sessionId: input.agentSessionId, issueId });
+          const facts = await activities.fetchWorkItemFacts({ sessionId: input.agentSessionId, issueId });
+          labels = facts.labels;
+          linearProject = facts.project;
         } catch (error) {
           if (isCancellation(error)) throw error;
           // The webhook labels are never worse than an empty list, so the fallback keeps them.
@@ -1022,6 +1003,7 @@ export async function agentRunWorkflow(
         defaultBranch: repository.defaultBranch,
         configSha: "",
         requestedSecretNames: [],
+        linearProjects: repository.linearProjects,
         discoveredAt: EPOCH,
         lastSeenAt: EPOCH,
         absentSince: repository.absentSince === null ? null : new Date(repository.absentSince),
@@ -1051,19 +1033,16 @@ export async function agentRunWorkflow(
           repositoryId: repository.id,
           selectionReason: reason,
         });
-        if (notice) {
-          await notify(() =>
-            activities.postTargetNotice({
-              tenantId: input.tenantId,
-              runId: id,
-              fullName: repository.fullName,
-              reason,
-            }),
-          );
-        }
+        if (notice) await takeDecision({ kind: "target", statement: `chose ${repository.fullName}`, reason });
       };
 
-      let targetOutcome = selectTarget(presentRepositories, input.repositoryProposal);
+      // docs/specs/own-proposals-and-parallel-runs.md. The issue text or the Linear project decides
+      // the target when exactly one repository matches. A pick among equals is a guess, so only
+      // then does a human choose.
+      let targetOutcome = selectTarget(
+        presentRepositories,
+        proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+      );
       while (targetOutcome.kind === "ambiguous") {
         const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
         const proceeded = await askAndWait(
@@ -1305,8 +1284,8 @@ export async function agentRunWorkflow(
       if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
       // docs/specs/refiner-agent.md. A fresh refiner reads the work sprite and proposes what done
-      // means and how to prove it. The gate decides what freezes. A criterion the refiner inferred,
-      // and each of its questions, reach a human as one question with a proposed answer.
+      // means and how to prove it. The gate decides what freezes, and Factoree takes every other
+      // proposal itself (docs/specs/own-proposals-and-parallel-runs.md).
       status = "REFINING";
       await activities.setRunStatus({ runId: id, status });
       let proposal: ProposeRefinementActivityOutput | null;
@@ -1353,25 +1332,12 @@ export async function agentRunWorkflow(
           `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
         );
       }
-      // A refiner that proposes nothing leaves the criteria the Work Item states.
-      let contractCriteria =
-        proposal.accepted.length + proposal.inferred.length === 0 ? refined.criteria : proposal.accepted;
+      // A refiner that freezes nothing leaves the criteria the Work Item states.
+      const contractCriteria = proposal.accepted.length === 0 ? refined.criteria : proposal.accepted;
       const validationAnswers: string[] = [];
-      if (proposal.question !== null) {
-        const proceeded = await askAndWait(REFINER_QUESTION_ID, proposal.question);
-        if (stopRequested) return await cancelRun();
-        if (!proceeded) {
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-          return await failRun(
-            "REFINEMENT_UNRESOLVED",
-            "Factoree could not start, because a proposed acceptance criterion is not confirmed. " +
-              "Factoree must not invent product behavior, so it published nothing.",
-          );
-        }
-        const answer = decisions[decisions.length - 1]?.answer ?? "";
-        if (acceptsProposal(answer)) contractCriteria = [...proposal.accepted, ...proposal.inferred];
-        else if (answer.trim() !== "") validationAnswers.push(answer);
-      }
+      // docs/specs/own-proposals-and-parallel-runs.md. Every proposal of the gate is determined, so
+      // Factoree takes it and asks nobody. The proof pack lists each one for the reviewer.
+      for (const decision of proposal.decisions) await takeDecision(decision);
 
       // docs/specs/refiner-agent.md. The Validation Contract freezes after the refiner and before
       // the Implementer. SDD section 24 requires the contract to freeze before implementation
@@ -1917,36 +1883,8 @@ export async function agentRunWorkflow(
         githubInstallationId: primaryRepositoryInstallationId,
       };
 
-      // SDD section 45. The stale-base check runs before any write, so a moved branch reaches no
-      // remote.
-      // SDD section 50. A stop that arrives during the base read must end the Run CANCELLED,
-      // because Factoree published nothing.
-      let baseCheck: CheckBaseActivityOutput;
-      try {
-        baseCheck = await publishingActivities.checkBase({
-          runId: id,
-          tenantId: input.tenantId,
-          productId: input.productId,
-          repositorySlug: publishInput.repositorySlug,
-          repositoryBaseUrl: publishInput.repositoryBaseUrl,
-          branch: publishInput.baseBranch,
-          baseSha: publishInput.baseSha,
-          githubInstallationId: publishInput.githubInstallationId,
-        });
-      } catch (error) {
-        if (isCancellation(error)) throw error;
-        if (stopRequested) return await cancelRun();
-        return await failRun(
-          "PUBLICATION_FAILED",
-          "Factoree could not read the target branch, so it published nothing.",
-        );
-      }
-
-      // A stop that arrives during the base read must not end the Run STALE_BASE.
-      if (stopRequested) return await cancelRun();
-
-      if (!baseCheck.fresh) return await endStale(publishInput.baseSha, baseCheck.currentTargetSha);
-
+      // docs/specs/own-proposals-and-parallel-runs.md. A moved base branch no longer stops the Run.
+      // The publication commits on the verified base and reports how far the branch moved.
       if (stopRequested) return await cancelRun();
 
       let publication: PublishActivityOutput;
@@ -2030,6 +1968,11 @@ export async function agentRunWorkflow(
           reviewAttempt: publishedReviewAttempt,
           changeDescription: publishedChangeDescription,
           visualEvidenceGap,
+          decisions: factoreeDecisions,
+          baseMove:
+            publication.baseMove === null
+              ? null
+              : { baseBranch: publishInput.baseBranch, ...publication.baseMove },
           autonomyLevel: refined.autonomyLevel,
           autonomyReasons: refined.autonomyReasons,
           checkDefiningFiles: published.checkDefiningFiles,
@@ -2064,7 +2007,6 @@ export async function agentRunWorkflow(
         repairCount,
         repairLimit: maxRepairs,
         patchSha256: publication.patchSha256,
-        baseUnchanged: baseCheck.fresh,
         pullRequestUrl: publication.pullRequestUrl,
         proofPackSha256: proofPack.sha256,
       });
@@ -2108,9 +2050,6 @@ export async function agentRunWorkflow(
     throw ApplicationFailure.fromError(error, { nonRetryable: true });
   }
 }
-
-/** docs/specs/refiner-agent.md. The question identifier of the refiner confirmation. */
-const REFINER_QUESTION_ID = "REFINER-Q-1";
 
 /** One sentence that names the level rules that applied, or none. */
 const autonomyNote = (reasons: string[]): string =>

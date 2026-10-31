@@ -171,3 +171,44 @@ describe("KilnSandbox (docs/specs/kiln-sandbox-provider.md)", () => {
     expect(() => templateName("ghcr.io/alternayte/factoree-sandbox:latest")).toThrow(/digest/);
   });
 });
+
+describe("KilnClient retries (a Kiln restart answers 502 for a while)", () => {
+  const flaky = (failures: number, status: number | "network") => {
+    const calls: string[] = [];
+    const fetchStub: typeof fetch = (input, init) => {
+      calls.push(`${init?.method ?? "GET"} ${new URL(input instanceof Request ? input.url : input).pathname}`);
+      if (calls.length <= failures) {
+        if (status === "network") return Promise.reject(new TypeError("fetch failed"));
+        return Promise.resolve(new Response(JSON.stringify({ error: { code: "internal", message: "the host is not reachable" } }), { status }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(process({ exit_code: 0 })), { status: 200 }));
+    };
+    return { client: new KilnClient({ baseUrl: "https://kiln.test", apiKey: "k", fetch: fetchStub, retryDelaysMs: [0, 0, 0] }), calls };
+  };
+
+  it("repeats a read through a 502 and a network fault", async () => {
+    const gateway = flaky(2, 502);
+    await expect(gateway.client.readProcess("sb1", "p1", 0, 0)).resolves.toMatchObject({ exit_code: 0 });
+    expect(gateway.calls).toHaveLength(3);
+    const network = flaky(1, "network");
+    await expect(network.client.readProcess("sb1", "p1", 0, 0)).resolves.toMatchObject({ exit_code: 0 });
+  });
+
+  it("repeats a POST only on a 502, so a process never starts twice", async () => {
+    const gateway = flaky(1, 502);
+    await expect(gateway.client.startProcess("sb1", { cmd: ["true"] })).resolves.toBe("p1");
+    expect(gateway.calls).toHaveLength(2);
+    const timeout = flaky(1, 504);
+    await expect(timeout.client.startProcess("sb1", { cmd: ["true"] })).rejects.toThrow(/HTTP 504/);
+    expect(timeout.calls).toHaveLength(1);
+  });
+
+  it("gives up after the last delay, and never repeats a 4xx", async () => {
+    const down = flaky(10, 503);
+    await expect(down.client.readProcess("sb1", "p1", 0, 0)).rejects.toThrow(/HTTP 503/);
+    expect(down.calls).toHaveLength(4);
+    const missing = flaky(10, 404);
+    await expect(missing.client.readProcess("sb1", "p1", 0, 0)).rejects.toThrow(/HTTP 404/);
+    expect(missing.calls).toHaveLength(1);
+  });
+});

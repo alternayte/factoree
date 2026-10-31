@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
-import { humanInputSignal, stopSignal } from "~/workflows/agent-run.workflow.js";
+import { stopSignal } from "~/workflows/agent-run.workflow.js";
 import { createWorkflowHarness, waitFor } from "./support/harness.js";
 
 let environment: TestWorkflowEnvironment;
@@ -13,53 +13,52 @@ afterAll(async () => {
   await environment?.teardown();
 });
 
-/** docs/specs/refiner-agent.md. The refiner proposes, the gate decides, a human confirms inferences. */
+/**
+ * docs/specs/refiner-agent.md and docs/specs/own-proposals-and-parallel-runs.md. The refiner
+ * proposes, the gate decides, and Factoree takes every determined proposal without a question.
+ */
 describe("the refiner in the Run workflow", () => {
   const harness = createWorkflowHarness(() => environment);
   const stated = { id: "AC-R1", statement: "A failed delivery is retried.", source: "ticket:quote", method: "test" as const, target: "tests/retry.test.ts" };
-  const inferred = { id: "AC-R2", statement: "Retries stop after five attempts.", source: "refiner:inferred", method: "test" as const, target: "tests/retry.test.ts" };
-  const question = "Factoree inferred these acceptance criteria ...\nProposal: accept them, because the existing code implies them.";
+  const implied = {
+    id: "AC-R2",
+    statement: "A retried delivery keeps its message.",
+    source: "implied by: Users lose messages.",
+    method: "test" as const,
+    target: "tests/retry.test.ts",
+  };
+  const decisions = [
+    { kind: "criterion" as const, statement: 'added the implied criterion "A retried delivery keeps its message"', reason: 'the ticket says "Users lose messages"' },
+    { kind: "not_built" as const, statement: 'did not build "Also email the admin"', reason: "no ticket sentence states or implies it" },
+  ];
 
   const validationsOf = (runId: string) => harness.validationCalls.filter((entry) => entry.runId === runId);
 
-  it("freezes the stated and the inferred criteria after a human replies yes", async () => {
-    harness.refinerOutcomes.set("run-ref-yes", { status: "proposed", accepted: [stated], inferred: [inferred], question, visualEvidenceGap: null, reason: "" });
+  it("freezes the stated and the implied criteria, records each decision, and asks nobody", async () => {
+    harness.refinerOutcomes.set("run-ref-take", { status: "proposed", accepted: [stated, implied], decisions, visualEvidenceGap: null, reason: "" });
     const before = harness.elicitations.length;
     await harness.runWorker(async () => {
-      const handle = await harness.start("ref-yes");
-      await waitFor(() => harness.elicitations.length > before, "the refiner question of ref-yes");
-      expect(harness.elicitations[before]).toContain("Proposal:");
-      expect(harness.implementCalls.filter((entry) => entry.runId === "run-ref-yes")).toEqual([]);
-      await handle.signal(humanInputSignal, "yes");
-      await waitFor(() => harness.implementCalls.some((entry) => entry.runId === "run-ref-yes"), "the Implementer of ref-yes");
+      const handle = await harness.start("ref-take");
+      await waitFor(() => harness.implementCalls.some((entry) => entry.runId === "run-ref-take"), "the Implementer of ref-take");
       await handle.signal(stopSignal);
       await handle.result();
     });
-    expect(validationsOf("run-ref-yes")[0]?.acceptanceCriteria).toEqual([stated, inferred]);
-  });
-
-  it("freezes only the stated criteria, plus the human answer, when the human corrects the proposal", async () => {
-    harness.refinerOutcomes.set("run-ref-no", { status: "proposed", accepted: [stated], inferred: [inferred], question, visualEvidenceGap: null, reason: "" });
-    const before = harness.elicitations.length;
-    await harness.runWorker(async () => {
-      const handle = await harness.start("ref-no");
-      await waitFor(() => harness.elicitations.length > before, "the refiner question of ref-no");
-      await handle.signal(humanInputSignal, "Retries stop after three attempts.");
-      await waitFor(() => harness.implementCalls.some((entry) => entry.runId === "run-ref-no"), "the Implementer of ref-no");
-      await handle.signal(stopSignal);
-      await handle.result();
-    });
-    expect(validationsOf("run-ref-no")[0]?.acceptanceCriteria).toEqual([stated]);
-    expect(validationsOf("run-ref-no")[0]?.humanAssertions).toEqual(["Retries stop after three attempts."]);
+    expect(harness.elicitations.length).toBe(before);
+    expect(validationsOf("run-ref-take")[0]?.acceptanceCriteria).toEqual([stated, implied]);
+    expect(harness.decisionCalls.filter((entry) => entry.runId === "run-ref-take").map((entry) => entry.decision)).toEqual(decisions);
+    // The implementer follows Factoree's own decisions as it follows a human answer.
+    const implementer = harness.implementCalls.find((entry) => entry.runId === "run-ref-take");
+    expect(implementer?.humanDecisions).toContain(
+      'Factoree added the implied criterion "A retried delivery keeps its message", because the ticket says "Users lose messages".',
+    );
   });
 
   it("ends the Run with REFINEMENT_UNAVAILABLE and starts no Implementer when the refiner changed the worktree", async () => {
     harness.refinerOutcomes.set("run-ref-dirty", {
       status: "worktree_changed",
       accepted: [],
-      inferred: [],
+      decisions: [],
       visualEvidenceGap: null,
-      question: null,
       reason: "The refiner changed the primary worktree.",
     });
     const result = await harness.runWorker(async () => (await harness.start("ref-dirty")).result());

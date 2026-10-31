@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
 import { VALIDATION_METHODS, type ValidationMethod } from "~/domain/validation/validation-contract.js";
+import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 
 /**
  * docs/specs/refiner-agent.md. The refiner writes one proposal file. It is data, never code, and
@@ -14,7 +15,10 @@ const proposalSchema = z
         z
           .object({
             statement: z.string().min(1),
-            // The exact ticket sentence the criterion restates, or null when the refiner inferred it.
+            // docs/specs/own-proposals-and-parallel-runs.md. "stated": the ticket says it. "implied":
+            // one ticket sentence directly implies it. "new": it adds behaviour no sentence implies.
+            origin: z.enum(["stated", "implied", "new"]),
+            // The exact ticket sentence the criterion restates or follows from, or null for a new one.
             quote: z.string().nullable(),
             method: z.enum(VALIDATION_METHODS),
             // What runs the check: a command, a test path, "METHOD /path", or a browser route.
@@ -26,6 +30,8 @@ const proposalSchema = z
           .strict(),
       )
       .max(20),
+    // A decision the refiner needs that the ticket leaves open, with the answer it proposes and why.
+    // Factoree takes the proposal and records it. A human corrects it in the review.
     questions: z
       .array(z.object({ question: z.string().min(1), proposal: z.string().min(1), reason: z.string().min(1) }).strict())
       .max(5),
@@ -59,7 +65,7 @@ export const parseRefinerProposal = (text: string): RefinerProposal => {
 /** The schema text the refiner prompt shows, so the prompt and the parser cannot drift. */
 export const REFINER_PROPOSAL_SCHEMA = [
   "{",
-  '  "criteria": [{ "statement": string, "quote": string | null, "method": "command" | "test" | "http" | "browser" | "code_review" | "manual", "target": string | null, "visible": boolean }],',
+  '  "criteria": [{ "statement": string, "origin": "stated" | "implied" | "new", "quote": string | null, "method": "command" | "test" | "http" | "browser" | "code_review" | "manual", "target": string | null, "visible": boolean }],',
   '  "questions": [{ "question": string, "proposal": string, "reason": string }],',
   '  "patterns": [string]',
   "}",
@@ -79,22 +85,30 @@ const runnable = (method: ValidationMethod, target: string | null): boolean => {
 };
 
 export interface GatedRefinement {
-  /** Criteria the ticket states, with a runnable check or `manual`. They freeze without a question. */
+  /**
+   * Criteria that freeze: each stated one whose quote the ticket holds, and each implied one whose
+   * cited sentence the ticket holds. An implied criterion carries the source "implied by: <quote>".
+   */
   accepted: ValidationCriterion[];
-  /** Criteria the refiner inferred. A human confirms them before they freeze. */
-  inferred: ValidationCriterion[];
-  /** The refiner's own questions, each with a proposed answer. */
+  /** The implied criteria among `accepted`. The proof pack lists each one for the reviewer. */
+  implied: ValidationCriterion[];
+  /**
+   * Criteria that add behaviour no ticket sentence implies, or whose quote the ticket does not
+   * hold. §7 forbids invented product behaviour, so they never freeze, and nobody is asked.
+   */
+  notBuilt: string[];
+  /** The refiner's open decisions, each with the answer Factoree takes. */
   questions: RefinerProposal["questions"];
   /**
    * Criteria no automated check can prove: `manual`, `code_review`, or a target that does not
-   * run. They never freeze, because the workflow ends a Run that holds one. The question proposes
-   * to drop them, and the independent Reviewer still reads the code.
+   * run. They never freeze, because the workflow ends a Run that holds one, and the independent
+   * Reviewer still reads the code.
    */
   unverifiable: string[];
   /**
    * docs/specs/proof-pack-and-visual-evidence.md. Why a visible criterion has no visual evidence,
-   * or null when every visible criterion has a browser check. A human accepts the gap through
-   * the confirmation question, and the Proof Pack lists it under "Needs your attention".
+   * or null when every visible criterion has a browser check. The Proof Pack lists it under
+   * "Needs your attention".
    */
   visualEvidenceGap: string | null;
 }
@@ -106,9 +120,11 @@ export interface GateRepository {
 }
 
 /**
- * docs/specs/refiner-agent.md. The deterministic gate. A criterion counts as stated only when
- * its quote appears in the ticket text. A criterion freezes only with a runnable target. One
- * without, or with the method `manual` or `code_review`, is unverifiable and does not freeze.
+ * docs/specs/refiner-agent.md and docs/specs/own-proposals-and-parallel-runs.md. The deterministic
+ * gate. A stated or implied criterion freezes only when its quote appears in the ticket text, and
+ * only with a runnable target. A new criterion, or one whose quote the ticket does not hold, is
+ * not built. One without a runnable target, or with the method `manual` or `code_review`, is
+ * unverifiable and does not freeze.
  */
 export const gateRefinerProposal = (
   proposal: RefinerProposal,
@@ -117,32 +133,40 @@ export const gateRefinerProposal = (
 ): GatedRefinement => {
   const ticket = normalize(ticketText);
   const accepted: ValidationCriterion[] = [];
-  const inferred: ValidationCriterion[] = [];
+  const implied: ValidationCriterion[] = [];
+  const notBuilt: string[] = [];
   const unproven: string[] = [];
   const unverifiable: string[] = [];
   proposal.criteria.forEach((criterion, index) => {
+    const statement = criterion.statement.trim();
+    const quote = criterion.quote === null ? "" : criterion.quote.trim();
+    const cited = quote !== "" && ticket.includes(normalize(quote));
+    if (criterion.origin === "new" || !cited) {
+      notBuilt.push(statement);
+      return;
+    }
     if (!runnable(criterion.method, criterion.target)) {
-      unverifiable.push(criterion.statement.trim());
-      if (criterion.visible) unproven.push(criterion.statement.trim());
+      unverifiable.push(statement);
+      if (criterion.visible) unproven.push(statement);
       return;
     }
     const method: ValidationMethod = criterion.method;
     const target = criterion.target === null ? null : criterion.target.trim();
-    const quote = criterion.quote === null ? "" : normalize(criterion.quote);
-    const stated = quote !== "" && ticket.includes(quote);
     const gated: ValidationCriterion = {
       id: `AC-R${String(index + 1)}`,
-      statement: criterion.statement.trim(),
-      source: stated ? "ticket:quote" : "refiner:inferred",
+      statement,
+      source: criterion.origin === "implied" ? `implied by: ${quote}` : "ticket:quote",
       method,
       ...(target === null ? {} : { target }),
     };
-    (stated ? accepted : inferred).push(gated);
+    accepted.push(gated);
+    if (criterion.origin === "implied") implied.push(gated);
     if (criterion.visible && method !== "browser") unproven.push(gated.statement);
   });
   return {
     accepted,
-    inferred,
+    implied,
+    notBuilt,
     questions: proposal.questions,
     unverifiable,
     visualEvidenceGap: visualEvidenceGapOf(unproven, repository),
@@ -166,36 +190,40 @@ const visualEvidenceGapOf = (unproven: string[], repository: GateRepository): st
 /** An agent sentence without its closing period, so the joined sentence ends with exactly one. */
 const bare = (text: string): string => text.trim().replace(/[.\s]+$/, "");
 
-/** One question in the grill format: the item, a proposal, and the reason. */
-export const confirmationQuestion = (gated: GatedRefinement): string | null => {
-  const lines: string[] = [];
-  if (gated.inferred.length > 0) {
-    lines.push(
-      "Factoree inferred these acceptance criteria from the code. The ticket does not state them:",
-      ...gated.inferred.map((criterion) => `- ${criterion.statement}`),
-      "Proposal: accept them, because the existing code implies them. Reply \"yes\" to accept, or " +
-        "reply with the correct criterion.",
-    );
-  }
-  if (gated.unverifiable.length > 0) {
-    lines.push(
-      "No automated check can prove these criteria, and a Run cannot finish with them:",
-      ...gated.unverifiable.map((statement) => `- ${statement}`),
-      "Proposal: drop them, because the independent Reviewer reads the code anyway. Reply " +
-        "\"yes\" to drop them, or reply with a criterion Factoree can check.",
-    );
-  }
-  for (const question of gated.questions) {
-    lines.push(`${question.question}`, `Proposal: ${bare(question.proposal)}, because ${bare(question.reason)}.`);
-  }
-  if (gated.visualEvidenceGap !== null) {
-    lines.push(
-      `This change is visible, and Factoree cannot capture a screenshot of it. ${gated.visualEvidenceGap}`,
-      "Proposal: proceed with no screenshot, because the other checks still prove the change. " +
-        "The Proof Pack lists the gap under \"Needs your attention\".",
-    );
-  }
-  return lines.length === 0 ? null : lines.join("\n");
-};
+/**
+ * docs/specs/own-proposals-and-parallel-runs.md. Every proposal of the gate is determined, so
+ * Factoree takes each one, and none reaches a human as a question. Each becomes one decision with
+ * its reason, in the order a reviewer reads them.
+ */
+export const refinementDecisions = (gated: GatedRefinement): FactoreeDecision[] => [
+  ...gated.implied.map((criterion): FactoreeDecision => ({
+    kind: "criterion",
+    statement: `added the implied criterion "${bare(criterion.statement)}"`,
+    reason: `the ticket says "${bare(criterion.source.replace(/^implied by: /, ""))}"`,
+  })),
+  ...gated.notBuilt.map((statement): FactoreeDecision => ({
+    kind: "not_built",
+    statement: `did not build "${bare(statement)}"`,
+    reason: "no ticket sentence states or implies it, and Factoree must not invent product behaviour",
+  })),
+  ...gated.unverifiable.map((statement): FactoreeDecision => ({
+    kind: "dropped",
+    statement: `dropped the criterion "${bare(statement)}"`,
+    reason: "no automated check can prove it, and the independent Reviewer reads the code anyway",
+  })),
+  ...gated.questions.map((question): FactoreeDecision => ({
+    kind: "refiner",
+    statement: `answered "${bare(question.question)}" with "${bare(question.proposal)}"`,
+    reason: bare(question.reason),
+  })),
+  ...(gated.visualEvidenceGap === null
+    ? []
+    : [
+        {
+          kind: "visual_evidence",
+          statement: "proceeded with no screenshot",
+          reason: `${bare(gated.visualEvidenceGap)}, and the other checks still prove the change`,
+        } satisfies FactoreeDecision,
+      ]),
+];
 
-export { acceptsProposal } from "./accepts-proposal.js";

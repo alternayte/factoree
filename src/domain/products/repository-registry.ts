@@ -6,6 +6,8 @@ export interface RepositoryRecord {
   defaultBranch: string;
   configSha: string;
   requestedSecretNames: string[];
+  /** The Linear project names `.factoree/config.yaml` declares under `identity.linear.projects`. */
+  linearProjects: string[];
   discoveredAt: Date;
   lastSeenAt: Date;
   /** Set when the configuration file disappears. Null while discovery still sees the file. */
@@ -21,6 +23,7 @@ export interface UpsertRepositoryInput {
   defaultBranch: string;
   configSha: string;
   requestedSecretNames: string[];
+  linearProjects: string[];
   githubInstallationId: string;
 }
 

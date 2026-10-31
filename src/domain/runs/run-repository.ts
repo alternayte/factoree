@@ -1,3 +1,4 @@
+import type { FactoreeDecision } from "./factoree-decision.js";
 import type { RunFailureReason, RunStatus } from "./run-status.js";
 import type { RunFailureCategory } from "./failure-category.js";
 
@@ -36,6 +37,8 @@ export interface RunRecord {
   proofPackPostedAt: Date | null;
   /** docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document, or null. */
   proofPackDocument: Record<string, unknown> | null;
+  /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
+  decisions: FactoreeDecision[];
   repairCount: number;
   createdAt: Date;
   startedAt: Date | null;
@@ -175,6 +178,11 @@ export interface RunRepository {
    * SDD section 47 and section 68. Records the Proof Pack of one Run. The method throws when it
    * reaches no Run of that tenant, because a silent success hides a caller defect.
    */
+  /**
+   * docs/specs/own-proposals-and-parallel-runs.md. Appends one decision Factoree took. A retry of
+   * the same decision appends nothing.
+   */
+  appendDecision(tenantId: string, runId: string, decision: FactoreeDecision): Promise<void>;
   setProofPack(
     tenantId: string,
     runId: string,

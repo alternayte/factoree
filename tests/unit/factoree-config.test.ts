@@ -57,7 +57,7 @@ describe("parseFactoreeConfig", () => {
   it("reads every documented key of SDD section 15", () => {
     const config = parseFactoreeConfig(complete);
     expect(config.version).toBe(1);
-    expect(config.identity).toEqual({ product: "checkout-platform", linear: { teamKey: "PAY" } });
+    expect(config.identity).toEqual({ product: "checkout-platform", linear: { teamKey: "PAY", projects: [] } });
     expect(config.secrets).toEqual({ require: ["STRIPE_TEST_KEY"] });
     expect(config.bootstrap).toEqual({ command: "npm ci" });
     expect(config.verify.commands).toEqual([

@@ -9,7 +9,6 @@ import {
   type PublishActivityOutput,
   type PublishingActivityDependencies,
 } from "~/activities/publishing.activities.js";
-import type { RepositoryReader, TreeListing } from "~/adapters/github/git-repository-reader.js";
 import type {
   CreatePullRequestInput,
   PullRequestPort,
@@ -56,33 +55,6 @@ const stubSandbox = (options: { changedFiles: string[]; patchText: string }): Sa
     },
     exec,
   } as unknown as Sandbox;
-};
-
-interface RecordingReader extends RepositoryReader {
-  readonly urls: string[];
-}
-
-/**
- * A `RepositoryReader` double for the base backstop of the `publish` activity. It records every
- * URL it received, so a test proves the activity passed the plain URL. SDD section 30 forbids a
- * credential on the process argument list, and `git ls-remote` puts its URL there.
- */
-const recordingRepositoryReader = (targetSha: string): RecordingReader => {
-  const urls: string[] = [];
-  return {
-    urls,
-    resolveRef(url: string): Promise<string> {
-      urls.push(url);
-      return Promise.resolve(targetSha);
-    },
-    listTree(): Promise<TreeListing> {
-      return Promise.resolve({ entries: [], truncated: false });
-    },
-    readBlob(): Promise<string | null> {
-      return Promise.resolve(null);
-    },
-    withCredential: (_credential, work) => work(),
-  };
 };
 
 interface MemoryPullRequests extends PullRequestPort {
@@ -144,6 +116,7 @@ const stubPublishToBranch = (
       treeSha: "b".repeat(40),
       branch: input.branch,
       gitVersion: "git version 0.0.0-test",
+      baseMove: null,
     });
   };
   fake.inputs = inputs;
@@ -195,8 +168,6 @@ const build = (options: {
   changedFiles?: string[];
   patchText?: string;
   existing?: PullRequestRecord | null;
-  /** The SHA the target branch holds now. The default equals the Run base SHA, so it is fresh. */
-  currentTargetSha?: string;
   /** The failure the trusted checkout double throws. */
   checkoutFailure?: Error;
   /** The failure every pull request call throws. */
@@ -213,7 +184,6 @@ const build = (options: {
     pullRequests.create = (): Promise<PullRequestRecord> => Promise.reject(failure);
   }
   const runs = stubRuns();
-  const reader = recordingRepositoryReader(options.currentTargetSha ?? BASE);
   const publishToBranch = stubPublishToBranch(options.checkoutFailure);
   const dependencies: PublishingActivityDependencies = {
     sandbox: stubSandbox({
@@ -224,7 +194,6 @@ const build = (options: {
     tokens,
     redactor,
     runs,
-    repositoryReader: reader,
     pullRequests: () => pullRequests,
     gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
     logger: createLogger({ level: "debug", redactor, sink: (line) => lines.push(line) }),
@@ -234,7 +203,6 @@ const build = (options: {
     activities: createPublishingActivities(dependencies),
     pullRequests,
     runs,
-    reader,
     publishToBranch,
     tokens,
     redactor,
@@ -386,8 +354,7 @@ describe("the publish activity", () => {
     expect(output.pullRequestNumber).toBe(7);
     expect(pullRequests.created).toEqual([]);
     expect(publishToBranch.inputs).toEqual([]);
-    // The commit SHA comes from the pull request answer. The reader would throw if it were
-    // called, so this success proves the credential never reaches a git command line.
+    // The commit SHA comes from the pull request answer, so no git command runs here.
     expect(output.commitSha).toBe(COMMIT);
     expect(runs.publications).toHaveLength(1);
   });
@@ -483,60 +450,17 @@ describe("the publish activity", () => {
       }),
     ).rejects.toBeInstanceOf(RunConfigurationError);
   });
-  it("refuses a base that moved, before any trusted checkout and before any pull request creation", async () => {
-    // SDD section 45. The workflow calls `checkBase` once. A Temporal retry of `publish` runs
-    // minutes later, so `publish` must check the base itself. This case is that retry path.
-    const { activities, pullRequests, publishToBranch, reader } = build({
-      currentTargetSha: "d".repeat(40),
-    });
-
-    await expect(
-      environment.run((value: PublishActivityInput) => activities.publish(value), input),
-    ).rejects.toThrow(/target branch "main" moved after this Run started/);
-
-    expect(publishToBranch.inputs).toEqual([]);
-    expect(pullRequests.created).toEqual([]);
-    // The base check reads the plain URL only. A credential must never reach a git argument list.
-    expect(reader.urls).toEqual(["https://github.com/acme/app.git"]);
-  });
-
-  it("returns the existing pull request when the base moved, because the publication already happened", async () => {
-    // The idempotency rule of AT-35 outranks the base gate here. This Run already published, so
-    // the existing pull request stays the correct answer. A throw here breaks a retry.
-    const existing = {
-      number: 7,
-      url: "https://github.com/acme/app/pull/7",
-      headBranch: publishBranchName(input.runId),
-      headSha: COMMIT,
-    };
-    const { activities, pullRequests, publishToBranch, reader } = build({
-      existing,
-      currentTargetSha: "d".repeat(40),
-    });
-
+  it("publishes when the base moved, and reports the move from the trusted checkout", async () => {
+    // docs/specs/own-proposals-and-parallel-runs.md. A moved base branch no longer stops the
+    // publication. The trusted checkout measures the move against the branch it is given.
+    const { activities, publishToBranch, pullRequests } = build();
     const output: PublishActivityOutput = await environment.run(
       (value: PublishActivityInput) => activities.publish(value),
       input,
     );
-
-    expect(output.created).toBe(false);
-    expect(output.pullRequestNumber).toBe(7);
-    expect(publishToBranch.inputs).toEqual([]);
-    expect(pullRequests.created).toEqual([]);
-    // The lookup answered first, so the base check never ran.
-    expect(pullRequests.lookups).toEqual([publishBranchName(input.runId)]);
-    expect(reader.urls).toEqual([]);
-  });
-
-  it("makes a moved base non-retryable, because a retry cannot repair it", async () => {
-    const { activities } = build({ currentTargetSha: "d".repeat(40) });
-    const error = await activities
-      .publish(input)
-      .then(() => null)
-      .catch((thrown: unknown) => thrown);
-    expect(error).toBeInstanceOf(ApplicationFailure);
-    expect((error as ApplicationFailure).type).toBe("PUBLICATION_FAILED");
-    expect((error as ApplicationFailure).nonRetryable).toBe(true);
+    expect(publishToBranch.inputs[0]?.baseBranch).toBe("main");
+    expect(pullRequests.created).toHaveLength(1);
+    expect(output.baseMove).toBeNull();
   });
 
   it("passes the clone URL without the credential and supplies the credential apart from it", async () => {

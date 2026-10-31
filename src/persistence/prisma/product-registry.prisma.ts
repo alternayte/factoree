@@ -75,6 +75,7 @@ type RepositoryRow = {
   defaultBranch: string;
   configSha: string;
   requestedSecretNames: string[];
+  linearProjects: string[];
   discoveredAt: Date;
   lastSeenAt: Date;
   absentSince: Date | null;
@@ -251,6 +252,7 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry {
         defaultBranch: input.defaultBranch,
         configSha: input.configSha,
         requestedSecretNames: input.requestedSecretNames,
+        linearProjects: input.linearProjects,
         githubInstallationId: input.githubInstallationId,
       },
       update: {

@@ -204,11 +204,11 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
   let environment: TestWorkflowEnvironment;
 
   const harness = createWorkflowHarness(() => environment);
-  const { productInput, recordRunTargetCalls, postTargetNoticeCalls, start, runWorker, implementCalls } = harness;
+  const { productInput, recordRunTargetCalls, decisionCalls, start, runWorker, implementCalls, workItemInput } = harness;
 
   const twoRepositories = [
-    { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
-    { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    { id: "repository-api", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
+    { id: "repository-web", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
   ];
 
   beforeAll(async () => {
@@ -223,13 +223,8 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
     await runWorker(async () => {
       const handle = await start("ses-at-42", {
         product: { ...productInput, repositories: twoRepositories },
-        // Specification section 10: refinement has no target proposal producer yet, so the
-        // proposal is supplied directly here, the way the workflow tests already do.
-        repositoryProposal: {
-          fullName: "acme/web",
-          reason: "the change is in the checkout form",
-          confident: true,
-        },
+        // docs/specs/own-proposals-and-parallel-runs.md. The issue names the repository.
+        workItem: { ...workItemInput, description: "## Goal\n\nFix the checkout form in acme/web.\n" },
       });
 
       await waitFor(
@@ -238,10 +233,10 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
       );
 
       expect(recordRunTargetCalls.filter((entry) => entry.runId === "run-ses-at-42")).toEqual([
-        expect.objectContaining({ repositoryId: "repository-web", selectionReason: "the change is in the checkout form" }),
+        expect.objectContaining({ repositoryId: "repository-web", selectionReason: "the issue names acme/web" }),
       ]);
-      expect(postTargetNoticeCalls.filter((entry) => entry.runId === "run-ses-at-42")).toEqual([
-        expect.objectContaining({ fullName: "acme/web" }),
+      expect(decisionCalls.filter((entry) => entry.runId === "run-ses-at-42").map((entry) => entry.decision)).toEqual([
+        { kind: "target", statement: "chose acme/web", reason: "the issue names acme/web" },
       ]);
 
       await handle.signal(stopSignal);
@@ -254,7 +249,6 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
     await runWorker(async () => {
       const handle = await start("ses-at-43", {
         product: { ...productInput, repositories: twoRepositories },
-        repositoryProposal: null,
       });
       await waitForStatus(handle, "BLOCKED_TARGET");
 
@@ -275,8 +269,8 @@ describe("AT-42 and AT-43: target selection inside the workflow", () => {
 
 describe("AT-46 and AT-47: the gated sibling clone", () => {
   const REPOSITORIES = [
-    { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
-    { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+    { id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
+    { id: "2", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
   ];
 
   const buildCloner = () => {
@@ -445,6 +439,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       configSha: input.configSha,
       requestedSecretNames: input.requestedSecretNames,
       githubInstallationId: input.githubInstallationId,
+      linearProjects: [],
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,

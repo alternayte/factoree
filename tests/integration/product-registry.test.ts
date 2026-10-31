@@ -144,6 +144,7 @@ describe("PrismaProductRegistry", () => {
       defaultBranch: "main",
       configSha: "aaa",
       requestedSecretNames: ["STRIPE_TEST_KEY"],
+      linearProjects: [],
       githubInstallationId: "install-1",
     });
     const second = await repositories.upsert({
@@ -153,6 +154,7 @@ describe("PrismaProductRegistry", () => {
       defaultBranch: "main",
       configSha: "bbb",
       requestedSecretNames: [],
+      linearProjects: [],
       githubInstallationId: "install-1",
     });
 
@@ -179,6 +181,7 @@ describe("PrismaProductRegistry", () => {
       defaultBranch: "main",
       configSha: "aaa",
       requestedSecretNames: [],
+      linearProjects: [],
       githubInstallationId: "42",
     });
 

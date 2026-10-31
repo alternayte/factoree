@@ -110,6 +110,7 @@ export class DiscoveryService {
       defaultBranch,
       configSha: file.sha,
       requestedSecretNames: config.secrets.require,
+      linearProjects: config.identity.linear.projects,
       githubInstallationId,
     });
 

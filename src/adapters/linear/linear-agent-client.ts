@@ -1,5 +1,5 @@
 import { LinearClient } from "@linear/sdk";
-import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { AgentSessionPort, WorkItemFacts } from "~/domain/runs/ports.js";
 
 export type AgentActivityContent =
   | { type: "thought"; body: string }
@@ -15,6 +15,8 @@ interface LinearIssueLabel {
 /** The Linear SDK issue shape this adapter reads, narrowed to the fields it uses. */
 interface LinearIssueWithLabels {
   labels(): Promise<{ nodes: LinearIssueLabel[] } | null>;
+  /** The SDK resolves the project lazily. An issue in no project has none. */
+  project?: PromiseLike<{ name: string } | undefined> | undefined;
 }
 
 export interface LinearApi {
@@ -62,14 +64,18 @@ export class LinearAgentClient implements AgentSessionPort {
 
   /**
    * SDD section 28. A null issue and a null label list both yield an empty list, so the cap
-   * never invents a label it did not see.
+   * never invents a label it did not see. The project name chooses the target
+   * (docs/specs/own-proposals-and-parallel-runs.md).
    */
-  async labels(issueId: string): Promise<string[]> {
+  async facts(issueId: string): Promise<WorkItemFacts> {
     const issue = await this.client.issue(issueId);
-    if (issue === null) return [];
+    if (issue === null) return { labels: [], project: null };
     const labels = await issue.labels();
-    if (labels === null) return [];
-    return labels.nodes.map((label) => label.name);
+    const project = issue.project === undefined ? undefined : await issue.project;
+    return {
+      labels: labels === null ? [] : labels.nodes.map((label) => label.name),
+      project: project?.name ?? null,
+    };
   }
 }
 

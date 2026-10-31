@@ -18,7 +18,6 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
   repairCount: 1,
   repairLimit: 2,
   patchSha256: "c".repeat(64),
-  baseUnchanged: true,
   pullRequestUrl: "https://github.com/acme/fixture/pull/1",
   proofPackSha256: "d".repeat(64),
   ...overrides,
@@ -44,7 +43,6 @@ describe("the SDD section 68 completion invariant", () => {
     ["a blocking finding remains", { blockingFindingCount: 1 }, "blocking"],
     ["the repair budget is exceeded", { repairCount: 3 }, "repair"],
     ["no patch hash exists", { patchSha256: "" }, "patch hash"],
-    ["the base moved", { baseUnchanged: false }, "base"],
     ["no pull request exists", { pullRequestUrl: null }, "pull request"],
     ["no Proof Pack exists", { proofPackSha256: null }, "Proof Pack"],
   ];

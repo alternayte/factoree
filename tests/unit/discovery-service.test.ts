@@ -125,6 +125,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       configSha: input.configSha,
       requestedSecretNames: input.requestedSecretNames,
       githubInstallationId: input.githubInstallationId,
+      linearProjects: [],
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,

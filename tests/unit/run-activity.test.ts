@@ -18,6 +18,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   failureReason: null,
   failureCategory: null,
   autonomyLevel: "L2",
+  decisions: [],
   implementerRunner: null,
   validatorRunner: null,
   reviewerRunner: null,

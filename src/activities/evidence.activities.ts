@@ -1,3 +1,4 @@
+import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import { ApplicationFailure } from "@temporalio/activity";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
@@ -20,6 +21,7 @@ import {
   PROOF_PACK_DOCUMENT_NAME,
   renderProofPack,
   type ProofPackAssertion,
+  type ProofPackBaseMove,
   type ProofPackCheck,
   type ProofPackEvidenceRef,
   type ProofPackRouting,
@@ -184,8 +186,12 @@ export interface PublishProofPackActivityInput {
   reviewAttempt: number;
   /** docs/specs/proof-pack-and-visual-evidence.md. The Reviewer's description of the change. */
   changeDescription?: string;
-  /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap a human accepted. */
+  /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap?: string | null;
+  /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
+  decisions?: FactoreeDecision[];
+  /** docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved, or null. */
+  baseMove?: ProofPackBaseMove | null;
   /** docs/specs/autonomy-levels.md. The level of the Run, and the caps that applied. */
   autonomyLevel: string;
   autonomyReasons: string[];
@@ -415,6 +421,8 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       autonomyReasons: input.autonomyReasons,
       checkDefiningFiles: input.checkDefiningFiles,
       visualEvidenceGap: input.visualEvidenceGap ?? null,
+      decisions: input.decisions ?? [],
+      baseMove: input.baseMove ?? null,
       ...(routing === undefined ? {} : { routing }),
     };
 

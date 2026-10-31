@@ -50,7 +50,7 @@ describe("buildSiblingCloner against a real git repository", () => {
       ref,
       evidence,
       tenantId: "t",
-      repositories: [{ id: "1", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" }],
+      repositories: [{ id: "1", fullName: "acme/web", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] }],
       repositoryBaseUrl: root,
     });
 
@@ -82,7 +82,7 @@ describe("buildSiblingCloner against a real git repository", () => {
       ref,
       evidence,
       tenantId: "t",
-      repositories: [{ id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" }],
+      repositories: [{ id: "1", fullName: "acme/api", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] }],
       repositoryBaseUrl: "https://example.invalid",
     });
 

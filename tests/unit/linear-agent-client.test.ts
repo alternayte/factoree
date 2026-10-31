@@ -57,14 +57,18 @@ describe("LinearAgentClient", () => {
   });
 });
 
-describe("the Work Item labels of SDD section 28", () => {
-  it("reads the label names of one issue", async () => {
+describe("the Work Item labels of SDD section 28 and its Linear project", () => {
+  it("reads the label names and the project name of one issue", async () => {
     const client = new LinearAgentClient({
       createAgentActivity: () => Promise.resolve({}),
       updateAgentSession: () => Promise.resolve({}),
-      issue: () => Promise.resolve({ labels: () => Promise.resolve({ nodes: [{ name: "security" }, { name: "backend" }] }) }),
+      issue: () =>
+        Promise.resolve({
+          labels: () => Promise.resolve({ nodes: [{ name: "security" }, { name: "backend" }] }),
+          project: Promise.resolve({ name: "Dashboard" }),
+        }),
     });
-    expect(await client.labels("issue-1")).toEqual(["security", "backend"]);
+    expect(await client.facts("issue-1")).toEqual({ labels: ["security", "backend"], project: "Dashboard" });
   });
 
   it("reports no label when the issue does not exist", async () => {
@@ -73,6 +77,6 @@ describe("the Work Item labels of SDD section 28", () => {
       updateAgentSession: () => Promise.resolve({}),
       issue: () => Promise.resolve(null),
     });
-    expect(await client.labels("issue-1")).toEqual([]);
+    expect(await client.facts("issue-1")).toEqual({ labels: [], project: null });
   });
 });

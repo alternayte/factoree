@@ -1,3 +1,4 @@
+import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
@@ -158,17 +159,11 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
    * reason. The notice reaches the Run's own agent session. The activity resolves the session
    * id from the Run record.
    */
-  async postTargetNotice(input: {
-    tenantId: string;
-    runId: string;
-    fullName: string;
-    reason: string;
-  }): Promise<void> {
-    const run = await dependencies.runs.findById(input.tenantId, input.runId);
-    if (run === null) return;
-    await dependencies.agentSession.progress(
-      run.linearAgentSessionId,
-      `Factoree selected "${input.fullName}" as the target repository, because ${input.reason}.`,
-    );
+  /**
+   * docs/specs/own-proposals-and-parallel-runs.md. Records a proposal Factoree took without asking.
+   * The workflow posts it to Linear apart from this record, so a Linear fault never loses it.
+   */
+  async recordDecision(input: { tenantId: string; runId: string; decision: FactoreeDecision }): Promise<void> {
+    await dependencies.runs.appendDecision(input.tenantId, input.runId, input.decision);
   },
 });

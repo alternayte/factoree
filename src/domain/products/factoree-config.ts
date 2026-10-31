@@ -65,7 +65,12 @@ const identitySchema = z
       .min(1)
       .regex(/^[a-z0-9][a-z0-9-]*$/, "must be lower case letters, digits, or hyphen"),
     linear: z
-      .object({ teamKey: z.string().min(1).max(10).regex(/^[A-Za-z][A-Za-z0-9]*$/) })
+      .object({
+        teamKey: z.string().min(1).max(10).regex(/^[A-Za-z][A-Za-z0-9]*$/),
+        // docs/specs/own-proposals-and-parallel-runs.md. The Linear projects whose issues target
+        // this repository. An issue in one of them needs no target question.
+        projects: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
+      })
       .strict(),
   })
   .strict();

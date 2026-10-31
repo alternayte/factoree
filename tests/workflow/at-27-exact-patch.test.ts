@@ -76,7 +76,7 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
     expect(statusesOf(runId)).toContain("PUBLISHING");
   });
 
-  it("records the pull request URL and ends the activity order with review, checkBase, publish", async () => {
+  it("records the pull request URL and ends the activity order with review, publish", async () => {
     const runId = "run-ses-at27b";
 
     const progressBefore = postedProgress.length;
@@ -106,12 +106,7 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
     ).toBe(true);
 
     // SDD section 47. The Proof Pack follows the publication, so it closes the ordered tail.
-    expect(activityOrder.slice(orderBefore).slice(-4)).toEqual([
-      "review",
-      "checkBase",
-      "publish",
-      "publishProofPack",
-    ]);
+    expect(activityOrder.slice(orderBefore).slice(-3)).toEqual(["review", "publish", "publishProofPack"]);
   });
 
   it("does not claim that nothing was published when a stop follows a successful publication", async () => {

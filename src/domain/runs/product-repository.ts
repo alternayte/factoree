@@ -16,4 +16,6 @@ export interface AgentRunProductRepositoryInput {
   absentSince: string | null;
   /** The installation that granted access to this repository. A clone or a push mints its token against it. */
   githubInstallationId: string;
+  /** docs/specs/own-proposals-and-parallel-runs.md. The Linear projects the repository declares. */
+  linearProjects: string[];
 }

@@ -17,5 +17,14 @@ export interface AgentSessionPort {
  * same way it already does for `AgentSessionPort`, and the issue identifier names the Work Item.
  */
 export interface WorkItemPort {
-  labels(sessionId: string, issueId: string): Promise<string[]>;
+  /**
+   * The labels of the Work Item, and the name of its Linear project or null.
+   * docs/specs/own-proposals-and-parallel-runs.md uses the project to choose the target.
+   */
+  facts(sessionId: string, issueId: string): Promise<WorkItemFacts>;
+}
+
+export interface WorkItemFacts {
+  labels: string[];
+  project: string | null;
 }

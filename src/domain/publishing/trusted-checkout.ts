@@ -82,6 +82,20 @@ export interface TrustedPublication {
   branch: string;
   /** The git version of the trusted checkout. SDD section 46 names it beside the patch hash. */
   gitVersion: string;
+  /**
+   * docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved past the verified
+   * base, and the files the patch conflicts in there, or null when the branch did not move.
+   */
+  baseMove: BaseMove | null;
+}
+
+export interface BaseMove {
+  /** The head of the base branch at publication. */
+  headSha: string;
+  /** The number of commits the base branch holds past the verified base. */
+  ahead: number;
+  /** The files where the verified commit conflicts with the head of the base branch. */
+  conflicts: string[];
 }
 
 export interface TrustedCheckoutInput {
@@ -98,6 +112,8 @@ export interface TrustedCheckoutInput {
   token?: string;
   baseSha: string;
   branch: string;
+  /** The branch the pull request targets. Publication compares the verified base with its head. */
+  baseBranch: string;
   patchBase64: string;
   verifiedPatchSha256: string;
   /**
@@ -269,13 +285,18 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
         deterministic: true,
       });
     }
+    // docs/specs/own-proposals-and-parallel-runs.md. A moved base branch no longer stops the
+    // publication. The commit stays on the verified base, and the proof pack states the gap and
+    // any conflict. The merge below writes objects only, never a ref or the worktree.
+    const baseMove = await measureBaseMove(git, checkout, input.baseSha, input.baseBranch, commitSha);
+
     await git(
       checkout,
       ["push", "origin", `${input.branch}:refs/heads/${input.branch}`],
       remoteEnv,
     );
 
-    return { commitSha, publishedPatchSha256, treeSha, branch: input.branch, gitVersion };
+    return { commitSha, publishedPatchSha256, treeSha, branch: input.branch, gitVersion, baseMove };
   } finally {
     // Step 10. The temporary files hold a clone and a credentialed remote. Factoree removes them
     // on every path. The failure paths above are included.
@@ -287,4 +308,43 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
       input.onCleanupFailure?.(cleanupError);
     }
   }
+};
+
+/**
+ * Compares the verified base with the head of the base branch in the clone. When the branch
+ * moved, `git merge-tree --write-tree` merges the verified commit into that head in the object
+ * store and names each conflicting file. It exits 1 on a conflict, and the clone stays as it is.
+ */
+const measureBaseMove = async (
+  git: (cwd: string, args: string[]) => Promise<string>,
+  checkout: string,
+  baseSha: string,
+  baseBranch: string,
+  commitSha: string,
+): Promise<BaseMove | null> => {
+  const headSha = (await git(checkout, ["rev-parse", `refs/remotes/origin/${baseBranch}`])).trim();
+  if (!SHA.test(headSha)) {
+    throw new TrustedCheckoutError(`the base branch "${baseBranch}" resolved to no commit SHA`, { deterministic: true });
+  }
+  if (headSha === baseSha) return null;
+  const ahead = Number.parseInt((await git(checkout, ["rev-list", "--count", `${baseSha}..${headSha}`])).trim(), 10);
+  let conflicts: string[] = [];
+  try {
+    await run("git", ["merge-tree", "--write-tree", "--name-only", "--no-messages", headSha, commitSha], {
+      cwd: checkout,
+      timeout: PUBLISH_GIT_TIMEOUT_MS,
+      maxBuffer: MAX_OUTPUT_BYTES,
+      env: isolatedGitEnvironment(tmpdir()),
+    });
+  } catch (error) {
+    // Exit code 1 is a conflict. The first line is the tree, and each further line names a file.
+    const candidate = error as { code?: unknown; stdout?: unknown };
+    if (candidate.code !== 1 || typeof candidate.stdout !== "string") {
+      throw new TrustedCheckoutError(
+        `the conflict check of the trusted checkout failed: ${withoutUrlCredentials(String(error))}`,
+      );
+    }
+    conflicts = [...new Set(candidate.stdout.split("\n").slice(1).map((line) => line.trim()).filter((line) => line !== ""))];
+  }
+  return { headSha, ahead: Number.isNaN(ahead) ? 0 : ahead, conflicts };
 };

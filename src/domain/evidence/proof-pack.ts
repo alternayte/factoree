@@ -1,3 +1,4 @@
+import { describeDecision, type FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import { createHash } from "node:crypto";
 import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validation/validation-contract.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
@@ -142,10 +143,21 @@ export interface ProofPackInput {
   autonomyReasons?: string[];
   /** docs/specs/check-isolation.md. Changed files that define a check. A human reads them first. */
   checkDefiningFiles?: string[];
-  /** The visual evidence gap a human accepted at refinement, or null. */
+  /** The visual evidence gap Factoree accepted at refinement, or null. */
   visualEvidenceGap: string | null;
   /** SDD section 18. Present only for a Run that a routed Product produced. */
   routing?: ProofPackRouting;
+  /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
+  decisions?: FactoreeDecision[];
+  /** docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved, or null. */
+  baseMove?: ProofPackBaseMove | null;
+}
+
+export interface ProofPackBaseMove {
+  baseBranch: string;
+  headSha: string;
+  ahead: number;
+  conflicts: string[];
 }
 
 /** The JSON document an agent reads. `GET /admin/runs/:id` returns the same value. */
@@ -173,6 +185,8 @@ export interface ProofPackDocument {
     checkDefiningFiles: string[];
   };
   routing: ProofPackRouting | null;
+  decisions: FactoreeDecision[];
+  baseMove: ProofPackBaseMove | null;
   run: {
     baseSha: string;
     patchSha256: string;
@@ -204,6 +218,21 @@ const openable = (ref: string | null): ref is string => ref !== null && /^https:
  */
 export const needsAttention = (input: ProofPackInput): string[] => {
   const items: string[] = [];
+  // docs/specs/own-proposals-and-parallel-runs.md. A conflict with the moved branch comes first,
+  // because the pull request cannot merge until a human resolves it.
+  const move = input.baseMove ?? null;
+  if (move !== null && move.conflicts.length > 0) {
+    items.push(`Conflicts with ${move.baseBranch} in ${move.conflicts.map((file) => `\`${file}\``).join(", ")}.`);
+  }
+  if (move !== null) {
+    items.push(
+      `Verified on \`${input.baseSha.slice(0, 7)}\`. ${move.baseBranch} is now \`${move.headSha.slice(0, 7)}\`, ` +
+        `${move.ahead} ${move.ahead === 1 ? "commit" : "commits"} ahead.`,
+    );
+  }
+  for (const decision of input.decisions ?? []) {
+    items.push(decision.kind === "not_built" ? `Not built: ${decision.statement.replace(/^did not build /, "")}.` : describeDecision(decision));
+  }
   const checkDefining = input.checkDefiningFiles ?? [];
   if (checkDefining.length > 0) {
     items.push(
@@ -219,7 +248,9 @@ export const needsAttention = (input: ProofPackInput): string[] => {
   for (const assertion of input.assertions.filter((candidate) => candidate.result !== "PASS")) {
     items.push(`${assertion.id} is ${assertion.result}: ${assertion.statement} ${assertion.reason}`);
   }
-  if (input.visualEvidenceGap !== null) items.push(input.visualEvidenceGap);
+  // A gap Factoree accepted is one of its decisions. Only a gap without one is listed here.
+  const gapDecided = (input.decisions ?? []).some((decision) => decision.kind === "visual_evidence");
+  if (input.visualEvidenceGap !== null && !gapDecided) items.push(input.visualEvidenceGap);
   return items;
 };
 
@@ -232,6 +263,8 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   pullRequestUrl: input.pullRequestUrl,
   changeDescription: input.changeDescription,
   needsAttention: needsAttention(input),
+  decisions: input.decisions ?? [],
+  baseMove: input.baseMove ?? null,
   visualEvidenceGap: input.visualEvidenceGap,
   assertions: input.assertions,
   checks: input.checks,

@@ -167,7 +167,6 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     runs: dependencies.runs,
-    repositoryReader: dependencies.repositoryReader,
     pullRequests: dependencies.pullRequests,
     gitAuthor: dependencies.gitAuthor,
     logger: dependencies.logger,

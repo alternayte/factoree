@@ -103,9 +103,11 @@ const PROOF_FILE = "factoree-live-proof.md";
  * The task names one new file at the repository root, so the scenario runs against any fixture
  * repository without assuming a toolchain, a test runner, or a directory layout.
  */
-export const fixtureDescription = (token: string): string =>
+export const fixtureDescription = (token: string, repository?: string): string =>
   [
-    `Add a file named \`${PROOF_FILE}\` at the root of the repository.`,
+    // docs/specs/own-proposals-and-parallel-runs.md. The issue names its repository, so a Product
+    // with several repositories chooses the target with no human answer.
+    `Add a file named \`${PROOF_FILE}\` at the root of ${repository === undefined ? "the repository" : repository}.`,
     `Its only line must be the token ${token}.`,
     "Change no other file.",
     "",
@@ -129,6 +131,7 @@ export const fixtureDescription = (token: string): string =>
 const delegateFixtureIssue = async (
   linear: LinearClient,
   teamId: string,
+  repository: string | undefined,
 ): Promise<{ issueId: string; identifier: string }> => {
   const organization = await linear.organization;
   const users = await linear.users({ filter: { name: { containsIgnoreCase: "Factoree" } } });
@@ -145,7 +148,7 @@ const delegateFixtureIssue = async (
   const created = await linear.createIssue({
     teamId,
     title: `Factoree live acceptance fixture ${token}`,
-    description: fixtureDescription(token),
+    description: fixtureDescription(token, repository),
     assigneeId: factoreeUser.id,
   });
   const issue = await created.issue;
@@ -246,7 +249,7 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
 
   let issueId: string | null = null;
   try {
-    const delegation = await delegateFixtureIssue(linear, teamId);
+    const delegation = await delegateFixtureIssue(linear, teamId, env.LIVE_GITHUB_REPOSITORY);
     issueId = delegation.issueId;
     const reached = await waitForAgentActivity(linear, delegation.issueId);
     facts.push({

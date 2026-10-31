@@ -84,7 +84,7 @@ const agentSession: AgentSessionPort = {
 // SDD section 28. This test drives no high-risk label, so an empty list keeps the Project
 // default autonomy level, in the same way an issue with no label does in production.
 const workItems: WorkItemPort = {
-  labels: async () => [],
+  facts: async () => ({ labels: [], project: null }),
 };
 
 let prisma: FactoreePrismaClient;
@@ -138,6 +138,7 @@ beforeAll(async () => {
     defaultBranch: "main",
     configSha: "a".repeat(40),
     requestedSecretNames: [],
+    linearProjects: [],
     githubInstallationId: "install-1",
   });
 

@@ -41,7 +41,7 @@ const activities = {
   postElicitation: async () => undefined,
   postFinalResponse: async () => undefined,
   postError: async () => undefined,
-  fetchWorkItemLabels: async () => [],
+  fetchWorkItemFacts: async () => ({ labels: [], project: null }),
   // Phase 4 puts refinement and context resolution before preparation, so this Run reaches
   // every activity below. Each double returns at once, and none of them holds state.
   refine: async (input: { project: { primaryRepository: string; referenceRepositories: string[] } }) => ({
@@ -116,7 +116,7 @@ const activities = {
     checkDefiningFiles: [],
   }),
   releaseCheckSandbox: async () => undefined,
-  proposeRefinement: async () => ({ status: "proposed", accepted: [], inferred: [], question: null, reason: "" }),
+  proposeRefinement: async () => ({ status: "proposed", accepted: [], decisions: [], visualEvidenceGap: null, reason: "" }),
   implement: async (input: { runnerName: string }) => ({
     sessionId: "ses_fake",
     processId: "process-fake",
@@ -163,10 +163,6 @@ const activities = {
   }),
   // Phase 9 adds the publication path. This map is a plain object literal and is not typed as
   // `Activities`, so `npm run typecheck` cannot catch a missing entry here either.
-  checkBase: async (input: { baseSha: string }) => ({
-    fresh: true,
-    currentTargetSha: input.baseSha,
-  }),
   // DI-9.8. The branch name and the pull request lookup are deterministic, so a
   // second call after a worker restart finds the pull request the first call opened. The double
   // returns the same pull request record every time. Only the first call reports a creation.
@@ -181,6 +177,7 @@ const activities = {
       branch: `factoree/run-${input.runId}`,
       created,
       patchByteLength: 812,
+      baseMove: null,
     };
     publishResults.push({
       runId: input.runId,
@@ -256,7 +253,7 @@ describe("AT-35 worker restart", () => {
           product: {
             productId: "product-1",
             productSlug: "acme",
-            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" }],
+            repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] }],
             repositoryBaseUrl: "https://example.invalid",
             stagingRead: false,
             spriteRetentionHours: 24,
@@ -265,7 +262,6 @@ describe("AT-35 worker restart", () => {
             allowedDomains: [],
             organizationSkillsRepository: null,
           },
-          repositoryProposal: null,
         },
       ],
     });

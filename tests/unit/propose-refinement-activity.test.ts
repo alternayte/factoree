@@ -16,7 +16,7 @@ import { MemorySecretStore } from "../support/memory-secret-store.js";
 
 const PROPOSAL = JSON.stringify({
   criteria: [
-    { statement: "A failed delivery is retried.", quote: "is never retried", method: "test", target: "tests/retry.test.ts" },
+    { statement: "A failed delivery is retried.", origin: "stated", quote: "is never retried", method: "test", target: "tests/retry.test.ts" },
   ],
   questions: [],
   patterns: [],

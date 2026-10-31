@@ -61,6 +61,7 @@ describe("publishToBranch", () => {
     const result = await publishToBranch({
       cloneUrl: bare,
       baseSha,
+      baseBranch: "main",
       branch: "factoree/run-1",
       patchBase64,
       verifiedPatchSha256: sha256OfBase64(patchBase64),
@@ -73,6 +74,8 @@ describe("publishToBranch", () => {
 
     expect(result.publishedPatchSha256).toBe(sha256OfBase64(patchBase64));
     expect(result.commitSha).toMatch(/^[0-9a-f]{40}$/);
+    // The base branch still points at the verified base.
+    expect(result.baseMove).toBeNull();
     const remoteHead = execFileSync("git", ["rev-parse", "factoree/run-1"], { cwd: bare, encoding: "utf8" }).trim();
     expect(remoteHead).toBe(result.commitSha);
   });
@@ -82,7 +85,8 @@ describe("publishToBranch", () => {
       publishToBranch({
         cloneUrl: bare,
         baseSha,
-        branch: "factoree/run-2",
+        baseBranch: "main",
+      branch: "factoree/run-2",
         patchBase64,
         verifiedPatchSha256: "f".repeat(64),
         verifiedGitVersion: "git version 0.0.0-test",
@@ -102,7 +106,8 @@ describe("publishToBranch", () => {
       publishToBranch({
         cloneUrl: "--upload-pack=false",
         baseSha,
-        branch: "factoree/run-injection",
+        baseBranch: "main",
+      branch: "factoree/run-injection",
         patchBase64,
         verifiedPatchSha256: sha256OfBase64(patchBase64),
         verifiedGitVersion: "git version 0.0.0-test",
@@ -124,6 +129,7 @@ describe("publishToBranch", () => {
     const result = await publishToBranch({
       cloneUrl: bare,
       baseSha,
+      baseBranch: "main",
       branch: "factoree/run-3",
       patchBase64,
       verifiedPatchSha256: sha256OfBase64(patchBase64),
@@ -145,7 +151,8 @@ describe("publishToBranch", () => {
       publishToBranch({
         cloneUrl: bare,
         baseSha,
-        branch: "factoree/run-4",
+        baseBranch: "main",
+      branch: "factoree/run-4",
         patchBase64,
         verifiedPatchSha256: "f".repeat(64),
         verifiedGitVersion: "git version 0.0.0-test",
@@ -165,6 +172,7 @@ describe("publishToBranch", () => {
     const identical = {
       cloneUrl: bare,
       baseSha,
+      baseBranch: "main",
       branch,
       patchBase64,
       verifiedPatchSha256: sha256OfBase64(patchBase64),
@@ -217,6 +225,7 @@ describe("publishToBranch", () => {
     const error = await publishToBranch({
       cloneUrl: bare,
       baseSha: "0".repeat(40),
+      baseBranch: "main",
       branch: "factoree/run-missing-base",
       patchBase64,
       verifiedPatchSha256: sha256OfBase64(patchBase64),
@@ -265,5 +274,40 @@ describe("the review name query and the publication name query", () => {
       await sandbox.destroy(ref);
       rmSync(sandboxRoot, { recursive: true, force: true });
     }
+  });
+  it("publishes on the verified base after the base branch moved, and names the conflicting file", async () => {
+    // docs/specs/own-proposals-and-parallel-runs.md. Two merges land on main during the Run: one
+    // that touches another file, and one that rewrites the line the patch changes.
+    const mover = join(root, "mover");
+    execFileSync("git", ["clone", bare, mover]);
+    git(mover, "config", "user.email", "fixture@example.test");
+    git(mover, "config", "user.name", "Fixture");
+    writeFileSync(join(mover, "other.txt"), "other\n");
+    git(mover, "add", "-A");
+    git(mover, "commit", "-m", "an unrelated merge");
+    writeFileSync(join(mover, "README.md"), "base\nrewritten by another pull request\n");
+    git(mover, "add", "-A");
+    git(mover, "commit", "-m", "a conflicting merge");
+    git(mover, "push", "origin", "main");
+    const head = git(mover, "rev-parse", "HEAD").trim();
+
+    const result = await publishToBranch({
+      cloneUrl: bare,
+      baseSha,
+      baseBranch: "main",
+      branch: "factoree/run-moved",
+      patchBase64,
+      verifiedPatchSha256: sha256OfBase64(patchBase64),
+      verifiedGitVersion: "git version 0.0.0-test",
+      commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
+      authorName: "Factoree",
+      authorEmail: "factoree@example.test",
+    });
+
+    expect(result.baseMove).toEqual({ headSha: head, ahead: 2, conflicts: ["README.md"] });
+    // The commit sits on the verified base, not on the moved head.
+    const parent = execFileSync("git", ["rev-parse", "factoree/run-moved^"], { cwd: bare, encoding: "utf8" }).trim();
+    expect(parent).toBe(baseSha);
   });
 });

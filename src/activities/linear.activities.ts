@@ -1,4 +1,4 @@
-import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
+import type { AgentSessionPort, WorkItemFacts, WorkItemPort } from "~/domain/runs/ports.js";
 
 export interface LinearActivityDependencies {
   agentSession: AgentSessionPort;
@@ -22,7 +22,7 @@ export const createLinearActivities = (dependencies: LinearActivityDependencies)
    * already exhausted, both yield no label, and the Run then runs at its Project default. The
    * cap must never invent a label it did not see.
    */
-  async fetchWorkItemLabels(input: { sessionId: string; issueId: string }): Promise<string[]> {
-    return await dependencies.workItems.labels(input.sessionId, input.issueId);
+  async fetchWorkItemFacts(input: { sessionId: string; issueId: string }): Promise<WorkItemFacts> {
+    return await dependencies.workItems.facts(input.sessionId, input.issueId);
   },
 });

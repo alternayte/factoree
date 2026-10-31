@@ -107,6 +107,7 @@ const build = (
     listRunTargets: vi.fn().mockResolvedValue([]),
     setConfigSha: vi.fn().mockResolvedValue(undefined),
     setPullRequestPreview: vi.fn().mockResolvedValue(null),
+    appendDecision: vi.fn().mockResolvedValue(undefined),
     countByProduct: vi.fn().mockResolvedValue(0),
   };
   const redactor = new Redactor();

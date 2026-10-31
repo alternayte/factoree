@@ -23,7 +23,7 @@ const SAMPLE: ImplementerPromptFields = {
  * rendered text, which changes this hash, which fails this test. The failure message tells a
  * developer to bump IMPLEMENTER_PROMPT_VERSION and to record the new hash here.
  */
-const EXPECTED_TEMPLATE_HASH = "4451d3dcf67d7b59b2af0c3f7a6b54ef3076fec6ad0e17d799615db57d4870df";
+const EXPECTED_TEMPLATE_HASH = "be208edda1e86e35cd4f6383429577284d54c672de92711b884b695d523f181f";
 
 describe("renderImplementerPrompt version guard", () => {
   it("keeps IMPLEMENTER_PROMPT_VERSION synchronized with the template text", () => {
@@ -39,7 +39,7 @@ describe("renderImplementerPrompt version guard", () => {
   });
 
   it("stamps the prompt version as a value that changes only with the template", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/5");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/6");
   });
 });
 
@@ -54,7 +54,7 @@ describe("renderImplementerPrompt skills", () => {
   });
 
   it("reports the prompt version 4", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/5");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/6");
   });
 });
 

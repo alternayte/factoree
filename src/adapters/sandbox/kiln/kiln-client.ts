@@ -75,7 +75,26 @@ export interface KilnClientOptions {
   baseUrl: string;
   apiKey: string;
   fetch?: typeof fetch;
+  /** The delays between the attempts of one call. A test sets them to zero. */
+  retryDelaysMs?: number[];
 }
+
+/**
+ * The delays between attempts of a call that met a transient failure, about two minutes in all.
+ * A Kiln host restart or a deploy makes the gateway answer 502 for that long.
+ */
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000];
+
+/**
+ * True when the call can run again without a second effect. A GET reads, and a PUT or a DELETE
+ * replaces or removes, so each one can repeat on any transient failure. A POST creates, so it
+ * repeats only on a 502: the gateway answers 502 when the request never reached the host.
+ */
+const retryable = (method: string, failure: KilnApiError | null): boolean => {
+  const status = failure?.status ?? 0;
+  if (method === "POST") return status === 502;
+  return failure === null || status === 502 || status === 503 || status === 504;
+};
 
 /** Each path segment is escaped alone, so a slash in a guest path stays a separator. */
 const escapePath = (path: string): string =>
@@ -173,6 +192,22 @@ export class KilnClient {
   }
 
   private async request(method: string, path: string, body?: string, isJson = false): Promise<string> {
+    const delays = this.options.retryDelaysMs ?? RETRY_DELAYS_MS;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.send(method, path, body, isJson);
+      } catch (error) {
+        // A network fault carries no status. Only a GET, a PUT or a DELETE repeats on one.
+        const failure = error instanceof KilnApiError ? error : null;
+        if (failure !== null && failure.status < 500) throw error;
+        const delay = delays[attempt];
+        if (delay === undefined || !retryable(method, failure)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  private async send(method: string, path: string, body: string | undefined, isJson: boolean): Promise<string> {
     const headers: Record<string, string> = { authorization: `Bearer ${this.options.apiKey}` };
     if (isJson) headers["content-type"] = "application/json";
     const response = await this.fetch(`${this.baseUrl}${path}`, {

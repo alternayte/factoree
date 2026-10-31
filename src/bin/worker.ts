@@ -158,7 +158,7 @@ const agentSession: AgentSessionPort = {
 // SDD section 28. The session identifier resolves the workspace client, in the same way it
 // already does for `AgentSessionPort` above, and the issue identifier names the Work Item.
 const workItems: WorkItemPort = {
-  labels: (sessionId, issueId) => call(sessionId, (client) => client.labels(issueId)),
+  facts: (sessionId, issueId) => call(sessionId, (client) => client.facts(issueId)),
 };
 
 async function call<T>(

@@ -11,7 +11,6 @@ import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js"
 import { GitHubPullRequests, GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import type { DiscoveredRepository, RepositoryConfigFile, RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
-import type { RepositoryReader, TreeListing } from "~/adapters/github/git-repository-reader.js";
 import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { registerGitHubWebhookRoutes } from "~/http/webhooks/github.routes.js";
@@ -144,6 +143,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       configSha: input.configSha,
       requestedSecretNames: input.requestedSecretNames,
       githubInstallationId: input.githubInstallationId,
+      linearProjects: [],
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,
@@ -787,13 +787,6 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
 
     const localCloneSeam = (input: TrustedCheckoutInput) => realPublishToBranch({ ...input, cloneUrl: remote.cloneUrl });
 
-    const reader: RepositoryReader = {
-      resolveRef: () => Promise.resolve(remote.baseSha),
-      listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
-      readBlob: (): Promise<string | null> => Promise.resolve(null),
-      withCredential: (_credential, work) => work(),
-    };
-
     const runs: RunRepository = {
       setPublication: () => Promise.resolve(),
     } as unknown as RunRepository;
@@ -813,7 +806,6 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       tokens,
       redactor,
       runs,
-      repositoryReader: reader,
       pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: fixture.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       logger: createLogger({ level: "error", redactor, sink: () => undefined }),

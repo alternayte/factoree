@@ -12,9 +12,10 @@ import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { worktreeFingerprint } from "~/domain/review/source-diff.js";
 import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
+import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import {
-  confirmationQuestion,
   gateRefinerProposal,
+  refinementDecisions,
   type GatedRefinement,
   type GateRepository,
   parseRefinerProposal,
@@ -106,11 +107,14 @@ export interface ProposeRefinementActivityOutput {
    * the primary worktree, which the refiner role must never do.
    */
   status: "proposed" | "unavailable" | "worktree_changed";
+  /** The criteria that freeze, implied ones included. */
   accepted: ValidationCriterion[];
-  inferred: ValidationCriterion[];
-  /** One question in the grill format, or null when nothing needs a human. */
-  question: string | null;
-  /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap the human accepts. */
+  /**
+   * docs/specs/own-proposals-and-parallel-runs.md. The proposals Factoree takes without asking:
+   * implied criteria, criteria not built, dropped criteria, the refiner's answers and a visual gap.
+   */
+  decisions: FactoreeDecision[];
+  /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap: string | null;
   reason: string;
 }
@@ -299,7 +303,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       });
 
       const after = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
-      const empty = { accepted: [], inferred: [], question: null, visualEvidenceGap: null };
+      const empty = { accepted: [], decisions: [], visualEvidenceGap: null };
       if (after !== before) {
         return {
           status: "worktree_changed",
@@ -321,13 +325,13 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         run_id: input.runId,
         step: "propose_refinement",
         accepted: gated.accepted.length,
-        inferred: gated.inferred.length,
+        implied: gated.implied.length,
+        not_built: gated.notBuilt.length,
       });
       return {
         status: "proposed",
         accepted: gated.accepted,
-        inferred: gated.inferred,
-        question: confirmationQuestion(gated),
+        decisions: refinementDecisions(gated),
         visualEvidenceGap: gated.visualEvidenceGap,
         reason: "",
       };

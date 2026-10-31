@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
+import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type {
   CreateRunInput,
   CreateRunTargetInput,
@@ -46,6 +47,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   proofPackDocument: (row.proofPackDocument as Record<string, unknown> | null) ?? null,
+  decisions: (row.decisions as unknown as FactoreeDecision[] | null) ?? [],
   repairCount: row.repairCount,
   createdAt: row.createdAt,
   startedAt: row.startedAt,
@@ -292,6 +294,22 @@ export class PrismaRunRepository implements RunRepository {
       pullRequestUrl: row.pullRequestUrl,
       previewUrl: row.previewUrl,
     }));
+  }
+
+  async appendDecision(tenantId: string, runId: string, decision: FactoreeDecision): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    await this.prisma.$transaction(async (tx) => {
+      const row = await tx.run.findFirst({ where: { id: runId, tenantId }, select: { decisions: true } });
+      if (row === null) throw new Error(`no Run "${runId}" of tenant "${tenantId}" took the decision`);
+      const decisions = (row.decisions as unknown as FactoreeDecision[] | null) ?? [];
+      const same = (other: FactoreeDecision): boolean =>
+        other.kind === decision.kind && other.statement === decision.statement && other.reason === decision.reason;
+      if (decisions.some(same)) return;
+      await tx.run.update({
+        where: { id: runId },
+        data: { decisions: [...decisions, decision] as unknown as Prisma.InputJsonArray },
+      });
+    });
   }
 
   async setPullRequestPreview(

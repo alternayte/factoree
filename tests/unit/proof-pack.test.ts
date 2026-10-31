@@ -216,3 +216,22 @@ describe("proof-pack.json (proof-pack-and-visual-evidence.md)", () => {
     expect(document.change.changedFileCount).toBe(MAX_LISTED_CHANGED_FILES + 7);
   });
 });
+
+describe("decisions and a moved base (own-proposals-and-parallel-runs.md)", () => {
+  it("lists a conflict first, then the move, then each decision, and keeps both in proof-pack.json", () => {
+    const decisions = [
+      { kind: "target" as const, statement: "chose alternayte/c-dash", reason: "the issue names c-dash" },
+      { kind: "not_built" as const, statement: 'did not build "also email the admin"', reason: "no ticket sentence implies it" },
+    ];
+    const baseMove = { baseBranch: "main", headSha: "9".repeat(40), ahead: 3, conflicts: ["src/app.ts"] };
+    const document = buildProofPackDocument(input({ decisions, baseMove }));
+    expect(document.needsAttention).toEqual([
+      "Conflicts with main in `src/app.ts`.",
+      "Verified on `fffffff`. main is now `9999999`, 3 commits ahead.",
+      "Factoree chose alternayte/c-dash, because the issue names c-dash.",
+      'Not built: "also email the admin".',
+    ]);
+    expect(document.decisions).toEqual(decisions);
+    expect(document.baseMove).toEqual(baseMove);
+  });
+});

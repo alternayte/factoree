@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
-import type { RepositoryReader, TreeListing } from "~/adapters/github/git-repository-reader.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import {
   createPublishingActivities,
@@ -53,35 +52,6 @@ const localCloneUrl = (remote: BareRemote) => {
   return seam;
 };
 
-/**
- * The base backstop of the `publish` activity reads the target branch. SDD section 45 requires
- * that check on every attempt. The reader records each URL, so a test proves the URL stays plain.
- */
-const baseRepositoryReader = (sha: () => string): RepositoryReader & { urls: string[] } => {
-  const urls: string[] = [];
-  return {
-    urls,
-    resolveRef: (url: string): Promise<string> => {
-      urls.push(url);
-      return Promise.resolve(sha());
-    },
-    listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
-    readBlob: (): Promise<string | null> => Promise.resolve(null),
-    withCredential: (_credential, work) => work(),
-  };
-};
-
-/**
- * The hostile-scheme case must reach no remote at all. The scheme gate runs before the base
- * check, so a call here fails the test that made it.
- */
-const forbiddenRepositoryReader = (): RepositoryReader => ({
-  resolveRef: (): Promise<string> =>
-    Promise.reject(new Error("the publish activity must not read the repository")),
-  listTree: (): Promise<TreeListing> => Promise.resolve({ entries: [], truncated: false }),
-  readBlob: (): Promise<string | null> => Promise.resolve(null),
-  withCredential: (_credential, work) => work(),
-});
 
 interface PublicationRow {
   patchSha256: string;
@@ -116,7 +86,6 @@ let first: PublishActivityOutput;
 let second: PublishActivityOutput;
 let branch: string;
 let logLines: string[];
-let reader: RepositoryReader & { urls: string[] };
 
 const environment = new MockActivityEnvironment();
 
@@ -150,7 +119,6 @@ beforeAll(async () => {
   const redactor = new Redactor([]);
   logLines = [];
   seam = localCloneUrl(remote);
-  reader = baseRepositoryReader(() => remote.baseSha);
   runs = memoryRuns();
   const activities = createPublishingActivities({
     sandbox,
@@ -158,7 +126,6 @@ beforeAll(async () => {
     tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
     redactor,
     runs,
-    repositoryReader: reader,
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
     gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
     logger: createLogger({ level: "debug", redactor, sink: (line) => logLines.push(line) }),
@@ -252,10 +219,6 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
     expect(seam.received[0] ?? "").not.toContain(TOKEN);
     expect(seam.received[0] ?? "").not.toContain("x-access-token");
     expect(seam.tokens[0]).toBe(TOKEN);
-    // The base backstop reads the plain URL too. SDD section 45 requires that check. The first
-    // call published, so it ran the check. The second call found the existing pull request and
-    // returned it, so it ran no check at all.
-    expect(reader.urls).toEqual(["https://github.test/acme/app.git"]);
   });
 
   it("creates no second pull request when the same input runs again (AT-35)", () => {
@@ -299,7 +262,6 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
       tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
       redactor,
       runs: memoryRuns(),
-      repositoryReader: forbiddenRepositoryReader(),
       pullRequests: (token: string) =>
         new GitHubPullRequests({ apiBaseUrl: hostileApi.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },

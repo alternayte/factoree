@@ -32,7 +32,6 @@ export interface CompletionInvariantInput extends PrePublicationInput {
    * "verified patch hash == published patch hash".
    */
   patchSha256: string;
-  baseUnchanged: boolean;
   pullRequestUrl: string | null;
   proofPackSha256: string | null;
 }
@@ -70,7 +69,6 @@ export const prePublicationFailures = (input: PrePublicationInput): string[] => 
 export const completionInvariantFailures = (input: CompletionInvariantInput): string[] => {
   const failures = prePublicationFailures(input);
   if (!SHA256.test(input.patchSha256)) failures.push("No verified patch hash exists.");
-  if (!input.baseUnchanged) failures.push("The target base SHA changed.");
   if (input.pullRequestUrl === null || input.pullRequestUrl.trim() === "") {
     failures.push("No pull request exists.");
   }

@@ -379,7 +379,7 @@ describe("a Project default branch that does not exist", () => {
             ...input("ses-badbranch"),
             product: {
               ...productInput,
-              repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "no-such-branch", absentSince: null, githubInstallationId: "install-1" }],
+              repositories: [{ id: "repository-1", fullName: "acme/primary", defaultBranch: "no-such-branch", absentSince: null, githubInstallationId: "install-1", linearProjects: [] }],
             },
           },
         ],

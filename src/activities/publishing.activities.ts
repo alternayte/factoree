@@ -1,6 +1,4 @@
 import { ApplicationFailure } from "@temporalio/activity";
-import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
-import { readCredential } from "~/activities/repository-credential.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
@@ -17,11 +15,11 @@ import {
   buildPullRequestTitle,
   type PullRequestPort,
 } from "~/domain/publishing/pull-request.js";
-import { checkBase as checkBaseFreshness } from "~/domain/publishing/stale-base.js";
 import {
   PatchHashMismatchError,
   publishToBranch as publishToBranchDefault,
   TrustedCheckoutError,
+  type BaseMove,
 } from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
@@ -46,23 +44,6 @@ export const PUBLICATION_COMMIT_TIMESTAMP = "1970-01-01T00:00:00Z";
 
 /** The head branch of one Run. AT-35 requires a stable name, so a retry finds the same branch. */
 export const publishBranchName = (runId: string): string => `factoree/run-${runId}`;
-
-export interface CheckBaseActivityInput {
-  runId: string;
-  tenantId: string;
-  productId: string;
-  repositorySlug: string;
-  repositoryBaseUrl: string;
-  branch: string;
-  baseSha: string;
-  /** The GitHub App installation that grants the repository. Empty when it holds none. */
-  githubInstallationId: string;
-}
-
-export interface CheckBaseActivityOutput {
-  fresh: boolean;
-  currentTargetSha: string;
-}
 
 export interface PublishActivityInput {
   runId: string;
@@ -107,6 +88,11 @@ export interface PublishActivityOutput {
   created: boolean;
   /** SDD section 47. The size of the verified patch, for the human change summary. */
   patchByteLength: number;
+  /**
+   * docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved past the verified
+   * base, with any conflict, or null when it did not move or the pull request already existed.
+   */
+  baseMove: BaseMove | null;
 }
 
 export interface PublishingActivityDependencies {
@@ -116,11 +102,6 @@ export interface PublishingActivityDependencies {
   runs: RunRepository;
   /** Mints the write credential of one publish. SDD section 30 keeps it off every agent session. */
   tokens: GitHubTokenProvider;
-  /**
-   * `checkBase` and the base backstop of `publish` read the target branch. Each one passes the
-   * plain URL, never a credential.
-   */
-  repositoryReader: RepositoryReader;
   pullRequests: (token: string) => PullRequestPort;
   gitAuthor: { name: string; email: string };
   logger: Logger;
@@ -193,42 +174,6 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
 
 /** SDD section 44, section 45, and section 46. */
 export const createPublishingActivities = (dependencies: PublishingActivityDependencies) => ({
-  /**
-   * SDD section 45. Version 1 never rebases. A target branch that moved after the Run started
-   * ends the Run in `STALE_BASE`, so this activity reports the fact and publishes nothing.
-   */
-  async checkBase(input: CheckBaseActivityInput): Promise<CheckBaseActivityOutput> {
-    const started = Date.now();
-    const labels = { tenant_id: input.tenantId, product_id: input.productId };
-
-    try {
-      const url = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
-      // A private repository needs the read credential here too. A worker restart between context
-      // resolution and this check must not leave the check without one.
-      const result = await dependencies.repositoryReader.withCredential(
-        readCredential(url, input.githubInstallationId, dependencies),
-        () =>
-          checkBaseFreshness(dependencies.repositoryReader, {
-            url,
-            branch: input.branch,
-            runBaseSha: input.baseSha,
-          }),
-      );
-
-      dependencies.logger.info("base freshness checked", {
-        tenant_id: input.tenantId,
-        product_id: input.productId,
-        run_id: input.runId,
-        step: "publish",
-        fresh: result.fresh,
-      });
-
-      return { fresh: result.fresh, currentTargetSha: result.currentTargetSha };
-    } finally {
-      metrics.publishDuration.observe(labels, (Date.now() - started) / 1000);
-    }
-  },
-
   /**
    * SDD section 46. Applies the verified patch to a clean trusted checkout, proves the patch
    * hash again, pushes the branch, and opens the pull request. No agent session reaches this
@@ -349,36 +294,8 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           branch,
           created: false,
           patchByteLength: patch.byteLength,
+          baseMove: null,
         };
-      }
-
-      // Step 8b. SDD section 45. The base must still be fresh at the moment of a NEW
-      // publication. The workflow calls `checkBase` once, and a Temporal retry of this activity
-      // runs minutes later. The base branch can move in that interval, so this activity checks
-      // it again. This check is a fail-closed backstop for the retry path.
-      //
-      // The order matters. Step 8 above returns the pull request this Run already published, so
-      // a moved base never breaks that idempotent answer. The publication already happened, so
-      // the existing pull request stays the correct answer. This gate guards a new publication
-      // only.
-      //
-      // The check reads the PLAIN URL, because `git ls-remote` puts its URL on the process
-      // argument list. SDD section 30 forbids a credential there.
-      const freshness = await dependencies.repositoryReader.withCredential(
-        readCredential(plainUrl, input.githubInstallationId, dependencies),
-        () =>
-          checkBaseFreshness(dependencies.repositoryReader, {
-            url: plainUrl,
-            branch: input.baseBranch,
-            runBaseSha: input.baseSha,
-          }),
-      );
-      if (!freshness.fresh) {
-        throw new PatchError(
-          `the target branch "${input.baseBranch}" moved after this Run started. Run base: ` +
-            `${input.baseSha}. Current target: ${freshness.currentTargetSha}. Factoree ` +
-            "published nothing.",
-        );
       }
 
       // Step 9. SDD section 46 steps 1 to 8. The trusted checkout runs on the control plane.
@@ -397,6 +314,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         token,
         baseSha: input.baseSha,
         branch,
+        baseBranch: input.baseBranch,
         patchBase64: patch.patchBase64,
         verifiedPatchSha256: patch.patchSha256,
         verifiedGitVersion: patch.gitVersion,
@@ -466,6 +384,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         branch,
         created: true,
         patchByteLength: patch.byteLength,
+        baseMove: publication.baseMove,
       };
     } catch (error) {
       throw asNonRetryable(dependencies.redactor, error);

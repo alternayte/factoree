@@ -110,7 +110,6 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
   repairCount: 1,
   repairLimit: 2,
   patchSha256: "4".repeat(64),
-  baseUnchanged: true,
   pullRequestUrl: "https://github.com/acme/fixture/pull/1",
   proofPackSha256: "9".repeat(64),
   ...overrides,

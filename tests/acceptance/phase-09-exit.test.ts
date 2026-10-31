@@ -6,15 +6,14 @@ import { join } from "node:path";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
-import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import {
   createPublishingActivities,
   publishBranchName,
   type PublishActivityInput,
+  type PublishActivityOutput,
 } from "~/activities/publishing.activities.js";
 import { assertSameChangedFiles, capturePatch, PatchError } from "~/domain/publishing/patch.js";
-import { checkBase } from "~/domain/publishing/stale-base.js";
 import {
   publishToBranch,
   PatchHashMismatchError,
@@ -66,6 +65,7 @@ const trustedInput = (
 ): TrustedCheckoutInput => ({
   cloneUrl: remote.cloneUrl,
   baseSha: remote.baseSha,
+  baseBranch: "main",
   patchBase64,
   verifiedPatchSha256: patchSha256,
   verifiedGitVersion: "git version 0.0.0-test",
@@ -129,13 +129,6 @@ const buildActivities = (api: GitHubFixtureApi) => {
     tokens: { tokenForInstallation: () => Promise.resolve(TOKEN) },
     redactor,
     runs: { setPublication: () => Promise.resolve() } as unknown as RunRepository,
-    repositoryReader: {
-      resolveRef: (): Promise<string> =>
-        Promise.reject(new Error("the publish activity must not read the repository")),
-      listTree: () => Promise.resolve({ entries: [], truncated: false }),
-      readBlob: () => Promise.resolve(null),
-      withCredential: (_credential, work) => work(),
-    },
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
     gitAuthor: AUTHOR,
     logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
@@ -227,50 +220,29 @@ describe("Phase 9 exit: only the exact verified patch can reach GitHub", () => {
     expect(publishDirectories().length).toBe(before);
   });
 
-  it("case 4: a base that moved after the Run started publishes nothing", async () => {
-    const branchesBefore = factoreeBranches();
+  it("case 4: a base that moved after the Run started still publishes on the verified base", async () => {
+    // docs/specs/own-proposals-and-parallel-runs.md. A moved branch no longer stops a Run. The
+    // commit sits on the base the checks ran against, and the output names the move.
     const api = await startGitHubFixtureApi();
     const { activities, attempted } = buildActivities(api);
-    const reader = new GitRepositoryReader();
-    const runId = "phase09-stale";
+    const runId = "phase09-moved";
 
     try {
-      const before = await checkBase(reader, {
-        url: remote.cloneUrl,
-        branch: "main",
-        runBaseSha: remote.baseSha,
-      });
-      expect(before.fresh).toBe(true);
-
       const moved = remote.advanceHead("another author changed the branch\n");
       expect(moved).not.toBe(remote.baseSha);
 
-      const after = await checkBase(reader, {
-        url: remote.cloneUrl,
-        branch: "main",
-        runBaseSha: remote.baseSha,
-      });
-      expect(after.currentTargetSha).toBe(moved);
+      const output: PublishActivityOutput = await new MockActivityEnvironment().run(
+        (value: PublishActivityInput) => activities.publish(value),
+        publishInputFor(runId, changedFiles),
+      );
 
-      // The publication rule of `agent-run.workflow.ts`. SDD section 45 forbids a rebase, so the
-      // Run publishes only while the base is fresh. The real activity runs when the rule allows
-      // it, so a `checkBase` that wrongly reports freshness pushes a branch and fails this case.
-      if (after.fresh) {
-        await new MockActivityEnvironment().run(
-          (value: PublishActivityInput) => activities.publish(value),
-          publishInputFor(runId, ["added.txt", "target.txt"]),
-        );
-      }
-
-      // The remote assertions come first. A `checkBase` that wrongly reports freshness lets the
-      // real publication run, so these three fail before the freshness assertion below.
-      expect(attempted).toEqual([]);
-      expect(api.created).toEqual([]);
-      expect(remote.refSha(publishBranchName(runId))).toBeNull();
-      expect(factoreeBranches()).toEqual(branchesBefore);
-      expect(after.fresh).toBe(false);
+      expect(attempted).toEqual([publishBranchName(runId)]);
+      expect(api.created).toHaveLength(1);
+      expect(output.baseMove?.headSha).toBe(moved);
+      expect(output.baseMove?.ahead).toBe(1);
+      const commit = remote.refSha(publishBranchName(runId));
+      expect(commit).toBe(output.commitSha);
     } finally {
-      reader.close();
       await api.stop();
     }
   });

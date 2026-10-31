@@ -40,8 +40,6 @@ import type {
   ReviewActivityOutput,
 } from "~/activities/review.activities.js";
 import type {
-  CheckBaseActivityInput,
-  CheckBaseActivityOutput,
   PublishActivityInput,
   PublishActivityOutput,
 } from "~/activities/publishing.activities.js";
@@ -59,6 +57,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_CONFIG,
 } from "~/domain/runs/project-runtime-config.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 
 /** One conflict the context double reports. It carries the domain, the way a real record does. */
@@ -248,10 +247,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   /** The run ids whose live Reviewer session the activity observed a cancellation for. */
   const cancelledLiveReviews: string[] = [];
   /**
-   * A run id in this map replaces the `checkBase` result. SDD section 45 ends a Run on a moved
-   * target branch, so a test states a stale answer here.
+   * docs/specs/own-proposals-and-parallel-runs.md. A run id in this map reports a moved base
+   * branch from `publish`, so a test states how far it moved and what conflicts.
    */
-  const baseChecks = new Map<string, () => CheckBaseActivityOutput>();
+  const baseMoves = new Map<string, PublishActivityOutput["baseMove"]>();
   /**
    * A run id in this map replaces the `publish` result. The function can also throw, so a test
    * can drive the three semantic publication failures of SDD section 46.
@@ -298,13 +297,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     commitSha?: string;
     pullRequestUrl?: string;
   }> = [];
-  /** Every recorded `postTargetNotice` call, in order. */
-  const postTargetNoticeCalls: Array<{
-    tenantId: string;
-    runId: string;
-    fullName: string;
-    reason: string;
-  }> = [];
+  /** Every recorded `recordDecision` call, in order. */
+  const decisionCalls: Array<{ tenantId: string; runId: string; decision: FactoreeDecision }> = [];
   /** A run id in this map holds the publication open until the test resolves the promise. */
   const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
@@ -318,6 +312,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * from the map reports no label, the same way an issue with no label does in production.
    */
   const workItemLabels = new Map<string, string[]>();
+  /** docs/specs/own-proposals-and-parallel-runs.md. The Linear project of a session's issue. */
+  const workItemProjects = new Map<string, string>();
   /**
    * The session ids whose label read the fake Linear API fails on every call, in the same way a
    * transport fault the retry policy has exhausted does in production.
@@ -479,9 +475,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postError: async (activityInput: { message: string }) => {
       postedErrors.push(activityInput.message);
     },
-    fetchWorkItemLabels: async (activityInput: { sessionId: string; issueId: string }) => {
+    fetchWorkItemFacts: async (activityInput: { sessionId: string; issueId: string }) => {
       if (failingLabelReads.has(activityInput.sessionId)) throw new Error("Linear is down");
-      return workItemLabels.get(activityInput.sessionId) ?? [];
+      return {
+        labels: workItemLabels.get(activityInput.sessionId) ?? [],
+        project: workItemProjects.get(activityInput.sessionId) ?? null,
+      };
     },
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       activityOrder.push("prepareSandbox");
@@ -543,7 +542,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       refinerCalls.push(activityInput);
       const outcome = refinerOutcomes.get(activityInput.runId);
       if (outcome !== undefined) return outcome;
-      return { status: "proposed" as const, accepted: [], inferred: [], question: null, reason: "" };
+      return { status: "proposed" as const, accepted: [], decisions: [], visualEvidenceGap: null, reason: "" };
     },
     releaseCheckSandbox: async (activityInput: { spriteId: string }) => {
       releasedChecks.push(activityInput.spriteId);
@@ -749,15 +748,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       if (outcome === undefined) return passing;
       return { ...passing, ...outcome(activityInput.attempt) };
     },
-    checkBase: async (
-      activityInput: CheckBaseActivityInput,
-    ): Promise<CheckBaseActivityOutput> => {
-      activityOrder.push("checkBase");
-      const override = baseChecks.get(activityInput.runId);
-      return override === undefined
-        ? { fresh: true, currentTargetSha: activityInput.baseSha }
-        : override();
-    },
     publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
       activityOrder.push("publish");
       publishCalls.push(activityInput);
@@ -790,6 +780,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         branch: `factoree/${activityInput.runId}`,
         created: true,
         patchByteLength: 812,
+        baseMove: baseMoves.get(activityInput.runId) ?? null,
       };
     },
     publishProofPack: async (
@@ -850,13 +841,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     }) => {
       recordRunTargetFactsCalls.push(input);
     },
-    postTargetNotice: async (input: {
-      tenantId: string;
-      runId: string;
-      fullName: string;
-      reason: string;
-    }) => {
-      postTargetNoticeCalls.push(input);
+    recordDecision: async (input: { tenantId: string; runId: string; decision: FactoreeDecision }) => {
+      decisionCalls.push(input);
     },
   };
 
@@ -877,7 +863,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     productId: "product-1",
     productSlug: "acme",
     repositories: [
-      { id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1" },
+      { id: "repository-1", fullName: "acme/primary", defaultBranch: "main", absentSince: null, githubInstallationId: "install-1", linearProjects: [] },
     ],
     repositoryBaseUrl: "https://example.invalid",
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
@@ -898,7 +884,6 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     maxRunMinutes,
     workItem: workItemInput,
     product: productInput,
-    repositoryProposal: null,
   });
 
   /** Starts one Run of the default fixture Project, with the given overrides. */
@@ -966,7 +951,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldReviews,
     reviewerConfigurationFaults,
     cancelledLiveReviews,
-    baseChecks,
+    baseMoves,
     publishOutcomes,
     publishCalls,
     heldPublishes,
@@ -975,11 +960,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldProofPacks,
     recordRunTargetCalls,
     recordRunTargetFactsCalls,
-    postTargetNoticeCalls,
+    decisionCalls,
     targetIdentityOutcomes,
     targetIdentityCalls,
     activityOrder,
     workItemLabels,
+    workItemProjects,
     failingLabelReads,
     refineCalls,
     contextCalls,

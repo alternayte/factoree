@@ -29,6 +29,7 @@ const repository = (fullName: string): RepositoryRecord => ({
   defaultBranch: "main",
   configSha: "aaa",
   requestedSecretNames: [],
+  linearProjects: [],
   discoveredAt: new Date(),
   lastSeenAt: new Date(),
   absentSince: null,
