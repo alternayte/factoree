@@ -12,7 +12,7 @@ if [ "${1:-}" = "export" ]; then
   exit 0
 fi
 PROMPT=$(/bin/cat)
-printf '{"type":"session.start","session":{"id":"ses_stub_1"}}\n'
+printf '{"type":"step_start","timestamp":1,"sessionID":"ses_stub_1","part":{"type":"step-start"}}\n'
 if [ -n "${FACTOREE_STUB_SLEEP:-}" ]; then
   sleep "$FACTOREE_STUB_SLEEP"
 fi
@@ -20,8 +20,8 @@ if [ -n "${FACTOREE_STUB_TARGET:-}" ]; then
   printf '%s\n' "$PROMPT" > "$FACTOREE_STUB_TARGET"
 fi
 if [ -n "${FACTOREE_STUB_PRINT_SECRET:-}" ]; then
-  printf '{"type":"message","text":"I printed %s"}\n' "$FACTOREE_STUB_PRINT_SECRET"
+  printf '{"type":"text","timestamp":2,"sessionID":"ses_stub_1","part":{"type":"text","text":"I printed %s"}}\n' "$FACTOREE_STUB_PRINT_SECRET"
 else
-  printf '{"type":"message","text":"The change is applied."}\n'
+  printf '{"type":"text","timestamp":2,"sessionID":"ses_stub_1","part":{"type":"text","text":"The change is applied."}}\n'
 fi
 exit "${FACTOREE_STUB_EXIT:-0}"

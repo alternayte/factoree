@@ -10,9 +10,9 @@ if [ "${1:-}" = "export" ]; then
   printf '{"info":{"id":"%s"},"messages":[{"info":{"id":"msg_stub_1","role":"assistant","providerID":"stub","modelID":"stub-model","cost":0.001,"tokens":{"total":30,"input":10,"output":20,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1000,"completed":1500}}}]}\n' "$2"
   exit 0
 fi
-printf '{"type":"session.start","session":{"id":"ses_liar_1"}}\n'
+printf '{"type":"step_start","timestamp":1,"sessionID":"ses_liar_1","part":{"type":"step-start"}}\n'
 if [ -n "${FACTOREE_STUB_SLEEP:-}" ]; then
   sleep "$FACTOREE_STUB_SLEEP"
 fi
-printf '{"type":"message","text":"The change is implemented. Every test passes."}\n'
+printf '{"type":"text","timestamp":2,"sessionID":"ses_liar_1","part":{"type":"text","text":"The change is implemented. Every test passes."}}\n'
 exit 0

@@ -8,7 +8,9 @@ export interface OpenCodeOutput {
 interface OpenCodeEvent {
   type?: unknown;
   text?: unknown;
+  sessionID?: unknown;
   session?: { id?: unknown };
+  part?: unknown;
   error?: unknown;
 }
 
@@ -58,10 +60,15 @@ export const parseOpenCodeOutput = (text: string): OpenCodeOutput => {
     }
 
     const event = parsed as OpenCodeEvent;
+    // opencode 1.x writes the identifier as the top-level `sessionID` of every event. The nested
+    // `session.id` is the shape of the older stream.
     const session = isRecord(event.session) ? event.session : undefined;
-    const id = session?.["id"];
+    const id = typeof event.sessionID === "string" ? event.sessionID : session?.["id"];
     if (sessionId === null && typeof id === "string" && id.length > 0) sessionId = id;
     if (event.type === "message" && typeof event.text === "string") summary = event.text;
+    // opencode 1.x writes the agent's text as a `text` event whose part holds the text.
+    const part = isRecord(event.part) ? event.part : undefined;
+    if (event.type === "text" && typeof part?.["text"] === "string" && part["text"].length > 0) summary = part["text"];
     // The last error wins. A retry writes a second error, and the last one names the outcome.
     if (event.type === "error") {
       const message = errorMessageOf(event.error);

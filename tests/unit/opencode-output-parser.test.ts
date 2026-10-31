@@ -108,3 +108,23 @@ describe("parseOpenCodeOutput, an error event", () => {
     expect(parseOpenCodeOutput('{"type":"message","text":"done"}').errorMessage).toBeUndefined();
   });
 });
+
+// The events of `opencode run --format json`, as opencode 1.19 writes them: the session
+// identifier is the top-level `sessionID`, and the agent's text is a `text` event with a part.
+describe("parseOpenCodeOutput with the events opencode writes", () => {
+  const events = [
+    '{"type":"step_start","timestamp":1,"sessionID":"ses_real_1","part":{"type":"step-start"}}',
+    '{"type":"text","timestamp":2,"sessionID":"ses_real_1","part":{"type":"text","text":"First draft."}}',
+    '{"type":"tool_use","timestamp":3,"sessionID":"ses_real_1","part":{"type":"tool","tool":"bash"}}',
+    '{"type":"text","timestamp":4,"sessionID":"ses_real_1","part":{"type":"text","text":"The change is applied."}}',
+    '{"type":"step_finish","timestamp":5,"sessionID":"ses_real_1","part":{"type":"step-finish"}}',
+  ].join("\n");
+
+  it("reads the session identifier from the top-level sessionID", () => {
+    expect(parseOpenCodeOutput(events).sessionId).toBe("ses_real_1");
+  });
+
+  it("returns the text of the last text event as the summary", () => {
+    expect(parseOpenCodeOutput(events).summary).toBe("The change is applied.");
+  });
+});
