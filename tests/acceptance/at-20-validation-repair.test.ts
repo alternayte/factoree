@@ -33,6 +33,7 @@ import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { startDatabase, seedTenantProjectAndRun } from "../integration/support/database.js";
 import { applyPreviewFixtureNamePersistenceFix, writePreviewFixtureApp } from "./support/preview-fixture-app.js";
 import { pickPort, realHttpFetch, realProbe } from "./support/preview-fixture-helpers.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const NEW_NAME = "Repaired Project";
 
@@ -95,6 +96,11 @@ class ScriptedValidatorRunner implements AgentRunner {
       summary: "The user validation session is complete.",
       durationMs: 5,
       failureLog: null,
+      outcome: "finished",
+      silenceLimitMs: 600_000,
+      usage: null,
+      model: null,
+      effort: null,
     };
   }
 
@@ -235,6 +241,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
       userValidation: {
         sandbox,
         runners: new AgentRunnerRegistry([validatorRunner]),
+        sessions: new MemoryAgentSessionStore(),
         executions,
         secrets: validatorSecrets,
         redactor,

@@ -3,6 +3,7 @@ import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
+import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import {
   PrismaProductRegistry,
   PrismaRepositoryRegistry,
@@ -42,6 +43,7 @@ const env = {
   FACTOREE_GIT_AUTHOR_EMAIL: "factoree@users.noreply.github.com",
   EVIDENCE_STORAGE: "filesystem",
   EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
+  AGENT_SILENCE_MINUTES: 10,
 } satisfies Env;
 
 let prisma: FactoreePrismaClient;
@@ -352,6 +354,52 @@ describe("administration API", () => {
     });
     expect(stillThere.statusCode).toBe(200);
     expect(stillThere.json<{ id: string }>().id).toBe(product.id);
+  });
+
+  // docs/specs/agent-session-usage-and-hangs.md. The run route returns the agent sessions of the Run.
+  it("returns the agent sessions of a Run with the Run", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-run-sessions", slug: "run-sessions", name: "Run sessions", linearTeamKey: "SES" },
+    });
+    const product = created.json<{ id: string; tenantId: string }>();
+    const run = await prisma.run.create({
+      data: {
+        tenantId: product.tenantId,
+        productId: product.id,
+        linearAgentSessionId: "session-run-sessions",
+        temporalWorkflowId: "workflow-run-sessions",
+        status: "RECEIVED",
+        autonomyLevel: "L2",
+      },
+    });
+    await new PrismaAgentSessionStore(prisma).record({
+      tenantId: product.tenantId,
+      runId: run.id,
+      role: "reviewer",
+      attempt: 1,
+      runner: "opencode",
+      cliSessionId: "ses_review",
+      model: "deepseek/deepseek-flash",
+      effort: "low",
+      usage: null,
+      durationMs: 42_000,
+      outcome: "hung",
+      idempotencyKey: `run:${run.id}:reviewer:1`,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/runs/${run.id}?linearWorkspaceId=ws-run-sessions`,
+      headers: auth,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{ id: string; agentSessions: Array<{ role: string; outcome: string; usage: unknown }> }>();
+    expect(body.id).toBe(run.id);
+    expect(body.agentSessions).toEqual([expect.objectContaining({ role: "reviewer", outcome: "hung", usage: null })]);
   });
 
   it("F6: answers 404 for a Product of another tenant", async () => {

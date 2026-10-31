@@ -20,6 +20,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { startDatabase, seedTenantProjectAndRun } from "../integration/support/database.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 let database: { url: string; stop: () => Promise<void> };
 let prisma: FactoreePrismaClient;
@@ -294,6 +295,7 @@ const seedProvedRun = async (
     validationResults: results,
     evidence,
     reviewFindings,
+    sessions: new MemoryAgentSessionStore(),
     agentSession: {
       acknowledge: () => Promise.resolve(),
       progress: () => Promise.resolve(),

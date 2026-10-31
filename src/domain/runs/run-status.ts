@@ -54,6 +54,9 @@ export const RUN_FAILURE_REASONS = [
   "STOPPED_BY_HUMAN",
   "CONFIGURATION_INVALID",
   "IMPLEMENTATION_FAILED",
+  // docs/specs/agent-session-usage-and-hangs.md. An agent session wrote no output for the silence
+  // limit twice in the same step. Two hangs are a pattern that a human must see.
+  "AGENT_HUNG",
   // SDD section 35. Deterministic verification did not pass, and the repair budget of SDD
   // section 42 is spent. SDD section 48 fixes the state names, not the failure reasons.
   "VERIFICATION_FAILED",

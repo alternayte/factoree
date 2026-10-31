@@ -13,6 +13,7 @@ import { Redactor } from "~/telemetry/redaction.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const PROPOSAL = JSON.stringify({
   criteria: [
@@ -66,6 +67,7 @@ const build = (options: { trees: string[]; proposal: string | null }) => {
     agent: {
       sandbox,
       runners: new AgentRunnerRegistry([runner]),
+      sessions: new MemoryAgentSessionStore(),
       executions: {
         record(entry: RecordAgentExecutionInput): Promise<AgentExecutionRecord> {
           recorded.push(entry);

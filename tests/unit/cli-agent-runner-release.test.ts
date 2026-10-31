@@ -30,7 +30,7 @@ const startOneRun = async (
   const runner = shared.runner ?? new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
   const sandbox = shared.sandbox ?? new FakeSandbox();
   const ref = shared.ref ?? (await sandbox.create({ runId, tenantId: "tenant-1", productId: "project-1" }));
-  const commandsBefore = sandbox.commands.length;
+  const commandsBefore = sandbox.started.length;
   const started = runner.run({
     runId,
     tenantId: "tenant-1",
@@ -44,7 +44,7 @@ const startOneRun = async (
     actionPolicy: buildActionPolicy(),
     timeoutMs: 5_000,
   });
-  await waitUntil(() => sandbox.commands.length > commandsBefore && sandbox.commands.at(-1)?.file === "sh");
+  await waitUntil(() => sandbox.started.length > commandsBefore && sandbox.started.at(-1)?.file === "sh");
   // A fresh sandbox spends one counter tick on `create`, so its first `startProcess` yields
   // "process-2". Reusing a sandbox's ref across Runs spends no further `create` tick, so each
   // further `startProcess` id is one past the number of commands already recorded.
@@ -79,9 +79,9 @@ describe("CliAgentRunner.releaseRun", () => {
     const second = await startOneRun("run-b", { runner: first.runner, sandbox: first.sandbox, ref: first.ref });
     second.runner.releaseRun("run-a");
     // The second Run is untouched, so its session still resumes.
-    const commandsBeforeResume = second.sandbox.commands.length;
+    const commandsBeforeResume = second.sandbox.started.length;
     const resumed = second.runner.resume(second.session, { prompt: "again", timeoutMs: 5_000 });
-    await waitUntil(() => second.sandbox.commands.length > commandsBeforeResume);
+    await waitUntil(() => second.sandbox.started.length > commandsBeforeResume);
     second.sandbox.finishProcess(`process-${commandsBeforeResume + 2}`, {
       exitCode: 0,
       stdout: '{"type":"message","text":"done again"}',

@@ -66,11 +66,14 @@ describe("AT-33 tenant isolation", () => {
     return rows.map((row) => row.table_name).sort();
   };
 
-  /** Every table that carries a `tenantId` column, ordered by name. */
+  /**
+   * Every table that carries a tenant column, ordered by name. `AgentSession` names its columns
+   * in snake_case (DI-14.42), so its tenant column is `tenant_id`.
+   */
   const tenantedTableNames = async (): Promise<string[]> => {
     const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.columns
-      WHERE table_schema = 'public' AND column_name = 'tenantId'
+      WHERE table_schema = 'public' AND column_name IN ('tenantId', 'tenant_id')
     `;
     return rows.map((row) => row.table_name).sort();
   };
@@ -79,6 +82,8 @@ describe("AT-33 tenant isolation", () => {
     expect(await tenantedTableNames()).toEqual(
       [
         "AgentExecution",
+        // docs/specs/agent-session-usage-and-hangs.md. One row per agent session of one tenant.
+        "AgentSession",
         // SDD section 21 and SDD section 52. Phase 4 added the Context Contract tables, and each
         // one is tenant-owned.
         "ContextConflict",

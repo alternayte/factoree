@@ -116,7 +116,7 @@ const activities = {
     checkDefiningFiles: [],
   }),
   releaseCheckSandbox: async () => undefined,
-  proposeRefinement: async () => ({ status: "proposed", accepted: [], decisions: [], visualEvidenceGap: null, reason: "" }),
+  proposeRefinement: async () => ({ status: "proposed", accepted: [], decisions: [], visualEvidenceGap: null, reason: "", hang: null }),
   implement: async (input: { runnerName: string }) => ({
     sessionId: "ses_fake",
     processId: "process-fake",
@@ -127,6 +127,7 @@ const activities = {
     summary: "The change is applied.",
     durationMs: 10,
     cancelledSession: false,
+    hang: null,
   }),
   verify: async () => ({ passed: true, checks: [], summary: "Every check passed.", failures: [] }),
   cancelImplementer: async () => undefined,
@@ -143,6 +144,7 @@ const activities = {
     summary: "Every user validation assertion passed.",
     failures: [],
     sessionId: "ses_fake_validator",
+    hang: null,
   }),
   // Phase 8 adds the review activity to the bounded loop. This map is a plain object literal and
   // is not typed as `Activities`, so `npm run typecheck` cannot catch a missing entry here
@@ -160,6 +162,7 @@ const activities = {
     reportProblem: null,
     changedFiles: ["src/app.ts"],
     worktreeSha: "b".repeat(40),
+    hang: null,
   }),
   // Phase 9 adds the publication path. This map is a plain object literal and is not typed as
   // `Activities`, so `npm run typecheck` cannot catch a missing entry here either.

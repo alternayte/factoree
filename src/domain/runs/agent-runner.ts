@@ -1,8 +1,9 @@
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
 import type { Sandbox, SandboxRef } from "./sandbox.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
+import type { AgentSessionOutcome, AgentSessionRole, AgentSessionUsage } from "./agent-session.js";
 
-export type AgentRole = "implementer" | "validator" | "reviewer" | "refiner";
+export type AgentRole = AgentSessionRole;
 
 export interface AgentSessionRef {
   /** The runner-scoped session identifier. Factoree uses it to resume and to cancel. */
@@ -64,6 +65,35 @@ export interface AgentRunResult {
    * destroyed, and an operator then has nothing to read.
    */
   failureLog: string | null;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. `hung` means the session wrote no output for
+   * `silenceLimitMs`, and the runner stopped it.
+   */
+  outcome: AgentSessionOutcome;
+  /** The silence limit the runner applied to this session. A hang report names it. */
+  silenceLimitMs: number;
+  /**
+   * The usage of this invocation alone, read from the agent CLI after the process ended. A resume
+   * reports only its own model calls. Null when the CLI left no record. Cost is a metric, so a
+   * null never fails the Run.
+   */
+  usage: AgentSessionUsage | null;
+  /** The model the session ran, as `provider/model`, or null when nothing names it. */
+  model: string | null;
+  /** The reasoning effort the runner asked for, or null for the CLI default. */
+  effort: string | null;
+}
+
+/**
+ * The runner holds no live sandbox for the session a caller asks it to resume. A runner keeps
+ * its sessions in process memory, so another worker cannot resume one. The caller starts a fresh
+ * session instead.
+ */
+export class AgentSessionUnavailableError extends Error {
+  constructor(runner: string, sessionId: string) {
+    super(`${runner} has no live sandbox for session ${sessionId}.`);
+    this.name = "AgentSessionUnavailableError";
+  }
 }
 
 /** SDD section 33 requires that Temporal workflows depend only on this interface. */

@@ -35,7 +35,7 @@ describe("the refiner in the Run workflow", () => {
   const validationsOf = (runId: string) => harness.validationCalls.filter((entry) => entry.runId === runId);
 
   it("freezes the stated and the implied criteria, records each decision, and asks nobody", async () => {
-    harness.refinerOutcomes.set("run-ref-take", { status: "proposed", accepted: [stated, implied], decisions, visualEvidenceGap: null, reason: "" });
+    harness.refinerOutcomes.set("run-ref-take", { status: "proposed", accepted: [stated, implied], decisions, visualEvidenceGap: null, reason: "", hang: null });
     const before = harness.elicitations.length;
     await harness.runWorker(async () => {
       const handle = await harness.start("ref-take");
@@ -60,6 +60,7 @@ describe("the refiner in the Run workflow", () => {
       decisions: [],
       visualEvidenceGap: null,
       reason: "The refiner changed the primary worktree.",
+      hang: null,
     });
     const result = await harness.runWorker(async () => (await harness.start("ref-dirty")).result());
     expect(result.status).toBe("FAILED");

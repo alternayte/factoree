@@ -1,6 +1,13 @@
-import type { CliAgentCommand, CliAgentParse, CliAgentRunnerOptions } from "../cli-agent-runner.js";
-import { CliAgentRunner } from "../cli-agent-runner.js";
+import type {
+  CliAgentCommand,
+  CliAgentParse,
+  CliAgentRunnerOptions,
+  CliUsageContext,
+  CliUsageReading,
+} from "../cli-agent-runner.js";
+import { CliAgentRunner, USAGE_READ_TIMEOUT_MS } from "../cli-agent-runner.js";
 import { parseOpenCodeOutput } from "./output-parser.js";
+import { readOpenCodeExport } from "./export-usage.js";
 import type { AgentRole } from "~/domain/runs/agent-runner.js";
 
 /**
@@ -81,7 +88,34 @@ export class OpenCodeRunner extends CliAgentRunner {
 
   /** The model arguments of one role. A role with no variant of its own takes the default. */
   private modelFor(role: AgentRole): string[] {
-    return modelArguments(this.options.model, this.options.roleVariants?.[role] ?? this.options.variant);
+    return modelArguments(this.options.model, this.effortFor(role) ?? undefined);
+  }
+
+  protected effortFor(role: AgentRole): string | null {
+    return this.options.roleVariants?.[role] ?? this.options.variant ?? null;
+  }
+
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. `opencode export <session>` prints the session
+   * with the cost and the tokens of every model call. It runs in the sandbox the session ran in,
+   * from the same directory and with the same environment, because opencode keeps a session
+   * under the project of that directory.
+   */
+  protected async readUsage(context: CliUsageContext): Promise<CliUsageReading> {
+    const fallbackModel = this.options.model ?? null;
+    if (context.sessionId === null) return { usage: null, model: fallbackModel };
+    const result = await context.sandbox.exec(context.ref, {
+      file: this.executable,
+      args: ["export", context.sessionId],
+      cwd: context.directory,
+      env: { ...context.environment, OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG, OPENCODE_DISABLE_PROJECT_CONFIG: "1" },
+      timeoutMs: USAGE_READ_TIMEOUT_MS,
+    });
+    if (result.exitCode !== 0) return { usage: null, model: fallbackModel };
+    const reading = readOpenCodeExport(result.stdout, context.counted);
+    if (reading === null) return { usage: null, model: fallbackModel };
+    for (const id of reading.messageIds) context.counted.add(id);
+    return { usage: reading.usage, model: reading.model ?? fallbackModel };
   }
 
   protected startCommand(promptFile: string, repositoryPath: string | undefined, role: AgentRole): CliAgentCommand {

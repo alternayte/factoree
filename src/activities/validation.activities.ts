@@ -8,7 +8,9 @@ import { buildValidationContract } from "~/domain/validation/validation-contract
 import { validateValidationContract } from "~/domain/validation/validation-contract.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { agentSessionKey, describeSilenceLimit, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -64,6 +66,8 @@ export interface UserValidationActivityDependencies {
   sandbox: Sandbox;
   runners: AgentRunnerRegistry;
   executions: AgentExecutionRepository;
+  /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
+  sessions: AgentSessionStore;
   secrets: SecretStore;
   redactor: Redactor;
   browser: BrowserDriver;
@@ -94,6 +98,11 @@ export interface UserValidateActivityInput {
   timeoutMs: number;
   /** The user validation pass. The first pass is 1, and a repair raises it. */
   attempt: number;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. True for the one fresh session that follows a
+   * hung one in the same pass. It writes its own plan file and its own rows.
+   */
+  afterHang?: boolean;
 }
 
 export interface UserValidateActivityOutput {
@@ -115,6 +124,11 @@ export interface UserValidateActivityOutput {
    * preview. The Proof Pack names it. It is reachable only while the sandbox lives.
    */
   previewUrl: string | null;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. Set when the validator session wrote no output
+   * for the silence limit. The pass then ran no check and recorded no result.
+   */
+  hang: AgentHang;
 }
 
 /** The interval between two heartbeats. See `agent.activities.ts` for the same rule. */
@@ -377,7 +391,9 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
 
-      const planPath = `${validationDirectory}/plan.json`;
+      const afterHang = input.afterHang === true;
+      // A hung session can leave a partial plan, and the fresh session must never read it.
+      const planPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}.json`;
       const validatorInput = buildUserValidatorInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -471,7 +487,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       // The duration of each part reaches the log, so a slow validation names its slow part.
       const sessionStarted = Date.now();
-      let sessionResult;
+      let sessionResult: AgentRunResult;
       try {
         sessionResult = await runner.run({
           runId: input.runId,
@@ -510,8 +526,9 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           cancelled: sessionResult.cancelled,
           summary: sessionResult.summary,
         },
-        idempotencyKey: `run:${input.runId}:validator:${input.attempt}`,
+        idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
       });
+      const invocations: AgentRunResult[] = [sessionResult];
 
       // Step 8. A missing or unreadable plan gives `planText = null`.
       let planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
@@ -520,7 +537,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // the Run then proves nothing although the change may be correct. A measured session wrote
       // the file on one pass and not on the next, from the same prompt. One reminder costs a few
       // seconds and recovers the pass, so the session is asked once more before the Run gives up.
-      if (planResult.exitCode !== 0) {
+      // A hung session gets no reminder. The workflow starts one fresh session instead.
+      if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung") {
         dependencies.logger.warn("the validator wrote no plan, asking once more", {
           tenant_id: input.tenantId,
           product_id: input.productId,
@@ -533,8 +551,40 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             "Write the file and nothing else. Do not answer with the plan in a message.",
           timeoutMs: input.timeoutMs,
         });
-        void reminder;
+        invocations.push(reminder);
         planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
+      }
+
+      await recordAgentSession(
+        { sessions: uv.sessions, logger: dependencies.logger },
+        {
+          tenantId: input.tenantId,
+          productId: input.productId,
+          runId: input.runId,
+          role: "validator",
+          attempt: input.attempt,
+          runner: runner.name,
+          idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+        },
+        invocations,
+      );
+
+      // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
+      // runs no check and records no result. The `finally` below stops the early preview.
+      const hang = hangOf(invocations);
+      if (hang !== null) {
+        return {
+          passed: false,
+          results: [],
+          hasFailure: false,
+          hasManual: false,
+          hasBlocked: false,
+          summary: `The User Validator session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, so Factoree stopped it.`,
+          failures: [],
+          sessionId: sessionResult.session.sessionId,
+          previewUrl: null,
+          hang,
+        };
       }
 
       const planText = planResult.exitCode === 0 ? planResult.stdout : null;
@@ -626,6 +676,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         failures: outcome.failures,
         sessionId: sessionResult.session.sessionId,
         previewUrl: previewBaseUrl,
+        hang: null,
       };
     } finally {
       clearInterval(heartbeat);

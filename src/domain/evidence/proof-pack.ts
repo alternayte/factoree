@@ -4,6 +4,7 @@ import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validati
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { ReviewCategory, ReviewSeverity } from "~/domain/review/review-report.js";
 import type { EvidenceKind } from "~/domain/evidence/evidence.js";
+import type { AgentUsageTotals } from "~/domain/runs/agent-session.js";
 
 /**
  * SDD section 47, amended by docs/specs/proof-pack-and-visual-evidence.md. The Proof Pack has a
@@ -151,6 +152,8 @@ export interface ProofPackInput {
   decisions?: FactoreeDecision[];
   /** docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved, or null. */
   baseMove?: ProofPackBaseMove | null;
+  /** docs/specs/agent-session-usage-and-hangs.md. The usage of every agent session, per role. */
+  agentUsage?: AgentUsageTotals;
 }
 
 export interface ProofPackBaseMove {
@@ -187,6 +190,8 @@ export interface ProofPackDocument {
   routing: ProofPackRouting | null;
   decisions: FactoreeDecision[];
   baseMove: ProofPackBaseMove | null;
+  /** docs/specs/agent-session-usage-and-hangs.md. The totals per role, or null when none was recorded. */
+  agentUsage: AgentUsageTotals | null;
   run: {
     baseSha: string;
     patchSha256: string;
@@ -281,6 +286,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
     checkDefiningFiles: input.checkDefiningFiles ?? [],
   },
   routing: input.routing ?? null,
+  agentUsage: input.agentUsage ?? null,
   run: {
     baseSha: input.baseSha,
     patchSha256: input.patchSha256,
@@ -336,6 +342,31 @@ const checkLines = (input: ProofPackInput): string[] => {
   ];
 };
 
+/** A duration as a human reads it: hours and minutes, minutes and seconds, or seconds. */
+const formatDuration = (milliseconds: number): string => {
+  const seconds = Math.round(milliseconds / 1_000);
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+};
+
+/**
+ * docs/specs/agent-session-usage-and-hangs.md. One line with the total cost, the tokens and the
+ * model time. A session with no usage record is named, so a reader never takes a partial total
+ * for the whole cost.
+ */
+export const agentUsageLine = (usage: AgentUsageTotals): string => {
+  const missing = usage.sessionsWithoutUsage;
+  return [
+    `**Agent usage:** $${usage.costUsd.toFixed(2)}`,
+    `${usage.tokens.toLocaleString("en-US")} tokens`,
+    `${formatDuration(usage.modelTimeMs)} model time`,
+    ...(missing === 0 ? [] : [`${missing} ${missing === 1 ? "session" : "sessions"} without a usage record`]),
+  ].join(" · ");
+};
+
 const footer = (input: ProofPackInput, documentUrl: string | null): string =>
   [
     `Run ${input.runId}`,
@@ -375,6 +406,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     "",
     ...checkLines(input),
     "",
+    ...(input.agentUsage === undefined || input.agentUsage.roles.length === 0 ? [] : [agentUsageLine(input.agentUsage), ""]),
     "---",
     "",
     footer(input, documentUrl),

@@ -7,6 +7,7 @@ import {
   renderProofPack,
   type ProofPackInput,
 } from "~/domain/evidence/proof-pack.js";
+import { summarizeAgentSessions, type RecordAgentSessionInput } from "~/domain/runs/agent-session.js";
 
 const input = (overrides: Partial<ProofPackInput> = {}): ProofPackInput => ({
   runId: "run-1",
@@ -233,5 +234,61 @@ describe("decisions and a moved base (own-proposals-and-parallel-runs.md)", () =
     ]);
     expect(document.decisions).toEqual(decisions);
     expect(document.baseMove).toEqual(baseMove);
+  });
+});
+
+describe("agent usage (agent-session-usage-and-hangs.md)", () => {
+  const usage = (costUsd: number, turns: number) => ({
+    inputTokens: 1_000,
+    outputTokens: 2_000,
+    reasoningTokens: 500,
+    cacheReadTokens: 10_000,
+    cacheWriteTokens: 0,
+    costUsd,
+    turns,
+    longestTurnMs: 30_000,
+  });
+  const row = (role: "refiner" | "implementer" | "validator" | "reviewer", overrides: Partial<RecordAgentSessionInput> = {}): RecordAgentSessionInput => ({
+    tenantId: "tenant-1",
+    runId: "run-1",
+    role,
+    attempt: 1,
+    runner: "opencode",
+    cliSessionId: "ses_1",
+    model: "deepseek/deepseek-flash",
+    effort: null,
+    usage: usage(0.5, 4),
+    durationMs: 90_000,
+    outcome: "finished",
+    idempotencyKey: `run:run-1:${role}:1`,
+    ...overrides,
+  });
+
+  it("totals each role and the whole Run, and counts a session with no usage record apart", () => {
+    const totals = summarizeAgentSessions([
+      row("implementer"),
+      row("implementer", { attempt: 2, outcome: "hung", usage: usage(1.25, 9) }),
+      row("reviewer", { usage: null, durationMs: 30_000 }),
+      row("refiner"),
+    ]);
+    expect(totals.roles.map((entry) => entry.role)).toEqual(["refiner", "implementer", "reviewer"]);
+    expect(totals.roles[1]).toMatchObject({ sessions: 2, hung: 1, costUsd: 1.75, modelTimeMs: 180_000 });
+    expect(totals.roles[2]).toMatchObject({ sessions: 1, sessionsWithoutUsage: 1, costUsd: 0 });
+    expect(totals.costUsd).toBe(2.25);
+    expect(totals.tokens).toBe(3 * 13_500);
+    expect(totals.modelTimeMs).toBe(300_000);
+  });
+
+  it("shows one line with the cost, the tokens and the model time, and keeps the totals in proof-pack.json", () => {
+    const agentUsage = summarizeAgentSessions([row("implementer"), row("reviewer", { usage: null })]);
+    const body = renderProofPack(input({ agentUsage }), null);
+    expect(body).toContain("**Agent usage:** $0.50 · 13,500 tokens · 3m 0s model time · 1 session without a usage record");
+    expect(body.indexOf("**Agent usage:**")).toBeGreaterThan(body.indexOf("### Checks"));
+    expect(buildProofPackDocument(input({ agentUsage })).agentUsage?.roles).toHaveLength(2);
+  });
+
+  it("shows no usage line when the Run recorded no session", () => {
+    expect(renderProofPack(input({ agentUsage: summarizeAgentSessions([]) }), null)).not.toContain("Agent usage");
+    expect(buildProofPackDocument(input()).agentUsage).toBeNull();
   });
 });

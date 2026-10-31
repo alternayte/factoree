@@ -55,6 +55,9 @@ const schema = z.object({
   OPENCODE_VARIANT_REFINER: z.string().min(1).optional(),
   OPENCODE_VARIANT_VALIDATOR: z.string().min(1).optional(),
   OPENCODE_VARIANT_REVIEWER: z.string().min(1).optional(),
+  // docs/specs/agent-session-usage-and-hangs.md. The silence limit: an agent session that writes
+  // no output for this many minutes is hung. At max effort a model thinks for minutes in silence.
+  AGENT_SILENCE_MINUTES: z.coerce.number().positive().default(10),
   EVIDENCE_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-evidence"),
   GITHUB_BASE_URL: z.string().url().default("https://github.com"),
   GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),

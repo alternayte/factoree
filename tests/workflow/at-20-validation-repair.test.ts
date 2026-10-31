@@ -50,6 +50,7 @@ const failing: UserValidateActivityOutput = {
   failures: ["VAL-API-002: the reload does not show the saved name."],
   sessionId: "ses_fake_validator",
   previewUrl: null,
+  hang: null,
 };
 
 const passing: UserValidateActivityOutput = {
@@ -62,6 +63,7 @@ const passing: UserValidateActivityOutput = {
   failures: [],
   sessionId: "ses_fake_validator",
   previewUrl: null,
+  hang: null,
 };
 
 /**

@@ -18,5 +18,10 @@ export const buildAgentRunnerRegistry = (
   redactor: Redactor,
   // docs/specs/kiln-sandbox-provider.md. `executable` is the root-owned CLI of the sandbox image.
   opencode: OpenCodeSettings = {},
-): AgentRunnerRegistry =>
-  new AgentRunnerRegistry([new OpenCodeRunner({ redactor, ...opencode }), new ClaudeCodeRunner({ redactor })]);
+  // docs/specs/agent-session-usage-and-hangs.md. The silence limit of every session, from
+  // AGENT_SILENCE_MINUTES. Absent means the runner default of ten minutes.
+  sessions: { silenceLimitMs?: number } = {},
+): AgentRunnerRegistry => {
+  const shared = { redactor, ...(sessions.silenceLimitMs === undefined ? {} : { silenceLimitMs: sessions.silenceLimitMs }) };
+  return new AgentRunnerRegistry([new OpenCodeRunner({ ...shared, ...opencode }), new ClaudeCodeRunner(shared)]);
+};

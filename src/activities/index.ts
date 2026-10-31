@@ -6,6 +6,7 @@ import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
+import type { AgentSessionStore } from "~/domain/runs/agent-session.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -50,6 +51,8 @@ export interface ActivityDependencies {
   sandbox: Sandbox;
   runners: AgentRunnerRegistry;
   executions: AgentExecutionRepository;
+  /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session, with its usage. */
+  sessions: AgentSessionStore;
   secrets: SecretStore;
   evidence: EvidenceStore;
   redactor: Redactor;
@@ -104,6 +107,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     runners: dependencies.runners,
     sandbox: dependencies.sandbox,
     executions: dependencies.executions,
+    sessions: dependencies.sessions,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
@@ -116,6 +120,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
       sandbox: dependencies.sandbox,
       runners: dependencies.runners,
       executions: dependencies.executions,
+      sessions: dependencies.sessions,
       secrets: dependencies.secrets,
       redactor: dependencies.redactor,
     },
@@ -139,6 +144,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
       sandbox: dependencies.sandbox,
       runners: dependencies.runners,
       executions: dependencies.executions,
+      sessions: dependencies.sessions,
       secrets: dependencies.secrets,
       redactor: dependencies.redactor,
       browser: dependencies.browser,
@@ -156,6 +162,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     sandbox: dependencies.sandbox,
     runners: dependencies.runners,
     executions: dependencies.executions,
+    sessions: dependencies.sessions,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     contracts: dependencies.validationContracts,
@@ -182,6 +189,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     evidence: dependencies.evidence,
     reviewFindings: dependencies.reviewFindings,
     agentSession: dependencies.agentSession,
+    sessions: dependencies.sessions,
     storage: dependencies.evidenceStorage,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,

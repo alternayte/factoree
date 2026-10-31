@@ -182,8 +182,8 @@ describe("OpenCodeRunner", () => {
     const initial = await first;
 
     const resumed = runner.resume(initial.session, { prompt: "Fix the lint failure.", timeoutMs: 5_000 });
-    await waitUntil(() => sandbox.commands.length === 2);
-    const command = sandbox.commands.at(-1);
+    await waitUntil(() => sandbox.started.length === 2);
+    const command = sandbox.started.at(-1);
     expect(command?.args.join(" ")).toContain("--session");
     expect(command?.env?.FACTOREE_OPENCODE_SESSION).toBe("ses_1");
     sandbox.finishProcess("process-3", { exitCode: 0, stdout: '{"type":"message","text":"fixed"}' });
@@ -217,7 +217,7 @@ describe("OpenCodeRunner", () => {
 
     sandbox.readProcess = originalReadProcess;
     const retriedAttempt = runner.resume(initial.session, { prompt: "Fix the lint failure.", timeoutMs: 5_000 });
-    await waitUntil(() => sandbox.commands.length === 3);
+    await waitUntil(() => sandbox.started.length === 3);
     sandbox.finishProcess("process-4", { exitCode: 0, stdout: '{"type":"message","text":"fixed on retry"}' });
     const result = await retriedAttempt;
     expect(result.summary).toBe("fixed on retry");
@@ -284,7 +284,7 @@ describe("CliAgentRunner, the idle deadline of a session", () => {
     const runner = new OpenCodeRunner({
       redactor: new Redactor(),
       pollIntervalMs: 1,
-      idleTimeoutMs: 20,
+      silenceLimitMs: 20,
     });
 
     const started = runner.run(runInput(sandbox, ref));
@@ -305,6 +305,20 @@ describe("CliAgentRunner, the idle deadline of a session", () => {
     expect(result.exitCode).toBe(143);
     expect(result.summary).toContain("wrote nothing");
     expect(result.session.sessionId).toBe("ses_1");
+    // docs/specs/agent-session-usage-and-hangs.md. The silence makes the session hung.
+    expect(result.outcome).toBe("hung");
+    expect(result.silenceLimitMs).toBe(20);
+  });
+
+  it("reports a budget that ends during the silence as a timeout, not as a hang", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1, silenceLimitMs: 60_000 });
+
+    const result = await runner.run({ ...runInput(sandbox, ref), timeoutMs: 20 });
+
+    expect(result.completed).toBe(false);
+    expect(result.outcome).toBe("failed");
   });
 
   it("keeps a session alive while it still writes", async () => {
@@ -313,7 +327,7 @@ describe("CliAgentRunner, the idle deadline of a session", () => {
     const runner = new OpenCodeRunner({
       redactor: new Redactor(),
       pollIntervalMs: 1,
-      idleTimeoutMs: 60,
+      silenceLimitMs: 60,
     });
 
     const started = runner.run(runInput(sandbox, ref));
@@ -363,9 +377,9 @@ describe("OpenCodeRunner, the permission to read across the workspace", () => {
     const first = await started;
 
     const resumed = runner.resume(first.session, { ...runInput(sandbox, ref), prompt: "carry on" });
-    await waitUntil(() => sandbox.commands.length > 1);
+    await waitUntil(() => sandbox.started.length > 1);
 
-    expect(configOf(sandbox.commands.at(-1)).permission?.external_directory).toBe("allow");
+    expect(configOf(sandbox.started.at(-1)).permission?.external_directory).toBe("allow");
 
     sandbox.finishProcess("process-3", { stdout: '{"type":"message","text":"done"}' });
     await resumed;
@@ -427,9 +441,9 @@ describe("OpenCodeRunner, the repository the session configures itself from", ()
     const first = await started;
 
     const resumed = runner.resume(first.session, { ...runInput(sandbox, ref), prompt: "carry on" });
-    await waitUntil(() => sandbox.commands.length > 1);
+    await waitUntil(() => sandbox.started.length > 1);
 
-    expect(argsOf(sandbox.commands.at(-1)).slice(-2)).toEqual(["--dir", "/workspace/primary"]);
+    expect(argsOf(sandbox.started.at(-1)).slice(-2)).toEqual(["--dir", "/workspace/primary"]);
 
     sandbox.finishProcess("process-3", { stdout: '{"type":"message","text":"done"}' });
     await resumed;
@@ -459,5 +473,94 @@ describe("CliAgentRunner, a prompt larger than an environment value can hold", (
 
     sandbox.finishProcess("process-2", { stdout: '{"type":"message","text":"done"}' });
     await started;
+  });
+});
+
+describe("OpenCodeRunner, the usage of a session", () => {
+  const exportText = (ids: string[]) =>
+    JSON.stringify({
+      info: { id: "ses_1" },
+      messages: ids.map((id) => ({
+        info: {
+          id,
+          role: "assistant",
+          providerID: "deepseek",
+          modelID: "deepseek-flash",
+          cost: 0.5,
+          tokens: { input: 10, output: 20, reasoning: 5, cache: { read: 100, write: 1 } },
+          time: { created: 0, completed: 2_000 },
+        },
+      })),
+    });
+
+  it("reads the usage with opencode export, in the session's directory and environment", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({
+      redactor: new Redactor(),
+      pollIntervalMs: 1,
+      executable: "/opt/factoree/bin/opencode",
+      variant: "max",
+    });
+    sandbox.scriptExec(/^\/opt\/factoree\/bin\/opencode export ses_1$/, { stdout: exportText(["a1", "a2"]) });
+
+    const started = runner.run({ ...runInput(sandbox, ref), repositoryPath: "/workspace/primary" });
+    await waitUntil(() => sandbox.started.length === 1);
+    sandbox.finishProcess("process-2", { stdout: '{"type":"session.start","session":{"id":"ses_1"}}' });
+    const result = await started;
+
+    const exported = sandbox.commands.find((command) => command.args[0] === "export");
+    expect(exported?.cwd).toBe("/workspace/primary");
+    expect(exported?.env?.TEST_API_KEY).toBe("super-secret-value");
+    expect(result.usage).toEqual({
+      inputTokens: 20,
+      outputTokens: 40,
+      reasoningTokens: 10,
+      cacheReadTokens: 200,
+      cacheWriteTokens: 2,
+      costUsd: 1,
+      turns: 2,
+      longestTurnMs: 2_000,
+    });
+    expect(result.model).toBe("deepseek/deepseek-flash");
+    expect(result.effort).toBe("max");
+    expect(result.outcome).toBe("finished");
+  });
+
+  it("reports only the calls of the resume, because the export repeats the earlier ones", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    let calls = ["a1"];
+    sandbox.onExec = () => ({ exitCode: 0, stdout: exportText(calls), stderr: "" });
+
+    const started = runner.run(runInput(sandbox, ref));
+    await waitUntil(() => sandbox.started.length === 1);
+    sandbox.finishProcess("process-2", { stdout: '{"type":"session.start","session":{"id":"ses_1"}}' });
+    const first = await started;
+    expect(first.usage?.turns).toBe(1);
+
+    calls = ["a1", "a2", "a3"];
+    const resumed = runner.resume(first.session, { prompt: "continue", timeoutMs: 5_000 });
+    await waitUntil(() => sandbox.started.length === 2);
+    sandbox.finishProcess("process-3", { stdout: '{"type":"message","text":"done"}' });
+    const second = await resumed;
+    expect(second.usage?.turns).toBe(2);
+    expect(second.usage?.costUsd).toBe(1);
+  });
+
+  it("reports no usage when the export fails, and still returns the result", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    sandbox.scriptExec(/ export /, { exitCode: 1, stderr: "Session not found" });
+
+    const started = runner.run(runInput(sandbox, ref));
+    await waitUntil(() => sandbox.started.length === 1);
+    sandbox.finishProcess("process-2", { stdout: '{"type":"session.start","session":{"id":"ses_1"}}\n{"type":"message","text":"ok"}' });
+    const result = await started;
+
+    expect(result.usage).toBeNull();
+    expect(result.completed).toBe(true);
   });
 });

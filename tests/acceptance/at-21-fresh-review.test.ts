@@ -25,6 +25,7 @@ import { Redactor } from "~/telemetry/redaction.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { startDatabase, seedTenantProjectAndRun } from "../integration/support/database.js";
 import { createFixtureRepository, commitAll, git } from "./support/fixture-repository.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 /** The exact sentence the real Implementer session leaves behind, and never gives the Reviewer. */
 const IMPLEMENTER_SUMMARY = "The change is applied. Every test passes.";
@@ -53,6 +54,11 @@ class ScriptedReviewerRunner implements AgentRunner {
       summary: "The independent review is complete.",
       durationMs: 5,
       failureLog: null,
+      outcome: "finished",
+      silenceLimitMs: 600_000,
+      usage: null,
+      model: null,
+      effort: null,
     };
   }
 
@@ -167,6 +173,7 @@ describe("AT-21 — the Reviewer session is fresh", () => {
     const activities = createReviewActivities({
       sandbox,
       runners: new AgentRunnerRegistry([reviewerRunner]),
+      sessions: new MemoryAgentSessionStore(),
       executions,
       secrets: new MemorySecretStore(),
       redactor,

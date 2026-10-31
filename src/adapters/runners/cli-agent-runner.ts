@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AgentSessionUnavailableError } from "~/domain/runs/agent-runner.js";
 import type {
   AgentCancelOutcome,
   AgentRole,
@@ -11,6 +12,7 @@ import type {
 import type { ProcessRef, ProcessSnapshot, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { buildRetainedLog } from "~/domain/runs/retained-log.js";
+import type { AgentSessionOutcome, AgentSessionUsage } from "~/domain/runs/agent-session.js";
 
 /** One command line a runner starts inside the sandbox. */
 export interface CliAgentCommand {
@@ -32,23 +34,52 @@ export interface CliAgentParse {
   errorMessage?: string;
 }
 
+/** What a runner reads after one process ends, to learn the usage of that invocation. */
+export interface CliUsageContext {
+  sandbox: Sandbox;
+  ref: SandboxRef;
+  /** The directory the session configured itself from: the repository, or the working directory. */
+  directory: string;
+  /** The environment the session ran with, without the command values. */
+  environment: Record<string, string>;
+  role: AgentRole;
+  /** The session identifier the output named, or null. */
+  sessionId: string | null;
+  /** The whole output of the process, stdout then stderr. */
+  output: string;
+  /**
+   * The model calls an earlier invocation of the same CLI session already reported. A resume
+   * shares the set, so each invocation reports only its own calls.
+   */
+  counted: Set<string>;
+}
+
+export interface CliUsageReading {
+  usage: AgentSessionUsage | null;
+  model: string | null;
+}
+
 export interface CliAgentRunnerOptions {
   redactor: Redactor;
   pollIntervalMs?: number;
   clock?: () => number;
   /**
-   * How long a session may write nothing before Factoree ends it. It never outlives the Run
-   * budget. A test lowers it.
+   * docs/specs/agent-session-usage-and-hangs.md. The silence limit: how long a session may write
+   * no new output before Factoree reports it hung and stops it. `AGENT_SILENCE_MINUTES` sets it.
+   * A test lowers it.
    */
-  idleTimeoutMs?: number;
+  silenceLimitMs?: number;
 }
 
 /**
- * The default idle deadline of an agent session. An agent writes an event for every step and
- * every tool call, so ten minutes of complete silence means it stopped working, whatever the
- * process state says.
+ * The default silence limit of an agent session. At `max` effort a model can think for minutes
+ * with no output, so the limit is generous. Ten minutes of complete silence means the session
+ * stopped working, whatever the process state says.
  */
-const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1_000;
+export const DEFAULT_SILENCE_LIMIT_MS = 10 * 60 * 1_000;
+
+/** The deadline of the usage read after a session. A CLI that does not answer costs no more. */
+export const USAGE_READ_TIMEOUT_MS = 60_000;
 
 interface LiveSession {
   sandbox: Sandbox;
@@ -60,6 +91,13 @@ interface LiveSession {
   /** The role of the session. A resume keeps the settings of the role that started it. */
   role: AgentRole;
   cancelled: boolean;
+  /** The model calls of this CLI session that an earlier invocation already reported. */
+  counted: Set<string>;
+  /**
+   * The CLI session a resume continues. A resumed CLI can write no session event, and the usage
+   * read and the result still need the identifier.
+   */
+  cliSessionId: string | null;
 }
 
 /**
@@ -75,7 +113,7 @@ interface LiveSession {
 export abstract class CliAgentRunner implements AgentRunner {
   abstract readonly name: string;
   private readonly pollIntervalMs: number;
-  private readonly idleTimeoutMs: number;
+  private readonly silenceLimitMs: number;
   private readonly clock: () => number;
   // Every session of one Run, by process id. A Temporal activity retry can present an old
   // `AgentSessionRef`, so an entry must live until the Run itself ends. `releaseRun` disposes
@@ -87,7 +125,7 @@ export abstract class CliAgentRunner implements AgentRunner {
 
   constructor(protected readonly cliOptions: CliAgentRunnerOptions) {
     this.pollIntervalMs = cliOptions.pollIntervalMs ?? 1_000;
-    this.idleTimeoutMs = cliOptions.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.silenceLimitMs = cliOptions.silenceLimitMs ?? DEFAULT_SILENCE_LIMIT_MS;
     this.clock = cliOptions.clock ?? Date.now;
   }
 
@@ -109,6 +147,16 @@ export abstract class CliAgentRunner implements AgentRunner {
 
   /** Reads the output of the tool. An implementation must never throw. */
   protected abstract parseOutput(text: string): CliAgentParse;
+
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. Reads the usage of one invocation from the CLI
+   * after its process ended, on every outcome, because a failed or hung session costs money too.
+   * A throw is caught and read as a missing record.
+   */
+  protected abstract readUsage(context: CliUsageContext): Promise<CliUsageReading>;
+
+  /** The reasoning effort this runner asks for in one role. Null means the CLI default. */
+  protected abstract effortFor(role: AgentRole): string | null;
 
   /**
    * Returns the session reference for a run that is still active, as soon as the sandbox
@@ -147,6 +195,8 @@ export abstract class CliAgentRunner implements AgentRunner {
       environment: input.environment,
       role: input.role,
       cancelled: false,
+      counted: new Set<string>(),
+      cliSessionId: null,
     };
     this.sessions.set(process.id, live);
     this.activeByRun.set(input.runId, process.id);
@@ -162,7 +212,7 @@ export abstract class CliAgentRunner implements AgentRunner {
   async resume(session: AgentSessionRef, input: AgentResumeInput): Promise<AgentRunResult> {
     const previous = this.sessions.get(session.processId);
     if (previous === undefined) {
-      throw new Error(`${this.name} has no live sandbox for session ${session.sessionId}.`);
+      throw new AgentSessionUnavailableError(this.name, session.sessionId);
     }
 
     const promptFile = await this.writePrompt(previous.sandbox, previous.ref, input.prompt);
@@ -174,11 +224,24 @@ export abstract class CliAgentRunner implements AgentRunner {
       env: { ...previous.environment, ...command.env },
     });
 
-    const live: LiveSession = { ...previous, process, cancelled: false };
+    const live: LiveSession = {
+      ...previous,
+      process,
+      cancelled: false,
+      cliSessionId: session.sessionId === session.processId ? previous.cliSessionId : session.sessionId,
+    };
     this.sessions.set(process.id, live);
     const owner = this.runOfProcess(session.processId);
-    if (owner !== undefined) this.trackProcess(owner, process.id);
-    return await this.awaitProcess(live, input.timeoutMs);
+    if (owner === undefined) return await this.awaitProcess(live, input.timeoutMs);
+    this.trackProcess(owner, process.id);
+    // A resumed session is the live session of its Run, so a stop can find it and cancel it.
+    // DI-14.47.
+    this.activeByRun.set(owner, process.id);
+    try {
+      return await this.awaitProcess(live, input.timeoutMs);
+    } finally {
+      if (this.activeByRun.get(owner) === process.id) this.activeByRun.delete(owner);
+    }
   }
 
   async cancel(session: AgentSessionRef): Promise<AgentCancelOutcome> {
@@ -234,20 +297,18 @@ export abstract class CliAgentRunner implements AgentRunner {
   }
 
   /**
-   * Polls the sandbox process until it exits, its budget ends, it stops producing output, or
-   * Factoree cancels it.
+   * Polls the sandbox process until it exits, its budget ends, it stays silent for the silence
+   * limit, or Factoree cancels it.
    *
-   * The idle deadline exists because an agent can wait for ever on a connection that will never
+   * The silence limit exists because an agent can wait for ever on a connection that will never
    * answer. A sandbox that pauses drops every open connection, and a CLI that sets no timeout of
    * its own then sleeps until the Run budget ends, which wastes the whole budget on a session
    * that stopped working minutes after it started. Output is the signal: a working agent writes
-   * events continuously.
+   * events continuously. docs/specs/agent-session-usage-and-hangs.md calls such a session hung.
    */
   private async awaitProcess(live: LiveSession, timeoutMs: number): Promise<AgentRunResult> {
     const startedAt = this.clock();
     const deadline = startedAt + timeoutMs;
-    // The idle deadline never outlives the budget, so a short budget keeps its own meaning.
-    const idleLimitMs = Math.min(this.idleTimeoutMs, timeoutMs);
     // The comparison is on the text, not on its length. Two events of one shape carry the same
     // number of characters, and a length test would read a working agent as a silent one.
     let lastOutput: string | null = null;
@@ -263,41 +324,44 @@ export abstract class CliAgentRunner implements AgentRunner {
       }
 
       if (!snapshot.running) {
-        return this.buildResult(live, snapshot, startedAt, {
+        return await this.buildResult(live, snapshot, startedAt, {
           cancelled: live.cancelled,
           fallbackExitCode: 1,
         });
       }
 
-      if (snapshot.running && this.clock() - lastOutputAt >= idleLimitMs) {
-        // The session produced nothing for the whole idle window. Factoree ends it here, so the
-        // rest of the Run budget stays available to a repair attempt. The evidence it already
-        // produced is preserved, the same as on a budget timeout.
-        await live.sandbox.cancelProcess(live.ref, live.process);
-        const final = await live.sandbox.readProcess(live.ref, live.process);
-        const result = this.buildResult(live, final, startedAt, {
-          cancelled: true,
-          completed: false,
-          fallbackExitCode: 124,
-        });
-        return {
-          ...result,
-          summary:
-            `The ${this.name} session wrote nothing for ${Math.round(idleLimitMs / 1000)} seconds, so ` +
-            `Factoree ended it. ${result.summary}`.trim(),
-        };
-      }
-
+      // The budget is checked first. A session that is silent when the Run budget ends ran out
+      // of time, and SDD section 50 reports that as a timeout, not as a hang. DI-14.47.
       if (this.clock() >= deadline) {
         // On timeout Factoree cancels the active process and preserves the evidence it already
         // produced. See SDD section 50.
         await live.sandbox.cancelProcess(live.ref, live.process);
         const final = await live.sandbox.readProcess(live.ref, live.process);
-        return this.buildResult(live, final, startedAt, {
+        return await this.buildResult(live, final, startedAt, {
           cancelled: true,
           completed: false,
           fallbackExitCode: 124,
         });
+      }
+
+      if (this.clock() - lastOutputAt >= this.silenceLimitMs) {
+        // The session is hung. Factoree ends it here, so the rest of the Run budget stays
+        // available to the one retry of docs/specs/agent-session-usage-and-hangs.md. The
+        // evidence it already produced is preserved, the same as on a budget timeout.
+        await live.sandbox.cancelProcess(live.ref, live.process);
+        const final = await live.sandbox.readProcess(live.ref, live.process);
+        const result = await this.buildResult(live, final, startedAt, {
+          cancelled: true,
+          completed: false,
+          fallbackExitCode: 124,
+          hung: true,
+        });
+        return {
+          ...result,
+          summary:
+            `The ${this.name} session wrote nothing for ${Math.round(this.silenceLimitMs / 1000)} seconds, so ` +
+            `Factoree ended it. ${result.summary}`.trim(),
+        };
       }
 
       await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
@@ -310,13 +374,15 @@ export abstract class CliAgentRunner implements AgentRunner {
    * already produced. `completed`, when given, wins over the exit code check. This carries the
    * timeout branch, where the exit code alone does not say whether the Run finished its work.
    */
-  private buildResult(
+  private async buildResult(
     live: LiveSession,
     snapshot: ProcessSnapshot,
     startedAt: number,
-    options: { cancelled: boolean; completed?: boolean; fallbackExitCode: number },
-  ): AgentRunResult {
-    const parsed = this.safeParse(`${snapshot.stdout}\n${snapshot.stderr}`);
+    options: { cancelled: boolean; completed?: boolean; fallbackExitCode: number; hung?: boolean },
+  ): Promise<AgentRunResult> {
+    const output = `${snapshot.stdout}\n${snapshot.stderr}`;
+    const parsed = this.safeParse(output);
+    const sessionId = parsed.sessionId ?? live.cliSessionId;
     const exitCode = snapshot.exitCode ?? options.fallbackExitCode;
     const completed = options.completed ?? (exitCode === 0 && !options.cancelled);
     // A Run that did not finish must state why. The agent's own error outranks its last output
@@ -325,9 +391,22 @@ export abstract class CliAgentRunner implements AgentRunner {
       !completed && parsed.errorMessage !== undefined && parsed.errorMessage.length > 0
         ? parsed.errorMessage
         : parsed.summary;
+    const outcome: AgentSessionOutcome = options.hung === true ? "hung" : completed ? "finished" : "failed";
+    // The duration ends when the process ends. The usage read below is Factoree's own time.
+    const durationMs = this.clock() - startedAt;
+    const reading = await this.safeReadUsage({
+      sandbox: live.sandbox,
+      ref: live.ref,
+      directory: live.repositoryPath ?? live.workingDirectory,
+      environment: live.environment,
+      role: live.role,
+      sessionId,
+      output,
+      counted: live.counted,
+    });
     return {
       session: {
-        sessionId: parsed.sessionId ?? live.process.id,
+        sessionId: sessionId ?? live.process.id,
         processId: live.process.id,
         runner: this.name,
       },
@@ -338,9 +417,23 @@ export abstract class CliAgentRunner implements AgentRunner {
       failureLog: completed
         ? null
         : buildRetainedLog(this.cliOptions.redactor, snapshot.stdout, snapshot.stderr),
-      durationMs: this.clock() - startedAt,
+      durationMs,
       cancelled: options.cancelled,
+      outcome,
+      silenceLimitMs: this.silenceLimitMs,
+      usage: reading.usage,
+      model: reading.model,
+      effort: this.effortFor(live.role),
     };
+  }
+
+  /** Reads the usage and never throws. Cost is a metric, so a fault here must not fail the Run. */
+  private async safeReadUsage(context: CliUsageContext): Promise<CliUsageReading> {
+    try {
+      return await this.readUsage(context);
+    } catch {
+      return { usage: null, model: null };
+    }
   }
 
   /**

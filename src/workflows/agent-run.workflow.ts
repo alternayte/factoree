@@ -55,6 +55,12 @@ import { completionInvariantFailures, prePublicationFailures } from "../domain/r
 // `~/` alias either.
 import { proposeTarget, selectTarget } from "../domain/routing/select-targets.js";
 import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
+// The workflow bundler resolves a relative path only. The module imports nothing.
+import {
+  describeAgentRole,
+  describeSilenceLimit,
+  type AgentSessionRole,
+} from "../domain/runs/agent-session.js";
 
 export interface AgentRunProductInput {
   productId: string;
@@ -499,6 +505,7 @@ export async function agentRunWorkflow(
     failureReason:
       | "RUN_TIMEOUT"
       | "IMPLEMENTATION_FAILED"
+      | "AGENT_HUNG"
       | "CONFIGURATION_INVALID"
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
@@ -546,6 +553,44 @@ export async function agentRunWorkflow(
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message }));
     return { runId: id, status };
   };
+
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. The hang an agent activity reported. An activity
+   * result recorded before this field existed carries none, and a replay of that history must
+   * take the same path it took then, so an absent field reads as no hang. DI-14.48.
+   */
+  const hangOf = (output: { hang?: { silenceLimitMs: number } | null } | null): { silenceLimitMs: number } | null =>
+    output?.hang ?? null;
+
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. One hung session gets one more try, and the
+   * human sees that it happened.
+   */
+  const reportHang = async (role: AgentSessionRole, hang: { silenceLimitMs: number }, next: string): Promise<void> => {
+    await notify(() =>
+      activities.postProgress({
+        sessionId: input.agentSessionId,
+        message:
+          `The ${describeAgentRole(role)} session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, ` +
+          `so Factoree stopped it and ${next}.`,
+      }),
+    );
+  };
+
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. A second hang in the same step ends the Run. The
+   * message names the role and the silence limit, because two hangs are a pattern a human must see.
+   */
+  const failHung = async (
+    role: AgentSessionRole,
+    hang: { silenceLimitMs: number },
+    reason = "for the second time in the same step",
+  ): Promise<AgentRunWorkflowResult> =>
+    await failRun(
+      "AGENT_HUNG",
+      `The ${describeAgentRole(role)} session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)} ` +
+        `${reason}, so Factoree stopped it and ended the Run. Factoree published nothing.`,
+    );
 
   /**
    * Specification section 8 and section 17. The routing table used a cached repository row.
@@ -715,6 +760,8 @@ export async function agentRunWorkflow(
      * denies it the authority to change the contract, which the store enforces, not this prompt.
      */
     validationContract: string;
+    /** docs/specs/agent-session-usage-and-hangs.md. The hung session this attempt resumes. */
+    continueSession?: AgentSessionRef | null;
   }): Promise<ImplementActivityOutput | null> => {
     const budgetMs = remainingMs();
     const implementActivities = buildImplementActivities(budgetMs);
@@ -746,6 +793,7 @@ export async function agentRunWorkflow(
             : null,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
+        ...((attemptInput.continueSession ?? null) === null ? {} : { continueSession: attemptInput.continueSession }),
       }),
     );
 
@@ -772,6 +820,8 @@ export async function agentRunWorkflow(
     prepared: PrepareSandboxActivityOutput;
     goal: string;
     attempt: number;
+    /** docs/specs/agent-session-usage-and-hangs.md. The one fresh session after a hang. */
+    afterHang?: boolean;
   }): Promise<UserValidateActivityOutput | null> => {
     const budgetMs = remainingMs();
     const userValidateActivities = buildUserValidateActivities(budgetMs);
@@ -789,6 +839,7 @@ export async function agentRunWorkflow(
         preview: attemptInput.prepared.preview,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
+        ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
       }),
     );
   };
@@ -805,6 +856,8 @@ export async function agentRunWorkflow(
     constraints: string[];
     verificationSummary: string;
     validationEvidence: string[];
+    /** docs/specs/agent-session-usage-and-hangs.md. The one fresh session after a hang. */
+    afterHang?: boolean;
   }): Promise<ReviewActivityOutput | null> => {
     const budgetMs = remainingMs();
     const reviewActivities = buildReviewActivities(budgetMs);
@@ -827,6 +880,7 @@ export async function agentRunWorkflow(
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
+        ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
       }),
     );
   };
@@ -1289,8 +1343,8 @@ export async function agentRunWorkflow(
       status = "REFINING";
       await activities.setRunStatus({ runId: id, status });
       let proposal: ProposeRefinementActivityOutput | null;
-      try {
-        proposal = await runAgentActivity(() =>
+      const proposeOnce = (afterHang: boolean): Promise<ProposeRefinementActivityOutput | null> =>
+        runAgentActivity(() =>
           buildUserValidateActivities(remainingMs()).proposeRefinement({
             runId: id,
             tenantId: input.tenantId,
@@ -1307,8 +1361,17 @@ export async function agentRunWorkflow(
             skills: preparedSandbox.skills,
             previewConfigured: preparedSandbox.preview !== null && preparedSandbox.preview.enabled,
             timeoutMs: remainingMs(),
+            ...(afterHang ? { afterHang: true } : {}),
           }),
         );
+      try {
+        proposal = await proposeOnce(false);
+        // docs/specs/agent-session-usage-and-hangs.md. A hung refiner gets one fresh session.
+        const firstHang = hangOf(proposal);
+        if (firstHang !== null && !stopRequested && remainingMs() > 0) {
+          await reportHang("refiner", firstHang, "starts one fresh session");
+          proposal = await proposeOnce(true);
+        }
       } catch (error) {
         if (isCancellation(error)) throw error;
         if (isConfigurationFault(error)) {
@@ -1325,6 +1388,11 @@ export async function agentRunWorkflow(
       if (proposal === null) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
         return await failRun("REFINEMENT_UNAVAILABLE", "The Refiner did not finish, so Factoree published nothing.");
+      }
+      const refinerHang = hangOf(proposal);
+      if (refinerHang !== null) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        return await failHung("refiner", refinerHang);
       }
       if (proposal.status !== "proposed") {
         return await failRun(
@@ -1429,6 +1497,10 @@ export async function agentRunWorkflow(
       let repairFindings: string[] = [];
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
+      // docs/specs/agent-session-usage-and-hangs.md. The hung Implementer session the next attempt
+      // resumes, and whether the current step already resumed one. One step allows one hang.
+      let continueSession: AgentSessionRef | null = null;
+      let resumedAfterHang = false;
 
       // SDD section 46 needs these two values after the loop ends, and the loop scope does not
       // survive the `break`. The successful pass writes them just before it breaks.
@@ -1477,10 +1549,41 @@ export async function agentRunWorkflow(
           contextContract: resolvedContext.document,
           requiredContext: resolvedContext.requiredContext,
           validationContract: validation.document,
+          continueSession,
         });
+        continueSession = null;
 
         // A stop that arrived while the Implementer ran must end the Run here.
         if (stopRequested) return await cancelRun();
+
+        // docs/specs/agent-session-usage-and-hangs.md. The first hang resumes the session once
+        // with "continue", and that attempt uses the repair budget. A second hang in the same
+        // step ends the Run.
+        const implementerHang = hangOf(implementation);
+        if (implementation !== null && implementerHang !== null) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          if (resumedAfterHang) return await failHung("implementer", implementerHang);
+          if (repairCount >= maxRepairs) {
+            return await failHung(
+              "implementer",
+              implementerHang,
+              "and the repair budget is spent, so Factoree cannot resume it",
+            );
+          }
+          await reportHang("implementer", implementerHang, "resumes it once");
+          repairCount += 1;
+          attempt += 1;
+          resumedAfterHang = true;
+          continueSession = {
+            sessionId: implementation.sessionId,
+            processId: implementation.processId,
+            runner: implementation.runner,
+          };
+          status = "REPAIRING";
+          await activities.setRunStatus({ runId: id, status, repairCount, repairReason: "AGENT_HUNG" });
+          continue;
+        }
+        resumedAfterHang = false;
 
         // SDD section 49: a semantic outcome drives a workflow decision. A failed attempt must
         // not fall into the wait and become a timeout.
@@ -1607,13 +1710,20 @@ export async function agentRunWorkflow(
 
         let userValidation: UserValidateActivityOutput;
         try {
-          const result = await runUserValidate({
+          let result = await runUserValidate({
             prepared: checked,
             goal: sandbox.goal,
             attempt,
           });
           // A stop that arrived while the validator ran must end the Run here.
           if (stopRequested) return await cancelRun();
+          // docs/specs/agent-session-usage-and-hangs.md. A hung validator gets one fresh session.
+          const validatorHang = hangOf(result);
+          if (validatorHang !== null && remainingMs() > 0) {
+            await reportHang("validator", validatorHang, "starts one fresh session");
+            result = await runUserValidate({ prepared: checked, goal: sandbox.goal, attempt, afterHang: true });
+            if (stopRequested) return await cancelRun();
+          }
           if (result === null) {
             // The pass ended with no result and no stop signal. The budget decides why.
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -1635,6 +1745,12 @@ export async function agentRunWorkflow(
           }
           if (remainingMs() > 0) throw error;
           return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+
+        const validatorHang = hangOf(userValidation);
+        if (validatorHang !== null) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failHung("validator", validatorHang);
         }
 
         await notify(() =>
@@ -1710,7 +1826,7 @@ export async function agentRunWorkflow(
 
         let review: ReviewActivityOutput;
         try {
-          const result = await runReview({
+          const reviewInput = {
             prepared: checked,
             goal: sandbox.goal,
             attempt,
@@ -1720,8 +1836,17 @@ export async function agentRunWorkflow(
             validationEvidence: userValidation.results.map(
               (entry) => `${entry.assertionId}: ${entry.result}. ${entry.reason}`,
             ),
-          });
+          };
+          let result = await runReview(reviewInput);
           if (stopRequested) return await cancelRun();
+          // docs/specs/agent-session-usage-and-hangs.md. A hung Reviewer gets one fresh session in
+          // the same review pass.
+          const reviewerHang = hangOf(result);
+          if (reviewerHang !== null && remainingMs() > 0) {
+            await reportHang("reviewer", reviewerHang, "starts one fresh session");
+            result = await runReview({ ...reviewInput, afterHang: true });
+            if (stopRequested) return await cancelRun();
+          }
           if (result === null) {
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
             throw ApplicationFailure.nonRetryable("the review activity returned no result");
@@ -1740,6 +1865,12 @@ export async function agentRunWorkflow(
           }
           if (remainingMs() > 0) throw error;
           return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+
+        const reviewerHang = hangOf(review);
+        if (reviewerHang !== null) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failHung("reviewer", reviewerHang);
         }
 
         await notify(() =>

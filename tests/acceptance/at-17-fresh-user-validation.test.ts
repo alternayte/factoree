@@ -22,6 +22,7 @@ import { Redactor } from "~/telemetry/redaction.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { startDatabase, seedTenantProjectAndRun } from "../integration/support/database.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 /** The exact sentence the real Implementer session leaves behind, and never gives the validator. */
 const IMPLEMENTER_SUMMARY = "The change is applied.";
@@ -130,6 +131,7 @@ describe("AT-17 — the User Validator session is fresh", () => {
       userValidation: {
         sandbox,
         runners: new AgentRunnerRegistry([validatorRunner]),
+        sessions: new MemoryAgentSessionStore(),
         executions,
         secrets: new MemorySecretStore(),
         redactor,

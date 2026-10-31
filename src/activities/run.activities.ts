@@ -41,9 +41,10 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     /**
      * SDD section 42 and section 62. The stage that asked for this repair. Three stages can ask
      * for one, so the metric must name the right stage. The default keeps an older caller
-     * correct.
+     * correct. `AGENT_HUNG` is the resume of a hung Implementer session, which
+     * docs/specs/agent-session-usage-and-hangs.md charges to the repair budget.
      */
-    repairReason?: "VERIFICATION" | "VALIDATION" | "REVIEW";
+    repairReason?: "VERIFICATION" | "VALIDATION" | "REVIEW" | "AGENT_HUNG";
   }): Promise<void> {
     const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.startedAt === undefined ? {} : { startedAt: new Date(input.startedAt) }),

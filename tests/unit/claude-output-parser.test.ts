@@ -51,7 +51,33 @@ describe("parseClaudeOutput", () => {
   });
 
   it("reports nothing for empty output", () => {
-    expect(parseClaudeOutput("")).toEqual({ sessionId: null, summary: "" });
+    expect(parseClaudeOutput("")).toEqual({ sessionId: null, summary: "", usage: null, model: null });
+  });
+
+  // docs/specs/agent-session-usage-and-hangs.md. The result event carries the usage and the cost.
+  it("reads the usage and the cost of the result event and the model of the init event", () => {
+    const text = [
+      '{"type":"system","subtype":"init","session_id":"s","model":"claude-sonnet-4-5"}',
+      '{"type":"result","subtype":"success","result":"done","num_turns":7,"total_cost_usd":0.4213,' +
+        '"usage":{"input_tokens":120,"output_tokens":3400,"cache_read_input_tokens":90000,"cache_creation_input_tokens":5000}}',
+    ].join("\n");
+    const parsed = parseClaudeOutput(text);
+    expect(parsed.model).toBe("claude-sonnet-4-5");
+    expect(parsed.usage).toEqual({
+      inputTokens: 120,
+      outputTokens: 3400,
+      reasoningTokens: null,
+      cacheReadTokens: 90000,
+      cacheWriteTokens: 5000,
+      costUsd: 0.4213,
+      turns: 7,
+      longestTurnMs: null,
+    });
+  });
+
+  it("reports no usage for a session that wrote no result event", () => {
+    const text = '{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}';
+    expect(parseClaudeOutput(text).usage).toBeNull();
   });
 
   it("never throws on malformed input", () => {

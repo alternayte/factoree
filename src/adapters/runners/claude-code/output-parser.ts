@@ -1,10 +1,43 @@
+import type { AgentSessionUsage } from "~/domain/runs/agent-session.js";
+
 export interface ClaudeOutput {
   sessionId: string | null;
   summary: string;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. The `usage` and `total_cost_usd` of the result
+   * event, or null when the process wrote no result event, for example a hung session.
+   */
+  usage: AgentSessionUsage | null;
+  /** The model the init event names, or null. */
+  model: string | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+const numberOf = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/**
+ * The usage of one result event. Claude Code reports the thinking tokens inside the output
+ * tokens and no time per model call, so those two fields stay null. DI-14.43.
+ */
+const resultUsage = (event: Record<string, unknown>): AgentSessionUsage | null => {
+  const usage = event["usage"];
+  const cost = numberOf(event["total_cost_usd"]);
+  if (!isRecord(usage) && cost === null) return null;
+  const tokens = isRecord(usage) ? usage : {};
+  return {
+    inputTokens: numberOf(tokens["input_tokens"]),
+    outputTokens: numberOf(tokens["output_tokens"]),
+    reasoningTokens: null,
+    cacheReadTokens: numberOf(tokens["cache_read_input_tokens"]),
+    cacheWriteTokens: numberOf(tokens["cache_creation_input_tokens"]),
+    costUsd: cost,
+    turns: numberOf(event["num_turns"]),
+    longestTurnMs: null,
+  };
+};
 
 /** Joins every text block of one assistant message. A tool use block carries no text. */
 const assistantText = (message: unknown): string | null => {
@@ -38,6 +71,8 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   let resultSummary: string | null = null;
   let lastAssistant: string | null = null;
   let lastPlainLine = "";
+  let usage: AgentSessionUsage | null = null;
+  let model: string | null = null;
 
   for (const rawLine of text.split(/\r\n|\r|\n/)) {
     const trimmed = rawLine.trim();
@@ -58,9 +93,16 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
     const id = parsed["session_id"];
     if (sessionId === null && typeof id === "string" && id.length > 0) sessionId = id;
 
+    if (parsed["type"] === "system" && parsed["subtype"] === "init") {
+      const named = parsed["model"];
+      if (typeof named === "string" && named.length > 0) model = named;
+      continue;
+    }
+
     if (parsed["type"] === "result") {
       const value = parsed["result"];
       if (typeof value === "string") resultSummary = value;
+      usage = resultUsage(parsed) ?? usage;
       continue;
     }
 
@@ -71,5 +113,5 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   }
 
   const summary = resultSummary ?? lastAssistant ?? lastPlainLine;
-  return { sessionId, summary };
+  return { sessionId, summary, usage, model };
 };

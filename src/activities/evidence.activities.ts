@@ -10,6 +10,7 @@ import type { ContextContractStore } from "~/domain/context/context-contract-sto
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import { summarizeAgentSessions, type AgentSessionStore } from "~/domain/runs/agent-session.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -154,6 +155,8 @@ export interface ProofPackActivityDependencies {
   evidence: EvidenceStore;
   reviewFindings: ReviewFindingStore;
   agentSession: AgentSessionPort;
+  /** docs/specs/agent-session-usage-and-hangs.md. The usage rows of the Run's agent sessions. */
+  sessions: AgentSessionStore;
   /** docs/specs/proof-pack-and-visual-evidence.md. Stores `proof-pack.json` beside the evidence. */
   storage: EvidenceStorage;
   secrets: SecretStore;
@@ -248,6 +251,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     const resultRows = await dependencies.validationResults.listForRun(input.tenantId, input.runId);
     const evidenceRows = await dependencies.evidence.listForRun(input.tenantId, input.runId);
     const findingRows = await dependencies.reviewFindings.listForRun(input.tenantId, input.runId);
+    const sessionRows = await dependencies.sessions.listForRun(input.tenantId, input.runId);
 
     // SDD section 42. The last attempt of one assertion is its outcome. An earlier repair
     // attempt is history, and it must not decide what the Proof Pack reports.
@@ -423,6 +427,8 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       visualEvidenceGap: input.visualEvidenceGap ?? null,
       decisions: input.decisions ?? [],
       baseMove: input.baseMove ?? null,
+      // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.
+      agentUsage: summarizeAgentSessions(sessionRows),
       ...(routing === undefined ? {} : { routing }),
     };
 

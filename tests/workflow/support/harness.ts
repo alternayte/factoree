@@ -75,7 +75,7 @@ export interface StatusCall {
   status: string;
   repairCount?: number;
   /** SDD section 42 and section 62. The stage that asked for this repair. */
-  repairReason?: "VERIFICATION" | "VALIDATION" | "REVIEW";
+  repairReason?: "VERIFICATION" | "VALIDATION" | "REVIEW" | "AGENT_HUNG";
 }
 
 /** One recorded `completeRun` call. */
@@ -178,6 +178,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const heldStatuses = new Map<string, Promise<void>>();
   /** The run ids whose Implementer double reports a failed attempt. */
   const failingImplementations = new Set<string>();
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. A run id in this map decides, per Implementer
+   * call, whether the session hung.
+   */
+  const implementHangs = new Map<string, (call: ImplementActivityInput) => { silenceLimitMs: number } | null>();
   /** The run ids whose live Implementer session the activity cancelled. */
   const cancelledLiveSessions: string[] = [];
   /** Every message the workflow posted to the human on the error path. */
@@ -542,7 +547,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       refinerCalls.push(activityInput);
       const outcome = refinerOutcomes.get(activityInput.runId);
       if (outcome !== undefined) return outcome;
-      return { status: "proposed" as const, accepted: [], decisions: [], visualEvidenceGap: null, reason: "" };
+      return { status: "proposed" as const, accepted: [], decisions: [], visualEvidenceGap: null, reason: "", hang: null };
     },
     releaseCheckSandbox: async (activityInput: { spriteId: string }) => {
       releasedChecks.push(activityInput.spriteId);
@@ -580,6 +585,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         summary: "The change is applied. Every test passes.",
         durationMs: 10,
         cancelledSession: cancelledLiveSessions.includes(activityInput.runId),
+        hang: implementHangs.get(activityInput.runId)?.(activityInput) ?? null,
       };
     },
     verify: async (activityInput: VerifyActivityInput) => {
@@ -653,6 +659,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         failures: [],
         sessionId: "ses_fake_validator",
         previewUrl: null,
+        hang: null,
       };
     },
     review: async (activityInput: ReviewActivityInput): Promise<ReviewActivityOutput> => {
@@ -704,6 +711,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
             reportProblem: error.message,
             changedFiles,
             worktreeSha: "",
+            hang: null,
           };
         }
         const decision = decideReview({
@@ -727,6 +735,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           reportProblem: null,
           changedFiles,
           worktreeSha: REVIEWED_WORKTREE_SHA,
+          hang: null,
         };
       }
 
@@ -743,6 +752,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         reportProblem: null,
         changedFiles: ["src/app.ts"],
         worktreeSha: REVIEWED_WORKTREE_SHA,
+        hang: null,
       };
       const outcome = reviewOutcomes.get(activityInput.runId);
       if (outcome === undefined) return passing;
@@ -927,6 +937,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldVerifications,
     heldStatuses,
     failingImplementations,
+    implementHangs,
     cancelledLiveSessions,
     postedErrors,
     postedProgress,

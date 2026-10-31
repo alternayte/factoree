@@ -12,6 +12,7 @@ import {
   PrismaRepositoryRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
+import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
@@ -143,7 +144,7 @@ const runners = buildAgentRunnerRegistry(redactor, {
   },
   // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
   ...(sandbox.capabilities.supportsCustomImage ? { executable: `${KILN_RUNNER_BIN}/opencode` } : {}),
-});
+}, { silenceLimitMs: env.AGENT_SILENCE_MINUTES * 60_000 });
 const reaper = new SpriteReaper({
   sandboxes: { [sandbox.name]: sandbox },
   runs,
@@ -330,6 +331,7 @@ const worker = await Worker.create({
     sandbox,
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),
+    sessions: new PrismaAgentSessionStore(prisma),
     secrets,
     evidence: new PrismaEvidenceStore(prisma),
     redactor,

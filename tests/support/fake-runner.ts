@@ -33,6 +33,11 @@ export class FakeRunner implements AgentRunner {
       durationMs: 10,
       cancelled: false,
       failureLog: null,
+      outcome: "finished",
+      silenceLimitMs: 600_000,
+      usage: null,
+      model: null,
+      effort: null,
       ...result,
     };
   }

@@ -16,7 +16,7 @@ export const RUN_FAILURE_CATEGORIES = [
   "CONFIGURATION",
   /** A material question stayed open, so implementation never started. */
   "INPUT_UNRESOLVED",
-  /** The Implementer session itself failed. */
+  /** An agent session itself failed or hung. */
   "AGENT",
   /** Deterministic verification did not pass within the repair budget. SDD section 35. */
   "VERIFICATION",
@@ -41,6 +41,7 @@ const CATEGORY_BY_REASON: Record<RunFailureReason, RunFailureCategory> = {
   STOPPED_BY_HUMAN: "CANCELLED",
   CONFIGURATION_INVALID: "CONFIGURATION",
   IMPLEMENTATION_FAILED: "AGENT",
+  AGENT_HUNG: "AGENT",
   VERIFICATION_FAILED: "VERIFICATION",
   REFINEMENT_UNRESOLVED: "INPUT_UNRESOLVED",
   REFINEMENT_UNAVAILABLE: "AGENT",

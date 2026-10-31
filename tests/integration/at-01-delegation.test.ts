@@ -40,6 +40,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { Env } from "~/config/env.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const secret = "webhook-secret";
 const env = {
@@ -65,6 +66,7 @@ const env = {
   FACTOREE_GIT_AUTHOR_EMAIL: "factoree@users.noreply.github.com",
   EVIDENCE_STORAGE: "filesystem",
   EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
+  AGENT_SILENCE_MINUTES: 10,
 } satisfies Env;
 
 const redactor = new Redactor();
@@ -165,6 +167,7 @@ beforeAll(async () => {
       sandboxManager: new SandboxManager({ sandbox: fakeSandbox, allowUnenforcedNetwork: true }),
       sandbox: fakeSandbox,
       runners: new AgentRunnerRegistry([new FakeRunner()]),
+      sessions: new MemoryAgentSessionStore(),
       executions: new PrismaAgentExecutionRepository(prisma),
       secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
       evidence: new PrismaEvidenceStore(prisma),

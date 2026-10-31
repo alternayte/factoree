@@ -1,7 +1,10 @@
 import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
-import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { AgentSessionUnavailableError } from "~/domain/runs/agent-runner.js";
+import { agentSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -17,6 +20,8 @@ export interface AgentActivityDependencies {
   runners: AgentRunnerRegistry;
   sandbox: Sandbox;
   executions: AgentExecutionRepository;
+  /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
+  sessions: AgentSessionStore;
   secrets: SecretStore;
   redactor: Redactor;
   logger: Logger;
@@ -62,6 +67,12 @@ export interface ImplementActivityInput {
    * genuinely distinct attempt, for example a later repair loop attempt.
    */
   attempt: number;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. The session that hung in the previous attempt.
+   * This attempt resumes it with "continue" instead of starting a fresh session. Null or absent
+   * starts a fresh session.
+   */
+  continueSession?: AgentSessionRef | null;
 }
 
 export interface ImplementActivityOutput {
@@ -75,7 +86,12 @@ export interface ImplementActivityOutput {
   durationMs: number;
   /** True when this activity really cancelled the live session of the runner. */
   cancelledSession: boolean;
+  /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
+  hang: AgentHang;
 }
+
+/** docs/specs/agent-session-usage-and-hangs.md. The whole prompt of the resume after a hang. */
+export const CONTINUE_PROMPT = "continue";
 
 /**
  * The interval between two heartbeats. A heartbeat is the only way Temporal can deliver a
@@ -227,9 +243,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     if (context.cancellationSignal.aborted) onCancel();
     else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
 
-    let result;
-    try {
-      result = await runner.run({
+    const runFresh = (): Promise<AgentRunResult> =>
+      runner.run({
         runId: input.runId,
         tenantId: input.tenantId,
         role: "implementer",
@@ -243,6 +258,31 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         actionPolicy,
         timeoutMs: input.timeoutMs,
       });
+
+    // docs/specs/agent-session-usage-and-hangs.md. After a hang the Implementer resumes its own
+    // session with "continue", so the work it already did stays in its context. A session the
+    // CLI never named, or one this worker does not hold, cannot resume, so a fresh session with
+    // the whole prompt takes its place. DI-14.46.
+    const resumeAfterHang = async (session: AgentSessionRef): Promise<AgentRunResult> => {
+      if (session.sessionId === session.processId) return await runFresh();
+      try {
+        return await runner.resume(session, { prompt: CONTINUE_PROMPT, timeoutMs: input.timeoutMs });
+      } catch (error) {
+        if (!(error instanceof AgentSessionUnavailableError)) throw error;
+        dependencies.logger.warn("the hung Implementer session cannot resume here, starting a fresh one", {
+          tenant_id: input.tenantId,
+          run_id: input.runId,
+          runner: runner.name,
+          session_id: session.sessionId,
+        });
+        return await runFresh();
+      }
+    };
+
+    let result: AgentRunResult;
+    try {
+      const hung = input.continueSession ?? null;
+      result = hung === null ? await runFresh() : await resumeAfterHang(hung);
     } finally {
       running = false;
       clearInterval(heartbeat);
@@ -309,6 +349,20 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       });
     }
 
+    await recordAgentSession(
+      { sessions: dependencies.sessions, logger: dependencies.logger },
+      {
+        tenantId: input.tenantId,
+        productId: input.productId,
+        runId: input.runId,
+        role: "implementer",
+        attempt: input.attempt,
+        runner: runner.name,
+        idempotencyKey: agentSessionKey(input.runId, "implementer", input.attempt, false),
+      },
+      [result],
+    );
+
     metrics.implementationDuration.observe(
       { tenant_id: input.tenantId, product_id: input.productId, runner: runner.name },
       result.durationMs / 1000,
@@ -332,6 +386,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       summary: result.summary,
       durationMs: result.durationMs,
       cancelledSession,
+      hang: hangOf([result]),
     };
   },
 

@@ -1,4 +1,10 @@
-import type { CliAgentCommand, CliAgentParse, CliAgentRunnerOptions } from "../cli-agent-runner.js";
+import type {
+  CliAgentCommand,
+  CliAgentParse,
+  CliAgentRunnerOptions,
+  CliUsageContext,
+  CliUsageReading,
+} from "../cli-agent-runner.js";
 import { CliAgentRunner } from "../cli-agent-runner.js";
 import { parseClaudeOutput } from "./output-parser.js";
 
@@ -64,7 +70,22 @@ export class ClaudeCodeRunner extends CliAgentRunner {
     };
   }
 
+  /** Factoree passes no effort flag to Claude Code, so every role runs at the CLI default. */
+  protected effortFor(): string | null {
+    return null;
+  }
+
   protected parseOutput(text: string): CliAgentParse {
     return parseClaudeOutput(text);
+  }
+
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. Claude Code writes the usage and the cost of one
+   * invocation in its result event, so the output already holds them. A resume is a new process
+   * with its own result event, so it reports only its own calls.
+   */
+  protected readUsage(context: CliUsageContext): Promise<CliUsageReading> {
+    const parsed = parseClaudeOutput(context.output);
+    return Promise.resolve({ usage: parsed.usage, model: parsed.model });
   }
 }

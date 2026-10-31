@@ -4,7 +4,9 @@ import { metrics } from "~/telemetry/metrics.js";
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { agentSessionKey, describeSilenceLimit, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -53,6 +55,11 @@ export interface ReviewActivityInput {
   timeoutMs: number;
   /** The review pass this attempt belongs to. The first pass is 1. SDD section 42. */
   attempt: number;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. True for the one fresh session that follows a
+   * hung one in the same pass. It writes its own report file and its own rows.
+   */
+  afterHang?: boolean;
 }
 
 export interface ReviewActivityOutput {
@@ -80,12 +87,19 @@ export interface ReviewActivityOutput {
    * with the tree it captures. An empty value means this review produced no fingerprint.
    */
   worktreeSha: string;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. Set when the Reviewer session wrote no output
+   * for the silence limit. The report is then unusable.
+   */
+  hang: AgentHang;
 }
 
 export interface ReviewActivityDependencies {
   sandbox: Sandbox;
   runners: AgentRunnerRegistry;
   executions: AgentExecutionRepository;
+  /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
+  sessions: AgentSessionStore;
   secrets: SecretStore;
   redactor: Redactor;
   contracts: ValidationContractStore;
@@ -227,7 +241,10 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // Defect 3 fix. The report path carries the attempt number, so a stale report from an
       // earlier attempt can never be read as this attempt's report. The prompt below and the
       // `cat` call at step 13 both read this one value.
-      const reportPath = `${reviewDirectory}/report-${input.attempt}.json`;
+      // docs/specs/agent-session-usage-and-hangs.md. The fresh session after a hang writes its own
+      // report, so a partial report of the hung session is never read.
+      const afterHang = input.afterHang === true;
+      const reportPath = `${reviewDirectory}/report-${input.attempt}${afterHang ? "-after-hang" : ""}.json`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -305,7 +322,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       if (context.cancellationSignal.aborted) onCancel();
       else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
 
-      let sessionResult;
+      let sessionResult: AgentRunResult;
       try {
         // Step 10. A fresh session, every attempt. Factoree never resumes a Reviewer session and
         // never carries a session reference between attempts.
@@ -347,8 +364,42 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           cancelled: sessionResult.cancelled,
           summary: sessionResult.summary,
         },
-        idempotencyKey: `run:${input.runId}:reviewer:${input.attempt}`,
+        idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
       });
+      await recordAgentSession(
+        { sessions: dependencies.sessions, logger: dependencies.logger },
+        {
+          tenantId: input.tenantId,
+          productId: input.productId,
+          runId: input.runId,
+          role: "reviewer",
+          attempt: input.attempt,
+          runner: runner.name,
+          idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
+        },
+        [sessionResult],
+      );
+
+      // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing. The workflow
+      // starts one fresh session in the same pass.
+      const hang = hangOf([sessionResult]);
+      if (hang !== null) {
+        return {
+          passed: false,
+          verdict: "fail",
+          findingCount: 0,
+          blockingCount: 0,
+          summary: "",
+          changeDescription: "",
+          failures: [],
+          sessionId: sessionResult.session.sessionId,
+          reportUsable: false,
+          reportProblem: `The Reviewer session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, so Factoree stopped it.`,
+          changedFiles: diff.changedFiles,
+          worktreeSha: "",
+          hang,
+        };
+      }
 
       // Defect 4 fix. A session that did not complete, or that was cancelled, proves nothing.
       // A cancel here is the underlying runner reporting that the live Reviewer session stopped
@@ -374,6 +425,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
             : "The Reviewer session did not complete.",
           changedFiles: diff.changedFiles,
           worktreeSha: "",
+          hang: null,
         };
       }
 
@@ -407,6 +459,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
             "nothing.",
           changedFiles: diff.changedFiles,
           worktreeSha: "",
+          hang: null,
         };
       }
 
@@ -433,6 +486,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           reportProblem: NO_REPORT,
           changedFiles: diff.changedFiles,
           worktreeSha: "",
+          hang: null,
         };
       }
       try {
@@ -454,6 +508,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           reportProblem: dependencies.redactor.redactText(error.message),
           changedFiles: diff.changedFiles,
           worktreeSha: "",
+          hang: null,
         };
       }
 
@@ -529,6 +584,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         changedFiles: diff.changedFiles,
         // The identity of the reviewed content. The publication refuses a tree that differs.
         worktreeSha: afterFingerprint,
+        hang: null,
       };
     } finally {
       metrics.reviewDuration.observe(labels, (Date.now() - started) / 1000);

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { createAgentActivities, LiveSessionNotFoundError } from "~/activities/agent.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
-import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import { AgentRunnerRegistry, AgentSessionUnavailableError } from "~/domain/runs/agent-runner.js";
+import type { AgentResumeInput, AgentRunResult, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRecord, RecordAgentExecutionInput } from "~/domain/runs/agent-execution.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -11,6 +12,7 @@ import { FakeRunner } from "../support/fake-runner.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore()) => {
   const sandbox = new FakeSandbox();
@@ -24,16 +26,18 @@ const build = (runner: FakeRunner, secrets: SecretStore = new MemorySecretStore(
   };
   const redactor = new Redactor();
   const evidence = new FakeEvidenceStore();
+  const sessions = new MemoryAgentSessionStore();
   const activities = createAgentActivities({
     runners: new AgentRunnerRegistry([runner]),
     sandbox,
+    sessions,
     executions,
     secrets,
     redactor,
     logger: createLogger({ level: "error", redactor, sink: () => undefined }),
     evidence,
   });
-  return { activities, recorded, redactor, sandbox, evidence };
+  return { activities, recorded, redactor, sandbox, evidence, sessions };
 };
 
 /** Polls until the predicate holds, and names itself when it gives up. */
@@ -159,6 +163,7 @@ describe("cancelImplementer", () => {
     const activities = createAgentActivities({
       runners: new AgentRunnerRegistry([runner]),
       sandbox: new FakeSandbox(),
+      sessions: new MemoryAgentSessionStore(),
       executions: { record: () => Promise.resolve({} as AgentExecutionRecord), listForRun: () => Promise.resolve([]) },
       secrets: new MemorySecretStore(),
       evidence: new FakeEvidenceStore(),
@@ -314,5 +319,100 @@ describe("implement activity, the evidence of a failure", () => {
     await new MockActivityEnvironment().run(() => activities.implement(input));
 
     expect(evidence.rows).toHaveLength(1);
+  });
+});
+
+/** A runner whose resume finds no live sandbox, the way a session another worker started does. */
+class RemoteSessionRunner extends FakeRunner {
+  override resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+    this.resumes.push({ session, input: resumeInput });
+    return Promise.reject(new AgentSessionUnavailableError(this.name, session.sessionId));
+  }
+}
+
+describe("the implement activity, a hung session (docs/specs/agent-session-usage-and-hangs.md)", () => {
+  const hungSession = { sessionId: "ses_hung", processId: "process-hung", runner: "opencode" };
+
+  it("reports the hang and records the session row with its usage", async () => {
+    const runner = new FakeRunner("opencode", {
+      completed: false,
+      cancelled: true,
+      exitCode: 143,
+      outcome: "hung",
+      silenceLimitMs: 600_000,
+      model: "deepseek/deepseek-flash",
+      effort: "max",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 20,
+        reasoningTokens: 5,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 0,
+        costUsd: 0.25,
+        turns: 3,
+        longestTurnMs: 9_000,
+      },
+    });
+    const { activities, sessions } = build(runner);
+
+    const result: ImplementActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      input,
+    );
+
+    expect(result.hang).toEqual({ silenceLimitMs: 600_000 });
+    expect(sessions.rows).toHaveLength(1);
+    expect(sessions.rows[0]).toMatchObject({
+      role: "implementer",
+      attempt: 1,
+      outcome: "hung",
+      cliSessionId: "ses_fake",
+      model: "deepseek/deepseek-flash",
+      effort: "max",
+      idempotencyKey: "run:run-1:implementer:1",
+    });
+    expect(sessions.rows[0]?.usage?.costUsd).toBe(0.25);
+  });
+
+  it("records a session with no usage record, and reports no hang for a finished one", async () => {
+    const runner = new FakeRunner();
+    const { activities, sessions } = build(runner);
+
+    const result: ImplementActivityOutput = await new MockActivityEnvironment().run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      input,
+    );
+
+    expect(result.hang).toBeNull();
+    expect(sessions.rows[0]).toMatchObject({ outcome: "finished", usage: null });
+  });
+
+  it("resumes the hung session with continue instead of starting a fresh one", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner);
+
+    await new MockActivityEnvironment().run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      { ...input, attempt: 2, continueSession: hungSession },
+    );
+
+    expect(runner.runs).toHaveLength(0);
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.resumes[0]?.session).toEqual(hungSession);
+    expect(runner.resumes[0]?.input.prompt).toBe("continue");
+  });
+
+  it("starts a fresh session when this worker holds no live sandbox for the hung one", async () => {
+    const runner = new RemoteSessionRunner();
+    const { activities } = build(runner);
+
+    await new MockActivityEnvironment().run(
+      (activityInput: typeof input): Promise<ImplementActivityOutput> => activities.implement(activityInput),
+      { ...input, attempt: 2, continueSession: hungSession },
+    );
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.runs).toHaveLength(1);
+    expect(runner.runs[0]?.prompt).toContain("Add the health endpoint.");
   });
 });

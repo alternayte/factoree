@@ -26,6 +26,7 @@ import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
 import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const passingBrowserResult: BrowserRunResult = {
   passed: true,
@@ -215,6 +216,7 @@ const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => 
     userValidation: {
       sandbox,
       runners: new AgentRunnerRegistry([runner]),
+      sessions: new MemoryAgentSessionStore(),
       executions,
       secrets: new MemorySecretStore(),
       redactor,

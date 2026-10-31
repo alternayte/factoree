@@ -111,6 +111,7 @@ model Run {
   startedAt                DateTime?
   completedAt              DateTime?
   executions               AgentExecution[]
+  agentSessions            AgentSession[]
   evidence                 Evidence[]
   contextContract          ContextContract?
   validationContract       ValidationContract?
@@ -141,6 +142,40 @@ model AgentExecution {
   // attempt, for example a repair loop attempt, uses a distinct key and writes a distinct row.
   idempotencyKey String
   createdAt      DateTime  @default(now())
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId])
+  @@index([runId])
+}
+
+// docs/specs/agent-session-usage-and-hangs.md. One row per agent session, with the usage the
+// agent CLI recorded. The columns are snake_case, so an operator queries cost per Run, role and
+// Product in plain SQL. DI-14.42. A usage field is null when the CLI left no record.
+model AgentSession {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  runId            String   @map("run_id")
+  run              Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  role             String
+  attempt          Int
+  runner           String
+  cliSessionId     String?  @map("cli_session_id")
+  model            String?
+  effort           String?
+  inputTokens      Int?     @map("input_tokens")
+  outputTokens     Int?     @map("output_tokens")
+  reasoningTokens  Int?     @map("reasoning_tokens")
+  cacheReadTokens  Int?     @map("cache_read_tokens")
+  cacheWriteTokens Int?     @map("cache_write_tokens")
+  costUsd          Float?   @map("cost_usd")
+  turns            Int?
+  durationMs       Int      @map("duration_ms")
+  longestTurnMs    Int?     @map("longest_turn_ms")
+  // finished, hung or failed.
+  outcome          String
+  // One key per session. A Temporal retry of the activity upserts the same row.
+  idempotencyKey   String   @map("idempotency_key")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId])

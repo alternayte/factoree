@@ -56,3 +56,8 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - determined proposal: a proposal backed by a rule or a cited source that a reviewer can check. Factoree takes it without asking. Avoid: recommended default, auto-accept, best guess.
 - implied criterion: a criterion no ticket sentence states, but one cited sentence directly implies. It freezes with an implied-by source. Avoid: inferred criterion, assumed criterion.
 - new criterion: a criterion that adds behaviour no ticket sentence implies. Factoree drops it and lists it under Not built. Avoid: extra criterion, scope creep.
+- hung session: an agent session that writes no output for the silence limit. Factoree stops it and tries once more. Avoid: stuck agent, frozen session, stalled run.
+- silence limit: the time with no new process output after which a session is hung. Avoid: idle timeout, hang timeout.
+- install: one Factoree deployment, with its database, API and worker. It holds one or more tenants. Avoid: instance, deployment.
+- install settings: the settings for the whole install, stored in the database, such as the GitHub App, the sandbox provider and the git author. Avoid: global settings, system config.
+- setup token: the one-time token the API logs on first start. Only it opens /setup. Avoid: bootstrap token, admin token.

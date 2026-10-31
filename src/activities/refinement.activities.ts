@@ -2,7 +2,9 @@ import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { agentSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -75,6 +77,8 @@ export interface RefinementActivityDependencies {
     sandbox: Sandbox;
     runners: AgentRunnerRegistry;
     executions: AgentExecutionRepository;
+    /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
+    sessions: AgentSessionStore;
     secrets: SecretStore;
     redactor: Redactor;
   };
@@ -99,6 +103,11 @@ export interface ProposeRefinementActivityInput {
   /** docs/specs/proof-pack-and-visual-evidence.md. True when the repository has an enabled preview. */
   previewConfigured: boolean;
   timeoutMs: number;
+  /**
+   * docs/specs/agent-session-usage-and-hangs.md. True for the one fresh session that follows a
+   * hung one. It writes its own proposal file and its own rows.
+   */
+  afterHang?: boolean;
 }
 
 export interface ProposeRefinementActivityOutput {
@@ -117,6 +126,8 @@ export interface ProposeRefinementActivityOutput {
   /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap: string | null;
   reason: string;
+  /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
+  hang: AgentHang;
 }
 
 const REFINER_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -217,7 +228,9 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     await attachRunnerEnvironment(agent.sandbox, ref, agent.secrets, input.tenantId, input.productId);
     const directory = `${input.workspacePath}/refinement`;
     await agent.sandbox.exec(ref, { file: "mkdir", args: ["-p", directory] });
-    const proposalPath = `${directory}/proposal.json`;
+    const afterHang = input.afterHang === true;
+    // A hung session can leave a partial proposal, and the fresh session must never read it.
+    const proposalPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}.json`;
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
     const before = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
 
@@ -243,9 +256,9 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     if (context.cancellationSignal.aborted) onCancel();
     else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
 
-    let result;
+    const invocations: AgentRunResult[] = [];
     try {
-      result = await runner.run({
+      const result = await runner.run({
         runId: input.runId,
         tenantId: input.tenantId,
         role: "refiner",
@@ -259,30 +272,37 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         actionPolicy,
         timeoutMs: input.timeoutMs,
       });
+      invocations.push(result);
+      // A reminder is pointless once the session hung. The workflow decides what follows.
+      const live = (): boolean => !context.cancellationSignal.aborted && hangOf(invocations) === null;
       let read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
-      if (read.exitCode !== 0 && !context.cancellationSignal.aborted) {
+      if (read.exitCode !== 0 && live()) {
         // A session can answer in a message and forget the file. One reminder recovers it.
-        await runner.resume(result.session, {
-          prompt: `You wrote no proposal. Write it now, as one JSON document, to ${proposalPath}. Write the file and nothing else.`,
-          timeoutMs: input.timeoutMs,
-        });
+        invocations.push(
+          await runner.resume(result.session, {
+            prompt: `You wrote no proposal. Write it now, as one JSON document, to ${proposalPath}. Write the file and nothing else.`,
+            timeoutMs: input.timeoutMs,
+          }),
+        );
         read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
       }
       // docs/specs/proof-pack-and-visual-evidence.md. A visible criterion in a repository with a
       // preview needs a browser check. One reminder asks for it before the gap reaches a human.
-      if (read.exitCode === 0 && input.previewConfigured && !context.cancellationSignal.aborted) {
+      if (read.exitCode === 0 && input.previewConfigured && live()) {
         const first = gateOrNull(read.stdout, input.workItemText, repository);
         if (first !== null && first.visualEvidenceGap !== null) {
-          await runner.resume(result.session, {
+          const reminder = await runner.resume(result.session, {
             prompt:
               `${first.visualEvidenceGap} The repository has a preview, so give each visible criterion ` +
               'the method "browser" and a target route that starts with "/". Rewrite ' +
               `${proposalPath} with the whole proposal. Write the file and nothing else.`,
             timeoutMs: input.timeoutMs,
           });
+          invocations.push(reminder);
           read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
         }
       }
+      const hang = hangOf(invocations);
 
       await agent.executions.record({
         tenantId: input.tenantId,
@@ -299,17 +319,36 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           cancelled: result.cancelled,
           summary: result.summary,
         },
-        idempotencyKey: `run:${input.runId}:refiner`,
+        idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang),
       });
+      // The refiner runs before the first Implementer attempt, so its row carries attempt 1.
+      await recordAgentSession(
+        { sessions: agent.sessions, logger: dependencies.logger },
+        {
+          tenantId: input.tenantId,
+          productId: input.productId,
+          runId: input.runId,
+          role: "refiner",
+          attempt: 1,
+          runner: runner.name,
+          idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang),
+        },
+        invocations,
+      );
 
       const after = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
-      const empty = { accepted: [], decisions: [], visualEvidenceGap: null };
+      const empty = { accepted: [], decisions: [], visualEvidenceGap: null, hang: null };
       if (after !== before) {
         return {
           status: "worktree_changed",
           ...empty,
           reason: `The refiner changed the primary worktree. Tree before: ${before}. Tree after: ${after}.`,
         };
+      }
+      // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, even when a
+      // partial proposal exists. The workflow starts one fresh session.
+      if (hang !== null) {
+        return { status: "unavailable", ...empty, hang, reason: "The refiner session wrote no output for the silence limit." };
       }
       if (read.exitCode !== 0) {
         return { status: "unavailable", ...empty, reason: "The refiner wrote no proposal." };
@@ -334,6 +373,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         decisions: refinementDecisions(gated),
         visualEvidenceGap: gated.visualEvidenceGap,
         reason: "",
+        hang: null,
       };
     } finally {
       clearInterval(heartbeat);

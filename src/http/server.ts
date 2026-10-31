@@ -14,6 +14,7 @@ import { createAdminGuard } from "./admin/auth.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProductRoutes } from "./admin/products.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
+import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
@@ -88,7 +89,11 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       linearTeams: dependencies.linearTeams,
       runs: dependencies.runs,
     });
-    registerRunRoutes(admin, { runs: dependencies.runs, tenants: dependencies.tenants });
+    registerRunRoutes(admin, {
+      runs: dependencies.runs,
+      tenants: dependencies.tenants,
+      sessions: new PrismaAgentSessionStore(dependencies.prisma),
+    });
     registerInstallationRoutes(admin, { tenants: dependencies.tenants });
     registerContextSourceRoutes(admin, {
       products: dependencies.products,

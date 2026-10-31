@@ -13,6 +13,7 @@ import type { ValidationAssertionResultRecord } from "~/domain/validation/valida
 import type { StoredValidationContract } from "~/domain/validation/validation-contract-store.js";
 import type { StoredContextContract } from "~/domain/context/context-contract-store.js";
 import { MemorySecretStore } from "../support/memory-secret-store.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const contract: StoredValidationContract = {
   id: "vc-1",
@@ -226,6 +227,7 @@ const build = (
     validationResults: { listForRun: async () => results },
     evidence: { listForRun: async () => evidenceRows },
     reviewFindings: { listForRun: async () => findings },
+    sessions: new MemoryAgentSessionStore(),
     agentSession: {
       addLink: async () => {
         order.push("link");

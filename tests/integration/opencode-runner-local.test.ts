@@ -62,6 +62,9 @@ describe("OpenCodeRunner against a real sandbox process", () => {
     expect(result.summary).toBe("The change is applied.");
     const written = await readFile(join(ref.workspacePath, "out.txt"), "utf8");
     expect(written.trim()).toBe("Write this line into the target file.");
+    // docs/specs/agent-session-usage-and-hangs.md. The usage comes from `opencode export` in the sandbox.
+    expect(result.usage).toMatchObject({ costUsd: 0.001, inputTokens: 10, outputTokens: 20, turns: 1, longestTurnMs: 500 });
+    expect(result.model).toBe("stub/stub-model");
   });
 
   it("redacts a Project secret the agent printed", async () => {

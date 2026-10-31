@@ -25,6 +25,11 @@ export class FakeSandbox implements Sandbox {
   readonly name = "fake";
   readonly calls: string[] = [];
   readonly commands: Command[] = [];
+  /**
+   * The `startProcess` commands alone. A runner also runs `exec` commands after a session, for
+   * example the usage read, so a test that counts sessions counts these.
+   */
+  readonly started: Command[] = [];
   /** The environment of the last `attachEnvironment` or `create` call. A test asserts on it. */
   attachedEnvironment: Record<string, string> = {};
   readonly policies: NetworkPolicy[] = [];
@@ -123,6 +128,7 @@ export class FakeSandbox implements Sandbox {
   startProcess(_ref: SandboxRef, command: Command): Promise<ProcessRef> {
     this.calls.push(`startProcess:${command.file}`);
     this.commands.push(command);
+    this.started.push(command);
     this.counter += 1;
     const id = `process-${this.counter}`;
     this.processes.set(id, { running: true, exitCode: null, stdout: "", stderr: "" });

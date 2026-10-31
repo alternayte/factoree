@@ -51,6 +51,7 @@ import {
   applyReviewFixtureAuthorizationFix,
   writeReviewFixtureApp,
 } from "./support/review-fixture-app.js";
+import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 /** The name the frozen Validation Contract states. Both revisions of the fixture answer it. */
 const NEW_NAME = "Reviewed Project";
@@ -174,6 +175,11 @@ class ScriptedValidatorRunner implements AgentRunner {
       summary: "The user validation session is complete.",
       durationMs: 5,
       failureLog: null,
+      outcome: "finished",
+      silenceLimitMs: 600_000,
+      usage: null,
+      model: null,
+      effort: null,
     };
   }
 
@@ -217,6 +223,11 @@ class ScriptedReviewerRunner implements AgentRunner {
       summary: "The independent review is complete.",
       durationMs: 5,
       failureLog: null,
+      outcome: "finished",
+      silenceLimitMs: 600_000,
+      usage: null,
+      model: null,
+      effort: null,
     };
   }
 
@@ -407,6 +418,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
   const review = createReviewActivities({
     sandbox,
     runners: new AgentRunnerRegistry([reviewerRunner]),
+    sessions: new MemoryAgentSessionStore(),
     executions,
     secrets,
     redactor,
@@ -421,6 +433,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
     userValidation: {
       sandbox,
       runners: new AgentRunnerRegistry([new ScriptedValidatorRunner(planText)]),
+      sessions: new MemoryAgentSessionStore(),
       executions,
       secrets,
       redactor,
@@ -500,6 +513,7 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
         durationMs: 5,
         failureLog: null,
         cancelledSession: false,
+        hang: null,
       };
     },
     verify: async (input: VerifyActivityInput) => {
@@ -757,6 +771,7 @@ describe("Phase 8 exit — a known defect is found, repaired, revalidated, and r
       sandbox,
       runners: new AgentRunnerRegistry([new ScriptedReviewerRunner(() => LYING_REPORT)]),
       executions: new PrismaAgentExecutionRepository(prisma),
+      sessions: new MemoryAgentSessionStore(),
       secrets: new MemorySecretStore(),
       redactor: new Redactor(),
       contracts,

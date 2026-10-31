@@ -58,6 +58,7 @@ const passing: UserValidateActivityOutput = {
   failures: [],
   sessionId: "ses_fake_validator",
   previewUrl: null,
+  hang: null,
 };
 
 const failing: UserValidateActivityOutput = {
@@ -70,6 +71,7 @@ const failing: UserValidateActivityOutput = {
   failures: ["VAL-UI-001: the button is missing."],
   sessionId: "ses_fake_validator",
   previewUrl: null,
+  hang: null,
 };
 
 const manualOnly: UserValidateActivityOutput = {
@@ -82,6 +84,7 @@ const manualOnly: UserValidateActivityOutput = {
   failures: [],
   sessionId: "ses_fake_validator",
   previewUrl: null,
+  hang: null,
 };
 
 const blockedOnly: UserValidateActivityOutput = {
@@ -94,6 +97,7 @@ const blockedOnly: UserValidateActivityOutput = {
   failures: [],
   sessionId: "ses_fake_validator",
   previewUrl: null,
+  hang: null,
 };
 
 describe("USER_VALIDATING", () => {
