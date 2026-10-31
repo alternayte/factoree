@@ -71,6 +71,10 @@ export type GetSetupStatusResponses = {
       done: boolean;
       workspaceName: string | null;
       linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
     };
     githubInstall: {
       done: boolean;
@@ -190,6 +194,10 @@ export type ConvertGitHubAppManifestResponses = {
       done: boolean;
       workspaceName: string | null;
       linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
     };
     githubInstall: {
       done: boolean;
@@ -264,6 +272,10 @@ export type PutLinearAppResponses = {
       done: boolean;
       workspaceName: string | null;
       linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
     };
     githubInstall: {
       done: boolean;
@@ -318,6 +330,87 @@ export type StartSetupLinearInstallResponses = {
 };
 
 export type StartSetupLinearInstallResponse = StartSetupLinearInstallResponses[keyof StartSetupLinearInstallResponses];
+
+export type AdoptSetupLinearInstallData = {
+  body: {
+    tenantId: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/api/setup/linear/adopt";
+};
+
+export type AdoptSetupLinearInstallErrors = {
+  /**
+   * Default Response
+   */
+  401: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type AdoptSetupLinearInstallError = AdoptSetupLinearInstallErrors[keyof AdoptSetupLinearInstallErrors];
+
+export type AdoptSetupLinearInstallResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    completed: boolean;
+    publicUrl: string;
+    githubApp: {
+      done: boolean;
+      appSlug: string | null;
+      installUrl: string | null;
+      baseUrl: string;
+      apiBaseUrl: string;
+    };
+    linearApp: {
+      done: boolean;
+      clientId: string | null;
+      webhookUrl: string;
+      installCallbackUrl: string;
+      signInCallbackUrl: string;
+    };
+    linearInstall: {
+      done: boolean;
+      workspaceName: string | null;
+      linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
+    };
+    githubInstall: {
+      done: boolean;
+      accounts: Array<string>;
+    };
+    sandbox: {
+      done: boolean;
+      provider: string | null;
+      localAllowed: boolean;
+      pinnedImage: string | null;
+    };
+    product: {
+      done: boolean;
+      slugs: Array<string>;
+    };
+  };
+};
+
+export type AdoptSetupLinearInstallResponse = AdoptSetupLinearInstallResponses[keyof AdoptSetupLinearInstallResponses];
 
 export type BindGitHubInstallationData = {
   body: {
@@ -382,6 +475,10 @@ export type BindGitHubInstallationResponses = {
       done: boolean;
       workspaceName: string | null;
       linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
     };
     githubInstall: {
       done: boolean;
@@ -459,6 +556,10 @@ export type PutSandboxResponses = {
       done: boolean;
       workspaceName: string | null;
       linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
     };
     githubInstall: {
       done: boolean;
@@ -645,6 +746,10 @@ export type CompleteSetupResponses = {
       done: boolean;
       workspaceName: string | null;
       linearWorkspaceId: string | null;
+      existing: Array<{
+        tenantId: string;
+        workspaceName: string;
+      }>;
     };
     githubInstall: {
       done: boolean;

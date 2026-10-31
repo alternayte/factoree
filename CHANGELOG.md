@@ -21,6 +21,7 @@ The first release. Another person can install Factoree from released artefacts a
 - Each agent session records its tokens, cost, turns and longest turn. The admin API returns the sessions, and the proof pack shows the totals.
 - An agent session that writes no output for the product's silence limit is hung. Factoree stops it and tries once more. A second hang in the same step fails the run with `AGENT_HUNG`.
 - Setup in the web UI at `/setup`, guarded by a one-time setup token that the API logs at start: the GitHub App from a manifest, the Linear OAuth app and its install, the GitHub App install, the sandbox provider, and the first product.
+- Setup takes over a Linear installation that the database already holds, because Linear does not install the app again in a workspace that has it. The stored token must still work, and the GitHub installations of another App are unbound.
 - Sign-in with Linear through better-auth. Only members of a set-up Linear workspace get in, and a Linear workspace admin is a Factoree admin.
 - API keys per person replace `ADMIN_API_TOKEN`. A script sends a key as `Authorization: Bearer`. Every admin API call records the user or the key.
 - A web UI in `ui/`, served by the API from the same origin: install settings, workspaces, products with model, effort per role, silence limit, policy, secrets, retention and concurrency, and API keys.

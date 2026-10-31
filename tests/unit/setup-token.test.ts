@@ -62,7 +62,8 @@ const unused = new Proxy({}, { get: () => () => Promise.reject(new Error("unused
 const server = (settings: InstallSettingsStore) => {
   const app = Fastify();
   const dependencies: SetupRouteDependencies = {
-    prisma: unused,
+    // Status reads the stored Linear installations while no setup workspace exists. None exist here.
+    prisma: { tenant: { findMany: () => Promise.resolve([]) } } as never,
     settings,
     tenants: unused,
     products: unused,

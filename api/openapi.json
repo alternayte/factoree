@@ -158,12 +158,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
                         }
                       },
                       "required": [
                         "done",
                         "workspaceName",
-                        "linearWorkspaceId"
+                        "linearWorkspaceId",
+                        "existing"
                       ]
                     },
                     "githubInstall": {
@@ -521,12 +540,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
                         }
                       },
                       "required": [
                         "done",
                         "workspaceName",
-                        "linearWorkspaceId"
+                        "linearWorkspaceId",
+                        "existing"
                       ]
                     },
                     "githubInstall": {
@@ -795,12 +833,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
                         }
                       },
                       "required": [
                         "done",
                         "workspaceName",
-                        "linearWorkspaceId"
+                        "linearWorkspaceId",
+                        "existing"
                       ]
                     },
                     "githubInstall": {
@@ -983,6 +1040,290 @@
         }
       }
     },
+    "/api/setup/linear/adopt": {
+      "post": {
+        "operationId": "adoptSetupLinearInstall",
+        "tags": [
+          "setup"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tenantId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "tenantId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "setupToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "completed": {
+                      "type": "boolean"
+                    },
+                    "publicUrl": {
+                      "type": "string"
+                    },
+                    "githubApp": {
+                      "type": "object",
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "appSlug": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "installUrl": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "baseUrl": {
+                          "type": "string"
+                        },
+                        "apiBaseUrl": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "done",
+                        "appSlug",
+                        "installUrl",
+                        "baseUrl",
+                        "apiBaseUrl"
+                      ]
+                    },
+                    "linearApp": {
+                      "type": "object",
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "clientId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "webhookUrl": {
+                          "type": "string"
+                        },
+                        "installCallbackUrl": {
+                          "type": "string"
+                        },
+                        "signInCallbackUrl": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "done",
+                        "clientId",
+                        "webhookUrl",
+                        "installCallbackUrl",
+                        "signInCallbackUrl"
+                      ]
+                    },
+                    "linearInstall": {
+                      "type": "object",
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "workspaceName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "linearWorkspaceId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "done",
+                        "workspaceName",
+                        "linearWorkspaceId",
+                        "existing"
+                      ]
+                    },
+                    "githubInstall": {
+                      "type": "object",
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "accounts": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "done",
+                        "accounts"
+                      ]
+                    },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "provider": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "localAllowed": {
+                          "type": "boolean"
+                        },
+                        "pinnedImage": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "done",
+                        "provider",
+                        "localAllowed",
+                        "pinnedImage"
+                      ]
+                    },
+                    "product": {
+                      "type": "object",
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "slugs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "done",
+                        "slugs"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "completed",
+                    "publicUrl",
+                    "githubApp",
+                    "linearApp",
+                    "linearInstall",
+                    "githubInstall",
+                    "sandbox",
+                    "product"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/setup/github/installation": {
       "post": {
         "operationId": "bindGitHubInstallation",
@@ -1108,12 +1449,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
                         }
                       },
                       "required": [
                         "done",
                         "workspaceName",
-                        "linearWorkspaceId"
+                        "linearWorkspaceId",
+                        "existing"
                       ]
                     },
                     "githubInstall": {
@@ -1452,12 +1812,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
                         }
                       },
                       "required": [
                         "done",
                         "workspaceName",
-                        "linearWorkspaceId"
+                        "linearWorkspaceId",
+                        "existing"
                       ]
                     },
                     "githubInstall": {
@@ -2043,12 +2422,31 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "existing": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tenantId": {
+                                "type": "string"
+                              },
+                              "workspaceName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "tenantId",
+                              "workspaceName"
+                            ]
+                          }
                         }
                       },
                       "required": [
                         "done",
                         "workspaceName",
-                        "linearWorkspaceId"
+                        "linearWorkspaceId",
+                        "existing"
                       ]
                     },
                     "githubInstall": {

@@ -74,7 +74,11 @@ const setupStatusSchema = z.object({
     installCallbackUrl: z.string(),
     signInCallbackUrl: z.string(),
   }),
-  linearInstall: stepSchema.extend({ workspaceName: z.string().nullable(), linearWorkspaceId: z.string().nullable() }),
+  linearInstall: stepSchema.extend({
+    workspaceName: z.string().nullable(),
+    linearWorkspaceId: z.string().nullable(),
+    existing: z.array(z.object({ tenantId: z.string(), workspaceName: z.string() })),
+  }),
   githubInstall: stepSchema.extend({ accounts: z.array(z.string()) }),
   sandbox: stepSchema.extend({
     provider: z.string().nullable(),
@@ -102,6 +106,8 @@ const conversionSchema = z.object({ code: z.string().min(1), state: z.string().m
 const linearAppSchema = z
   .object({ clientId: z.string().min(1), clientSecret: z.string().min(1), webhookSecret: z.string().min(1) })
   .strict();
+
+const adoptSchema = z.object({ tenantId: z.string().uuid() }).strict();
 
 const installationSchema = z.object({ installationId: z.string().regex(/^\d+$/) }).strict();
 
@@ -158,6 +164,16 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
         ? []
         : await dependencies.prisma.gitHubInstallation.findMany({ where: { tenantId: tenant.id } });
     const products = tenant === null ? [] : await dependencies.products.list(tenant.id);
+    // A workspace that holds the app from before setup cannot install it again without an
+    // uninstall, so setup offers its stored installation instead.
+    const existing =
+      tenant === null
+        ? await dependencies.prisma.tenant.findMany({
+            where: { installations: { some: {} } },
+            select: { id: true, name: true },
+            orderBy: { createdAt: "asc" },
+          })
+        : [];
     const { publicUrl } = dependencies;
     return {
       completed: settings.setupCompletedAt !== null,
@@ -183,6 +199,7 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
         done: tenant !== null,
         workspaceName: tenant?.name ?? null,
         linearWorkspaceId: tenant?.linearWorkspaceId ?? null,
+        existing: existing.map((candidate) => ({ tenantId: candidate.id, workspaceName: candidate.name })),
       },
       githubInstall: { done: githubAccounts.length > 0, accounts: githubAccounts.map((github) => github.accountLogin) },
       sandbox: {
@@ -390,6 +407,60 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
             state: signFlowState(dependencies.masterKey, "setup"),
           }),
         };
+      },
+    );
+
+    scope.post(
+      "/api/setup/linear/adopt",
+      {
+        schema: {
+          tags: TAGS,
+          operationId: "adoptSetupLinearInstall",
+          security: SETUP_SECURITY,
+          body: schemaOf(adoptSchema),
+          response: { 200: schemaOf(setupStatusSchema), 401: errorSchema, 404: errorSchema, 422: errorSchema },
+        },
+      },
+      async (request, reply) => {
+        const body = adoptSchema.safeParse(request.body);
+        if (!body.success) return reply.code(422).send({ error: body.error.flatten() });
+        const tenant = await dependencies.prisma.tenant.findFirst({
+          where: { id: body.data.tenantId, installations: { some: {} } },
+        });
+        if (tenant === null) return reply.code(404).send({ error: "no stored Linear installation for this workspace" });
+        // A team read with the stored token proves the installation still works.
+        try {
+          await dependencies.linear.listTeams(tenant.linearWorkspaceId);
+        } catch (error) {
+          dependencies.logger.warn("the stored Linear installation does not work", { error: String(error), step: "setup" });
+          return reply.code(422).send({ error: "the stored Linear token no longer works. Install the app again" });
+        }
+        // The stored workspace can hold installations of an App from before setup. A token request
+        // for one fails with this App's key, so only installations of this App stay bound.
+        const settings = await dependencies.settings.read();
+        if (settings.github.appId !== null && settings.github.privateKey !== null) {
+          const credentials = {
+            appId: settings.github.appId,
+            privateKey: settings.github.privateKey,
+            apiBaseUrl: settings.github.apiBaseUrl,
+          };
+          const bound = await dependencies.prisma.gitHubInstallation.findMany({ where: { tenantId: tenant.id } });
+          for (const installation of bound) {
+            const current = await dependencies.github.readInstallation({
+              credentials,
+              installationId: installation.githubInstallationId,
+            });
+            if (current !== null) continue;
+            await dependencies.prisma.gitHubInstallation.delete({ where: { id: installation.id } });
+            dependencies.logger.info("a GitHub installation of another App is unbound", {
+              github_installation_id: installation.githubInstallationId,
+              step: "setup",
+            });
+          }
+        }
+        await dependencies.settings.update({ operatorTenantId: tenant.id });
+        dependencies.logger.info("Linear installation adopted", { linear_workspace_id: tenant.linearWorkspaceId, step: "setup" });
+        return status();
       },
     );
 

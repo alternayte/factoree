@@ -6,6 +6,9 @@ import type {
   ActivateProductData,
   ActivateProductErrors,
   ActivateProductResponses,
+  AdoptSetupLinearInstallData,
+  AdoptSetupLinearInstallErrors,
+  AdoptSetupLinearInstallResponses,
   BindGitHubInstallationData,
   BindGitHubInstallationErrors,
   BindGitHubInstallationResponses,
@@ -198,6 +201,25 @@ export const startSetupLinearInstall = <ThrowOnError extends boolean = false>(
     ],
     url: "/api/setup/linear/install",
     ...options,
+  });
+
+export const adoptSetupLinearInstall = <ThrowOnError extends boolean = false>(
+  options: Options<AdoptSetupLinearInstallData, ThrowOnError>,
+): RequestResult<AdoptSetupLinearInstallResponses, AdoptSetupLinearInstallErrors, ThrowOnError> =>
+  (options.client ?? client).post<AdoptSetupLinearInstallResponses, AdoptSetupLinearInstallErrors, ThrowOnError>({
+    security: [
+      {
+        key: "setupToken",
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/api/setup/linear/adopt",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 export const bindGitHubInstallation = <ThrowOnError extends boolean = false>(

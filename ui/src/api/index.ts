@@ -2,6 +2,7 @@
 
 export {
   activateProduct,
+  adoptSetupLinearInstall,
   bindGitHubInstallation,
   completeSetup,
   convertGitHubAppManifest,
@@ -38,6 +39,11 @@ export type {
   ActivateProductErrors,
   ActivateProductResponse,
   ActivateProductResponses,
+  AdoptSetupLinearInstallData,
+  AdoptSetupLinearInstallError,
+  AdoptSetupLinearInstallErrors,
+  AdoptSetupLinearInstallResponse,
+  AdoptSetupLinearInstallResponses,
   BindGitHubInstallationData,
   BindGitHubInstallationError,
   BindGitHubInstallationErrors,

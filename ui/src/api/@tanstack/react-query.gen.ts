@@ -5,6 +5,7 @@ import { type DefaultError, queryOptions, type UseMutationOptions } from "@tanst
 import { client } from "../client.gen";
 import {
   activateProduct,
+  adoptSetupLinearInstall,
   bindGitHubInstallation,
   completeSetup,
   convertGitHubAppManifest,
@@ -39,6 +40,9 @@ import type {
   ActivateProductData,
   ActivateProductError,
   ActivateProductResponse,
+  AdoptSetupLinearInstallData,
+  AdoptSetupLinearInstallError,
+  AdoptSetupLinearInstallResponse,
   BindGitHubInstallationData,
   BindGitHubInstallationError,
   BindGitHubInstallationResponse,
@@ -275,6 +279,30 @@ export const startSetupLinearInstallMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await startSetupLinearInstall({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const adoptSetupLinearInstallMutation = (
+  options?: Partial<Options<AdoptSetupLinearInstallData>>,
+): UseMutationOptions<
+  AdoptSetupLinearInstallResponse,
+  AdoptSetupLinearInstallError,
+  Options<AdoptSetupLinearInstallData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    AdoptSetupLinearInstallResponse,
+    AdoptSetupLinearInstallError,
+    Options<AdoptSetupLinearInstallData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await adoptSetupLinearInstall({
         ...options,
         ...fnOptions,
         throwOnError: true,

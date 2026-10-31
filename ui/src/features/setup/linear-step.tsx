@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { putLinearApp, startSetupLinearInstall } from "@/api/sdk.gen";
+import { adoptSetupLinearInstall, putLinearApp, startSetupLinearInstall } from "@/api/sdk.gen";
 import { Button } from "@/components/button";
 import { CopyValue } from "@/components/copy";
 import { Field, Input } from "@/components/form";
@@ -40,6 +40,13 @@ export function LinearStep({ linearError }: { linearError?: string }) {
   });
 
   const fieldErrors = save.error instanceof ApiError ? save.error.fieldErrors : {};
+
+  const adopt = useMutation({
+    mutationFn: async (tenantId: string) =>
+      (await adoptSetupLinearInstall({ body: { tenantId }, throwOnError: true })).data,
+    onSuccess: (next) => setStatus(next),
+    onError: handleAuthError,
+  });
 
   return (
     <StepFrame
@@ -142,6 +149,13 @@ export function LinearStep({ linearError }: { linearError?: string }) {
               Installed in the Linear workspace {install.workspaceName ?? install.linearWorkspaceId}.
             </Alert>
           ) : null}
+          {!install.done && install.existing.length > 0 ? (
+            <Alert tone="info" title="The app is already installed">
+              Linear stops at "already installed" for a workspace that has the app. Use the stored installation
+              instead.
+            </Alert>
+          ) : null}
+          <ErrorAlert error={adopt.error} />
           <ErrorAlert error={startInstall.error} />
           <Actions>
             {/* One primary action per view: the install is primary once the credentials are stored. */}
@@ -153,6 +167,18 @@ export function LinearStep({ linearError }: { linearError?: string }) {
             >
               {install.done ? "Install again in Linear" : "Install in Linear"}
             </Button>
+            {!install.done
+              ? install.existing.map((existing) => (
+                  <Button
+                    key={existing.tenantId}
+                    variant="secondary"
+                    mutation={adopt}
+                    onClick={() => adopt.mutate(existing.tenantId)}
+                  >
+                    Use the installation in {existing.workspaceName}
+                  </Button>
+                ))
+              : null}
           </Actions>
         </div>
       </Section>
