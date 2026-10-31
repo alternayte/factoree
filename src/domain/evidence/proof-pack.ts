@@ -5,31 +5,28 @@ import type { ReviewCategory, ReviewSeverity } from "~/domain/review/review-repo
 import type { EvidenceKind } from "~/domain/evidence/evidence.js";
 
 /**
- * SDD section 47. The Proof Pack optimizes for one human acceptance decision. It must not dump a
- * full raw log into Linear, so no type in this file carries log text. A caller therefore cannot
- * pass one, and the rule holds by construction rather than by care.
+ * SDD section 47, amended by docs/specs/proof-pack-and-visual-evidence.md. The Proof Pack has a
+ * short body for a human and a full JSON document for an agent. Both come from one input, so they
+ * cannot disagree. The body must not dump a raw log into Linear, so no type in this file carries
+ * log text. A caller therefore cannot pass one, and the rule holds by construction.
  */
 
-/** The largest number of changed files the Proof Pack names one by one. */
+/** The largest number of changed files the document names one by one. */
 export const MAX_LISTED_CHANGED_FILES = 50;
 
-/** The largest number of characters one free text field contributes. */
+/** The largest number of characters one free text field contributes to the body. */
 export const MAX_FIELD_CHARACTERS = 500;
 
-/** SDD section 47 fixes these headings and this order. */
+/** docs/specs/proof-pack-and-visual-evidence.md fixes these body headings and this order. */
 export const PROOF_PACK_HEADINGS = [
   "## Factoree delivery",
-  "### Pull request",
-  "### Validation contract",
-  "### Deterministic verification",
-  "### Independent review",
-  "### Context used",
-  "### Context conflicts",
-  "### Change summary",
-  "### Preview",
-  "### Known limitations",
-  "### Run metadata",
+  "### Needs your attention",
+  "### Visual evidence",
+  "### Checks",
 ] as const;
+
+/** The file name of the JSON document, in Linear and in the body link. */
+export const PROOF_PACK_DOCUMENT_NAME = "proof-pack.json";
 
 /** One stored artefact of SDD section 39. The bytes stay in storage, and the reference travels. */
 export interface ProofPackEvidenceRef {
@@ -69,7 +66,7 @@ export interface ProofPackFinding {
   requirement: string;
   evidence: string;
   description: string;
-  /** Factoree's own decision. SDD section 41. A non-blocking finding is a known limitation. */
+  /** Factoree's own decision. SDD section 41. A non-blocking finding needs a human. */
   blocking: boolean;
   decisionReason: string;
   attempt: number;
@@ -118,6 +115,8 @@ export interface ProofPackInput {
   runId: string;
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
+  /** The Reviewer's description of the change. It is labelled as such, and it decides nothing. */
+  changeDescription: string;
   assertions: ProofPackAssertion[];
   checks: ProofPackCheck[];
   /** The agent claim of SDD section 41. Factoree's own decision drove the Run. */
@@ -131,7 +130,8 @@ export interface ProofPackInput {
   conflicts: ProofPackConflict[];
   changedFiles: string[];
   patchByteLength: number;
-  previewUrl: string | null;
+  /** The check sprite preview of the last pass. It ends with the Run, so only the document holds it. */
+  checkPreviewUrl: string | null;
   baseSha: string;
   patchSha256: string;
   commitSha: string;
@@ -142,8 +142,47 @@ export interface ProofPackInput {
   autonomyReasons?: string[];
   /** docs/specs/check-isolation.md. Changed files that define a check. A human reads them first. */
   checkDefiningFiles?: string[];
+  /** The visual evidence gap a human accepted at refinement, or null. */
+  visualEvidenceGap: string | null;
   /** SDD section 18. Present only for a Run that a routed Product produced. */
   routing?: ProofPackRouting;
+}
+
+/** The JSON document an agent reads. `GET /admin/runs/:id` returns the same value. */
+export interface ProofPackDocument {
+  version: 1;
+  runId: string;
+  status: "READY_FOR_HUMAN";
+  workItem: { title: string; url: string | null };
+  pullRequestUrl: string;
+  changeDescription: string;
+  needsAttention: string[];
+  visualEvidenceGap: string | null;
+  assertions: ProofPackAssertion[];
+  checks: ProofPackCheck[];
+  review: { verdict: "pass" | "fail"; passes: number; findings: ProofPackFinding[] };
+  context: {
+    items: ProofPackContextItem[];
+    discoverableItemCount: number;
+    conflicts: ProofPackConflict[];
+  };
+  change: {
+    changedFiles: string[];
+    changedFileCount: number;
+    patchByteLength: number;
+    checkDefiningFiles: string[];
+  };
+  routing: ProofPackRouting | null;
+  run: {
+    baseSha: string;
+    patchSha256: string;
+    commitSha: string;
+    repairCount: number;
+    repairLimit: number;
+    autonomyLevel: string | null;
+    autonomyReasons: string[];
+    checkPreviewUrl: string | null;
+  };
 }
 
 /** Keeps one field inside the cap. A truncated field says so, so a reader never guesses. */
@@ -152,222 +191,163 @@ const cap = (value: string): string =>
     ? value
     : `${value.slice(0, MAX_FIELD_CHARACTERS)} [truncated]`;
 
-/** One Markdown table cell. A newline breaks a table, and a pipe starts a new column. */
-const cell = (value: string): string =>
-  cap(value)
-    .replace(/\r?\n/g, " ")
-    .replace(/\|/g, "\\|")
-    .trim();
+/** One line of the body. A newline breaks a list item, so it becomes a space. */
+const line = (value: string): string => cap(value).replace(/\r?\n/g, " ").trim();
 
-const evidenceCell = (assertion: ProofPackAssertion): string => {
-  if (assertion.evidence.length === 0) return "No stored evidence.";
-  return assertion.evidence
-    .map((item) => `${item.kind}: ${item.storageRef ?? item.sha256.slice(0, 12)}`)
-    .join("; ");
-};
-
-const validationSection = (input: ProofPackInput): string[] => {
-  if (input.assertions.length === 0) return ["No assertion was recorded."];
-  const rows = input.assertions.map(
-    (assertion) =>
-      `| ${cell(assertion.id)} | ${cell(assertion.result)} | ${cell(evidenceCell(assertion))} |`,
-  );
-  const criteria = input.assertions.map(
-    (assertion) =>
-      // A newline inside a bullet breaks the list, exactly as it breaks a table row, so the
-      // statement and the reason pass the same normalization the table cells use.
-      `- ${assertion.id} proves ${assertion.requirement} by ${assertion.method}: ` +
-      `${cell(assertion.statement)} Result: ${assertion.result}. ${cell(assertion.reason)}`,
-  );
-  return [
-    "| Assertion | Result | Evidence |",
-    "|---|---|---|",
-    ...rows,
-    "",
-    "Success criteria:",
-    "",
-    ...criteria,
-  ];
-};
-
-const verificationSection = (input: ProofPackInput): string[] => {
-  if (input.checks.length === 0) return ["No deterministic check ran."];
-  return input.checks.map(
-    (check) =>
-      `- ${check.name}: \`${cell(check.command)}\` ended with exit code ${check.exitCode} ` +
-      `after ${check.durationMs} ms. ${check.passed ? "Passed" : "Failed"}. ` +
-      `stdout ${check.stdoutSha256.slice(0, 12)}, stderr ${check.stderrSha256.slice(0, 12)}.`,
-  );
-};
-
-const reviewSection = (input: ProofPackInput): string[] => {
-  const blocking = input.findings.filter((finding) => finding.blocking);
-  return [
-    `Factoree accepted the change after ${input.reviewPasses} independent review ` +
-      `${input.reviewPasses === 1 ? "pass" : "passes"}. The last Reviewer verdict was ` +
-      `${input.reviewVerdict}.`,
-    "",
-    `Findings: ${input.findings.length}. Blocking findings that remain: ${blocking.length}.`,
-  ];
-};
-
-const contextSection = (input: ProofPackInput): string[] => {
-  const lines =
-    input.contextItems.length === 0
-      ? ["No context item was preloaded."]
-      : input.contextItems.map(
-          (item) =>
-            `- ${item.ref} — authority ${item.authority}, ${item.classification}, version ` +
-            `${item.sourceVersion}, hash ${item.contentSha256 ?? "not recorded"}. ` +
-            `Selected because ${cap(item.reason)}`,
-        );
-  return [
-    ...lines,
-    "",
-    `${input.discoverableItemCount} further ${
-      input.discoverableItemCount === 1 ? "item stayed" : "items stayed"
-    } discoverable through a tool.`,
-  ];
-};
-
-const conflictSection = (input: ProofPackInput): string[] =>
-  input.conflicts.length === 0
-    ? ["None."]
-    : input.conflicts.map(
-        (conflict) =>
-          `- ${conflict.id} on "${cap(conflict.subject)}": ${conflict.winnerRef ?? "no winner"} ` +
-          `wins over ${conflict.loserRef ?? "no loser"}. ${cap(conflict.reason)}`,
-      );
-
-const changeSection = (input: ProofPackInput): string[] => {
-  const listed = input.changedFiles.slice(0, MAX_LISTED_CHANGED_FILES);
-  const remainder = input.changedFiles.length - listed.length;
-  const checkDefining = input.checkDefiningFiles ?? [];
-  return [
-    ...(checkDefining.length === 0
-      ? []
-      : [
-          "This change edits files that define a check, so the pull request is a draft. Read these first:",
-          "",
-          ...checkDefining.map((file) => `- ${cell(file)}`),
-          "",
-        ]),
-    `${input.changedFiles.length} ${input.changedFiles.length === 1 ? "file" : "files"}, ` +
-      `${input.patchByteLength} patch bytes.`,
-    "",
-    ...listed.map((file) => `- ${file}`),
-    ...(remainder > 0 ? [`- and ${remainder} more files.`] : []),
-  ];
-};
+/** A link a reader in Linear can open. A worker-local `file:` reference opens for nobody. */
+const openable = (ref: string | null): ref is string => ref !== null && /^https:\/\//.test(ref);
 
 /**
- * SDD section 47. A finding Factoree judged non-blocking is exactly what a human must still
- * weigh, so every one appears here with the reason it did not block. See the Phase 8 carried
- * finding about a defect that failed only one gate.
+ * docs/specs/proof-pack-and-visual-evidence.md. Everything a human must weigh before a merge, in
+ * one list. A non-blocking finding, a check-defining file, an assertion that did not pass, and an
+ * accepted visual evidence gap each need a human, and none of them may sit at the bottom.
  */
-const limitationSection = (input: ProofPackInput): string[] => {
-  const limitations = input.findings.filter((finding) => !finding.blocking);
-  if (limitations.length === 0) return ["None."];
-  return limitations.map(
-    (finding) =>
-      `- ${finding.id} (${finding.severity}, ${finding.category}) at ${cell(finding.evidence)}: ` +
-      `${cap(finding.description)} It did not block, because ${cap(finding.decisionReason)}`,
-  );
+export const needsAttention = (input: ProofPackInput): string[] => {
+  const items: string[] = [];
+  const checkDefining = input.checkDefiningFiles ?? [];
+  if (checkDefining.length > 0) {
+    items.push(
+      `The change edits files that define a check, so the pull request is a draft. Read them first: ${checkDefining.join(", ")}.`,
+    );
+  }
+  for (const finding of input.findings.filter((candidate) => !candidate.blocking)) {
+    items.push(
+      `Review finding ${finding.id} (${finding.severity}, ${finding.category}) at ${finding.evidence}: ` +
+        `${finding.description} It did not block, because ${finding.decisionReason}`,
+    );
+  }
+  for (const assertion of input.assertions.filter((candidate) => candidate.result !== "PASS")) {
+    items.push(`${assertion.id} is ${assertion.result}: ${assertion.statement} ${assertion.reason}`);
+  }
+  if (input.visualEvidenceGap !== null) items.push(input.visualEvidenceGap);
+  return items;
 };
 
-/** SDD section 18. The Routing section. Renders only when the Run carries `routing`. */
-const routingSection = (routing: ProofPackRouting): string[] => {
-  const targets = routing.targets;
-  const prNumber = (pullRequestUrl: string): string => pullRequestUrl.split("/").pop() ?? "";
-  const targetLines = targets.map(
-    (target, index) =>
-      `  ${index + 1}. ${target.fullName} @ ${target.baseSha} -> PR #${prNumber(target.pullRequestUrl)}`,
-  );
-  const siblingLines =
-    routing.siblingsRead.length === 0
-      ? ["Sibling repositories read: none."]
-      : [
-          `Sibling repositories read: ${routing.siblingsRead
-            .map((sibling) => `${sibling.fullName} @ ${sibling.commitSha}`)
-            .join(", ")}`,
-        ];
+/** Builds the full JSON document. It holds every fact, and the body holds a short view of it. */
+export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument => ({
+  version: 1,
+  runId: input.runId,
+  status: "READY_FOR_HUMAN",
+  workItem: input.workItem,
+  pullRequestUrl: input.pullRequestUrl,
+  changeDescription: input.changeDescription,
+  needsAttention: needsAttention(input),
+  visualEvidenceGap: input.visualEvidenceGap,
+  assertions: input.assertions,
+  checks: input.checks,
+  review: { verdict: input.reviewVerdict, passes: input.reviewPasses, findings: input.findings },
+  context: {
+    items: input.contextItems,
+    discoverableItemCount: input.discoverableItemCount,
+    conflicts: input.conflicts,
+  },
+  change: {
+    changedFiles: input.changedFiles.slice(0, MAX_LISTED_CHANGED_FILES),
+    changedFileCount: input.changedFiles.length,
+    patchByteLength: input.patchByteLength,
+    checkDefiningFiles: input.checkDefiningFiles ?? [],
+  },
+  routing: input.routing ?? null,
+  run: {
+    baseSha: input.baseSha,
+    patchSha256: input.patchSha256,
+    commitSha: input.commitSha,
+    repairCount: input.repairCount,
+    repairLimit: input.repairLimit,
+    autonomyLevel: input.autonomyLevel ?? null,
+    autonomyReasons: input.autonomyReasons ?? [],
+    checkPreviewUrl: input.checkPreviewUrl,
+  },
+});
+
+const pullRequestLines = (input: ProofPackInput): string[] => {
+  const targets = input.routing?.targets.filter((target) => target.pullRequestUrl !== "") ?? [];
+  if (targets.length <= 1) return [`**Pull request:** ${input.pullRequestUrl}`];
   return [
-    `Product: ${cell(routing.productSlug)}`,
-    `Linear team: ${cell(routing.linearTeamKey)}`,
-    "Targets:",
-    ...targetLines,
-    ...siblingLines,
-    `Selection reason: ${cell(routing.selectionReason)}`,
+    "**Pull requests:**",
+    ...targets.map((target) => `- ${target.fullName}: ${target.pullRequestUrl}`),
   ];
 };
 
-const metadataSection = (input: ProofPackInput): string[] => [
-  `- Run: ${input.runId}`,
-  `- Base SHA: ${input.baseSha}`,
-  `- Patch SHA-256: ${input.patchSha256}`,
-  `- Commit: ${input.commitSha}`,
-  `- Repairs: ${input.repairCount} of ${input.repairLimit}`,
-  ...(input.autonomyLevel === undefined
-    ? []
-    : [
-        `- Autonomy level: ${input.autonomyLevel}` +
-          ((input.autonomyReasons ?? []).length === 0 ? "" : `. ${(input.autonomyReasons ?? []).join(" ")}`),
-      ]),
-];
+const visualSection = (input: ProofPackInput): string[] => {
+  const lines: string[] = [];
+  for (const assertion of input.assertions) {
+    for (const item of assertion.evidence) {
+      if (!openable(item.storageRef)) continue;
+      if (item.kind === "screenshot") lines.push(`![${assertion.id}](${item.storageRef})`);
+      if (item.kind === "video") lines.push(`[${assertion.id} video](${item.storageRef})`);
+    }
+  }
+  return lines;
+};
 
-/** SDD section 47. One Proof Pack, in the exact section order the SDD fixes. */
-export const renderProofPack = (input: ProofPackInput): string =>
+const evidenceLinks = (assertion: ProofPackAssertion): string => {
+  const links = assertion.evidence
+    .filter((item) => openable(item.storageRef))
+    .map((item) => `[${item.kind}](${item.storageRef ?? ""})`);
+  return links.length === 0 ? "" : ` ${links.join(" ")}`;
+};
+
+const checkLines = (input: ProofPackInput): string[] => {
+  const blocking = input.findings.filter((finding) => finding.blocking).length;
+  return [
+    ...input.checks.map(
+      (check) => `- ${check.passed ? "PASS" : "FAIL"} ${line(check.name)}: \`${line(check.command)}\``,
+    ),
+    ...input.assertions.map(
+      (assertion) => `- ${assertion.result} ${assertion.id}: ${line(assertion.statement)}${evidenceLinks(assertion)}`,
+    ),
+    `- ${blocking === 0 ? "PASS" : "FAIL"} Independent review: ${input.reviewPasses} ` +
+      `${input.reviewPasses === 1 ? "pass" : "passes"}, ${input.findings.length} ` +
+      `${input.findings.length === 1 ? "finding" : "findings"}, ${blocking} blocking.`,
+  ];
+};
+
+const footer = (input: ProofPackInput, documentUrl: string | null): string =>
   [
+    `Run ${input.runId}`,
+    ...(input.autonomyLevel === undefined ? [] : [input.autonomyLevel]),
+    `repairs ${input.repairCount} of ${input.repairLimit}`,
+    documentUrl === null ? `${PROOF_PACK_DOCUMENT_NAME} not stored` : `[${PROOF_PACK_DOCUMENT_NAME}](${documentUrl})`,
+  ].join(" · ");
+
+/** docs/specs/proof-pack-and-visual-evidence.md. The short body a human reads in Linear. */
+export const renderProofPack = (input: ProofPackInput, documentUrl: string | null): string => {
+  const attention = needsAttention(input);
+  const visual = visualSection(input);
+  const description = line(input.changeDescription);
+  return [
     "## Factoree delivery",
     "",
-    "Status: READY FOR HUMAN REVIEW",
-    "",
-    `Work Item: ${cap(input.workItem.title)}${
+    `**Ready for human review.** ${line(input.workItem.title)}${
       input.workItem.url === null ? "" : ` (${input.workItem.url})`
     }`,
     "",
-    "### Pull request",
+    description === "" ? "The Reviewer gave no description of the change." : `> ${description}`,
     "",
-    input.pullRequestUrl,
+    "_The Reviewer's description of the change._",
     "",
-    ...(input.routing === undefined ? [] : ["### Routing", "", ...routingSection(input.routing), ""]),
-    "### Validation contract",
+    ...pullRequestLines(input),
+    "**Preview:** the pull request preview link appears in this session's links when CI publishes it.",
     "",
-    ...validationSection(input),
+    "### Needs your attention",
     "",
-    "### Deterministic verification",
+    ...(attention.length === 0 ? ["Nothing."] : attention.map((item) => `- ${line(item)}`)),
     "",
-    ...verificationSection(input),
+    "### Visual evidence",
     "",
-    "### Independent review",
+    ...(visual.length === 0 ? ["None captured."] : visual),
     "",
-    ...reviewSection(input),
+    "### Checks",
     "",
-    "### Context used",
+    ...checkLines(input),
     "",
-    ...contextSection(input),
+    "---",
     "",
-    "### Context conflicts",
-    "",
-    ...conflictSection(input),
-    "",
-    "### Change summary",
-    "",
-    ...changeSection(input),
-    "",
-    "### Preview",
-    "",
-    input.previewUrl ?? "Not available.",
-    "",
-    "### Known limitations",
-    "",
-    ...limitationSection(input),
-    "",
-    "### Run metadata",
-    "",
-    ...metadataSection(input),
+    footer(input, documentUrl),
     "",
   ].join("\n");
+};
 
 /** The identity of one Proof Pack body. The Run row records it, so its existence is provable. */
 export const hashProofPack = (body: string): string =>

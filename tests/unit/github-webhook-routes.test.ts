@@ -77,6 +77,7 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
   if (tenantBound) installations.set("42", TENANT);
   const tenants = new FakeTenantRegistry(installations);
   const started: { tenantId: string; githubInstallationId: string }[] = [];
+  const previews: { tenantId: string; repositoryFullName: string; commitSha: string; previewUrl: string }[] = [];
 
   const app: FastifyInstance = Fastify({ logger: false });
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
@@ -97,10 +98,15 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
       started.push(input);
       return Promise.resolve();
     },
+    // Only the commit a Run published has a Run. Every other commit answers false.
+    recordPullRequestPreview: (input) => {
+      previews.push(input);
+      return Promise.resolve(input.commitSha === "published-sha");
+    },
     logger,
   });
 
-  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started };
+  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews };
 };
 
 describe("GitHub webhook route", () => {
@@ -329,5 +335,49 @@ describe("GitHub webhook route", () => {
 
     expect(response.statusCode).toBe(200);
     expect(started).toEqual([]);
+  });
+
+  const deploymentStatus = (state: string, sha: string, environmentUrl: string | null) => ({
+    method: "POST" as const,
+    url: "/webhooks/github",
+    headers: { "x-github-event": "deployment_status" },
+    payload: {
+      action: "created",
+      deployment_status: { id: 1, state, environment_url: environmentUrl, target_url: "https://ci.example/run/1" },
+      deployment: { id: 9, sha, ref: sha, environment: "preview/pr-1" },
+      repository: { full_name: "acme/api", default_branch: "main" },
+      installation: { id: 42 },
+    },
+  });
+
+  it("links a successful preview of the published commit to its Run", async () => {
+    const { app, previews } = build({});
+    const response = await app.inject(deploymentStatus("success", "published-sha", "https://pr-1.preview.example/"));
+    expect(response.json()).toEqual({ status: "handled" });
+    expect(previews).toEqual([
+      {
+        tenantId: "tenant-1",
+        repositoryFullName: "acme/api",
+        commitSha: "published-sha",
+        previewUrl: "https://pr-1.preview.example/",
+      },
+    ]);
+  });
+
+  it("adds no link for a preview of a commit no Run published", async () => {
+    const { app } = build({});
+    const response = await app.inject(deploymentStatus("success", "other-sha", "https://pr-1.preview.example/"));
+    expect(response.json()).toEqual({ status: "ignored", reason: "no run published this commit" });
+  });
+
+  it.each([
+    ["in_progress", "https://pr-1.preview.example/"],
+    ["success", null],
+    ["success", "http://pr-1.preview.example/"],
+  ])("ignores a deployment status %s with the URL %s, because no live link exists", async (state, url) => {
+    const { app, previews } = build({});
+    const response = await app.inject(deploymentStatus(state, "published-sha", url));
+    expect(response.json()).toEqual({ status: "ignored", reason: "no live preview" });
+    expect(previews).toEqual([]);
   });
 });

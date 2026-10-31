@@ -109,6 +109,8 @@ describe("AT-33 tenant isolation", () => {
         "ValidationAssertion",
         "ValidationAssertionResult",
         "ValidationContract",
+        // docs/specs/kiln-sandbox-provider.md. A warm snapshot holds one tenant's checkout.
+        "WarmSnapshot",
       ].sort(),
     );
   });

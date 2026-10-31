@@ -63,6 +63,28 @@ const readSection = (proofPack: string, heading: string): string => {
   return proofPack.slice(afterHeading, boundedEnd).trim();
 };
 
+/** The fields of proof-pack.json this scenario reads. */
+interface LiveProofPackDocument {
+  context: { items: unknown[] };
+  assertions: unknown[];
+  change: { changedFileCount: number };
+}
+
+/** Reads proof-pack.json from the link at the foot of the Proof Pack, or null when it cannot. */
+const readProofPackDocument = async (proofPack: string, credential: string): Promise<LiveProofPackDocument | null> => {
+  const url = proofPack.match(/\[proof-pack\.json\]\((https:\/\/[^)]+)\)/)?.[1];
+  if (url === undefined) return null;
+  try {
+    // A personal API key goes bare. An OAuth token needs the Bearer scheme.
+    const authorization = credential.startsWith("lin_api_") ? credential : `Bearer ${credential}`;
+    const response = await fetch(url, { headers: { Authorization: authorization } });
+    if (!response.ok) return null;
+    return (await response.json()) as LiveProofPackDocument;
+  } catch {
+    return null;
+  }
+};
+
 /** The file the fixture task adds. It is one file at the root, so any repository can carry it. */
 const PROOF_FILE = "factoree-live-proof.md";
 
@@ -255,62 +277,59 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
       : "no comment containing the Proof Pack headings appeared before the timeout",
   });
 
-  const contextSection = proofPack === null ? "" : readSection(proofPack, "### Context used");
+  // docs/specs/proof-pack-and-visual-evidence.md. The body links proof-pack.json, the full
+  // record. Linear serves an upload to a request that carries the workspace credential.
+  const document = proofPack === null ? null : await readProofPackDocument(proofPack, linearCredential);
+  const checks = proofPack === null ? "" : readSection(proofPack, "### Checks");
+  const checkLines = checks.split("\n").filter((line) => /^- (PASS|FAIL|BLOCKED|MANUAL_REQUIRED) /.test(line));
+  const assertionLines = checkLines.filter((line) => / VAL-[A-Z]+-\d+:/.test(line));
+  const reviewLine = checkLines.find((line) => line.includes(" Independent review: "));
+  const verificationLines = checkLines.filter((line) => !assertionLines.includes(line) && line !== reviewLine);
+
   facts.push({
     name: "Real context resolution runs",
-    holds: contextSection.length > 0,
-    detail: contextSection.length > 0 ? "the Context used section is not empty" : "the Context used section is absent or empty",
+    holds: (document?.context.items.length ?? 0) > 0,
+    detail:
+      document === null
+        ? "proof-pack.json could not be read from the Proof Pack link"
+        : `proof-pack.json names ${document.context.items.length} context items`,
   });
-
-  const validationSection = proofPack === null ? "" : readSection(proofPack, "### Validation contract");
   facts.push({
     name: "Real Validation Contract is frozen",
-    holds: validationSection.length > 0,
-    detail:
-      validationSection.length > 0
-        ? "the Validation contract section is not empty"
-        : "the Validation contract section is absent or empty",
+    holds: (document?.assertions.length ?? 0) > 0,
+    detail: `proof-pack.json holds ${document?.assertions.length ?? 0} assertions`,
   });
   facts.push({
     name: "User-level validation runs",
-    holds: validationSection.length > 0,
+    holds: assertionLines.length > 0,
     detail:
-      validationSection.length > 0
-        ? "the Validation contract section reports assertion results"
+      assertionLines.length > 0
+        ? "the Checks section reports assertion results"
         : "no validation assertion result was reported",
   });
-
-  const verificationSection = proofPack === null ? "" : readSection(proofPack, "### Deterministic verification");
   facts.push({
     name: "Deterministic verification runs",
-    holds: verificationSection.length > 0,
+    holds: verificationLines.length > 0,
     detail:
-      verificationSection.length > 0
-        ? "the Deterministic verification section reports at least one check"
-        : "the Deterministic verification section is absent or empty",
+      verificationLines.length > 0
+        ? "the Checks section reports at least one deterministic check"
+        : "the Checks section reports no deterministic check",
   });
-
-  const reviewSection = proofPack === null ? "" : readSection(proofPack, "### Independent review");
   facts.push({
     name: "Independent review runs",
-    holds: reviewSection.length > 0,
-    detail:
-      reviewSection.length > 0
-        ? "the Independent review section reports a review outcome"
-        : "the Independent review section is absent or empty",
+    holds: reviewLine !== undefined,
+    detail: reviewLine ?? "the Checks section reports no review outcome",
   });
-
-  const changeSummary = proofPack === null ? "" : readSection(proofPack, "### Change summary");
   facts.push({
     name: "Real Fly Sprite performs implementation",
-    holds: changeSummary.length > 0,
+    holds: (document?.change.changedFileCount ?? 0) > 0,
     detail:
-      changeSummary.length > 0
-        ? "the Change summary section names changed files, so the sandbox produced a patch"
-        : "the Change summary section is absent or empty",
+      (document?.change.changedFileCount ?? 0) > 0
+        ? "proof-pack.json names changed files, so the sandbox produced a patch"
+        : "proof-pack.json names no changed file",
   });
 
-  const pullRequestSection = proofPack === null ? "" : readSection(proofPack, "### Pull request");
+  const pullRequestSection = proofPack?.match(/\*\*Pull request:\*\* \S+/)?.[0] ?? "";
   const prUrlMatch = pullRequestSection.match(/https:\/\/github\.com\/\S+\/pull\/\d+/);
   let prConfirmed = false;
   let prDetail = "the Pull request section named no GitHub pull request URL";

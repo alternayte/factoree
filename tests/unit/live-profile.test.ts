@@ -29,6 +29,29 @@ describe("the live acceptance profile split", () => {
     expect(credentialsFor("full")).toHaveLength(9);
   });
 
+  it("swaps only the Sprite requirements for the Kiln ones when the full profile runs on Kiln", () => {
+    const names = credentialsFor("full", { SANDBOX_ADAPTER: "kiln" })
+      .map((entry) => entry.name)
+      .sort();
+    expect(names).toEqual(
+      [
+        "LIVE_LINEAR_API_KEY",
+        "LIVE_LINEAR_TEAM_ID",
+        "LIVE_GITHUB_TOKEN",
+        "LIVE_GITHUB_REPOSITORY",
+        "DATABASE_URL",
+        "TEMPORAL_ADDRESS",
+        "TEMPORAL_NAMESPACE",
+        "SANDBOX_ADAPTER",
+        "KILN_URL",
+        "KILN_API_KEY",
+        "KILN_IMAGE",
+      ].sort(),
+    );
+    const requirement = credentialsFor("full", { SANDBOX_ADAPTER: "kiln" }).find((entry) => entry.name === "SANDBOX_ADAPTER");
+    expect(requirement?.value).toBe("kiln");
+  });
+
   it("requires SANDBOX_ADAPTER to equal fly-sprites in the full profile", () => {
     const requirement = credentialsFor("full").find((entry) => entry.name === "SANDBOX_ADAPTER");
     expect(requirement?.kind).toBe("equals");

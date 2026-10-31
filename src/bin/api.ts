@@ -102,6 +102,29 @@ const verifyGitHubWebhookSignature = (raw: Buffer, signature: string): boolean =
 
 const startInstallationSync = createSyncInstallationStarter(client, env.TEMPORAL_TASK_QUEUE);
 
+// docs/specs/proof-pack-and-visual-evidence.md. The Run is over when CI publishes the preview, so
+// the link reaches the Linear session from here. The tenant row carries the workspace id.
+const recordPullRequestPreview = async (input: {
+  tenantId: string;
+  repositoryFullName: string;
+  commitSha: string;
+  previewUrl: string;
+}): Promise<boolean> => {
+  const target = await runs.setPullRequestPreview(
+    input.tenantId,
+    input.repositoryFullName,
+    input.commitSha,
+    input.previewUrl,
+  );
+  if (target === null) return false;
+  const tenant = await prisma.tenant.findUnique({ where: { id: input.tenantId } });
+  if (tenant === null) return false;
+  const linearClient = createLinearAgentClient(await linearTokens.tokenFor(tenant.linearWorkspaceId));
+  await linearClient.addLink(target.linearAgentSessionId, "Preview", input.previewUrl);
+  logger.info("pull request preview linked", { run_id: target.runId, step: "preview_link" });
+  return true;
+};
+
 const app = buildServer({
   env,
   logger,
@@ -116,6 +139,7 @@ const app = buildServer({
   discovery,
   verifyGitHubSignature: verifyGitHubWebhookSignature,
   startInstallationSync,
+  recordPullRequestPreview,
 });
 await app.listen({ port: env.PORT, host: "0.0.0.0" });
 logger.info("api started", { step: "boot" });

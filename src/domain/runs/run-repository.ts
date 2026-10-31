@@ -34,6 +34,8 @@ export interface RunRecord {
   /** SDD section 47. The SHA-256 of the Proof Pack this Run posted, or null while none exists. */
   proofPackSha256: string | null;
   proofPackPostedAt: Date | null;
+  /** docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document, or null. */
+  proofPackDocument: Record<string, unknown> | null;
   repairCount: number;
   createdAt: Date;
   startedAt: Date | null;
@@ -110,6 +112,14 @@ export interface RunTargetRecord {
   patchSha256: string | null;
   commitSha: string | null;
   pullRequestUrl: string | null;
+  /** docs/specs/proof-pack-and-visual-evidence.md. The pull request preview, or null. */
+  previewUrl: string | null;
+}
+
+/** The Run a pull request preview belongs to. The session receives the preview link. */
+export interface PreviewTarget {
+  runId: string;
+  linearAgentSessionId: string;
 }
 
 /**
@@ -166,8 +176,19 @@ export interface RunRepository {
   setProofPack(
     tenantId: string,
     runId: string,
-    proofPack: { sha256: string; postedAt: Date },
+    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown> },
   ): Promise<void>;
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. Records the pull request preview of the
+   * RunTarget that published `commitSha` to the repository `repositoryFullName`. It answers the
+   * Run, or null when no RunTarget of that tenant published that commit.
+   */
+  setPullRequestPreview(
+    tenantId: string,
+    repositoryFullName: string,
+    commitSha: string,
+    previewUrl: string,
+  ): Promise<PreviewTarget | null>;
   /**
    * SDD section 28. Refinement caps the autonomy level of the Run. `createRun` happens before
    * Refinement, so the Run row first holds the Project default. This method writes the capped

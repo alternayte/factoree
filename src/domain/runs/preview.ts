@@ -77,6 +77,18 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
     );
   }
 
+  // The preview port belongs to Factoree's preview. An agent can leave a server of its own on
+  // it, and on the FAC-44 run one made `next start` fail with EADDRINUSE. The stray server would
+  // also answer the readiness poll for a change Factoree did not start.
+  await input.sandbox.exec(input.ref, {
+    file: "sh",
+    args: [
+      "-c",
+      `for pid in $(ss -ltnpH "sport = :${port}" | grep -o "pid=[0-9]*" | cut -d= -f2 | sort -u); do kill "$pid"; done; true`,
+    ],
+    cwd: "/",
+  });
+
   const startedAt = new Date(now()).toISOString();
   // Rule 2. `startProcess` ignores `Command.timeoutMs`, so this function owns the deadline below.
   const processRef = await input.sandbox.startProcess(input.ref, {
@@ -87,6 +99,25 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
   });
 
   const pollUntilReady = async (): Promise<PreviewHandle> => {
+    // Rule 7. The exposed URL is the URL a client outside the sandbox uses. The readiness URL
+    // names an address inside the sandbox, and on the worker `localhost` is the worker itself:
+    // the FAC-46 run polled the local Factoree API for the whole timeout. So the poll requests
+    // the readiness path at the exposed URL. Exposure needs no running server. A sandbox adapter
+    // that cannot expose a service fails here the same honest way every preview failure does.
+    let service;
+    try {
+      service = await input.sandbox.exposeService(input.ref, port);
+    } catch (error) {
+      throw new PreviewStartError(
+        `The sandbox could not expose the preview on port ${String(port)}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        "expose_failed",
+        "",
+      );
+    }
+    const ready = new URL(input.preview.readyUrl);
+    const probeUrl = new URL(`${ready.pathname}${ready.search}`, service.url).toString();
+
     // Rule 3. The deadline is measured from the first poll, not from the process start.
     const deadline = now() + input.preview.timeoutSeconds * 1000;
 
@@ -102,23 +133,8 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
       }
 
       // Rule 5. Any status outside 200 to 399, and a null answer, means keep polling.
-      const result = await input.probe(input.preview.readyUrl);
+      const result = await input.probe(probeUrl);
       if (isReady(result)) {
-        // Rule 7. The exposed URL, not the readiness URL, is the URL a client outside the
-        // sandbox uses. A sandbox adapter that cannot expose a service, for example the Fly
-        // adapter's recorded Phase 2 limitation, must fail this call the same honest way every
-        // other preview failure does, rather than an unwrapped rejection the caller cannot read.
-        let service;
-        try {
-          service = await input.sandbox.exposeService(input.ref, port);
-        } catch (error) {
-          throw new PreviewStartError(
-            `The sandbox could not expose the preview on port ${String(port)}: ` +
-              `${error instanceof Error ? error.message : String(error)}`,
-            "expose_failed",
-            buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
-          );
-        }
         return {
           process: processRef,
           baseUrl: service.url,

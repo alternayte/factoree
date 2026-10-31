@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@2";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@4";
 
 export interface UserValidatorPromptFields {
   goal: string;

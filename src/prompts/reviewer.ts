@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REVIEWER_PROMPT_VERSION = "reviewer@2";
+export const REVIEWER_PROMPT_VERSION = "reviewer@3";
 
 export interface ReviewerPromptFields {
   goal: string;

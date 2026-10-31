@@ -153,6 +153,7 @@ const activities = {
     findingCount: 0,
     blockingCount: 0,
     summary: "The independent review found no blocking finding.",
+    changeDescription: "The change edits the app.",
     failures: [],
     sessionId: "ses_fake_reviewer",
     reportUsable: true,

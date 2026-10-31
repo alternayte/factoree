@@ -18,7 +18,7 @@ const main = async (): Promise<number> => {
   const profile = resolveProfile(process.env);
   process.stdout.write(`${PROFILE_BANNER[profile]}\n\n`);
 
-  const requirements = credentialsFor(profile);
+  const requirements = credentialsFor(profile, process.env);
   const unmet = unmetRequirementsFor(process.env, requirements);
   if (unmet.length > 0) {
     process.stdout.write("BLOCKED_EXTERNAL\n\n");

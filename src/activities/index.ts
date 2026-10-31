@@ -183,6 +183,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     evidence: dependencies.evidence,
     reviewFindings: dependencies.reviewFindings,
     agentSession: dependencies.agentSession,
+    storage: dependencies.evidenceStorage,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,

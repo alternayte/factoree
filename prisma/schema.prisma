@@ -17,6 +17,7 @@ model Tenant {
   productPolicyChanges ProductPolicyChange[]
   runs              Run[]
   webhooks          ProcessedWebhook[]
+  warmSnapshots     WarmSnapshot[]
 }
 
 model GitHubInstallation {
@@ -101,6 +102,8 @@ model Run {
   validationContractVersion String?
   proofPackSha256          String?
   proofPackPostedAt        DateTime?
+  // docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document an agent reads.
+  proofPackDocument        Json?
   repairCount              Int       @default(0)
   createdAt                DateTime  @default(now())
   startedAt                DateTime?
@@ -325,6 +328,21 @@ model ProcessedWebhook {
   @@index([tenantId])
 }
 
+/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, adapter and repository.
+model WarmSnapshot {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  adapter       String
+  repositoryUrl String
+  image         String
+  configSha     String
+  snapshotId    String
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, adapter, repositoryUrl])
+}
+
 model Product {
   id             String   @id @default(uuid())
   tenantId       String
@@ -412,11 +430,15 @@ model RunTarget {
   patchSha256     String?
   commitSha       String?
   pullRequestUrl  String?
+  // docs/specs/proof-pack-and-visual-evidence.md. The pull request preview that CI published for
+  // the commit, from a GitHub deployment status. A link for humans, never evidence.
+  previewUrl      String?
   createdAt       DateTime   @default(now())
 
   @@unique([runId, repositoryId])
   @@index([runId])
   @@index([tenantId])
+  @@index([tenantId, commitSha])
 }
 
 // docs/specs/autonomy-levels.md. One row for each change of a Product policy field, so raising

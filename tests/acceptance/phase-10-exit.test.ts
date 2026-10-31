@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderProofPack, type ProofPackInput } from "~/domain/evidence/proof-pack.js";
+import { buildProofPackDocument, renderProofPack, type ProofPackInput } from "~/domain/evidence/proof-pack.js";
 import {
   completionInvariantFailures,
   type CompletionInvariantInput,
@@ -86,7 +86,9 @@ const provedRun = (overrides: Partial<ProofPackInput> = {}): ProofPackInput => (
   ],
   changedFiles: ["src/health.ts", "tests/health.test.ts"],
   patchByteLength: 812,
-  previewUrl: null,
+  checkPreviewUrl: null,
+  changeDescription: "The change adds a health endpoint that answers 200.",
+  visualEvidenceGap: null,
   baseSha: "5".repeat(40),
   patchSha256: "4".repeat(64),
   commitSha: "3".repeat(40),
@@ -115,29 +117,41 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
 });
 
 describe("Phase 10 exit — a human decides from the Proof Pack alone", () => {
-  const body = renderProofPack(provedRun());
+  const body = renderProofPack(provedRun(), "https://uploads.linear.app/proof-pack.json");
+  const document = JSON.stringify(buildProofPackDocument(provedRun()));
 
-  const questions: Array<[string, string]> = [
+  // docs/specs/proof-pack-and-visual-evidence.md. The body answers what a human needs to decide.
+  const bodyQuestions: Array<[string, string]> = [
     ["Where is the change?", "https://github.com/acme/fixture/pull/1"],
+    ["What does it do?", "The change adds a health endpoint that answers 200."],
     ["What was promised?", "GET /health returns 200."],
-    ["Was the promise kept?", "| VAL-API-001 | PASS |"],
-    ["What proves it?", "file:VAL-API-001.json"],
-    ["Did the build pass?", "exit code 0"],
-    ["What did the reviewer say?", "The last Reviewer verdict was pass"],
-    ["Does a blocking defect remain?", "Blocking findings that remain: 0"],
-    ["What did Factoree read?", "github:acme/fixture/README.md"],
-    ["On whose authority?", "authority repository_readme"],
-    ["Which conflicts were settled?", "ADR-031"],
-    ["What changed?", "2 files, 812 patch bytes."],
+    ["Was the promise kept?", "- PASS VAL-API-001"],
+    ["Did the build pass?", "- PASS unit: `npm test`"],
+    ["Does a blocking defect remain?", "0 blocking."],
     ["What must I still weigh?", "the finding names no mandatory requirement"],
-    ["How many repairs did it need?", "Repairs: 1 of 2"],
+    ["How many repairs did it need?", "repairs 1 of 2"],
+    ["Where is the full record?", "[proof-pack.json](https://uploads.linear.app/proof-pack.json)"],
+  ];
+
+  // The full record holds the facts an agent or an auditor reads, so the body stays short.
+  const documentQuestions: Array<[string, string]> = [
+    ["What proves it?", "file:VAL-API-001.json"],
+    ["What did Factoree read?", "github:acme/fixture/README.md"],
+    ["On whose authority?", "repository_readme"],
+    ["Which conflicts were settled?", "ADR-031"],
     ["Against which base?", "5".repeat(40)],
     ["Which exact patch?", "4".repeat(64)],
   ];
 
-  for (const [question, evidence] of questions) {
-    it(`answers the acceptance question: ${question}`, () => {
+  for (const [question, evidence] of bodyQuestions) {
+    it(`answers the acceptance question in the body: ${question}`, () => {
       expect(body).toContain(evidence);
+    });
+  }
+
+  for (const [question, evidence] of documentQuestions) {
+    it(`answers the audit question in proof-pack.json: ${question}`, () => {
+      expect(document).toContain(evidence);
     });
   }
 
@@ -153,11 +167,11 @@ describe("Phase 10 exit — a human decides from the Proof Pack alone", () => {
     expect(body).not.toContain("IMPLEMENTER TRANSCRIPT");
     expect(body).not.toContain("--- stdout ---");
     expect(body).not.toContain("--- stderr ---");
-    expect(body).toContain("stdout bbbbbbbbbbbb");
+    expect(document).toContain("b".repeat(64));
   });
 
   it("stays short enough for one human to read", () => {
-    expect(body.length).toBeLessThan(8_000);
+    expect(body.length).toBeLessThan(3_000);
   });
 
   it("refuses completion while no Proof Pack exists", () => {

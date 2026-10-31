@@ -17,7 +17,7 @@ import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
-import { registerGitHubWebhookRoutes } from "./webhooks/github.routes.js";
+import { registerGitHubWebhookRoutes, type GitHubWebhookDependencies } from "./webhooks/github.routes.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 
 declare module "fastify" {
@@ -46,6 +46,8 @@ export interface ServerDependencies {
    * `installation` event joins the run already in flight rather than start a second one.
    */
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
+  /** docs/specs/proof-pack-and-visual-evidence.md. Records a pull request preview. */
+  recordPullRequestPreview: GitHubWebhookDependencies["recordPullRequestPreview"];
 }
 
 export const buildServer = (dependencies: ServerDependencies): FastifyInstance => {
@@ -72,6 +74,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     tenants: dependencies.tenants,
     verifySignature: dependencies.verifyGitHubSignature,
     startInstallationSync: dependencies.startInstallationSync,
+    recordPullRequestPreview: dependencies.recordPullRequestPreview,
     logger: dependencies.logger,
   });
 

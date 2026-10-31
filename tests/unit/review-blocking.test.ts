@@ -35,6 +35,7 @@ const finding = (over: Partial<ReviewFinding> = {}): ReviewFinding => ({
 const report = (findings: ReviewFinding[], verdict: "pass" | "fail" = "fail"): ReviewReport => ({
   version: 1,
   verdict,
+  changeDescription: "The handler checks the token expiry.",
   findings,
 });
 

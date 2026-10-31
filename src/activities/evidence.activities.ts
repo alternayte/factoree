@@ -15,7 +15,9 @@ import type { RepositoryRegistry } from "~/domain/products/repository-registry.j
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import {
+  buildProofPackDocument,
   hashProofPack,
+  PROOF_PACK_DOCUMENT_NAME,
   renderProofPack,
   type ProofPackAssertion,
   type ProofPackCheck,
@@ -150,6 +152,8 @@ export interface ProofPackActivityDependencies {
   evidence: EvidenceStore;
   reviewFindings: ReviewFindingStore;
   agentSession: AgentSessionPort;
+  /** docs/specs/proof-pack-and-visual-evidence.md. Stores `proof-pack.json` beside the evidence. */
+  storage: EvidenceStorage;
   secrets: SecretStore;
   redactor: Redactor;
   logger: Logger;
@@ -178,6 +182,10 @@ export interface PublishProofPackActivityInput {
    * caller knows it, and without it a repaired blocker of an earlier attempt is reported as open.
    */
   reviewAttempt: number;
+  /** docs/specs/proof-pack-and-visual-evidence.md. The Reviewer's description of the change. */
+  changeDescription?: string;
+  /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap a human accepted. */
+  visualEvidenceGap?: string | null;
   /** docs/specs/autonomy-levels.md. The level of the Run, and the caps that applied. */
   autonomyLevel: string;
   autonomyReasons: string[];
@@ -365,57 +373,75 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
           };
 
     const items = contextContract?.items ?? [];
-    const body = dependencies.redactor.redactText(
-      renderProofPack({
-        runId: input.runId,
-        workItem: input.workItem,
-        pullRequestUrl: input.pullRequestUrl,
-        assertions,
-        checks,
-        reviewVerdict: input.reviewVerdict,
-        reviewPasses: input.reviewPasses,
-        findings,
-        contextItems: items
-          .filter((item) => item.classification !== "discoverable")
-          .map((item) => ({
-            ref: item.reference.ref,
-            authority: item.authority,
-            classification: item.classification,
-            sourceVersion: item.sourceVersion,
-            contentSha256: item.contentSha256,
-            reason: item.reason,
-          })),
-        discoverableItemCount: items.filter((item) => item.classification === "discoverable").length,
-        conflicts: (contextContract?.conflicts ?? [])
-          .filter((conflict) => conflict.resolution === "resolved")
-          .map((conflict) => ({
-            id: conflict.id,
-            subject: conflict.subject,
-            winnerRef: conflict.winnerRef,
-            loserRef: conflict.loserRef,
-            reason: conflict.reason,
-          })),
-        changedFiles: input.changedFiles,
-        patchByteLength: input.patchByteLength,
-        previewUrl: input.previewUrl,
-        baseSha: input.baseSha,
-        patchSha256: input.patchSha256,
-        commitSha: input.commitSha,
-        repairCount: input.repairCount,
-        repairLimit: input.repairLimit,
-        autonomyLevel: input.autonomyLevel,
-        autonomyReasons: input.autonomyReasons,
-        checkDefiningFiles: input.checkDefiningFiles,
-        ...(routing === undefined ? {} : { routing }),
-      }),
+    const proofPackInput = {
+      runId: input.runId,
+      workItem: input.workItem,
+      pullRequestUrl: input.pullRequestUrl,
+      changeDescription: input.changeDescription ?? "",
+      assertions,
+      checks,
+      reviewVerdict: input.reviewVerdict,
+      reviewPasses: input.reviewPasses,
+      findings,
+      contextItems: items
+        .filter((item) => item.classification !== "discoverable")
+        .map((item) => ({
+          ref: item.reference.ref,
+          authority: item.authority,
+          classification: item.classification,
+          sourceVersion: item.sourceVersion,
+          contentSha256: item.contentSha256,
+          reason: item.reason,
+        })),
+      discoverableItemCount: items.filter((item) => item.classification === "discoverable").length,
+      conflicts: (contextContract?.conflicts ?? [])
+        .filter((conflict) => conflict.resolution === "resolved")
+        .map((conflict) => ({
+          id: conflict.id,
+          subject: conflict.subject,
+          winnerRef: conflict.winnerRef,
+          loserRef: conflict.loserRef,
+          reason: conflict.reason,
+        })),
+      changedFiles: input.changedFiles,
+      patchByteLength: input.patchByteLength,
+      checkPreviewUrl: input.previewUrl,
+      baseSha: input.baseSha,
+      patchSha256: input.patchSha256,
+      commitSha: input.commitSha,
+      repairCount: input.repairCount,
+      repairLimit: input.repairLimit,
+      autonomyLevel: input.autonomyLevel,
+      autonomyReasons: input.autonomyReasons,
+      checkDefiningFiles: input.checkDefiningFiles,
+      visualEvidenceGap: input.visualEvidenceGap ?? null,
+      ...(routing === undefined ? {} : { routing }),
+    };
+
+    // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.
+    // The text passes the redactor before it leaves the worker, exactly as the body does.
+    const documentText = dependencies.redactor.redactText(
+      JSON.stringify(buildProofPackDocument(proofPackInput), null, 2),
     );
+    const document = JSON.parse(documentText) as Record<string, unknown>;
+    const stored = await dependencies.storage.put({
+      tenantId: input.tenantId,
+      runId: input.runId,
+      name: PROOF_PACK_DOCUMENT_NAME,
+      contentType: "application/json",
+      bytes: Buffer.from(documentText, "utf8"),
+    });
+
+    const body = dependencies.redactor.redactText(renderProofPack(proofPackInput, stored.storageRef));
 
     const sha256 = hashProofPack(body);
     const postedAt = new Date();
 
     // The durable record comes first. A Linear outage must not lose the proof that the Proof
     // Pack exists, and the activity retry then posts the identical body again.
-    await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt });
+    await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt, document });
+    // Linear documents the session link as the way to name a published pull request.
+    await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
     await dependencies.agentSession.respond(input.sessionId, body);
 
     dependencies.logger.info("proof pack posted", {

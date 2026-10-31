@@ -100,6 +100,38 @@ export const SPRITE_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
   },
 ];
 
+/**
+ * docs/specs/kiln-sandbox-provider.md. With SANDBOX_ADAPTER=kiln, the `full` profile proves the
+ * worker uses a real Kiln sandbox from the Factoree sandbox image.
+ */
+export const KILN_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
+  {
+    name: "SANDBOX_ADAPTER",
+    dependency: "sandbox",
+    kind: "equals",
+    value: "kiln",
+    description: "src/config/env.ts must select the Kiln sandbox adapter for this profile.",
+  },
+  {
+    name: "KILN_URL",
+    dependency: "sandbox",
+    kind: "present",
+    description: "The Kiln host src/config/env.ts requires when SANDBOX_ADAPTER is kiln.",
+  },
+  {
+    name: "KILN_API_KEY",
+    dependency: "sandbox",
+    kind: "present",
+    description: "A key of the Factoree tenant on the Kiln host.",
+  },
+  {
+    name: "KILN_IMAGE",
+    dependency: "sandbox",
+    kind: "present",
+    description: "The Factoree sandbox image by digest, from the sandbox-image workflow.",
+  },
+];
+
 /** One requirement the environment does not meet, with the actual value it found, if any. */
 export interface UnmetRequirement {
   requirement: LiveRequirement;

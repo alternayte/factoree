@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Checkpoint, Sprite } from "@fly/sprites";
 import { SpritesClient } from "@fly/sprites";
 
@@ -29,6 +30,13 @@ export interface SpritesSpriteHandle {
    */
   writeFile: (path: string, content: string) => Promise<void>;
   execFile: (file: string, args: string[], options: SpritesExecOptions) => Promise<SpritesExecResult>;
+  /**
+   * Runs one command like `execFile`, and carries its output through files in the sprite. The
+   * exec stream closed before its exit frame on six of eight tries when a command printed a
+   * 192 KB diff (FAC-49 to FAC-51), and a file read was reliable. Only the exit code travels on
+   * the stream. A small poll uses `execFile`, because three more calls cost it time for nothing.
+   */
+  execFileCaptured: (file: string, args: string[], options: SpritesExecOptions) => Promise<SpritesExecResult>;
   /**
    * Starts a detachable session that stays alive after this call returns, and after the
    * client disconnects. `FlySpriteSandbox.startProcess` uses this only to launch its shell
@@ -123,6 +131,12 @@ const pickLatestCheckpoint = (checkpoints: Checkpoint[], comment: string): Check
  * Wraps one SDK sprite as the narrow handle above. It is exported so a test can drive it with a
  * fake sprite, which is the only way to reproduce the event behaviour of a broken connection.
  */
+/** The wrapper `execFileCaptured` runs. `$1` is the output directory, and the command follows it. */
+const CAPTURE_SCRIPT = 'd=$1; shift; mkdir -p "$d" && exec "$@" >"$d/out" 2>"$d/err"';
+
+/** One output directory per command, under `/tmp`, so no repository file is touched. */
+const captureDirectory = (): string => `/tmp/factoree-exec/${randomUUID()}`;
+
 export const wrapSprite = (sprite: Sprite, client: SpritesClient): SpritesSpriteHandle => ({
   publishPort: async (port) => {
     // The service only declares the route. `sleep` keeps it alive, and the preview process the
@@ -145,6 +159,34 @@ export const wrapSprite = (sprite: Sprite, client: SpritesClient): SpritesSprite
   },
   writeFile: async (path, content) => {
     await sprite.filesystem("/").writeFile(path, content);
+  },
+  execFileCaptured: async (file, args, execOptions) => {
+    const dir = captureDirectory();
+    const files = sprite.filesystem("/");
+    const read = async (): Promise<{ stdout: string; stderr: string }> => {
+      const [stdout, stderr] = await Promise.all([
+        files.readFile(`${dir}/out`, "utf8").catch(() => ""),
+        files.readFile(`${dir}/err`, "utf8").catch(() => ""),
+      ]);
+      return { stdout: String(stdout), stderr: String(stderr) };
+    };
+    try {
+      const result = await sprite.execFile("/bin/sh", ["-c", CAPTURE_SCRIPT, "sh", dir, file, ...args], {
+        cwd: execOptions.cwd,
+        env: execOptions.env,
+        ...(execOptions.timeout === undefined ? {} : { timeout: execOptions.timeout }),
+      });
+      return { exitCode: result.exitCode, ...(await read()) };
+    } catch (error) {
+      const failure = normalizeExecFailure(error);
+      // A non-zero exit is a result, and its output sits in the files like any other.
+      if (failure instanceof Error && typeof (failure as { exitCode?: unknown }).exitCode === "number") {
+        throw Object.assign(failure, await read());
+      }
+      throw failure;
+    } finally {
+      await files.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
   },
   execFile: async (file, args, execOptions) => {
     try {

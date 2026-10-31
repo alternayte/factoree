@@ -23,7 +23,7 @@ describe("the refiner in the Run workflow", () => {
   const validationsOf = (runId: string) => harness.validationCalls.filter((entry) => entry.runId === runId);
 
   it("freezes the stated and the inferred criteria after a human replies yes", async () => {
-    harness.refinerOutcomes.set("run-ref-yes", { status: "proposed", accepted: [stated], inferred: [inferred], question, reason: "" });
+    harness.refinerOutcomes.set("run-ref-yes", { status: "proposed", accepted: [stated], inferred: [inferred], question, visualEvidenceGap: null, reason: "" });
     const before = harness.elicitations.length;
     await harness.runWorker(async () => {
       const handle = await harness.start("ref-yes");
@@ -39,7 +39,7 @@ describe("the refiner in the Run workflow", () => {
   });
 
   it("freezes only the stated criteria, plus the human answer, when the human corrects the proposal", async () => {
-    harness.refinerOutcomes.set("run-ref-no", { status: "proposed", accepted: [stated], inferred: [inferred], question, reason: "" });
+    harness.refinerOutcomes.set("run-ref-no", { status: "proposed", accepted: [stated], inferred: [inferred], question, visualEvidenceGap: null, reason: "" });
     const before = harness.elicitations.length;
     await harness.runWorker(async () => {
       const handle = await harness.start("ref-no");
@@ -58,6 +58,7 @@ describe("the refiner in the Run workflow", () => {
       status: "worktree_changed",
       accepted: [],
       inferred: [],
+      visualEvidenceGap: null,
       question: null,
       reason: "The refiner changed the primary worktree.",
     });

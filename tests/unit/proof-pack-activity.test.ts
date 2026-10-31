@@ -190,6 +190,8 @@ const findings: ReviewFindingRecord[] = [
 interface Harness {
   activities: ReturnType<typeof createProofPackActivities>;
   posted: string[];
+  /** The proof-pack.json text of every post. */
+  documents: string[];
   proofPacks: Array<{ sha256: string; postedAt: Date }>;
   order: string[];
 }
@@ -199,6 +201,7 @@ const build = (
   options: { respondThrows?: boolean } = {},
 ): Harness => {
   const posted: string[] = [];
+  const documents: string[] = [];
   const proofPacks: Array<{ sha256: string; postedAt: Date }> = [];
   const order: string[] = [];
   // The redactor starts empty on purpose. The secret reaches it only if the activity loads it
@@ -224,10 +227,20 @@ const build = (
     evidence: { listForRun: async () => evidenceRows },
     reviewFindings: { listForRun: async () => findings },
     agentSession: {
+      addLink: async () => {
+        order.push("link");
+      },
       respond: async (_sessionId: string, body: string) => {
         order.push("post");
         if (options.respondThrows === true) throw new Error("Linear is down");
         posted.push(body);
+      },
+    },
+    storage: {
+      name: "fake",
+      put: async (artifact: { name: string; bytes: Uint8Array }) => {
+        documents.push(Buffer.from(artifact.bytes).toString("utf8"));
+        return { storageRef: `https://uploads.linear.app/${artifact.name}`, sha256: "f".repeat(64), byteLength: 1 };
       },
     },
     secrets: new MemorySecretStore({ API_TOKEN: "sk-fixture-value-123" }),
@@ -236,7 +249,7 @@ const build = (
     ...overrides,
   } as unknown as ProofPackActivityDependencies;
 
-  return { activities: createProofPackActivities(dependencies), posted, proofPacks, order };
+  return { activities: createProofPackActivities(dependencies), posted, documents, proofPacks, order };
 };
 
 const input: PublishProofPackActivityInput = {
@@ -283,19 +296,20 @@ describe("publishProofPack", () => {
     const harness = build();
     await harness.activities.publishProofPack(input);
     expect(harness.posted[0]).not.toContain("sk-fixture-value-123");
+    expect(harness.documents[0]).not.toContain("sk-fixture-value-123");
   });
 
   it("reads every deterministic check from its evidence row", async () => {
     const harness = build();
     await harness.activities.publishProofPack(input);
-    expect(harness.posted[0]).toContain("npm test");
-    expect(harness.posted[0]).toContain("exit code 0");
+    expect(harness.posted[0]).toContain("- PASS unit: `npm test`");
   });
 
   it("never carries the retained log of a check into the Proof Pack", async () => {
     const harness = build();
     await harness.activities.publishProofPack(input);
     expect(harness.posted[0]).not.toContain("IMPLEMENTER TRANSCRIPT LINE");
+    expect(harness.documents[0]).not.toContain("IMPLEMENTER TRANSCRIPT LINE");
   });
 
   it("reports only the non-blocking finding of the last review pass", async () => {
@@ -309,16 +323,17 @@ describe("publishProofPack", () => {
   it("counts a discoverable context item and preloads none of it", async () => {
     const harness = build();
     await harness.activities.publishProofPack(input);
-    expect(harness.posted[0]).toContain("github:acme/fixture/README.md");
-    expect(harness.posted[0]).toContain("1 further item stayed discoverable");
-    expect(harness.posted[0]).not.toContain("docs/big.md");
+    const document = JSON.parse(harness.documents[0] ?? "{}") as { context: { discoverableItemCount: number } };
+    expect(harness.documents[0]).toContain("github:acme/fixture/README.md");
+    expect(document.context.discoverableItemCount).toBe(1);
+    expect(harness.documents[0]).not.toContain("docs/big.md");
   });
 
   it("names the resolved context conflict", async () => {
     const harness = build();
     await harness.activities.publishProofPack(input);
-    expect(harness.posted[0]).toContain("CTX-4");
-    expect(harness.posted[0]).toContain("ADR-031");
+    expect(harness.documents[0]).toContain("CTX-4");
+    expect(harness.documents[0]).toContain("ADR-031");
   });
 
   it("records the Proof Pack hash on the Run row", async () => {
@@ -331,7 +346,7 @@ describe("publishProofPack", () => {
   it("records the hash before it posts, so a Linear outage loses no proof", async () => {
     const harness = build({}, { respondThrows: true });
     await expect(harness.activities.publishProofPack(input)).rejects.toThrow("Linear is down");
-    expect(harness.order).toEqual(["record", "post"]);
+    expect(harness.order).toEqual(["record", "link", "post"]);
   });
 
   it("produces one hash for one recorded state", async () => {
@@ -353,7 +368,7 @@ describe("publishProofPack", () => {
 
     await harness.activities.publishProofPack({ ...input, reviewAttempt: 2 });
 
-    expect(harness.posted[0]).toContain("Blocking findings that remain: 0");
+    expect(harness.posted[0]).toContain("0 blocking.");
     expect(harness.posted[0]).not.toContain("RV-1");
   });
 
@@ -365,7 +380,7 @@ describe("publishProofPack", () => {
     expect(harness.posted).toHaveLength(0);
   });
 
-  it("renders the Routing section, F3, from the Product, the RunTarget rows, and sibling_read evidence", async () => {
+  it("records the routing, F3, from the Product, the RunTarget rows, and sibling_read evidence", async () => {
     const harness = build({
       products: {
         findById: async () => ({
@@ -423,12 +438,13 @@ describe("publishProofPack", () => {
 
     const output = await harness.activities.publishProofPack(input);
 
-    expect(harness.posted[0]).toContain("### Routing");
-    expect(harness.posted[0]).toContain("Product: checkout-platform");
-    expect(harness.posted[0]).toContain("Linear team: PAY");
-    expect(harness.posted[0]).toContain("acme/checkout-api");
-    expect(harness.posted[0]).toContain("PR #812");
-    expect(harness.posted[0]).toContain("acme/checkout-events");
+    const document = JSON.parse(harness.documents[0] ?? "{}") as { routing: Record<string, unknown> };
+    expect(document.routing).toMatchObject({
+      productSlug: "checkout-platform",
+      linearTeamKey: "PAY",
+      targets: [{ fullName: "acme/checkout-api", pullRequestUrl: "https://github.com/acme/checkout-api/pull/812" }],
+      siblingsRead: [{ fullName: "acme/checkout-events" }],
+    });
     expect(output.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -437,7 +453,8 @@ describe("publishProofPack", () => {
       validationResults: { listForRun: async () => [] },
     } as unknown as Partial<ProofPackActivityDependencies>);
     await harness.activities.publishProofPack(input);
-    expect(harness.posted[0]).toContain("BLOCKED");
-    expect(harness.posted[0]).toContain("No result row exists for this assertion.");
+    const attention = harness.posted[0]?.slice(harness.posted[0].indexOf("### Needs your attention")) ?? "";
+    expect(attention).toContain("is BLOCKED");
+    expect(attention).toContain("No result row exists for this assertion.");
   });
 });

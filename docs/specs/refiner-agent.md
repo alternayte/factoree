@@ -11,7 +11,7 @@ Before the contracts freeze, a fresh refiner agent reads the code in the run's s
 - The refiner writes one proposal file. It writes nothing in the primary worktree, and the worktree fingerprint before and after proves it — the reviewer guard already works this way.
 - A proposal holds criteria, a method and a runnable target for each assertion (a command, a test path, an HTTP request or a browser route), the files that show existing patterns, and open questions.
 - Every criterion cites its source: a sentence of the ticket or a recorded human answer. A criterion the refiner inferred becomes a confirmation question — §7 forbids invented product behaviour.
-- Every assertion that is not manual names a runnable target. Otherwise the gate makes it manual — the method must be executable, not a label.
+- Every frozen assertion names a runnable target. A criterion without one, or with the method `manual` or `code_review`, does not freeze. The question proposes to drop it, and "yes" drops it — the workflow ends a Run that holds a manual assertion, and the independent Reviewer reads the code anyway.
 - An L3 run with a manual assertion asks the human before implementation. If the rounds end with a manual assertion, the run fails with VALIDATION_MANUAL_REQUIRED before the implementer starts — agent time is not spent on a run that cannot pass.
 - A question carries one proposal: "Proposal: <answer>, because <reason>". A reply "yes" accepts it — the cheapest answer in a Linear comment.
 - Question rounds stay bounded at five (DI-4.6) — an elicitation loop must end.

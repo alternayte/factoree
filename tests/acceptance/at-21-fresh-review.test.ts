@@ -161,7 +161,7 @@ describe("AT-21 — the Reviewer session is fresh", () => {
       idempotencyKey: `${runId}:implementer:attempt-1`,
     });
 
-    const passReport = JSON.stringify({ version: 1, verdict: "pass", findings: [] });
+    const passReport = JSON.stringify({ version: 1, verdict: "pass", changeDescription: "The change adds the health endpoint.", findings: [] });
     const reviewerRunner = new ScriptedReviewerRunner("opencode", "ses_reviewer_at21", passReport);
 
     const activities = createReviewActivities({

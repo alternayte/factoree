@@ -67,8 +67,6 @@ export interface ContextActivityDependencies {
   redactor: Redactor;
 }
 
-const shortSha = (sha: string): string => sha.slice(0, 7);
-
 
 
 /**
@@ -208,32 +206,23 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     });
 
     const repositories = [
-      `${resolved.pinned.primary.slug}@${shortSha(resolved.pinned.primary.sha)}`,
-      ...resolved.pinned.references.map(
-        (repository) => `${repository.slug}@${shortSha(repository.sha)}`,
-      ),
+      resolved.pinned.primary.slug,
+      ...resolved.pinned.references.map((repository) => repository.slug),
     ].join(", ");
-
-    const required = resolved.contract.items.filter((item) => item.classification === "required");
 
     // The stored contract wins, so a retry after a successful write reports the frozen values.
     const sha256 = stored?.sha256 ?? resolved.sha256;
     const document = stored?.document ?? resolved.document;
 
-    const outcome =
-      stored === null
-        ? `Factoree did not freeze this Context Contract, because one conflict is unresolved. ` +
-          `Draft Context Contract ${shortSha(sha256)}.`
-        : `Context Contract ${shortSha(sha256)}.`;
-
-    // Nothing reached the store on the draft path, so the summary must not claim a record.
-    const conflictVerb = stored === null ? "found" : "recorded";
-
+    // docs/specs/proof-pack-and-visual-evidence.md. One short sentence a human reads. The hashes
+    // live in the Proof Pack document.
+    const conflicts = resolved.contract.conflicts.length;
     const summary =
-      `Factoree resolved the context of this Run. Repositories: ${repositories}. ` +
-      `${count(resolved.contract.items.length, "context item", "context items")}, ` +
-      `${required.length} of them preloaded. ` +
-      `${count(resolved.contract.conflicts.length, "conflict", "conflicts")} ${conflictVerb}. ${outcome}`;
+      stored === null
+        ? `Factoree read ${count(resolved.contract.items.length, "context item", "context items")} from ${repositories}, ` +
+          "and did not freeze the context, because one conflict is unresolved."
+        : `Factoree read ${count(resolved.contract.items.length, "context item", "context items")} from ${repositories}` +
+          (conflicts === 0 ? "." : `, and recorded ${count(conflicts, "conflict", "conflicts")}.`);
 
     return {
       sha256,

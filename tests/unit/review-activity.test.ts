@@ -152,7 +152,7 @@ const input = {
   attempt: 1,
 };
 
-const passReport = JSON.stringify({ version: 1, verdict: "pass", findings: [] });
+const passReport = JSON.stringify({ version: 1, verdict: "pass", changeDescription: "The change adds the health endpoint.", findings: [] });
 
 describe("the review activity", () => {
   it("passes when the report holds no finding", async () => {
@@ -177,6 +177,7 @@ describe("the review activity", () => {
     const report = JSON.stringify({
       version: 1,
       verdict: "pass",
+      changeDescription: "The change adds the health endpoint.",
       findings: [
         {
           id: "RV-1",
@@ -209,6 +210,7 @@ describe("the review activity", () => {
     const report = JSON.stringify({
       version: 1,
       verdict: "fail",
+      changeDescription: "The change adds the health endpoint.",
       findings: [
         {
           id: "RV-1",
@@ -239,6 +241,7 @@ describe("the review activity", () => {
     const report = JSON.stringify({
       version: 1,
       verdict: "fail",
+      changeDescription: "The change adds the health endpoint.",
       findings: [
         {
           id: `RV-1-${secret}`,
@@ -356,6 +359,7 @@ describe("the review activity", () => {
     const report = JSON.stringify({
       version: 1,
       verdict: "fail",
+      changeDescription: "The change adds the health endpoint.",
       findings: [
         {
           id: "RV-1",

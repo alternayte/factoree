@@ -55,3 +55,18 @@ export const pushEventSchema = z.object({
   }),
   commits: z.array(pushCommitSchema),
 });
+
+/**
+ * docs/specs/proof-pack-and-visual-evidence.md. A deployment_status event. A CI preview tool
+ * reports the URL of the commit it runs in `environment_url`. Factoree reads the state, the URL,
+ * the deployed commit, and the repository.
+ */
+export const deploymentStatusEventSchema = z.object({
+  deployment_status: z.object({
+    state: z.string(),
+    environment_url: z.string().nullish(),
+  }),
+  deployment: z.object({ sha: z.string() }),
+  repository: z.object({ full_name: z.string() }),
+  installation: z.object({ id: z.number() }),
+});

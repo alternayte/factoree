@@ -164,7 +164,8 @@ describe("resolveContext activity", () => {
     const { activities } = build(files);
     const output = await activities.resolveContext(input());
     expect(output.summary).toContain("acme/webhook-service");
-    expect(output.summary).toContain(SHA_A.slice(0, 7));
+    // docs/specs/proof-pack-and-visual-evidence.md. A progress thought names no hash.
+    expect(output.summary).not.toContain(SHA_A.slice(0, 7));
   });
 
   it("freezes no contract while a conflict stays unresolved", async () => {
@@ -182,8 +183,7 @@ describe("resolveContext activity", () => {
     const output = await activities.resolveContext(input());
     expect(output.summary).toMatch(/did not freeze/i);
     expect(output.summary).toMatch(/conflict is unresolved/i);
-    // Nothing reached the store, so the summary must not claim a record. It reports a find.
-    expect(output.summary).toMatch(/\d+ conflicts? found\./);
+    // Nothing reached the store, so the summary must not claim a record.
     expect(output.summary).not.toMatch(/recorded/);
   });
 
@@ -213,12 +213,12 @@ describe("resolveContext activity", () => {
     const one = await build(conflictedFiles).activities.resolveContext(
       input({ decisions: [decision] }),
     );
-    expect(one.summary).toContain("1 conflict recorded");
+    expect(one.summary).toContain("recorded 1 conflict.");
 
     const many = await build(threeWayFiles).activities.resolveContext(
       input({ decisions: [decision] }),
     );
-    expect(many.summary).toMatch(/[2-9]\d* conflicts recorded/);
+    expect(many.summary).toMatch(/recorded [2-9]\d* conflicts\./);
     expect(many.summary).toMatch(/\d+ context items/);
   });
 

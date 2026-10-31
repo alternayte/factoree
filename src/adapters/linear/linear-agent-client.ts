@@ -23,6 +23,10 @@ export interface LinearApi {
     content: AgentActivityContent;
   }): Promise<unknown>;
   issue(issueId: string): Promise<LinearIssueWithLabels | null>;
+  updateAgentSession(
+    id: string,
+    input: { addedExternalUrls: Array<{ label: string; url: string }> },
+  ): Promise<unknown>;
 }
 
 export class LinearAgentClient implements AgentSessionPort {
@@ -50,6 +54,10 @@ export class LinearAgentClient implements AgentSessionPort {
 
   fail(sessionId: string, message: string): Promise<void> {
     return this.emit(sessionId, { type: "error", body: message });
+  }
+
+  async addLink(sessionId: string, label: string, url: string): Promise<void> {
+    await this.client.updateAgentSession(sessionId, { addedExternalUrls: [{ label, url }] });
   }
 
   /**

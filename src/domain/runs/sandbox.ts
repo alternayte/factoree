@@ -89,6 +89,25 @@ export interface SandboxCapabilities {
   supportsCheckpoints: boolean;
   /** True when the adapter can publish a port to a reachable URL. */
   supportsExposedServices: boolean;
+  /**
+   * docs/specs/kiln-sandbox-provider.md. True when every sandbox starts from the Factoree sandbox
+   * image, which holds the runner CLIs root-owned and the browser tools. False means the run
+   * installs the browser tools itself, and B-2 stays open on that adapter.
+   */
+  supportsCustomImage: boolean;
+}
+
+/**
+ * docs/specs/kiln-sandbox-provider.md. A provider that can save a prepared sandbox and start a new
+ * sandbox from it. Only an adapter that can fork a saved state into a new sandbox has it.
+ */
+export interface WarmSnapshots {
+  /** Saves the sandbox as it is now, and returns the snapshot id. The sandbox keeps running. */
+  take(ref: SandboxRef): Promise<string>;
+  /** Starts a new sandbox from a snapshot, with the egress policy the snapshot recorded. */
+  restore(input: SandboxCreateInput, snapshotId: string): Promise<SandboxRef>;
+  /** Removes a snapshot. A snapshot that has gone is removed. */
+  remove(snapshotId: string): Promise<void>;
 }
 
 /** SDD section 31. */
@@ -96,6 +115,10 @@ export interface Sandbox {
   /** The adapter name. It appears in `SandboxRef.adapter` and in logs. */
   readonly name: string;
   readonly capabilities: SandboxCapabilities;
+  /** The sandbox image by digest, when `supportsCustomImage` is true. */
+  readonly image?: string;
+  /** Present only when the adapter can start a sandbox from a warm snapshot. */
+  readonly warmSnapshots?: WarmSnapshots;
 
   create(input: SandboxCreateInput): Promise<SandboxRef>;
   /**

@@ -15,6 +15,7 @@
 import {
   COMMON_INFRASTRUCTURE_REQUIREMENTS,
   DRIVER_CREDENTIALS,
+  KILN_SANDBOX_REQUIREMENTS,
   LOCAL_SANDBOX_REQUIREMENT,
   SPRITE_SANDBOX_REQUIREMENTS,
   type LiveRequirement,
@@ -30,9 +31,14 @@ const REQUIREMENTS_BY_PROFILE: Record<LiveProfile, LiveRequirement[]> = {
   full: [...commonRequirements, ...SPRITE_SANDBOX_REQUIREMENTS],
 };
 
-/** The requirement list of one profile. The full list is the anti-weakening guard. */
-export const credentialsFor = (profile: LiveProfile): LiveRequirement[] =>
-  REQUIREMENTS_BY_PROFILE[profile];
+/**
+ * The requirement list of one profile. The full list is the anti-weakening guard. A `full` run
+ * on Kiln swaps the Sprite requirements for the Kiln ones, and keeps every other requirement.
+ */
+export const credentialsFor = (profile: LiveProfile, env: NodeJS.ProcessEnv = {}): LiveRequirement[] =>
+  profile === "full" && env.SANDBOX_ADAPTER === "kiln"
+    ? [...commonRequirements, ...KILN_SANDBOX_REQUIREMENTS]
+    : REQUIREMENTS_BY_PROFILE[profile];
 
 /**
  * Resolve the profile from the environment. A missing or empty variable resolves to `full`,
@@ -51,7 +57,7 @@ export const PROFILE_BANNER: Record<LiveProfile, string> = {
   full: [
     "SDD SECTION 66 LIVE ACCEPTANCE",
     "",
-    "This run uses every real dependency SDD section 66 names.",
+    "This run uses every real dependency SDD section 66 names, on Fly Sprites or on Kiln.",
     "A pass on this run is SDD section 66 proof. A failure is not.",
   ].join("\n"),
   local: [

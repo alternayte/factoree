@@ -47,6 +47,7 @@ describe("AT-22 — a blocking finding repairs the Run", () => {
       text: JSON.stringify({
         version: 1,
         verdict: attempt === 1 ? "fail" : "pass",
+        changeDescription: "The change adds the health endpoint.",
         findings:
           attempt === 1
             ? [

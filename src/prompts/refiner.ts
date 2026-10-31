@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@1";
+export const REFINER_PROMPT_VERSION = "refiner@3";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -49,7 +49,8 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "State the required behaviour, not the defect. \"A failed delivery is never retried\" becomes \"A failed delivery is retried\".",
         "Set `quote` to the exact sentence of the Work Item that the criterion restates. Set it to null for a criterion you inferred from the code.",
         "Give each criterion the check that proves it: `test` with a test file path, `command` with a shell command, `http` with \"METHOD /path\", or `browser` with a route that starts with \"/\".",
-        "Use `manual` only when no automated check can prove the criterion.",
+        "A criterion with no automated check does not freeze: Factoree asks the human to drop it. Use `manual` or `code_review` only when no command, test, HTTP request or page can prove the criterion.",
+        "Set `visible` to true when the criterion names a page, a screen or a UI element a user sees. Give a visible criterion the method `browser` and the route of the page, so Factoree captures a screenshot of it.",
         "Prefer an existing test or command of the repository. Name the files that show the pattern in `patterns`.",
         "Ask a question only for a decision the Work Item and the code leave open. Give your proposed answer and its reason.",
         "You must not invent product behaviour the Work Item and the code do not imply.",

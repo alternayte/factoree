@@ -19,17 +19,42 @@ export interface UserValidatorInput {
   environment: Record<string, string>;
 }
 
-/** Describes the JSON shape `renderUserValidatorPrompt` asks the validator to write. */
+/**
+ * Describes the JSON shape `renderUserValidatorPrompt` asks the validator to write. It names every
+ * field, because a step kind alone leaves the model to guess them. The FAC-40 live run wrote
+ * `{ "type": "goto", "url": "/" }`, and the parser refused every step. The example parses with
+ * `parseValidationPlan`, and a unit test holds that.
+ */
 const PLAN_SCHEMA = [
   'The document is one JSON object: { "version": 1, "entries": [...] }.',
-  "Each entry names the assertionId of one Validation Contract assertion, and one kind: " +
-    '"http", "browser", or "command".',
-  'An "http" entry carries a request: { method, path, headers, body, expectStatus, ' +
-    "expectBodyContains }.",
-  'A "browser" entry carries steps, each one of: goto, click, fill, reload, expectText, ' +
-    "expectVisible, or screenshot.",
-  'A "command" entry carries a command: { run, expectExitCode }.',
-  "Cover every automated assertion of the Validation Contract with exactly one entry.",
+  "Each entry names the assertionId of one Validation Contract assertion, and one kind.",
+  'An "http" entry: { "assertionId": string, "kind": "http", "request": { "method": "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD", "path": string, "headers": { string: string }, "body": string | null, "expectStatus": number, "expectBodyContains": string | null } }.',
+  'A "browser" entry: { "assertionId": string, "kind": "browser", "steps": [...] }. The first step is a goto. Each step is exactly one of:',
+  '- { "action": "goto", "path": "/" } with a path relative to the preview',
+  '- { "action": "click", "selector": string }',
+  '- { "action": "fill", "selector": string, "value": string }',
+  '- { "action": "reload" }',
+  '- { "action": "expectText", "selector": string, "text": string } passes when the element contains the text',
+  '- { "action": "expectVisible", "selector": string }',
+  '- { "action": "screenshot", "name": string }',
+  'A "command" entry: { "assertionId": string, "kind": "command", "command": { "run": string, "expectExitCode": number } }. Use it for a test or a command assertion.',
+  "Cover every automated assertion of the Validation Contract with exactly one entry. Write no other key.",
+  "",
+  `Example: ${JSON.stringify({
+    version: 1,
+    entries: [
+      {
+        assertionId: "VAL-UI-001",
+        kind: "browser",
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectText", selector: "footer", text: "v0.1.0" },
+          { action: "screenshot", name: "footer" },
+        ],
+      },
+      { assertionId: "VAL-TEST-001", kind: "command", command: { run: "npm test", expectExitCode: 0 } },
+    ],
+  })}`,
 ].join("\n");
 
 /**

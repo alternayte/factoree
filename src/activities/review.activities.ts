@@ -62,6 +62,11 @@ export interface ReviewActivityOutput {
   findingCount: number;
   blockingCount: number;
   summary: string;
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. The Reviewer's description of the change,
+   * redacted. Empty when the report was not usable.
+   */
+  changeDescription: string;
   failures: string[];
   sessionId: string;
   /** False when the report is absent or fails to parse. DI-8.7 owns this path. */
@@ -360,6 +365,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           findingCount: 0,
           blockingCount: 0,
           summary: "",
+          changeDescription: "",
           failures: [],
           sessionId: sessionResult.session.sessionId,
           reportUsable: false,
@@ -391,6 +397,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           findingCount: 0,
           blockingCount: 0,
           summary: "",
+          changeDescription: "",
           failures: [],
           sessionId: sessionResult.session.sessionId,
           reportUsable: false,
@@ -419,6 +426,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           findingCount: 0,
           blockingCount: 0,
           summary: "",
+          changeDescription: "",
           failures: [],
           sessionId: sessionResult.session.sessionId,
           reportUsable: false,
@@ -437,6 +445,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           findingCount: 0,
           blockingCount: 0,
           summary: "",
+          changeDescription: "",
           failures: [],
           sessionId: sessionResult.session.sessionId,
           reportUsable: false,
@@ -512,6 +521,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         findingCount: decision.decisions.length,
         blockingCount: decision.blocking.length,
         summary: decision.summary,
+        changeDescription: dependencies.redactor.redactText(report.changeDescription.trim()),
         failures: redactedFailures,
         sessionId: sessionResult.session.sessionId,
         reportUsable: true,

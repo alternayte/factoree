@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
 import { createValidationActivities } from "~/activities/validation.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
@@ -41,9 +41,13 @@ class FakeBrowserDriver implements BrowserDriver {
   readonly calls: BrowserScenario[] = [];
   result: BrowserRunResult = passingBrowserResult;
 
-  run(scenario: BrowserScenario): Promise<BrowserRunResult> {
+  /** Runs inside the browser step, so a test can let time pass while the step runs. */
+  during: (() => Promise<void>) | null = null;
+
+  async run(scenario: BrowserScenario): Promise<BrowserRunResult> {
     this.calls.push(scenario);
-    return Promise.resolve(this.result);
+    if (this.during !== null) await this.during();
+    return this.result;
   }
 }
 
@@ -201,6 +205,7 @@ const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => 
   const evidence = new FakeEvidenceStore();
   const results = new FakeResultStore();
   const storage = new FakeEvidenceStorage();
+  const browser = new FakeBrowserDriver();
   const redactor = new Redactor();
   const logger = createLogger({ level: "error", redactor, sink: () => undefined });
   const activities = createValidationActivities({
@@ -213,13 +218,13 @@ const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => 
       executions,
       secrets: new MemorySecretStore(),
       redactor,
-      browser: new FakeBrowserDriver(),
+      browser,
       fetchImpl: okFetch,
       probe: readyProbe,
       evidencePersistence: createEvidencePersistence({ evidence, results, storage, logger }),
     },
   });
-  return { activities, sandbox, executions, evidence, results, storage };
+  return { activities, sandbox, executions, evidence, results, storage, browser };
 };
 
 const input = {
@@ -254,8 +259,35 @@ describe("the userValidate activity", () => {
     );
 
     expect(runner.runs[0]?.role).toBe("validator");
-    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@2" });
+    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@4" });
     expect(output.sessionId).toBe("ses_fake");
+  });
+
+  it("keeps heartbeating while the preview builds and the browser runs (FAC-41 live run)", async () => {
+    // FAC-41 failed with a heartbeat timeout: the heartbeat stopped with the validator session,
+    // and the Next.js preview build of the check sprite outlasted the two-minute timeout.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const runner = new FakeRunner();
+      const { activities, browser } = build(runner);
+      const environment = new MockActivityEnvironment();
+      let heartbeats = 0;
+      environment.on("heartbeat", () => {
+        heartbeats += 1;
+      });
+      let duringBrowser = 0;
+      browser.during = async () => {
+        const before = heartbeats;
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        duringBrowser = heartbeats - before;
+      };
+
+      await environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input);
+
+      expect(duringBrowser).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("never gives the validator an Implementer transcript", async () => {

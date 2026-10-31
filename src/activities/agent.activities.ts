@@ -49,6 +49,12 @@ export interface ImplementActivityInput {
   skills: string[];
   repairFindings: string[];
   stagingRead: boolean;
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. The preview the implementer can start and open
+   * with agent-browser to check its own work, or null when the work sprite has no browser tools.
+   */
+  selfCheck?: { previewCommand: string; readyUrl: string } | null;
+
   timeoutMs: number;
   /**
    * The ordinal of this Implementer attempt within the Run. The workflow counts it, so the
@@ -142,6 +148,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       actionPolicy,
       repairFindings: input.repairFindings,
       projectTestSecrets,
+      selfCheck: input.selfCheck ?? null,
     });
 
     // SDD section 30. The runner credential is attached again here, because the attachment lives

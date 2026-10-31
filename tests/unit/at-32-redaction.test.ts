@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Redactor } from "~/telemetry/redaction.js";
-import { renderProofPack } from "~/domain/evidence/proof-pack.js";
+import { buildProofPackDocument, renderProofPack, type ProofPackInput } from "~/domain/evidence/proof-pack.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
@@ -62,12 +62,11 @@ describe("AT-32 redaction in logs", () => {
 });
 
 describe("AT-32 redaction in the Proof Pack", () => {
-  it("keeps a deliberately printed fixture secret out of the Proof Pack", () => {
+  it("keeps a deliberately printed fixture secret out of the Proof Pack body and its document", () => {
     const redactor = new Redactor(["fixture-secret-value-12345"]);
     // Every free text field a Proof Pack can carry holds the fixture secret. A field the
     // renderer forgets would let the secret escape a real Run, so all of them are loaded here.
-    const body = redactor.redactText(
-      renderProofPack({
+    const input: ProofPackInput = {
         runId: "run-1",
         workItem: { title: "fixture-secret-value-12345", url: null },
         pullRequestUrl: "https://github.com/acme/fixture/pull/1",
@@ -138,14 +137,18 @@ describe("AT-32 redaction in the Proof Pack", () => {
         ],
         changedFiles: ["fixture-secret-value-12345.ts"],
         patchByteLength: 1,
-        previewUrl: "http://localhost:1/fixture-secret-value-12345",
+        checkPreviewUrl: "http://localhost:1/fixture-secret-value-12345",
+        changeDescription: "fixture-secret-value-12345",
+        visualEvidenceGap: "fixture-secret-value-12345",
         baseSha: "d".repeat(40),
         patchSha256: "e".repeat(64),
         commitSha: "f".repeat(40),
         repairCount: 0,
         repairLimit: 2,
-      }),
-    );
+      };
+    const body = redactor.redactText(renderProofPack(input, "https://uploads.linear.app/fixture-secret-value-12345"));
+    const document = redactor.redactText(JSON.stringify(buildProofPackDocument(input)));
     expect(body).not.toContain("fixture-secret-value-12345");
+    expect(document).not.toContain("fixture-secret-value-12345");
   });
 });

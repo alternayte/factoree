@@ -78,6 +78,7 @@ const agentSession: AgentSessionPort = {
   elicit: async () => undefined,
   respond: async () => undefined,
   fail: async () => undefined,
+  addLink: async () => undefined,
 };
 
 // SDD section 28. This test drives no high-risk label, so an empty list keeps the Project
@@ -241,6 +242,7 @@ beforeAll(async () => {
     ),
     verifyGitHubSignature: () => false,
     startInstallationSync: () => Promise.reject(new Error("unused")),
+    recordPullRequestPreview: () => Promise.reject(new Error("unused")),
   });
   await app.ready();
 });

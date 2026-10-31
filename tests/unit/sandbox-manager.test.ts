@@ -195,6 +195,7 @@ describe("SandboxManager.prepare", () => {
       enforcesNetworkPolicy: false,
       supportsCheckpoints: true,
       supportsExposedServices: false,
+      supportsCustomImage: false,
     });
     const manager = new SandboxManager({ sandbox });
     await expect(manager.prepare(input)).rejects.toThrow(NetworkPolicyNotEnforcedError);
@@ -205,6 +206,7 @@ describe("SandboxManager.prepare", () => {
       enforcesNetworkPolicy: false,
       supportsCheckpoints: true,
       supportsExposedServices: false,
+      supportsCustomImage: false,
     });
     const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
     await expect(manager.prepare(input)).resolves.toBeDefined();
@@ -215,6 +217,7 @@ describe("SandboxManager.prepare", () => {
       enforcesNetworkPolicy: true,
       supportsCheckpoints: false,
       supportsExposedServices: false,
+      supportsCustomImage: false,
     });
     const manager = new SandboxManager({ sandbox });
     const prepared = await manager.prepare(input);
@@ -282,6 +285,64 @@ describe("repository configuration and staged network policy", () => {
     ]);
     expect(prepared.runtime.allowedDomains).toEqual(["registry.npmjs.org"]);
     expect(prepared.verifyCommands).toEqual([{ name: "test", run: "npm test" }]);
+  });
+
+  describe("the browser tools of the self-check (proof-pack-and-visual-evidence.md)", () => {
+    const previewYaml =
+      `${configYaml}bootstrap:\n  command: npm ci\npreview:\n  enabled: true\n  command: npm start\n  readyUrl: http://localhost:3000/\n  timeoutSeconds: 60\n`;
+
+    // The install finishes when the bootstrap runs, so the wait ends at once.
+    const sandboxInstalling = (installExit: number): FakeSandbox => {
+      const sandbox = sandboxServing(previewYaml);
+      const serve = sandbox.onExec;
+      const start = sandbox.startProcess.bind(sandbox);
+      let install: string | null = null;
+      sandbox.startProcess = async (ref, command) => {
+        const started = await start(ref, command);
+        install = started.id;
+        return started;
+      };
+      sandbox.onExec = (command) => {
+        if (install !== null && command.file === "sh" && (command.args.at(-1) ?? "").includes("npm ci")) {
+          sandbox.finishProcess(install, { exitCode: installExit });
+        }
+        return serve === null ? { exitCode: 0, stdout: "", stderr: "" } : serve(command);
+      };
+      return sandbox;
+    };
+
+    const prepareWork = (sandbox: FakeSandbox, browserTools: boolean) =>
+      new SandboxManager({ sandbox, installBrowserTools: true }).prepare({
+        runId: "run-1",
+        tenantId: "tenant-1",
+        productId: "project-1",
+        primary: { url: "https://git.test/owner/app.git", ref: "main" },
+        references: [],
+        defaults: { stagingRead: false, spriteRetentionHours: 24, allowedDomains: ["registry.npmjs.org"] },
+        browserTools,
+      });
+
+    it("installs beside the bootstrap, and no agent runs with the install hosts", async () => {
+      const sandbox = sandboxInstalling(0);
+      const prepared = await prepareWork(sandbox, true);
+      expect(prepared.selfCheckReady).toBe(true);
+      expect(sandbox.networkPolicies[1]?.allowedDomains).toContain("storage.googleapis.com");
+      expect(sandbox.networkPolicies.at(-1)).toEqual({ allowedDomains: ["registry.npmjs.org"] });
+      expect(sandbox.calls.indexOf("startProcess:sh")).toBeLessThan(sandbox.calls.lastIndexOf("applyNetworkPolicy"));
+    });
+
+    it("gives a check sprite no browser tools and no install hosts", async () => {
+      const sandbox = sandboxInstalling(0);
+      const prepared = await prepareWork(sandbox, false);
+      expect(prepared.selfCheckReady).toBe(false);
+      expect(sandbox.calls).not.toContain("startProcess:sh");
+      expect(sandbox.networkPolicies.flatMap((policy) => policy.allowedDomains)).not.toContain("storage.googleapis.com");
+    });
+
+    it("prepares the sprite with no self-check when the install fails", async () => {
+      const prepared = await prepareWork(sandboxInstalling(1), true);
+      expect(prepared.selfCheckReady).toBe(false);
+    });
   });
 
   it("applies the last policy immediately before the baseline checkpoint", async () => {

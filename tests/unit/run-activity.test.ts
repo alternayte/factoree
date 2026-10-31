@@ -34,6 +34,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   configSha: null,
   proofPackSha256: null,
   proofPackPostedAt: null,
+  proofPackDocument: null,
   repairCount,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   startedAt: null,
@@ -63,6 +64,7 @@ const build = () => {
     elicit: () => Promise.resolve(),
     respond: () => Promise.resolve(),
     fail: () => Promise.resolve(),
+    addLink: () => Promise.resolve(),
   };
   const activities = createRunActivities({
     runs,

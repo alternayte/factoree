@@ -21,7 +21,7 @@ The Proof Pack has a short body for humans and a linked `proof-pack.json` for ag
 - The refiner marks each criterion `visible: true` when the ticket names a page, a screen or a UI element.
 - For a visible criterion in a repository with a `preview` block, the gate requires a browser assertion with a screenshot, and a video when the plan has more than one interaction step — a visible change must not pass on unit tests alone.
 - For a visible criterion in a repository with no `preview` block, the gate asks one Linear question: "Proposal: proceed with no screenshot, because the repository has no preview". A "yes" proceeds, and "Needs your attention" lists the gap — the human accepts the gap on purpose.
-- In a work sprite whose repository has a `preview` block, Factoree installs agent-browser and chrome-headless-shell while the refiner runs, under a fixed Factoree allow list for the install — the implementer checks its own work in a browser without a wait.
+- In a work sprite whose repository has a `preview` block, Factoree installs agent-browser and chrome-headless-shell beside the bootstrap command, under the bootstrap policy plus a fixed Factoree list of install hosts. It waits for the install before the agent policy applies — the install hides behind the bootstrap, and no agent ever runs with the install hosts.
 - The implementer prompt names agent-browser and the preview command. Nothing from its browser checks reaches the Proof Pack — a self-check makes the agent better, not the proof stronger.
 
 ## Out

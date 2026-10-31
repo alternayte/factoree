@@ -263,9 +263,10 @@ describe("PrismaRunRepository.setProofPack", () => {
     const runs = new PrismaRunRepository(prisma);
     const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
     const postedAt = new Date("2026-02-01T10:00:00.000Z");
-    await runs.setProofPack(tenantId, runId, { sha256: "a".repeat(64), postedAt });
+    await runs.setProofPack(tenantId, runId, { sha256: "a".repeat(64), postedAt, document: { version: 1, runId } });
     const reloaded = await runs.findById(tenantId, runId);
     expect(reloaded?.proofPackSha256).toBe("a".repeat(64));
+    expect(reloaded?.proofPackDocument).toEqual({ version: 1, runId });
     expect(reloaded?.proofPackPostedAt?.toISOString()).toBe(postedAt.toISOString());
   });
 
@@ -284,6 +285,7 @@ describe("PrismaRunRepository.setProofPack", () => {
       runs.setProofPack("other-tenant", runId, {
         sha256: "b".repeat(64),
         postedAt: new Date("2026-02-01T10:00:00.000Z"),
+        document: {},
       }),
     ).rejects.toThrow();
   });

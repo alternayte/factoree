@@ -10,6 +10,7 @@ const spyClient = () => {
       return Promise.resolve({ success: true });
     }),
     issue: vi.fn(() => Promise.resolve(null)),
+    updateAgentSession: vi.fn(() => Promise.resolve({ success: true })),
   };
 };
 
@@ -46,12 +47,21 @@ describe("LinearAgentClient", () => {
     await new LinearAgentClient(client).fail("session-1", "Run failed.");
     expect(client.calls[0]?.content).toEqual({ type: "error", body: "Run failed." });
   });
+
+  it("adds a link to the session without replacing the links it holds", async () => {
+    const client = spyClient();
+    await new LinearAgentClient(client).addLink("session-1", "Pull request", "https://github.com/acme/api/pull/1");
+    expect(client.updateAgentSession).toHaveBeenCalledWith("session-1", {
+      addedExternalUrls: [{ label: "Pull request", url: "https://github.com/acme/api/pull/1" }],
+    });
+  });
 });
 
 describe("the Work Item labels of SDD section 28", () => {
   it("reads the label names of one issue", async () => {
     const client = new LinearAgentClient({
       createAgentActivity: () => Promise.resolve({}),
+      updateAgentSession: () => Promise.resolve({}),
       issue: () => Promise.resolve({ labels: () => Promise.resolve({ nodes: [{ name: "security" }, { name: "backend" }] }) }),
     });
     expect(await client.labels("issue-1")).toEqual(["security", "backend"]);
@@ -60,6 +70,7 @@ describe("the Work Item labels of SDD section 28", () => {
   it("reports no label when the issue does not exist", async () => {
     const client = new LinearAgentClient({
       createAgentActivity: () => Promise.resolve({}),
+      updateAgentSession: () => Promise.resolve({}),
       issue: () => Promise.resolve(null),
     });
     expect(await client.labels("issue-1")).toEqual([]);

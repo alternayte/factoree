@@ -27,6 +27,7 @@ const recordingGateway = (sent: unknown[]): SpritesGateway => {
   const handle: SpritesSpriteHandle = {
     writeFile: () => Promise.resolve(),
     execFile: () => Promise.resolve(ok),
+    execFileCaptured: () => Promise.resolve(ok),
     startDetached: () => Promise.resolve(),
     createCheckpoint: () => Promise.resolve({ id: "checkpoint-1" }),
     publishPort: () => Promise.resolve("https://sprite.test"),

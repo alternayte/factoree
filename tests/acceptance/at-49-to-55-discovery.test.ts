@@ -512,6 +512,7 @@ const buildWebhookApp = (options: { boundInstallationId: string | null }) => {
     discovery: discovery as never,
     tenants,
     verifySignature: (raw, signature) => verifyGitHubSignature({ rawBody: raw, signature, secret: WEBHOOK_SECRET }).ok,
+    recordPullRequestPreview: () => Promise.resolve(false),
     startInstallationSync: (input) => {
       started.push(input);
       return Promise.resolve();

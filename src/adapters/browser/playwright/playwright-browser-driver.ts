@@ -200,11 +200,14 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       case "expectText": {
         const locator = page.locator(step.selector);
         const actual = await locator.textContent({ timeout: timeoutMs });
-        const trimmedActual = (actual ?? "").trim();
-        const trimmedExpected = step.text.trim();
-        if (trimmedActual !== trimmedExpected) {
+        // The element must contain the text. An exact match failed the FAC-47 footer, which
+        // showed the version beside other text. A plan that needs exact text picks a selector
+        // that holds only that text.
+        const trimmedActual = (actual ?? "").replace(/\s+/g, " ").trim();
+        const trimmedExpected = step.text.replace(/\s+/g, " ").trim();
+        if (!trimmedActual.includes(trimmedExpected)) {
           throw new Error(
-            `Expected ${step.selector} to hold text "${trimmedExpected}", but it held "${trimmedActual}".`,
+            `Expected ${step.selector} to contain text "${trimmedExpected}", but it held "${trimmedActual}".`,
           );
         }
         return `Confirmed ${step.selector} holds the expected text.`;

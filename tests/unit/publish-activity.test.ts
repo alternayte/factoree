@@ -52,6 +52,7 @@ const stubSandbox = (options: { changedFiles: string[]; patchText: string }): Sa
       enforcesNetworkPolicy: true,
       supportsCheckpoints: false,
       supportsExposedServices: false,
+      supportsCustomImage: false,
     },
     exec,
   } as unknown as Sandbox;

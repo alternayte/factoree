@@ -4,6 +4,11 @@ export interface AgentSessionPort {
   elicit(sessionId: string, question: string): Promise<void>;
   respond(sessionId: string, body: string): Promise<void>;
   fail(sessionId: string, message: string): Promise<void>;
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. Adds one link to the session, for example the
+   * pull request or the pull request preview. Linear shows it as an Open button.
+   */
+  addLink(sessionId: string, label: string, url: string): Promise<void>;
 }
 
 /**

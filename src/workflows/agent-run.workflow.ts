@@ -763,6 +763,10 @@ export async function agentRunWorkflow(
         skills: attemptInput.prepared.skills,
         repairFindings: attemptInput.repairFindings,
         stagingRead: attemptInput.prepared.runtime.stagingRead,
+        selfCheck:
+          attemptInput.prepared.selfCheckReady === true && attemptInput.prepared.preview !== null
+            ? { previewCommand: attemptInput.prepared.preview.command, readyUrl: attemptInput.prepared.preview.readyUrl }
+            : null,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
       }),
@@ -1322,6 +1326,7 @@ export async function agentRunWorkflow(
             statedCriteria: refined.acceptanceCriteria,
             contextContract: resolvedContext.document,
             skills: preparedSandbox.skills,
+            previewConfigured: preparedSandbox.preview !== null && preparedSandbox.preview.enabled,
             timeoutMs: remainingMs(),
           }),
         );
@@ -1485,6 +1490,9 @@ export async function agentRunWorkflow(
       // reaching a review. The Proof Pack reports this count to a human, so it must be exact.
       let reviewPasses = 0;
       let publishedPreviewUrl: string | null = null;
+      let publishedChangeDescription = "";
+      // docs/specs/proof-pack-and-visual-evidence.md. The gap the human accepted at refinement.
+      const visualEvidenceGap = proposal.visualEvidenceGap ?? null;
 
       for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -1795,6 +1803,7 @@ export async function agentRunWorkflow(
           publishedReviewPasses = reviewPasses;
           publishedReviewAttempt = attempt;
           publishedPreviewUrl = userValidation.previewUrl;
+          publishedChangeDescription = review.changeDescription;
           break;
         }
 
@@ -1973,9 +1982,7 @@ export async function agentRunWorkflow(
       await notify(() =>
         activities.postProgress({
           sessionId: input.agentSessionId,
-          message:
-            `Factoree published the verified change. Pull request: ${publication.pullRequestUrl}. ` +
-            `Base SHA: ${publishInput.baseSha}. Patch SHA-256: ${publication.patchSha256}.`,
+          message: `Factoree opened the pull request: ${publication.pullRequestUrl}.`,
         }),
       );
 
@@ -2021,6 +2028,8 @@ export async function agentRunWorkflow(
           reviewVerdict: publishedReviewVerdict,
           reviewPasses: publishedReviewPasses,
           reviewAttempt: publishedReviewAttempt,
+          changeDescription: publishedChangeDescription,
+          visualEvidenceGap,
           autonomyLevel: refined.autonomyLevel,
           autonomyReasons: refined.autonomyReasons,
           checkDefiningFiles: published.checkDefiningFiles,

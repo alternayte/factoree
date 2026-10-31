@@ -14,7 +14,7 @@ import { parseOpenCodeOutput } from "./output-parser.js";
  * command, so the session may read across the workspace. `OPENCODE_CONFIG_CONTENT` carries this
  * inline. R-3: `OPENCODE_DISABLE_PROJECT_CONFIG` makes opencode skip the `opencode.json` of the
  * repository, so a repository cannot add an MCP server, a plugin or a permission. The repository
- * therefore cannot choose the model either (B-3).
+ * therefore cannot choose the model either. The worker chooses it instead (B-3).
  */
 const OPENCODE_CONFIG = JSON.stringify({ permission: { external_directory: "allow" } });
 
@@ -42,9 +42,19 @@ const RESUME_SCRIPT =
 const directoryArguments = (repositoryPath: string | undefined): string[] =>
   repositoryPath === undefined ? [] : ["--dir", repositoryPath];
 
+/** B-3. The model and its reasoning effort, from the worker, as the same kind of parameters. */
+const modelArguments = (model: string | undefined, variant: string | undefined): string[] => [
+  ...(model === undefined ? [] : ["--model", model]),
+  ...(variant === undefined ? [] : ["--variant", variant]),
+];
+
 export interface OpenCodeRunnerOptions extends CliAgentRunnerOptions {
   /** The executable inside the sandbox. Bootstrap installs it. */
   executable?: string;
+  /** B-3. `provider/model`, for example `deepseek/deepseek-flash`. Absent means opencode's default. */
+  model?: string;
+  /** B-3. The reasoning effort of the model, for example `max`. opencode ignores an unknown one. */
+  variant?: string;
 }
 
 /**
@@ -56,17 +66,19 @@ export interface OpenCodeRunnerOptions extends CliAgentRunnerOptions {
 export class OpenCodeRunner extends CliAgentRunner {
   readonly name = "opencode";
   private readonly executable: string;
+  private readonly model: string[];
 
   constructor(options: OpenCodeRunnerOptions) {
     super(options);
     this.executable = options.executable ?? "opencode";
+    this.model = modelArguments(options.model, options.variant);
   }
 
   protected startCommand(promptFile: string, repositoryPath?: string): CliAgentCommand {
     return {
       file: "sh",
       // `sh` fills `$0`, so the arguments of the script start after it.
-      args: ["-c", START_SCRIPT, "sh", ...directoryArguments(repositoryPath)],
+      args: ["-c", START_SCRIPT, "sh", ...this.model, ...directoryArguments(repositoryPath)],
       env: {
         FACTOREE_PROMPT_FILE: promptFile,
         FACTOREE_OPENCODE_BIN: this.executable,
@@ -79,7 +91,7 @@ export class OpenCodeRunner extends CliAgentRunner {
   protected resumeCommand(sessionId: string, promptFile: string, repositoryPath?: string): CliAgentCommand {
     return {
       file: "sh",
-      args: ["-c", RESUME_SCRIPT, "sh", ...directoryArguments(repositoryPath)],
+      args: ["-c", RESUME_SCRIPT, "sh", ...this.model, ...directoryArguments(repositoryPath)],
       env: {
         FACTOREE_PROMPT_FILE: promptFile,
         FACTOREE_OPENCODE_BIN: this.executable,

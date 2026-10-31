@@ -54,7 +54,13 @@ export class LinearEvidenceStorage implements EvidenceStorage {
 
     const putResponse = await this.fetchImpl(uploadUrl, {
       method: "PUT",
-      headers: Object.fromEntries(headers.map((header) => [header.key, header.value])),
+      // The upload URL is signed for the content type of the slot. Linear returns only the
+      // signing headers, so the PUT names the type itself, or storage answers 400.
+      headers: {
+        "Content-Type": input.contentType,
+        "Cache-Control": "public, max-age=31536000",
+        ...Object.fromEntries(headers.map((header) => [header.key, header.value])),
+      },
       body: input.bytes,
     });
     if (!putResponse.ok) {

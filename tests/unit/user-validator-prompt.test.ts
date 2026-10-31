@@ -5,6 +5,7 @@ import {
 } from "~/domain/runs/implementer-input.js";
 import { buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
 import { USER_VALIDATOR_PROMPT_VERSION } from "~/prompts/user-validator.js";
+import { parseValidationPlan } from "~/domain/validation/validation-plan.js";
 
 const base = {
   goal: "Add the health endpoint.",
@@ -22,7 +23,7 @@ describe("buildUserValidatorInput", () => {
     expect(built.prompt).toContain("Add the health endpoint.");
     expect(built.prompt).toContain("# Validation Contract");
     expect(built.prompt).toContain("/workspace/validation/plan.json");
-    expect(built.promptVersion).toBe("user-validator@2");
+    expect(built.promptVersion).toBe("user-validator@4");
     expect(built.promptVersion).toBe(USER_VALIDATOR_PROMPT_VERSION);
   });
 
@@ -67,5 +68,32 @@ describe("buildUserValidatorInput", () => {
     const built = buildUserValidatorInput(base);
     expect(built.prompt).not.toContain("The change is applied.");
     expect(built.prompt).not.toContain("Reviewer finding:");
+  });
+});
+
+describe("the plan shape the validator prompt states (FAC-40 live run)", () => {
+  // The FAC-40 validator wrote { "type": "goto", "url": "/" }, because the prompt named the step
+  // kinds and never their fields. The parser refused the plan, and every assertion was BLOCKED.
+  it("shows the exact field names of a browser step", () => {
+    const prompt = buildUserValidatorInput(base).prompt;
+    expect(prompt).toContain('{ "action": "goto", "path": "/" }');
+    expect(prompt).toContain('{ "action": "expectText", "selector": string, "text": string }');
+    expect(prompt).toContain('{ "action": "screenshot", "name": string }');
+  });
+
+  it("carries an example plan that the plan parser accepts", () => {
+    const prompt = buildUserValidatorInput(base).prompt;
+    const example = prompt.slice(prompt.indexOf("Example:") + "Example:".length).split("\n\n")[0] ?? "";
+    const plan = parseValidationPlan(example.trim(), {
+      version: 1,
+      runId: "run-1",
+      workItem: "ENG-1",
+      goal: "g",
+      assertions: [
+        { id: "VAL-UI-001", requirement: "AC-1", statement: "s", method: "browser", evidence: ["screenshot"], preconditions: [] },
+        { id: "VAL-TEST-001", requirement: "AC-2", statement: "s", method: "test", evidence: ["test-report"], preconditions: [] },
+      ],
+    });
+    expect(plan.entries.map((entry) => entry.kind)).toEqual(["browser", "command"]);
   });
 });

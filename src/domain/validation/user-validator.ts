@@ -185,7 +185,10 @@ export const executeBrowserAssertion = async (
     }
   }
 
-  const captureVideo = assertion.evidence.includes("video");
+  // docs/specs/proof-pack-and-visual-evidence.md. A plan with more than one interaction step
+  // shows a flow, and a screenshot shows only its end, so the driver records a video too.
+  const interactionSteps = entry.steps.filter((step) => step.action === "click" || step.action === "fill").length;
+  const captureVideo = assertion.evidence.includes("video") || interactionSteps > 1;
   const captureTrace = assertion.evidence.includes("trace");
   const run = await dependencies.browser.run({
     baseUrl: handle.baseUrl,

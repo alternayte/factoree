@@ -26,6 +26,34 @@ const buildBase = (sandbox: FakeSandbox) => ({
 });
 
 describe("startPreview", () => {
+  it("checks readiness at the exposed URL, not at the sandbox-local readiness URL (FAC-46 live run)", async () => {
+    // FAC-46: the worker requested http://localhost:3000/ from its own host, reached the local
+    // Factoree API, and waited out the whole timeout while the preview was live on the sprite.
+    const sandbox = new FakeSandbox();
+    const probed: string[] = [];
+    await startPreview({
+      ...buildBase(sandbox),
+      probe: async (url) => {
+        probed.push(url);
+        return { status: 200 };
+      },
+    });
+    expect(probed).toEqual(["http://fake.invalid:8080/health"]);
+  });
+
+  it("frees the preview port before it starts the preview (FAC-44 live run)", async () => {
+    // FAC-44: a process the validator agent left on the port made `next start` fail with
+    // EADDRINUSE. The preview port belongs to Factoree's preview.
+    const sandbox = new FakeSandbox();
+    await startPreview({ ...buildBase(sandbox), probe: async () => ({ status: 200 }) });
+
+    const free = sandbox.calls.findIndex((call) => call.startsWith("exec"));
+    expect(free).toBeGreaterThanOrEqual(0);
+    expect(free).toBeLessThan(sandbox.calls.indexOf("startProcess:sh"));
+    const command = sandbox.commands.find((entry) => entry.args.join(" ").includes("sport = :8080"));
+    expect(command).toBeDefined();
+  });
+
   it("starts the command, waits for readiness, and exposes the port", async () => {
     const sandbox = new FakeSandbox();
     let polls = 0;
@@ -34,7 +62,7 @@ describe("startPreview", () => {
       probe: async () => (++polls < 3 ? null : { status: 200 }),
     });
 
-    expect(sandbox.commands[0]).toMatchObject({
+    expect(sandbox.commands.find((entry) => entry.args.at(-1) === config.command)).toMatchObject({
       file: "sh",
       args: ["-c", config.command],
       cwd: "/workspace/primary",

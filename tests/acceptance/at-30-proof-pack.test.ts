@@ -303,6 +303,18 @@ const seedProvedRun = async (
         return Promise.resolve();
       },
       fail: () => Promise.resolve(),
+      addLink: (_sessionId: string, label: string, url: string) => {
+        links.push({ label, url });
+        return Promise.resolve();
+      },
+    },
+    // The storage answers one stable reference per name, so two posts of one Run hash alike.
+    storage: {
+      name: "fake",
+      put: (artifact) => {
+        documents.push(Buffer.from(artifact.bytes).toString("utf8"));
+        return Promise.resolve({ sha256: "f".repeat(64), storageRef: `https://uploads.linear.app/${runId}/${artifact.name}`, byteLength: artifact.bytes.byteLength });
+      },
     },
     secrets: new MemorySecretStore({ API_TOKEN: SECRET }),
     redactor,
@@ -341,6 +353,8 @@ const seedProvedRun = async (
 };
 
 const posted: string[] = [];
+const documents: string[] = [];
+const links: Array<{ label: string; url: string }> = [];
 
 /**
  * AT-30. A successful L3 Run creates one Proof Pack that carries the pull request, the
@@ -350,121 +364,90 @@ const posted: string[] = [];
  * cannot pass.
  */
 describe("AT-30 — the Proof Pack of a successful L3 Run", () => {
-  it("carries every one of the eleven AT-30 items", async () => {
+  // docs/specs/proof-pack-and-visual-evidence.md. The Proof Pack is the body a human reads plus
+  // the proof-pack.json document it links. Together they carry every AT-30 item.
+  const publish = async (options: Parameters<typeof seedProvedRun>[0] = {}) => {
     const before = posted.length;
-    const seeded = await seedProvedRun();
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
+    const seeded = await seedProvedRun(options);
+    const output = await seeded.activities.publishProofPack(seeded.input);
+    return { seeded, output, body: posted.slice(before).at(-1) ?? "", document: documents.at(-1) ?? "" };
+  };
 
-    // 1. The pull request.
+  it("carries every one of the eleven AT-30 items", async () => {
+    const { body, document } = await publish();
+
     expect(body).toContain("https://github.com/acme/fixture/pull/1");
-    // 2. The validation results, one row per assertion.
-    expect(body).toContain("| Assertion | Result | Evidence |");
-    expect(body).toContain("| VAL-API-001 | PASS |");
-    expect(body).toContain("| VAL-UI-001 | PASS |");
-    // 3. The evidence of each assertion.
-    expect(body).toContain("file:VAL-API-001-http-request-response.json");
-    expect(body).toContain("file:VAL-UI-001-browser-screenshot.png");
-    // 4. The deterministic checks.
-    expect(body).toContain("npm test");
-    expect(body).toContain("exit code 0");
-    // 5. The review result.
-    expect(body).toContain("The last Reviewer verdict was pass");
-    expect(body).toContain("Blocking findings that remain: 0");
-    // 6. The context used, with provenance.
-    expect(body).toContain("github:acme/fixture/README.md");
-    expect(body).toContain("authority repository_readme");
-    // 7. The context conflicts.
-    expect(body).toContain("CTX-4");
-    expect(body).toContain("ADR-031");
-    // 8. The known limitations.
+    expect(body).toContain("- PASS VAL-API-001");
+    expect(body).toContain("- PASS VAL-UI-001");
+    expect(body).toContain("- PASS unit: `npm test`");
+    expect(body).toContain("Independent review: 2 passes");
+    expect(body).toContain("0 blocking.");
     expect(body).toContain("RV-2");
     expect(body).toContain("the finding names no mandatory requirement");
-    // 9. The repair count.
-    expect(body).toContain("Repairs: 1 of 2");
-    // 10. The base SHA.
-    expect(body).toContain("5".repeat(40));
-    // 11. The patch hash.
-    expect(body).toContain("4".repeat(64));
+    expect(body).toContain("repairs 1 of 2");
+    expect(document).toContain("file:VAL-API-001-http-request-response.json");
+    expect(document).toContain("file:VAL-UI-001-browser-screenshot.png");
+    expect(document).toContain("github:acme/fixture/README.md");
+    expect(document).toContain("repository_readme");
+    expect(document).toContain("CTX-4");
+    expect(document).toContain("ADR-031");
+    expect(document).toContain("5".repeat(40));
+    expect(document).toContain("4".repeat(64));
   });
 
   it("states the success criterion of every assertion, so a human can audit it", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun();
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
+    const { body } = await publish();
     expect(body).toContain("GET /health returns 200.");
     expect(body).toContain("The status page shows the healthy state after a reload.");
   });
 
-  it("records the Proof Pack hash on the Run row", async () => {
-    const seeded = await seedProvedRun();
-    const output = await seeded.activities.publishProofPack(seeded.input);
+  it("records the Proof Pack hash and the document on the Run row", async () => {
+    const { seeded, output, document } = await publish();
     const run = await seeded.runs.findById(seeded.tenantId, seeded.runId);
     expect(run?.proofPackSha256).toBe(output.sha256);
     expect(run?.proofPackPostedAt).not.toBeNull();
+    expect(run?.proofPackDocument).toEqual(JSON.parse(document));
+  });
+
+  it("links the document from the body and the pull request from the session", async () => {
+    const { seeded, body } = await publish();
+    expect(body).toContain(`[proof-pack.json](https://uploads.linear.app/${seeded.runId}/proof-pack.json)`);
+    expect(links.at(-1)).toEqual({ label: "Pull request", url: "https://github.com/acme/fixture/pull/1" });
   });
 
   it("reports the last attempt only, so a repaired defect is not reported as open", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun();
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
-    expect(body).not.toContain("RV-1");
-    expect(body).not.toContain("The endpoint answered 500.");
+    const { body, document } = await publish();
+    for (const text of [body, document]) {
+      expect(text).not.toContain("RV-1");
+      expect(text).not.toContain("The endpoint answered 500.");
+    }
   });
 
   it("keeps a project secret and the retained log out of the Proof Pack", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun();
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
-    // AT-32 and SDD section 60.
-    expect(body).not.toContain(SECRET);
-    // SDD section 47 forbids a raw log dump into Linear.
-    expect(body).not.toContain("IMPLEMENTER TRANSCRIPT LINE");
+    const { body, document } = await publish();
+    for (const text of [body, document]) {
+      expect(text).not.toContain(SECRET);
+      expect(text).not.toContain("IMPLEMENTER TRANSCRIPT LINE");
+    }
   });
 
   it("reports the deterministic checks of the last attempt only", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun();
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
-    // A stale failing row of the repaired attempt would tell the human that a passing Run failed
-    // its own verification.
-    expect(body).toContain("exit code 0");
-    expect(body).not.toContain("exit code 1");
-    expect(body).not.toContain("Failed.");
-    expect(body.match(/- unit:/g)).toHaveLength(1);
+    const { body } = await publish();
+    expect(body).not.toContain("FAIL unit");
+    expect(body.match(/- PASS unit:/g)).toHaveLength(1);
   });
 
   it("reports no open blocker when the last review passed and wrote no row", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun({ silentPassingReview: true });
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
-    // A passing review reports no finding, so it writes no row. Only the attempt 1 blocker
-    // remains in the database. A Proof Pack that infers the last pass from the rows would tell
-    // the human that a proved Run still carries a blocker.
-    expect(body).toContain("Blocking findings that remain: 0");
+    const { body } = await publish({ silentPassingReview: true });
+    expect(body).toContain("0 blocking.");
     expect(body).not.toContain("RV-1");
-    expect(body).toMatch(/### Known limitations\n\nNone\./);
+    expect(body).toMatch(/### Needs your attention\n\nNothing\./);
   });
 
   it("shows the evidence of the last validation attempt only", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun();
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
-    // A failure artefact beside a PASS misleads the human who opens it.
-    expect(body).toContain("file:VAL-API-001-http-request-response.json");
-    expect(body).not.toContain("file:VAL-API-001-FAILED-attempt-1.json");
+    const { document } = await publish();
+    expect(document).toContain("file:VAL-API-001-http-request-response.json");
+    expect(document).not.toContain("file:VAL-API-001-FAILED-attempt-1.json");
   });
 
   it("produces the same hash twice, because it is a function of recorded state", async () => {
@@ -474,15 +457,11 @@ describe("AT-30 — the Proof Pack of a successful L3 Run", () => {
     expect(second.sha256).toBe(first.sha256);
   });
 
-  it("stays small enough for a human, even for a large change", async () => {
-    const before = posted.length;
-    const seeded = await seedProvedRun({ changedFileCount: 200 });
-    await seeded.activities.publishProofPack(seeded.input);
-    const body = posted.slice(before).at(-1) ?? "";
-
-    // SDD section 47. The Proof Pack optimizes for one human decision, so it stays bounded.
-    expect(body.length).toBeLessThan(60_000);
-    expect(body).toContain("200 files");
-    expect(body).toContain("150 more files");
+  it("keeps the body short for a large change, and the document counts every file", async () => {
+    const { body, document } = await publish({ changedFileCount: 200 });
+    expect(body.length).toBeLessThan(5_000);
+    const parsed = JSON.parse(document) as { change: { changedFileCount: number; changedFiles: string[] } };
+    expect(parsed.change.changedFileCount).toBe(200);
+    expect(parsed.change.changedFiles).toHaveLength(50);
   });
 });

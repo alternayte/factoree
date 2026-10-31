@@ -4,6 +4,7 @@ import type {
   CreateRunInput,
   CreateRunTargetInput,
   ExpiredSandboxRun,
+  PreviewTarget,
   RunSandboxPatch,
   RunTargetPatch,
   RunTargetRecord,
@@ -44,6 +45,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   configSha: row.configSha ?? null,
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
+  proofPackDocument: (row.proofPackDocument as Record<string, unknown> | null) ?? null,
   repairCount: row.repairCount,
   createdAt: row.createdAt,
   startedAt: row.startedAt,
@@ -209,12 +211,16 @@ export class PrismaRunRepository implements RunRepository {
   async setProofPack(
     tenantId: string,
     runId: string,
-    proofPack: { sha256: string; postedAt: Date },
+    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown> },
   ): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
     const updated = await this.prisma.run.updateMany({
       where: { id: runId, tenantId },
-      data: { proofPackSha256: proofPack.sha256, proofPackPostedAt: proofPack.postedAt },
+      data: {
+        proofPackSha256: proofPack.sha256,
+        proofPackPostedAt: proofPack.postedAt,
+        proofPackDocument: proofPack.document as Prisma.InputJsonObject,
+      },
     });
     // SDD section 68 reads this value to decide whether the Run can complete. A silent success
     // makes a Run that posted a Proof Pack report that it posted none.
@@ -284,7 +290,24 @@ export class PrismaRunRepository implements RunRepository {
       patchSha256: row.patchSha256,
       commitSha: row.commitSha,
       pullRequestUrl: row.pullRequestUrl,
+      previewUrl: row.previewUrl,
     }));
+  }
+
+  async setPullRequestPreview(
+    tenantId: string,
+    repositoryFullName: string,
+    commitSha: string,
+    previewUrl: string,
+  ): Promise<PreviewTarget | null> {
+    // The tenant filter is part of the query. SDD section 52 forbids a read across the boundary.
+    const target = await this.prisma.runTarget.findFirst({
+      where: { tenantId, commitSha, repository: { fullName: repositoryFullName } },
+      select: { id: true, run: { select: { id: true, linearAgentSessionId: true } } },
+    });
+    if (target === null) return null;
+    await this.prisma.runTarget.update({ where: { id: target.id }, data: { previewUrl } });
+    return { runId: target.run.id, linearAgentSessionId: target.run.linearAgentSessionId };
   }
 
   async setConfigSha(tenantId: string, runId: string, sha: string): Promise<void> {

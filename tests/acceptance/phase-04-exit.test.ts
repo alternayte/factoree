@@ -163,8 +163,9 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
 
         // The explanation reached the human through Linear.
         const progress = postedProgress.join("\n");
-        expect(progress).toContain("Context Contract");
-        expect(progress).toContain(`${PRIMARY_SLUG}@${fixture.primarySha.slice(0, 7)}`);
+        // docs/specs/proof-pack-and-visual-evidence.md. One short sentence, with no hash.
+        expect(progress).toMatch(new RegExp(`Factoree read \\d+ context items from ${PRIMARY_SLUG}, and recorded 1 conflict\\.`));
+        expect(progress).not.toContain(fixture.primarySha.slice(0, 7));
 
         // The explanation reached the Implementer, and it is the frozen text.
         const call = implementCalls.find((entry) => entry.runId === RUN_ID);

@@ -51,6 +51,23 @@ describe("OpenCodeRunner", () => {
     await started;
   });
 
+  it("passes the model and its reasoning effort the worker chose (B-3)", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({
+      redactor: new Redactor(),
+      pollIntervalMs: 1,
+      model: "deepseek/deepseek-flash",
+      variant: "max",
+    });
+    const started = runner.run(runInput(sandbox, ref));
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    const args = sandbox.commands.at(-1)?.args ?? [];
+    expect(args.slice(3, 7)).toEqual(["--model", "deepseek/deepseek-flash", "--variant", "max"]);
+    sandbox.finishProcess("process-2", { stdout: '{"type":"session.start","session":{"id":"ses_1"}}' });
+    await started;
+  });
+
   it("passes the prompt through a file, not through the command line", async () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });

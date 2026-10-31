@@ -23,6 +23,9 @@ import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
 import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
 import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
+import { KilnClient } from "~/adapters/sandbox/kiln/kiln-client.js";
+import { KILN_RUNNER_BIN, KilnSandbox } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { PrismaWarmSnapshotStore } from "~/persistence/prisma/warm-snapshot.prisma.js";
 import { buildAgentRunnerRegistry } from "~/adapters/runners/registry.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
@@ -66,6 +69,8 @@ const redactor = new Redactor([
   env.FACTOREE_SECRET_KEY,
   env.GITHUB_APP_PRIVATE_KEY,
   env.GITHUB_WEBHOOK_SECRET,
+  ...(env.KILN_API_KEY === undefined ? [] : [env.KILN_API_KEY]),
+  ...(env.KILN_REGISTRY_TOKEN === undefined ? [] : [env.KILN_REGISTRY_TOKEN]),
 ]);
 const logger = createLogger({ level: env.LOG_LEVEL, redactor });
 const prisma = createPrismaClient(env.DATABASE_URL);
@@ -91,26 +96,48 @@ const runs = new PrismaRunRepository(prisma);
 
 // SDD section 31. The adapter comes from configuration. The local adapter cannot enforce an
 // egress policy, so SandboxManager accepts it only under the explicit opt in below.
-const sandbox: Sandbox =
-  env.SANDBOX_ADAPTER === "local"
-    ? new LocalProcessSandbox({ rootDirectory: env.SANDBOX_LOCAL_ROOT })
-    : new FlySpriteSandbox({
+const createSandbox = (): Sandbox => {
+  switch (env.SANDBOX_ADAPTER) {
+    case "local":
+      return new LocalProcessSandbox({ rootDirectory: env.SANDBOX_LOCAL_ROOT });
+    case "kiln":
+      // docs/specs/kiln-sandbox-provider.md. The env schema requires all three when the adapter is kiln.
+      return new KilnSandbox({
+        client: new KilnClient({ baseUrl: env.KILN_URL ?? "", apiKey: env.KILN_API_KEY ?? "" }),
+        image: env.KILN_IMAGE ?? "",
+        ...(env.KILN_REGISTRY_USERNAME === undefined || env.KILN_REGISTRY_TOKEN === undefined
+          ? {}
+          : { registryCredential: { username: env.KILN_REGISTRY_USERNAME, token: env.KILN_REGISTRY_TOKEN } }),
+      });
+    case "fly-sprites":
+      return new FlySpriteSandbox({
         gateway: createSpritesGateway({
           token: env.SPRITES_TOKEN ?? "",
           ...(env.SPRITES_BASE_URL === undefined ? {} : { baseUrl: env.SPRITES_BASE_URL }),
         }),
       });
+  }
+};
+const sandbox = createSandbox();
 
 const sandboxManager = new SandboxManager({
   sandbox,
   logger,
+  warmSnapshots: new PrismaWarmSnapshotStore(prisma),
+  // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
+  installBrowserTools: env.SANDBOX_ADAPTER === "fly-sprites",
   ...(env.SANDBOX_ADAPTER === "local" ? { allowUnenforcedNetwork: true } : {}),
 });
 
 // SDD section 33 names two required adapters. A stock `.factoree/config.yaml` selects
 // `opencode` for the Implementer and `claude` for the User Validator and the Reviewer, so both
 // must be registered before a stock repository can run.
-const runners = buildAgentRunnerRegistry(redactor);
+const runners = buildAgentRunnerRegistry(redactor, {
+  ...(env.OPENCODE_MODEL === undefined ? {} : { model: env.OPENCODE_MODEL }),
+  ...(env.OPENCODE_VARIANT === undefined ? {} : { variant: env.OPENCODE_VARIANT }),
+  // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
+  ...(sandbox.capabilities.supportsCustomImage ? { executable: `${KILN_RUNNER_BIN}/opencode` } : {}),
+});
 const reaper = new SpriteReaper({
   sandboxes: { [sandbox.name]: sandbox },
   runs,
@@ -125,6 +152,7 @@ const agentSession: AgentSessionPort = {
   elicit: (sessionId, question) => call(sessionId, (client) => client.elicit(sessionId, question)),
   respond: (sessionId, body) => call(sessionId, (client) => client.respond(sessionId, body)),
   fail: (sessionId, message) => call(sessionId, (client) => client.fail(sessionId, message)),
+  addLink: (sessionId, label, url) => call(sessionId, (client) => client.addLink(sessionId, label, url)),
 };
 
 // SDD section 28. The session identifier resolves the workspace client, in the same way it
@@ -240,7 +268,8 @@ const contextSources = new ConfiguredContextSourceProvider({
 // or record it as a failed request instead of crashing the activity.
 const previewProbe: ReadinessProbe = async (url) => {
   try {
-    const response = await fetch(url);
+    // A request that hangs must count as no answer, so the readiness deadline still ends the poll.
+    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     return { status: response.status };
   } catch {
     return null;

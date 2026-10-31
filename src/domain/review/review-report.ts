@@ -40,6 +40,11 @@ export interface ReviewReport {
   version: 1;
   /** The agent claim. It is recorded and it never decides. See DI-8.2. */
   verdict: "pass" | "fail";
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. What the change does, in two or three plain
+   * sentences. The Proof Pack shows it, labelled as the Reviewer's description. It decides nothing.
+   */
+  changeDescription: string;
   findings: ReviewFinding[];
 }
 
@@ -49,6 +54,9 @@ export class ReviewReportInvalidError extends Error {
     this.name = "ReviewReportInvalidError";
   }
 }
+
+/** The Proof Pack shows the description in full, so it stays short. */
+export const MAX_CHANGE_DESCRIPTION_CHARACTERS = 600;
 
 const nonBlank = z.string().refine((value) => value.trim() !== "", "must not be blank");
 
@@ -67,6 +75,10 @@ const reportSchema = z
   .object({
     version: z.literal(1),
     verdict: z.enum(["pass", "fail"]),
+    changeDescription: z
+      .string()
+      .max(MAX_CHANGE_DESCRIPTION_CHARACTERS)
+      .refine((value) => value.trim() !== "", "must not be blank"),
     findings: z.array(findingSchema),
   })
   .strict();
@@ -83,7 +95,8 @@ const fail = (message: string): never => {
 
 /** The prompt text that describes the shape above. SDD section 41 fixes it. */
 export const REVIEW_REPORT_SCHEMA_TEXT = [
-  'The document is one JSON object: { "version": 1, "verdict": "pass" | "fail", "findings": [...] }.',
+  'The document is one JSON object: { "version": 1, "verdict": "pass" | "fail", "changeDescription": string, "findings": [...] }.',
+  `changeDescription says what the change does for a user, in two or three plain sentences and at most ${MAX_CHANGE_DESCRIPTION_CHARACTERS} characters. Name no hash and no file list.`,
   "Each finding holds exactly these fields: id, severity, category, requirement, evidence, description.",
   `severity is one of: ${REVIEW_SEVERITIES.join(", ")}.`,
   `category is one of: ${REVIEW_CATEGORIES.join(", ")}.`,

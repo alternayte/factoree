@@ -28,16 +28,19 @@ publish credential itself, scoped to one installation.
 2. Set the webhook URL to the tunnel URL of step 3 below, followed by
    `/webhooks/github`. Set the webhook secret to a random value. Store it
    as `GITHUB_WEBHOOK_SECRET` in `.env`.
-3. Grant exactly three repository permissions:
+3. Grant exactly four repository permissions:
 
    | Permission | Access |
    | --- | --- |
    | Contents | Read and write |
    | Pull requests | Read and write |
+   | Deployments | Read |
    | Metadata | Read |
 
    Grant no other permission.
-4. Under "Subscribe to events", check `Push` only. GitHub delivers the
+4. Under "Subscribe to events", check `Push` and `Deployment status`. A
+   `deployment_status` event carries the pull request preview URL that CI
+   publishes, and Factoree adds it to the Linear session. GitHub delivers the
    `installation` and the `installation_repositories` events to every App
    automatically. Neither one appears in the subscription list, so do not
    look for it there.

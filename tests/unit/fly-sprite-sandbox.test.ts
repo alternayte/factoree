@@ -8,16 +8,22 @@ const WORKSPACE = "/home/sprite/workspace";
 
 const procDir = (id: string): string => posix.join(WORKSPACE, ".factoree", "proc", id);
 
-const handle = (overrides: Partial<SpritesSpriteHandle> = {}): SpritesSpriteHandle => ({
-  writeFile: vi.fn().mockResolvedValue(undefined),
-  execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
-  startDetached: vi.fn().mockResolvedValue(undefined),
-  createCheckpoint: vi.fn().mockResolvedValue({ id: "v1" }),
-  updateNetworkPolicy: vi.fn().mockResolvedValue(undefined),
-  publishPort: vi.fn().mockResolvedValue("https://factoree-run-1-abc.sprites.app/"),
-  delete: vi.fn().mockResolvedValue(undefined),
-  ...overrides,
-});
+const handle = (overrides: Partial<SpritesSpriteHandle> = {}): SpritesSpriteHandle => {
+  const sprite: SpritesSpriteHandle = {
+    writeFile: vi.fn().mockResolvedValue(undefined),
+    execFile: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    // The file capture is the gateway's own concern, and `wrapSprite` has its tests. Here it
+    // behaves as the plain call, so one fake `execFile` serves every path of the adapter.
+    execFileCaptured: (file, args, options) => sprite.execFile(file, args, options),
+    startDetached: vi.fn().mockResolvedValue(undefined),
+    createCheckpoint: vi.fn().mockResolvedValue({ id: "v1" }),
+    updateNetworkPolicy: vi.fn().mockResolvedValue(undefined),
+    publishPort: vi.fn().mockResolvedValue("https://factoree-run-1-abc.sprites.app/"),
+    delete: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+  return sprite;
+};
 
 const gateway = (sprite: SpritesSpriteHandle): SpritesGateway => ({
   createSprite: vi.fn().mockResolvedValue({ name: "factoree-run-1", handle: sprite }),

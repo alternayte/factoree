@@ -66,6 +66,7 @@ const VERIFY_COMMANDS = [{ name: "server", run: 'grep -q "http.createServer" ser
 const BLOCKING_REPORT = JSON.stringify({
   version: 1,
   verdict: "fail",
+  changeDescription: "The change adds the health endpoint.",
   findings: [
     {
       id: "RV-1",
@@ -110,6 +111,7 @@ const BLOCKING_REPORT = JSON.stringify({
 const CLEAN_REPORT = JSON.stringify({
   version: 1,
   verdict: "pass",
+  changeDescription: "The change adds the health endpoint.",
   findings: [
     {
       id: "RV-2",
@@ -129,6 +131,7 @@ const CLEAN_REPORT = JSON.stringify({
 const LYING_REPORT = JSON.stringify({
   version: 1,
   verdict: "pass",
+  changeDescription: "The change adds the health endpoint.",
   findings: [
     {
       id: "RV-9",

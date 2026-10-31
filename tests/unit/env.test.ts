@@ -93,14 +93,14 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...base, GITHUB_API_BASE_URL: "not-a-url" })).toThrow();
   });
 
-  it("defaults the evidence storage to the filesystem adapter", () => {
+  it("defaults the evidence storage to Linear, because a worker file opens for nobody", () => {
     const env = loadEnv(base);
-    expect(env.EVIDENCE_STORAGE).toBe("filesystem");
+    expect(env.EVIDENCE_STORAGE).toBe("linear");
   });
 
-  it("accepts the Linear evidence storage adapter", () => {
-    const env = loadEnv({ ...base, EVIDENCE_STORAGE: "linear" });
-    expect(env.EVIDENCE_STORAGE).toBe("linear");
+  it("accepts the filesystem evidence storage adapter", () => {
+    const env = loadEnv({ ...base, EVIDENCE_STORAGE: "filesystem" });
+    expect(env.EVIDENCE_STORAGE).toBe("filesystem");
   });
 
   it("rejects an unknown evidence storage adapter", () => {

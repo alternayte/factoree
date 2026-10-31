@@ -101,7 +101,7 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
       postedProgress
         .slice(progressBefore)
         .some((message) =>
-          message.includes("Pull request: https://github.com/acme/fixture/pull/1"),
+          message.includes("pull request: https://github.com/acme/fixture/pull/1"),
         ),
     ).toBe(true);
 

@@ -9,7 +9,7 @@ const sandboxOf = (trees: string[]): Sandbox => {
   let index = 0;
   return {
     name: "stub",
-    capabilities: { enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: false },
+    capabilities: { enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: false, supportsCustomImage: false },
     exec: (_ref: SandboxRef, command: Command): Promise<CommandResult> =>
       Promise.resolve({
         exitCode: 0,

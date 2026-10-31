@@ -33,6 +33,7 @@ const input: ProposeRefinementActivityInput = {
   primaryPath: "/workspace/primary",
   workItemText: "Retry notifications\n\nA failed notification delivery is never retried.",
   goal: "Retry failed deliveries.",
+  previewConfigured: false,
   statedCriteria: [],
   contextContract: "# Context Contract",
   skills: [],

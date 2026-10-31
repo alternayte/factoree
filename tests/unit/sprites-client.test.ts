@@ -67,3 +67,49 @@ describe("wrapSprite.startDetached", () => {
     expect(() => command.emit("error", new Error("socket closed later"))).not.toThrow();
   });
 });
+
+describe("wrapSprite.execFileCaptured (FAC-49 to FAC-51 live runs)", () => {
+  // The Sprites exec stream closed before its exit frame on six of eight tries when a command
+  // printed a 192 KB diff, and the review reported exit code -1. A file read was reliable.
+  const capturing = (exec: (file: string, args: string[]) => Promise<unknown>) => {
+    const files = new Map<string, string>();
+    const removed: string[] = [];
+    const sprite = {
+      execFile: vi.fn(async (file: string, args: string[]) => {
+        const dir = args[3] ?? "";
+        files.set(`${dir}/out`, "stdout from the file");
+        files.set(`${dir}/err`, "stderr from the file");
+        return exec(file, args);
+      }),
+      filesystem: () => ({
+        readFile: (path: string) => Promise.resolve(files.get(path) ?? ""),
+        rm: (path: string) => {
+          removed.push(path);
+          return Promise.resolve();
+        },
+      }),
+    } as unknown as Sprite;
+    return { handle: wrapSprite(sprite, {} as SpritesClient), sprite, removed };
+  };
+
+  it("reads the output from files in the sprite, not from the exec stream, and removes them", async () => {
+    const { handle, sprite, removed } = capturing(() => Promise.resolve({ exitCode: 0, stdout: "", stderr: "" }));
+    const result = await handle.execFileCaptured("git", ["diff", "--cached"], options);
+    expect(result).toEqual({ exitCode: 0, stdout: "stdout from the file", stderr: "stderr from the file" });
+    const [file, args] = (sprite.execFile as ReturnType<typeof vi.fn>).mock.calls[0] as [string, string[]];
+    expect(file).toBe("/bin/sh");
+    expect(args.slice(4)).toEqual(["git", "diff", "--cached"]);
+    expect(removed).toEqual([args[3]]);
+  });
+
+  it("carries a non-zero exit code with the output of the files", async () => {
+    const { handle } = capturing(() =>
+      Promise.reject(Object.assign(new Error("Command failed with exit code 2"), { exitCode: 2, stdout: "", stderr: "" })),
+    );
+    await expect(handle.execFileCaptured("git", ["status"], options)).rejects.toMatchObject({
+      exitCode: 2,
+      stdout: "stdout from the file",
+      stderr: "stderr from the file",
+    });
+  });
+});

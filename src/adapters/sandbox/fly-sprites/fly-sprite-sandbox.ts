@@ -99,6 +99,7 @@ export class FlySpriteSandbox implements Sandbox {
     // reachable URL. `exposeService` throws a clear error instead of a claim of success.
     // See docs/build/decisions.md, DI-2.9.
     supportsExposedServices: true,
+    supportsCustomImage: false,
   };
 
   private readonly workspacePath: string;
@@ -193,7 +194,7 @@ export class FlySpriteSandbox implements Sandbox {
   async exec(ref: SandboxRef, command: Command): Promise<CommandResult> {
     const startedAt = Date.now();
     try {
-      const result = await this.options.gateway.sprite(ref.id).execFile(command.file, command.args, {
+      const result = await this.options.gateway.sprite(ref.id).execFileCaptured(command.file, command.args, {
         cwd: this.resolveCwd(ref, command.cwd),
         env: this.environmentFor(ref, command.env, command.isolated),
         ...(command.timeoutMs === undefined ? {} : { timeout: command.timeoutMs }),

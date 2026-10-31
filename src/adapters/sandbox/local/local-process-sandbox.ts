@@ -146,6 +146,7 @@ export class LocalProcessSandbox implements Sandbox {
     enforcesNetworkPolicy: false,
     supportsCheckpoints: true,
     supportsExposedServices: false,
+    supportsCustomImage: false,
   };
 
   private readonly live = new Set<string>();

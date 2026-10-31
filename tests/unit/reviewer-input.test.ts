@@ -47,7 +47,7 @@ describe("buildReviewerInput", () => {
   });
 
   it("carries the prompt version", () => {
-    expect(buildReviewerInput(base).promptVersion).toBe("reviewer@2");
+    expect(buildReviewerInput(base).promptVersion).toBe("reviewer@3");
   });
 
   it("refuses a forbidden credential in the environment", () => {

@@ -93,6 +93,7 @@ beforeAll(async () => {
     ),
     verifyGitHubSignature: () => false,
     startInstallationSync: () => Promise.reject(new Error("unused")),
+    recordPullRequestPreview: () => Promise.reject(new Error("unused")),
   });
   await app.ready();
 });

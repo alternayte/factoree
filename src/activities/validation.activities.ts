@@ -146,10 +146,9 @@ const QUESTION =
   "person or a machine can check, for example a page state, an HTTP response, or a command exit " +
   "code. Factoree must not invent product behavior, so it cannot state this itself.";
 
-const summaryOf = (assertions: number, sha256: string): string =>
+const summaryOf = (assertions: number): string =>
   `Factoree froze the Validation Contract with ${assertions} ` +
-  `${assertions === 1 ? "assertion" : "assertions"}. Version ${sha256.slice(0, 12)}. ` +
-  "It cannot change while this Run implements the work.";
+  `${assertions === 1 ? "assertion" : "assertions"}.`;
 
 /** SDD section 36 and DI-7.5. The methods whose result is always `MANUAL_REQUIRED`. */
 const manualIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>): string[] =>
@@ -192,7 +191,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           assertionCount: existing.assertions.length,
           frozenAt: existing.createdAt.toISOString(),
           question: null,
-          summary: summaryOf(existing.assertions.length, existing.sha256),
+          summary: summaryOf(existing.assertions.length),
           manualAssertionIds: manualIdsOf(existing.assertions),
         };
       }
@@ -264,7 +263,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         assertionCount: stored.assertions.length,
         frozenAt: stored.createdAt.toISOString(),
         question: null,
-        summary: summaryOf(stored.assertions.length, stored.sha256),
+        summary: summaryOf(stored.assertions.length),
         manualAssertionIds: manualIdsOf(stored.assertions),
       };
     } finally {
@@ -283,6 +282,9 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
   async userValidate(input: UserValidateActivityInput): Promise<UserValidateActivityOutput> {
     const started = Date.now();
     const labels = { tenant_id: input.tenantId, product_id: input.productId };
+    // The heartbeat covers the whole activity. The preview build and the browser run after the
+    // validator session, and a Next.js build outlasted the heartbeat timeout on the FAC-41 run.
+    let heartbeat: NodeJS.Timeout | undefined;
 
     try {
       const uv = dependencies.userValidation;
@@ -403,7 +405,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       }
       const context = Context.current();
 
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         context.heartbeat();
       }, VALIDATOR_HEARTBEAT_INTERVAL_MS);
 
@@ -467,7 +469,6 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         });
       } finally {
         running = false;
-        clearInterval(heartbeat);
         if (pendingTimer !== null) clearTimeout(pendingTimer);
         context.cancellationSignal.removeEventListener("abort", onCancel);
       }
@@ -597,6 +598,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         previewUrl: previewBaseUrl,
       };
     } finally {
+      clearInterval(heartbeat);
       metrics.validationDuration.observe(labels, (Date.now() - started) / 1000);
     }
   },

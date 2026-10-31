@@ -1,5 +1,6 @@
+
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/3";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/5";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -13,6 +14,11 @@ export interface ImplementerPromptFields {
   skills: string[];
   actionPolicyLines: string[];
   repairFindings: string[];
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. The preview the implementer can start and open
+   * with agent-browser to check its own work, or null when the work sprite has no browser tools.
+   */
+  selfCheck?: { previewCommand: string; readyUrl: string } | null;
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -55,6 +61,19 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
         "Each rule names the mechanism that holds it outside this prompt. A rule you cannot see still applies.",
     ),
     section("Repair findings", list(fields.repairFindings, "None. This is the first attempt.")),
+    ...(fields.selfCheck === undefined || fields.selfCheck === null
+      ? []
+      : [
+          section(
+            "Check your work in a browser",
+            [
+              `Start the app with \`${fields.selfCheck.previewCommand}\` from the primary worktree, in the background.`,
+              `Open ${fields.selfCheck.readyUrl} with \`agent-browser open <url>\`, and read the page with \`agent-browser snapshot\`.`,
+              "Check every visible criterion of the Validation Contract this way before you finish. Stop the app when you are done.",
+              "Your browser checks help you. They are not evidence. Factoree checks the change itself in a new sandbox.",
+            ].join("\n"),
+          ),
+        ]),
     section(
       "Rules",
       [

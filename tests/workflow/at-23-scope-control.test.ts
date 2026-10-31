@@ -39,6 +39,7 @@ describe("AT-23 — a style-only finding never blocks the Run", () => {
       text: JSON.stringify({
         version: 1,
         verdict: "fail",
+        changeDescription: "The change adds the health endpoint.",
         findings: [
           {
             id: "RV-1",

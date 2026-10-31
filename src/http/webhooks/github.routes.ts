@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import {
+  deploymentStatusEventSchema,
   FACTOREE_CONFIG_PATH,
   installationEventSchema,
   installationRepositoriesEventSchema,
@@ -18,6 +19,17 @@ export interface GitHubWebhookDependencies {
    * `installation` event joins the run already in flight rather than start a second one.
    */
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. Records the pull request preview of the commit
+   * a Run published, and adds the link to its Linear session. It answers false when no Run of the
+   * tenant published that commit.
+   */
+  recordPullRequestPreview: (input: {
+    tenantId: string;
+    repositoryFullName: string;
+    commitSha: string;
+    previewUrl: string;
+  }) => Promise<boolean>;
   logger: Logger;
 }
 
@@ -134,6 +146,28 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         }
       }
       return reply.code(200).send({ status: "handled" });
+    }
+
+    if (event === "deployment_status") {
+      const parsed = deploymentStatusEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      const url = parsed.data.deployment_status.environment_url ?? "";
+      // Only a live preview is a link a human can open. A pending, failed or inactive status
+      // carries no URL worth showing.
+      if (parsed.data.deployment_status.state !== "success" || !/^https:\/\//.test(url)) {
+        return reply.code(200).send({ status: "ignored", reason: "no live preview" });
+      }
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      // The deployment SHA must equal the commit a Run published. A preview of any other commit
+      // shows a change Factoree did not verify.
+      const linked = await dependencies.recordPullRequestPreview({
+        tenantId,
+        repositoryFullName: parsed.data.repository.full_name,
+        commitSha: parsed.data.deployment.sha,
+        previewUrl: url,
+      });
+      return reply.code(200).send(linked ? { status: "handled" } : { status: "ignored", reason: "no run published this commit" });
     }
 
     if (event === "installation") {

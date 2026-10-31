@@ -19,6 +19,9 @@ const proposalSchema = z
             method: z.enum(VALIDATION_METHODS),
             // What runs the check: a command, a test path, "METHOD /path", or a browser route.
             target: z.string().nullable(),
+            // docs/specs/proof-pack-and-visual-evidence.md. True when the ticket names a page, a
+            // screen or a UI element. An older proposal without the field is not visible.
+            visible: z.boolean().default(false),
           })
           .strict(),
       )
@@ -56,7 +59,7 @@ export const parseRefinerProposal = (text: string): RefinerProposal => {
 /** The schema text the refiner prompt shows, so the prompt and the parser cannot drift. */
 export const REFINER_PROPOSAL_SCHEMA = [
   "{",
-  '  "criteria": [{ "statement": string, "quote": string | null, "method": "command" | "test" | "http" | "browser" | "code_review" | "manual", "target": string | null }],',
+  '  "criteria": [{ "statement": string, "quote": string | null, "method": "command" | "test" | "http" | "browser" | "code_review" | "manual", "target": string | null, "visible": boolean }],',
   '  "questions": [{ "question": string, "proposal": string, "reason": string }],',
   '  "patterns": [string]',
   "}",
@@ -82,22 +85,49 @@ export interface GatedRefinement {
   inferred: ValidationCriterion[];
   /** The refiner's own questions, each with a proposed answer. */
   questions: RefinerProposal["questions"];
+  /**
+   * Criteria no automated check can prove: `manual`, `code_review`, or a target that does not
+   * run. They never freeze, because the workflow ends a Run that holds one. The question proposes
+   * to drop them, and the independent Reviewer still reads the code.
+   */
+  unverifiable: string[];
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. Why a visible criterion has no visual evidence,
+   * or null when every visible criterion has a browser check. A human accepts the gap through
+   * the confirmation question, and the Proof Pack lists it under "Needs your attention".
+   */
+  visualEvidenceGap: string | null;
+}
+
+/** What the gate knows about the repository. */
+export interface GateRepository {
+  /** True when `.factoree/config.yaml` holds an enabled `preview` block. */
+  previewConfigured: boolean;
 }
 
 /**
  * docs/specs/refiner-agent.md. The deterministic gate. A criterion counts as stated only when
- * its quote appears in the ticket text. A method other than `manual` and `code_review` keeps
- * its method only with a runnable target; otherwise it becomes `manual`.
+ * its quote appears in the ticket text. A criterion freezes only with a runnable target. One
+ * without, or with the method `manual` or `code_review`, is unverifiable and does not freeze.
  */
-export const gateRefinerProposal = (proposal: RefinerProposal, ticketText: string): GatedRefinement => {
+export const gateRefinerProposal = (
+  proposal: RefinerProposal,
+  ticketText: string,
+  repository: GateRepository,
+): GatedRefinement => {
   const ticket = normalize(ticketText);
   const accepted: ValidationCriterion[] = [];
   const inferred: ValidationCriterion[] = [];
+  const unproven: string[] = [];
+  const unverifiable: string[] = [];
   proposal.criteria.forEach((criterion, index) => {
-    const executable =
-      criterion.method === "manual" || criterion.method === "code_review" || runnable(criterion.method, criterion.target);
-    const method: ValidationMethod = executable ? criterion.method : "manual";
-    const target = executable && criterion.target !== null ? criterion.target.trim() : null;
+    if (!runnable(criterion.method, criterion.target)) {
+      unverifiable.push(criterion.statement.trim());
+      if (criterion.visible) unproven.push(criterion.statement.trim());
+      return;
+    }
+    const method: ValidationMethod = criterion.method;
+    const target = criterion.target === null ? null : criterion.target.trim();
     const quote = criterion.quote === null ? "" : normalize(criterion.quote);
     const stated = quote !== "" && ticket.includes(quote);
     const gated: ValidationCriterion = {
@@ -108,9 +138,33 @@ export const gateRefinerProposal = (proposal: RefinerProposal, ticketText: strin
       ...(target === null ? {} : { target }),
     };
     (stated ? accepted : inferred).push(gated);
+    if (criterion.visible && method !== "browser") unproven.push(gated.statement);
   });
-  return { accepted, inferred, questions: proposal.questions };
+  return {
+    accepted,
+    inferred,
+    questions: proposal.questions,
+    unverifiable,
+    visualEvidenceGap: visualEvidenceGapOf(unproven, repository),
+  };
 };
+
+/**
+ * docs/specs/proof-pack-and-visual-evidence.md. A visible criterion needs a browser assertion,
+ * because a browser assertion captures a screenshot. A visible change must not pass on unit tests
+ * alone unless a human accepts the gap.
+ */
+const visualEvidenceGapOf = (unproven: string[], repository: GateRepository): string | null => {
+  if (unproven.length === 0) return null;
+  const reason = repository.previewConfigured
+    ? "no browser check proves it"
+    : "the repository has no preview";
+  return `No visual evidence for ${unproven.map((statement) => `"${statement}"`).join(", ")}: ${reason}.`;
+};
+
+
+/** An agent sentence without its closing period, so the joined sentence ends with exactly one. */
+const bare = (text: string): string => text.trim().replace(/[.\s]+$/, "");
 
 /** One question in the grill format: the item, a proposal, and the reason. */
 export const confirmationQuestion = (gated: GatedRefinement): string | null => {
@@ -123,8 +177,23 @@ export const confirmationQuestion = (gated: GatedRefinement): string | null => {
         "reply with the correct criterion.",
     );
   }
+  if (gated.unverifiable.length > 0) {
+    lines.push(
+      "No automated check can prove these criteria, and a Run cannot finish with them:",
+      ...gated.unverifiable.map((statement) => `- ${statement}`),
+      "Proposal: drop them, because the independent Reviewer reads the code anyway. Reply " +
+        "\"yes\" to drop them, or reply with a criterion Factoree can check.",
+    );
+  }
   for (const question of gated.questions) {
-    lines.push(`${question.question}`, `Proposal: ${question.proposal}, because ${question.reason}.`);
+    lines.push(`${question.question}`, `Proposal: ${bare(question.proposal)}, because ${bare(question.reason)}.`);
+  }
+  if (gated.visualEvidenceGap !== null) {
+    lines.push(
+      `This change is visible, and Factoree cannot capture a screenshot of it. ${gated.visualEvidenceGap}`,
+      "Proposal: proceed with no screenshot, because the other checks still prove the change. " +
+        "The Proof Pack lists the gap under \"Needs your attention\".",
+    );
   }
   return lines.length === 0 ? null : lines.join("\n");
 };

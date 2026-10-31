@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProofPackDocument,
   hashProofPack,
   MAX_LISTED_CHANGED_FILES,
   PROOF_PACK_HEADINGS,
@@ -58,7 +59,9 @@ const input = (overrides: Partial<ProofPackInput> = {}): ProofPackInput => ({
   conflicts: [],
   changedFiles: ["src/health.ts"],
   patchByteLength: 812,
-  previewUrl: null,
+  checkPreviewUrl: null,
+  changeDescription: "The change adds a health endpoint that answers 200.",
+  visualEvidenceGap: null,
   baseSha: "f".repeat(40),
   patchSha256: "e".repeat(64),
   commitSha: "1".repeat(40),
@@ -67,10 +70,34 @@ const input = (overrides: Partial<ProofPackInput> = {}): ProofPackInput => ({
   ...overrides,
 });
 
-describe("the Proof Pack renderer", () => {
-  it("writes every SDD section 47 heading exactly once and in order", () => {
+const DOCUMENT_URL = "https://uploads.linear.app/run-1/proof-pack.json";
+const render = (overrides: Partial<ProofPackInput> = {}): string => renderProofPack(input(overrides), DOCUMENT_URL);
+
+const screenshot = {
+  kind: "screenshot" as const,
+  source: "browser:VAL-UI-001:final",
+  sha256: "9".repeat(64),
+  storageRef: "https://uploads.linear.app/run-1/VAL-UI-001-final.png",
+};
+
+const uiAssertion = {
+  id: "VAL-UI-001",
+  requirement: "AC-2",
+  statement: "The footer shows the app version.",
+  method: "browser" as const,
+  requiredEvidence: ["screenshot" as const],
+  result: "PASS" as const,
+  reason: "The footer text matched.",
+  evidence: [
+    screenshot,
+    { ...screenshot, kind: "video" as const, storageRef: "https://uploads.linear.app/run-1/VAL-UI-001.webm" },
+  ],
+};
+
+describe("the Proof Pack body (proof-pack-and-visual-evidence.md)", () => {
+  it("writes every heading exactly once and in order", () => {
     // The leading newline lets the first heading match the same pattern as every later one.
-    const body = `\n${renderProofPack(input())}`;
+    const body = `\n${render()}`;
     let cursor = -1;
     for (const heading of PROOF_PACK_HEADINGS) {
       const at = body.indexOf(`\n${heading}\n`);
@@ -80,241 +107,112 @@ describe("the Proof Pack renderer", () => {
     }
   });
 
-  it("states the human decision status", () => {
-    expect(renderProofPack(input())).toContain("Status: READY FOR HUMAN REVIEW");
+  it("opens with the status, the Reviewer's labelled description, and the links", () => {
+    const body = render();
+    const top = body.slice(0, body.indexOf("### Needs your attention"));
+    expect(top).toContain("**Ready for human review.** Add the health endpoint");
+    expect(top).toContain("> The change adds a health endpoint that answers 200.");
+    expect(top).toContain("_The Reviewer's description of the change._");
+    expect(top).toContain("**Pull request:** https://github.com/acme/fixture/pull/1");
+    expect(top).toContain("**Preview:**");
   });
 
-  it("maps every assertion to its result and its evidence", () => {
-    const body = renderProofPack(input());
-    expect(body).toContain("| Assertion | Result | Evidence |");
-    expect(body).toContain("VAL-API-001");
-    expect(body).toContain("PASS");
-    expect(body).toContain("file:VAL-API-001-http-request-response.json");
+  it('says "Nothing." when nothing needs a human', () => {
+    expect(render()).toMatch(/### Needs your attention\n\nNothing\./);
   });
 
-  it("states the success criterion of every assertion, so a human can audit it", () => {
-    expect(renderProofPack(input())).toContain("GET /health returns 200.");
-  });
-
-  it("names an assertion with no stored evidence rather than hide it", () => {
-    const body = renderProofPack(
-      input({
-        assertions: [{ ...input().assertions[0]!, evidence: [] }],
-      }),
-    );
-    expect(body).toContain("No stored evidence.");
-  });
-
-  it("reports every deterministic check with its exit code", () => {
-    const body = renderProofPack(input());
-    expect(body).toContain("npm test");
-    expect(body).toContain("exit code 0");
-  });
-
-  it("lists a non-blocking finding under known limitations with its decision reason", () => {
-    const body = renderProofPack(
-      input({
-        findings: [
-          {
-            id: "RV-2",
-            severity: "high",
-            category: "performance",
-            requirement: "AC-1",
-            evidence: "src/health.ts:12",
-            description: "The handler reads the whole table.",
-            blocking: false,
-            decisionReason: "the finding names no mandatory requirement",
-            attempt: 1,
-          },
-        ],
-      }),
-    );
-    expect(body).toContain("RV-2");
-    expect(body).toContain("high");
-    expect(body).toContain("the finding names no mandatory requirement");
-  });
-
-  it("writes None under known limitations when no finding survived", () => {
-    expect(renderProofPack(input())).toMatch(/### Known limitations\n\nNone\./);
-  });
-
-  it("records the base SHA, the patch hash, and the repair count", () => {
-    const body = renderProofPack(input());
-    expect(body).toContain("f".repeat(40));
-    expect(body).toContain("e".repeat(64));
-    expect(body).toContain("Repairs: 0 of 2");
-  });
-
-  it("caps the changed-file list and states the remainder", () => {
-    const files = Array.from({ length: 60 }, (_, index) => `src/file-${index}.ts`);
-    const body = renderProofPack(input({ changedFiles: files }));
-    expect(body).toContain("60 files");
-    expect(body).toContain(`${60 - MAX_LISTED_CHANGED_FILES} more files`);
-    expect(body).not.toContain("src/file-59.ts");
-  });
-
-  it("truncates one long field rather than post an unbounded text", () => {
-    const body = renderProofPack(
-      input({
-        assertions: [{ ...input().assertions[0]!, reason: "x".repeat(4000) }],
-      }),
-    );
-    expect(body).toContain("[truncated]");
-    expect(body).not.toContain("x".repeat(1000));
-  });
-
-  it("keeps a newline out of a table cell and out of a criteria bullet", () => {
-    const body = renderProofPack(
-      input({
-        assertions: [
-          {
-            ...input().assertions[0]!,
-            reason: "line one\nline two",
-            evidence: [
-              {
-                kind: "request-response",
-                source: "http:VAL-API-001:request-response",
-                sha256: "a".repeat(64),
-                storageRef: "file:one\nfile:two",
-              },
-            ],
-          },
-        ],
-      }),
-    );
-    const row = body.split("\n").find((line) => line.startsWith("| VAL-API-001"));
-    expect(row).toContain("file:one file:two");
-    expect(body).toContain("line one line two");
-  });
-
-  it("escapes a pipe inside a table cell", () => {
-    const body = renderProofPack(
-      input({
-        assertions: [
-          { ...input().assertions[0]!, id: "VAL|API|001", evidence: [], result: "PASS" },
-        ],
-      }),
-    );
-    const row = body.split("\n").find((line) => line.startsWith("| VAL\\|API"));
-    expect(row).toBeDefined();
-  });
-
-  it("names a resolved context conflict with its winner and its reason", () => {
-    const body = renderProofPack(
-      input({
-        conflicts: [
-          {
-            id: "CTX-4",
-            subject: "notification ownership",
-            winnerRef: "ADR-031",
-            loserRef: "README.md",
-            reason: "an accepted ADR has higher architecture authority",
-          },
-        ],
-      }),
-    );
-    expect(body).toContain("CTX-4");
-    expect(body).toContain("ADR-031");
-    expect(body).toContain("an accepted ADR has higher architecture authority");
-  });
-
-  it("writes Not available under preview when the Run started none", () => {
-    expect(renderProofPack(input())).toMatch(/### Preview\n\nNot available\./);
-  });
-
-  it("renders the Routing section with the product, the team, and every target", () => {
-    const markdown = renderProofPack(
-      input({
-        routing: {
-          productSlug: "checkout-platform",
-          linearTeamKey: "PAY",
-          targets: [
-            {
-              fullName: "acme/checkout-api",
-              baseSha: "4f21c9e",
-              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-            },
-          ],
-          siblingsRead: [{ fullName: "acme/checkout-events", commitSha: "1b7d004" }],
-          selectionReason: "sole member",
+  it("puts every item that needs a human above the checks", () => {
+    const body = render({
+      checkDefiningFiles: ["package.json"],
+      findings: [
+        {
+          id: "F-1",
+          severity: "low",
+          category: "maintainability",
+          requirement: "AC-1",
+          evidence: "tsconfig.tsbuildinfo",
+          description: "The change commits a build cache.",
+          blocking: false,
+          decisionReason: "the severity low does not block",
+          attempt: 1,
         },
-      }),
-    );
-
-    expect(markdown).toContain("### Routing");
-    expect(markdown).toContain("Product: checkout-platform");
-    expect(markdown).toContain("Linear team: PAY");
-    expect(markdown).toContain("acme/checkout-api @ 4f21c9e -> PR #812");
-    expect(markdown).toContain("acme/checkout-events @ 1b7d004");
-    expect(markdown).toContain("Selection reason: sole member");
+      ],
+      assertions: [{ ...uiAssertion, result: "MANUAL_REQUIRED", reason: "A human must look." }],
+      visualEvidenceGap: 'No visual evidence for "The page loads.": the repository has no preview.',
+    });
+    const attention = body.slice(body.indexOf("### Needs your attention"), body.indexOf("### Visual evidence"));
+    expect(attention).toContain("package.json");
+    expect(attention).toContain("F-1 (low, maintainability) at tsconfig.tsbuildinfo");
+    expect(attention).toContain("It did not block, because the severity low does not block");
+    expect(attention).toContain("VAL-UI-001 is MANUAL_REQUIRED");
+    expect(attention).toContain("the repository has no preview");
   });
 
-  it("folds a newline in the selection reason so the Routing section stays one line per field", () => {
-    const markdown = renderProofPack(
-      input({
-        routing: {
-          productSlug: "checkout-platform",
-          linearTeamKey: "PAY",
-          targets: [
-            {
-              fullName: "acme/checkout-api",
-              baseSha: "4f21c9e",
-              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-            },
-          ],
-          siblingsRead: [],
-          selectionReason: "declared coupling\nconfirmed by an operator",
-        },
-      }),
-    );
-
-    expect(markdown).toContain(
-      "Selection reason: declared coupling confirmed by an operator",
-    );
-    expect(markdown).not.toContain("Selection reason: declared coupling\nconfirmed");
+  it("shows a screenshot inline and links the video", () => {
+    const body = render({ assertions: [uiAssertion] });
+    expect(body).toContain("![VAL-UI-001](https://uploads.linear.app/run-1/VAL-UI-001-final.png)");
+    expect(body).toContain("[VAL-UI-001 video](https://uploads.linear.app/run-1/VAL-UI-001.webm)");
   });
 
-  it("omits the Merge order line when the Run touched one target", () => {
-    const markdown = renderProofPack(
-      input({
-        routing: {
-          productSlug: "checkout-platform",
-          linearTeamKey: "PAY",
-          targets: [
-            {
-              fullName: "acme/checkout-api",
-              baseSha: "4f21c9e",
-              pullRequestUrl: "https://github.com/acme/checkout-api/pull/812",
-            },
-          ],
-          siblingsRead: [],
-          selectionReason: "sole member",
-        },
-      }),
-    );
+  it("links no evidence a reader cannot open", () => {
+    const local = { ...uiAssertion, evidence: [{ ...screenshot, storageRef: "file:///tmp/factoree-evidence/a.png" }] };
+    const body = render({ assertions: [local] });
+    expect(body).not.toContain("file:");
+    expect(body).toMatch(/### Visual evidence\n\nNone captured\./);
+  });
 
-    expect(markdown).not.toContain("Merge order:");
-    expect(markdown).toContain("Sibling repositories read: none.");
+  it("states each assertion once, with its result and its criterion", () => {
+    const body = render();
+    expect(body.match(/VAL-API-001/g)).toHaveLength(1);
+    expect(body).toContain("- PASS VAL-API-001: GET /health returns 200.");
+  });
+
+  it("writes one line per check, and the review result", () => {
+    const body = render();
+    expect(body).toContain("- PASS unit: `npm test`");
+    expect(body).toContain("- PASS Independent review: 1 pass, 0 findings, 0 blocking.");
+  });
+
+  it("carries no context list, no hash and no file list", () => {
+    const body = render();
+    expect(body).not.toContain("github:acme/fixture/README.md");
+    expect(body).not.toContain("e".repeat(64));
+    expect(body).not.toContain("f".repeat(40));
+    expect(body).not.toContain("src/health.ts");
+  });
+
+  it("ends with the Run, the autonomy level, the repairs and the document link", () => {
+    expect(render({ autonomyLevel: "L2" })).toContain(
+      `Run run-1 · L2 · repairs 0 of 2 · [proof-pack.json](${DOCUMENT_URL})`,
+    );
+  });
+
+  it("keeps a newline of a free text field out of a list line", () => {
+    const body = render({ assertions: [{ ...uiAssertion, statement: "The footer\nshows the version." }] });
+    expect(body).toContain("- PASS VAL-UI-001: The footer shows the version.");
   });
 
   it("hashes one body to one value and two bodies to two values", () => {
-    const body = renderProofPack(input());
+    const body = render();
     expect(hashProofPack(body)).toBe(hashProofPack(body));
     expect(hashProofPack(body)).not.toBe(hashProofPack(`${body} `));
     expect(hashProofPack(body)).toMatch(/^[0-9a-f]{64}$/);
   });
+});
 
-  it("names the autonomy level and every cap that applied (autonomy-levels.md)", () => {
-    const body = renderProofPack(
-      input({ autonomyLevel: "L2", autonomyReasons: ['The label "payments" caps this Run at L2.'] }),
-    );
-    expect(body).toContain('- Autonomy level: L2. The label "payments" caps this Run at L2.');
+describe("proof-pack.json (proof-pack-and-visual-evidence.md)", () => {
+  it("holds the context, the hashes, the evidence and the run metadata", () => {
+    const document = buildProofPackDocument(input({ autonomyLevel: "L3" }));
+    expect(document.context.items[0]?.contentSha256).toBe("d".repeat(64));
+    expect(document.assertions[0]?.evidence[0]?.storageRef).toBe("file:VAL-API-001-http-request-response.json");
+    expect(document.run).toMatchObject({ baseSha: "f".repeat(40), patchSha256: "e".repeat(64), autonomyLevel: "L3" });
+    expect(document.needsAttention).toEqual([]);
   });
 
-  it("lists the check-defining files first in the change summary (check-isolation.md)", () => {
-    const body = renderProofPack(input({ changedFiles: ["src/a.ts", "package.json"], checkDefiningFiles: ["package.json"] }));
-    const summary = body.slice(body.indexOf("### Change summary"));
-    expect(summary.indexOf("- package.json")).toBeLessThan(summary.indexOf("- src/a.ts"));
-    expect(summary).toContain("so the pull request is a draft");
+  it("caps the file list and keeps the full count", () => {
+    const files = Array.from({ length: MAX_LISTED_CHANGED_FILES + 7 }, (_, index) => `src/file-${index}.ts`);
+    const document = buildProofPackDocument(input({ changedFiles: files }));
+    expect(document.change.changedFiles).toHaveLength(MAX_LISTED_CHANGED_FILES);
+    expect(document.change.changedFileCount).toBe(MAX_LISTED_CHANGED_FILES + 7);
   });
 });

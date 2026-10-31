@@ -15,6 +15,8 @@ import type { ValidationCriterion } from "~/domain/validation/validation-contrac
 import {
   confirmationQuestion,
   gateRefinerProposal,
+  type GatedRefinement,
+  type GateRepository,
   parseRefinerProposal,
   REFINER_PROPOSAL_SCHEMA,
 } from "~/domain/refinement/refiner-proposal.js";
@@ -93,6 +95,8 @@ export interface ProposeRefinementActivityInput {
   statedCriteria: string[];
   contextContract: string;
   skills: string[];
+  /** docs/specs/proof-pack-and-visual-evidence.md. True when the repository has an enabled preview. */
+  previewConfigured: boolean;
   timeoutMs: number;
 }
 
@@ -106,6 +110,8 @@ export interface ProposeRefinementActivityOutput {
   inferred: ValidationCriterion[];
   /** One question in the grill format, or null when nothing needs a human. */
   question: string | null;
+  /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap the human accepts. */
+  visualEvidenceGap: string | null;
   reason: string;
 }
 
@@ -118,6 +124,19 @@ interface RunnerWithActiveSession {
 const activeSessionOf = (runner: AgentRunner, runId: string): AgentSessionRef | undefined => {
   const candidate = runner as Partial<RunnerWithActiveSession>;
   return typeof candidate.activeSession === "function" ? candidate.activeSession(runId) : undefined;
+};
+
+/** Gates a proposal text, or answers null when the text is not a valid proposal. */
+const gateOrNull = (
+  text: string,
+  workItemText: string,
+  repository: GateRepository,
+): GatedRefinement | null => {
+  try {
+    return gateRefinerProposal(parseRefinerProposal(text), workItemText, repository);
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -198,6 +217,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
     const before = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
 
+    const repository = { previewConfigured: input.previewConfigured };
     const actionPolicy = buildActionPolicy({ role: "refiner" });
     const prompt = renderRefinerPrompt({
       workItem: input.workItemText,
@@ -244,6 +264,21 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         });
         read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
       }
+      // docs/specs/proof-pack-and-visual-evidence.md. A visible criterion in a repository with a
+      // preview needs a browser check. One reminder asks for it before the gap reaches a human.
+      if (read.exitCode === 0 && input.previewConfigured && !context.cancellationSignal.aborted) {
+        const first = gateOrNull(read.stdout, input.workItemText, repository);
+        if (first !== null && first.visualEvidenceGap !== null) {
+          await runner.resume(result.session, {
+            prompt:
+              `${first.visualEvidenceGap} The repository has a preview, so give each visible criterion ` +
+              'the method "browser" and a target route that starts with "/". Rewrite ' +
+              `${proposalPath} with the whole proposal. Write the file and nothing else.`,
+            timeoutMs: input.timeoutMs,
+          });
+          read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
+        }
+      }
 
       await agent.executions.record({
         tenantId: input.tenantId,
@@ -264,7 +299,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       });
 
       const after = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
-      const empty = { accepted: [], inferred: [], question: null };
+      const empty = { accepted: [], inferred: [], question: null, visualEvidenceGap: null };
       if (after !== before) {
         return {
           status: "worktree_changed",
@@ -277,7 +312,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       }
       let gated;
       try {
-        gated = gateRefinerProposal(parseRefinerProposal(read.stdout), input.workItemText);
+        gated = gateRefinerProposal(parseRefinerProposal(read.stdout), input.workItemText, repository);
       } catch (error) {
         return { status: "unavailable", ...empty, reason: agent.redactor.redactText(String(error)) };
       }
@@ -293,6 +328,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         accepted: gated.accepted,
         inferred: gated.inferred,
         question: confirmationQuestion(gated),
+        visualEvidenceGap: gated.visualEvidenceGap,
         reason: "",
       };
     } finally {

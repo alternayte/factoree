@@ -11,5 +11,9 @@ import type { Redactor } from "~/telemetry/redaction.js";
  * SDD section 14 keeps runner selection configuration driven. This factory only registers the
  * two adapters. It never chooses one.
  */
-export const buildAgentRunnerRegistry = (redactor: Redactor): AgentRunnerRegistry =>
-  new AgentRunnerRegistry([new OpenCodeRunner({ redactor }), new ClaudeCodeRunner({ redactor })]);
+export const buildAgentRunnerRegistry = (
+  redactor: Redactor,
+  // docs/specs/kiln-sandbox-provider.md. `executable` is the root-owned CLI of the sandbox image.
+  opencode: { model?: string; variant?: string; executable?: string } = {},
+): AgentRunnerRegistry =>
+  new AgentRunnerRegistry([new OpenCodeRunner({ redactor, ...opencode }), new ClaudeCodeRunner({ redactor })]);

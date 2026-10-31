@@ -114,6 +114,19 @@ describe("PlaywrightBrowserDriver", () => {
     expect(result.network.some((entry: { status: number | null }) => entry.status === 200)).toBe(true);
   }, 60_000);
 
+  it("passes when the element holds the expected text among other text (FAC-47 live run)", async () => {
+    // FAC-47: the footer read "I'm here to stay (Footer) v0.1.0", and an exact match failed a
+    // change that showed the version.
+    const result = await driver.run({
+      ...scenario,
+      steps: [
+        { action: "goto", path: "/" },
+        { action: "expectText", selector: "body", text: "Original" },
+      ],
+    });
+    expect(result.passed).toBe(true);
+  }, 60_000);
+
   it("fails the scenario when the expected text is absent, and still returns a screenshot", async () => {
     const result = await driver.run({
       ...scenario,

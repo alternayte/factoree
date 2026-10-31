@@ -29,13 +29,27 @@ const schema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   SPRITES_TOKEN: z.string().min(1).optional(),
   SPRITES_BASE_URL: z.string().url().optional(),
-  SANDBOX_ADAPTER: z.enum(["fly-sprites", "local"]).default("fly-sprites"),
+  SANDBOX_ADAPTER: z.enum(["fly-sprites", "kiln", "local"]).default("fly-sprites"),
+  // docs/specs/kiln-sandbox-provider.md. The Kiln host, a key of the Factoree tenant, and the
+  // sandbox image by digest. The registry login is for a private image only.
+  KILN_URL: z.string().url().optional(),
+  KILN_API_KEY: z.string().min(1).optional(),
+  KILN_IMAGE: z
+    .string()
+    .regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/, "must name the image by digest, as <name>@sha256:<hex>")
+    .optional(),
+  KILN_REGISTRY_USERNAME: z.string().min(1).optional(),
+  KILN_REGISTRY_TOKEN: z.string().min(1).optional(),
   // The local sandbox runs the agent as the worker user. That user can read the worker
   // environment, which holds the App private key and the secret key. Only a developer machine
   // may accept that, and it must say so.
   FACTOREE_UNSAFE_LOCAL_SANDBOX: z.literal("1").optional(),
   SANDBOX_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-sandboxes"),
-  EVIDENCE_STORAGE: z.enum(["filesystem", "linear"]).default("filesystem"),
+  EVIDENCE_STORAGE: z.enum(["filesystem", "linear"]).default("linear"),
+  // B-3. The opencode model and its reasoning effort, for every Run of this install. Absent means
+  // opencode's own default. The provider key is a runner_credential Product secret.
+  OPENCODE_MODEL: z.string().min(1).optional(),
+  OPENCODE_VARIANT: z.string().min(1).optional(),
   EVIDENCE_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-evidence"),
   GITHUB_BASE_URL: z.string().url().default("https://github.com"),
   GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),
@@ -55,6 +69,17 @@ const schema = z.object({
 }).refine((value) => value.SANDBOX_ADAPTER !== "fly-sprites" || value.SPRITES_TOKEN !== undefined, {
   message: "SPRITES_TOKEN is required when SANDBOX_ADAPTER is fly-sprites",
   path: ["SPRITES_TOKEN"],
+}).refine(
+  (value) =>
+    value.SANDBOX_ADAPTER !== "kiln" ||
+    (value.KILN_URL !== undefined && value.KILN_API_KEY !== undefined && value.KILN_IMAGE !== undefined),
+  {
+    message: "KILN_URL, KILN_API_KEY and KILN_IMAGE are required when SANDBOX_ADAPTER is kiln",
+    path: ["KILN_IMAGE"],
+  },
+).refine((value) => (value.KILN_REGISTRY_USERNAME === undefined) === (value.KILN_REGISTRY_TOKEN === undefined), {
+  message: "KILN_REGISTRY_USERNAME and KILN_REGISTRY_TOKEN go together",
+  path: ["KILN_REGISTRY_TOKEN"],
 }).refine((value) => value.SANDBOX_ADAPTER !== "local" || value.FACTOREE_UNSAFE_LOCAL_SANDBOX === "1", {
   message:
     "SANDBOX_ADAPTER=local isolates nothing. Set FACTOREE_UNSAFE_LOCAL_SANDBOX=1 to accept that on a development machine",

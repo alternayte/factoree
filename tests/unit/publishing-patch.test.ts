@@ -16,7 +16,7 @@ const stubSandbox = (script: (command: Command) => Partial<CommandResult>): { sa
   const calls: Command[] = [];
   const sandbox = {
     name: "stub",
-    capabilities: { enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: false },
+    capabilities: { enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: false, supportsCustomImage: false },
     exec: (_ref: SandboxRef, command: Command): Promise<CommandResult> => {
       calls.push(command);
       return Promise.resolve({

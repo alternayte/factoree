@@ -141,6 +141,43 @@ export const checkoutPrimary = async (
 };
 
 /**
+ * docs/specs/kiln-sandbox-provider.md. Moves the primary checkout of a sandbox restored from a warm
+ * snapshot to the ref of this Run. `git clean` keeps ignored files, so the dependencies the
+ * bootstrap installed stay, and the bootstrap that follows only updates them.
+ */
+export const refreshPrimary = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec,
+  credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> => {
+  const path = `${ref.workspacePath}/primary`;
+  const credentialEnv = credentialEnvironment(spec.url, credential);
+  await run(sandbox, ref, {
+    file: "git",
+    args: ["-C", path, "fetch", "--no-tags", "origin", spec.ref],
+    ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
+  });
+  await run(sandbox, ref, { file: "git", args: ["-C", path, "checkout", "--force", "--detach", "FETCH_HEAD"] });
+  await run(sandbox, ref, { file: "git", args: ["-C", path, "clean", "-ffd"] });
+  const head = await run(sandbox, ref, { file: "git", args: ["-C", path, "rev-parse", "HEAD"] });
+  const baseSha = head.stdout.trim();
+  if (!SHA.test(baseSha)) {
+    throw new Error(`the base SHA of ${withoutUrlCredentials(spec.url)} is not forty hexadecimal characters: "${baseSha}"`);
+  }
+  return { url: spec.url, path, baseSha, readOnly: false };
+};
+
+/**
+ * Removes the reference checkouts a warm snapshot holds. They are read-only, so the write bit
+ * comes back first. `checkoutReferences` then clones each one at the ref of this Run.
+ */
+export const removeReferences = async (sandbox: Sandbox, ref: SandboxRef): Promise<void> => {
+  const path = `${ref.workspacePath}/reference`;
+  await run(sandbox, ref, { file: "sh", args: ["-c", `if [ -e "$1" ]; then chmod -R u+w "$1" && rm -rf "$1"; fi`, "sh", path] });
+};
+
+/**
  * SDD section 32. Checks out every reference repository and makes it read-only. SDD section 29
  * denies writing a reference repository and denies git remote write from an agent.
  */

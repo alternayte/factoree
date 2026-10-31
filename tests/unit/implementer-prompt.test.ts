@@ -39,7 +39,7 @@ describe("renderImplementerPrompt version guard", () => {
   });
 
   it("stamps the prompt version as a value that changes only with the template", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/3");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/5");
   });
 });
 
@@ -53,7 +53,24 @@ describe("renderImplementerPrompt skills", () => {
     expect(prompt).toContain("SDD section 57 ranks a skill ninth");
   });
 
-  it("reports the prompt version 3", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/3");
+  it("reports the prompt version 4", () => {
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/5");
+  });
+});
+
+describe("renderImplementerPrompt self-check (proof-pack-and-visual-evidence.md)", () => {
+  it("names the preview and agent-browser when the work sprite holds the browser tools", () => {
+    const rendered = renderImplementerPrompt({
+      ...SAMPLE,
+      selfCheck: { previewCommand: "npm start", readyUrl: "http://localhost:3000/" },
+    });
+    expect(rendered).toContain("## Check your work in a browser");
+    expect(rendered).toContain("`npm start`");
+    expect(rendered).toContain("`agent-browser open <url>");
+    expect(rendered).toContain("They are not evidence.");
+  });
+
+  it("names no browser when the work sprite has no browser tools", () => {
+    expect(renderImplementerPrompt({ ...SAMPLE, selfCheck: null })).not.toContain("Check your work in a browser");
   });
 });

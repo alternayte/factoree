@@ -48,6 +48,7 @@ export class FakeSandbox implements Sandbox {
     enforcesNetworkPolicy: true,
     supportsCheckpoints: true,
     supportsExposedServices: true,
+    supportsCustomImage: false,
   }) {}
 
   /** The first matcher whose pattern matches `file` plus its arguments wins. */

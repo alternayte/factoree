@@ -81,10 +81,9 @@ describe("LinearEvidenceStorage", () => {
           uploadFile: {
             uploadUrl: "https://uploads.linear.app/put-1",
             assetUrl: "https://uploads.linear.app/asset-1",
-            headers: [
-              { key: "x-amz-acl", value: "private" },
-              { key: "content-type", value: contentType },
-            ],
+            // Real Linear returns the signing headers only. The FAC-43 live run proved that the
+            // PUT must add the content type itself, or storage answers 400.
+            headers: [{ key: "x-amz-acl", value: "private" }],
           },
         });
       },

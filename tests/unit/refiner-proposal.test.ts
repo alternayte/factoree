@@ -22,6 +22,9 @@ describe("parseRefinerProposal", () => {
   });
 });
 
+const NO_PREVIEW = { previewConfigured: false };
+const WITH_PREVIEW = { previewConfigured: true };
+
 describe("gateRefinerProposal (docs/specs/refiner-agent.md)", () => {
   it("accepts a criterion that quotes the ticket, with its runnable check", () => {
     const gated = gateRefinerProposal(
@@ -36,6 +39,7 @@ describe("gateRefinerProposal (docs/specs/refiner-agent.md)", () => {
         ]),
       ),
       TICKET,
+      NO_PREVIEW,
     );
     expect(gated.accepted).toEqual([
       {
@@ -55,24 +59,32 @@ describe("gateRefinerProposal (docs/specs/refiner-agent.md)", () => {
         proposal([{ statement: "Retries stop after five attempts.", quote: "five attempts", method: "test", target: "t.test.ts" }]),
       ),
       TICKET,
+      NO_PREVIEW,
     );
     expect(gated.accepted).toEqual([]);
     expect(gated.inferred[0]?.source).toBe("refiner:inferred");
   });
 
-  it("makes a method manual when its target is not runnable", () => {
+  it("keeps a criterion with no automated check out of the contract, and proposes to drop it (FAC-42 live run)", () => {
+    // FAC-42 froze a code_review criterion, and the workflow ends every Run that holds one.
     const gated = gateRefinerProposal(
       parseRefinerProposal(
         proposal([
           { statement: "The API answers.", quote: "Users lose messages.", method: "http", target: "the api" },
           { statement: "The page shows it.", quote: "Users lose messages.", method: "browser", target: null },
+          { statement: "The code reads the version.", quote: null, method: "code_review", target: "src/a.ts" },
           { statement: "GET works.", quote: "Users lose messages.", method: "http", target: "GET /health" },
         ]),
       ),
       TICKET,
+      NO_PREVIEW,
     );
-    expect(gated.accepted.map((criterion) => criterion.method)).toEqual(["manual", "manual", "http"]);
-    expect(gated.accepted[2]?.target).toBe("GET /health");
+    expect(gated.accepted.map((criterion) => criterion.statement)).toEqual(["GET works."]);
+    expect(gated.inferred).toEqual([]);
+    expect(gated.unverifiable).toEqual(["The API answers.", "The page shows it.", "The code reads the version."]);
+    const question = confirmationQuestion(gated) ?? "";
+    expect(question).toContain("- The code reads the version.");
+    expect(question).toContain("Proposal: drop them");
   });
 
   it("asks one question in the grill format for inferred criteria and refiner questions", () => {
@@ -84,6 +96,7 @@ describe("gateRefinerProposal (docs/specs/refiner-agent.md)", () => {
         ),
       ),
       TICKET,
+      NO_PREVIEW,
     );
     const question = confirmationQuestion(gated) ?? "";
     expect(question).toContain("- Retries stop after five attempts.");
@@ -91,9 +104,44 @@ describe("gateRefinerProposal (docs/specs/refiner-agent.md)", () => {
     expect(question).toContain("Proposal: email, because the code sends email only.");
   });
 
+  it("ends a proposal sentence with one period when the refiner wrote its own", () => {
+    const gated = gateRefinerProposal(
+      parseRefinerProposal(proposal([], [{ question: "Which version?", proposal: "Add 0.1.0.", reason: "None is declared." }])),
+      TICKET,
+      NO_PREVIEW,
+    );
+    expect(confirmationQuestion(gated)).toContain("Proposal: Add 0.1.0, because None is declared.");
+  });
+
   it("asks nothing when every criterion is stated and the refiner has no question", () => {
-    const gated = gateRefinerProposal(parseRefinerProposal(proposal([])), TICKET);
+    const gated = gateRefinerProposal(parseRefinerProposal(proposal([])), TICKET, NO_PREVIEW);
     expect(confirmationQuestion(gated)).toBeNull();
+  });
+
+  it("needs no visual evidence answer when a visible criterion has a browser route", () => {
+    const gated = gateRefinerProposal(
+      parseRefinerProposal(
+        proposal([
+          { statement: "The footer shows the version.", quote: "Users lose messages.", method: "browser", target: "/", visible: true },
+        ]),
+      ),
+      TICKET,
+      WITH_PREVIEW,
+    );
+    expect(gated.visualEvidenceGap).toBeNull();
+    expect(confirmationQuestion(gated)).toBeNull();
+  });
+
+  it("asks to proceed with no screenshot when a visible criterion has no browser check (proof-pack-and-visual-evidence.md)", () => {
+    const visible = { statement: "The footer shows the version.", quote: "Users lose messages.", method: "test", target: "t.test.ts", visible: true };
+    const withPreview = gateRefinerProposal(parseRefinerProposal(proposal([visible])), TICKET, WITH_PREVIEW);
+    expect(withPreview.visualEvidenceGap).toBe('No visual evidence for "The footer shows the version.": no browser check proves it.');
+
+    const withoutPreview = gateRefinerProposal(parseRefinerProposal(proposal([visible])), TICKET, NO_PREVIEW);
+    expect(withoutPreview.visualEvidenceGap).toBe(
+      'No visual evidence for "The footer shows the version.": the repository has no preview.',
+    );
+    expect(confirmationQuestion(withoutPreview)).toContain("Proposal: proceed with no screenshot");
   });
 
   it("reads a reply of yes as acceptance", () => {

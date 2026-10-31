@@ -74,6 +74,11 @@ export interface PrepareSandboxActivityOutput {
    * the Project configures no organization skills repository.
    */
   organizationSkillsSha?: string;
+  /**
+   * docs/specs/proof-pack-and-visual-evidence.md. True when the work sprite holds agent-browser.
+   * Absent in a history recorded before the self-check existed.
+   */
+  selfCheckReady?: boolean;
 }
 
 /** The work sprite of the Run, where the Implementer wrote the change. */
@@ -189,6 +194,9 @@ const build = async (
     environment: { ...input.environment, ...runnerEnvironment },
     ...(repositoryCredential === null ? {} : { repositoryCredential }),
     ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
+    // A check sprite applies a patch before its bootstrap. Only the work sprite hosts an agent
+    // that checks its own work in a browser.
+    browserTools: beforeBootstrap === undefined,
     },
     beforeBootstrap,
   );
@@ -224,6 +232,7 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
   preview: prepared.preview,
   repositoryInstructions: prepared.repositoryInstructions,
   skills: prepared.skills,
+  selfCheckReady: prepared.selfCheckReady,
   ...(prepared.organizationSkillsSha === undefined
     ? {}
     : { organizationSkillsSha: prepared.organizationSkillsSha }),
