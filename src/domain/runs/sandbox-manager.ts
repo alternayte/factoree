@@ -111,12 +111,13 @@ export interface SandboxManagerOptions {
  * empty script exits 0. The Run then continues with nothing installed, and it fails much later,
  * with an error that names a missing tool rather than the download that never happened.
  *
- * `pipefail` reports the first failing stage instead. A shell that does not support the option
- * prints to stderr and returns non-zero, and `|| true` keeps such a shell on the old behaviour
- * rather than failing every bootstrap.
+ * `pipefail` reports the first failing stage instead. A shell without the option, such as dash
+ * 0.5.12 in Debian bookworm, treats a failed `set` as a fatal error of a special builtin and
+ * exits with status 2, so `|| true` never runs. The option is therefore tried in a subshell
+ * first, and set only where it exists. Such a shell keeps the old behaviour.
  */
 const bootstrapScript = (command: string): string =>
-  `set -o pipefail 2>/dev/null || true\n${command}`;
+  `if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi\n${command}`;
 
 /** The output of a failed bootstrap. An installer reports its reason on either stream. */
 const bootstrapFailureDetail = (stdout: string, stderr: string): string => {

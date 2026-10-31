@@ -120,6 +120,8 @@ export interface RunTargetRecord {
 export interface PreviewTarget {
   runId: string;
   linearAgentSessionId: string;
+  /** False when the run target already held this URL, so a repeated event posts nothing again. */
+  changed: boolean;
 }
 
 /**

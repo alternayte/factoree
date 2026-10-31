@@ -303,11 +303,15 @@ export class PrismaRunRepository implements RunRepository {
     // The tenant filter is part of the query. SDD section 52 forbids a read across the boundary.
     const target = await this.prisma.runTarget.findFirst({
       where: { tenantId, commitSha, repository: { fullName: repositoryFullName } },
-      select: { id: true, run: { select: { id: true, linearAgentSessionId: true } } },
+      select: { id: true, previewUrl: true, run: { select: { id: true, linearAgentSessionId: true } } },
     });
     if (target === null) return null;
     await this.prisma.runTarget.update({ where: { id: target.id }, data: { previewUrl } });
-    return { runId: target.run.id, linearAgentSessionId: target.run.linearAgentSessionId };
+    return {
+      runId: target.run.id,
+      linearAgentSessionId: target.run.linearAgentSessionId,
+      changed: target.previewUrl !== previewUrl,
+    };
   }
 
   async setConfigSha(tenantId: string, runId: string, sha: string): Promise<void> {

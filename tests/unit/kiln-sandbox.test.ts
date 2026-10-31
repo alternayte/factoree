@@ -81,12 +81,16 @@ describe("KilnSandbox (docs/specs/kiln-sandbox-provider.md)", () => {
     expect(sandboxes[0]?.body).not.toHaveProperty("env");
   });
 
-  it("fails with the reason Kiln gives for a failed template build", async () => {
-    const { client } = fakeKiln((call) =>
-      call.method === "GET" ? { status: 200, body: { name: TEMPLATE, image: IMAGE, state: "failed", error: "pull denied" } } : undefined,
-    );
+  it("fails with the reason Kiln gives for a failed template build, and deletes the template", async () => {
+    const { client, calls } = fakeKiln((call) => {
+      if (call.method === "GET") return { status: 200, body: { name: TEMPLATE, image: IMAGE, state: "failed", error: "pull denied" } };
+      if (call.method === "DELETE") return { status: 204 };
+      return undefined;
+    });
     const sandbox = new KilnSandbox({ client, image: IMAGE, pollMs: 0 });
     await expect(sandbox.create({ runId: "r1", tenantId: "t1", productId: "p1" })).rejects.toThrow(/pull denied/);
+    // The failed template goes, so the next attempt builds it again once the cause is fixed.
+    expect(calls).toContainEqual({ method: "DELETE", path: `/v1/templates/${TEMPLATE}`, body: undefined });
   });
 
   it("runs exec as a detached process with the runner PATH first, and reads every page of output", async () => {

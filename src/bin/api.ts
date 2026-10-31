@@ -121,6 +121,8 @@ const recordPullRequestPreview = async (input: {
   if (tenant === null) return false;
   const linearClient = createLinearAgentClient(await linearTokens.tokenFor(tenant.linearWorkspaceId));
   await linearClient.addLink(target.linearAgentSessionId, "Preview", input.previewUrl);
+  // The issue shows the first session link only, so the preview also gets one short message.
+  if (target.changed) await linearClient.respond(target.linearAgentSessionId, `Preview: ${input.previewUrl}`);
   logger.info("pull request preview linked", { run_id: target.runId, step: "preview_link" });
   return true;
 };

@@ -102,6 +102,10 @@ export class KilnClient {
     await this.json("POST", "/v1/templates", request);
   }
 
+  async deleteTemplate(name: string): Promise<void> {
+    await this.json("DELETE", `/v1/templates/${encodeURIComponent(name)}`);
+  }
+
   createSandbox(request: KilnSandboxRequest): Promise<KilnSandbox> {
     return this.json("POST", "/v1/sandboxes", request);
   }

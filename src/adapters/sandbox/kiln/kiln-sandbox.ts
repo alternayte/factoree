@@ -270,6 +270,9 @@ export class KilnSandbox implements Sandbox {
       try {
         const template = await client.template(this.template);
         if (template.state === "failed") {
+          // A failed template stays on Kiln and would fail every later run, even after the cause
+          // is fixed. It goes now, so the next attempt builds it again.
+          await client.deleteTemplate(this.template).catch(() => undefined);
           throw new SandboxError(
             `the Kiln template ${this.template} for ${this.image} failed: ${template.error ?? "no reason given"}`,
             this.name,
