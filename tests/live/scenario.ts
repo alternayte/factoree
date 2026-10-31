@@ -72,7 +72,8 @@ interface LiveProofPackDocument {
 
 /** Reads proof-pack.json from the link at the foot of the Proof Pack, or null when it cannot. */
 const readProofPackDocument = async (proofPack: string, credential: string): Promise<LiveProofPackDocument | null> => {
-  const url = proofPack.match(/\[proof-pack\.json\]\((https:\/\/[^)]+)\)/)?.[1];
+  // Linear stores a link as `[label](<url>)`, so the angle brackets are optional.
+  const url = proofPack.match(/\[proof-pack\.json\]\(<?(https:\/\/[^)>\s]+)>?\)/)?.[1];
   if (url === undefined) return null;
   try {
     // A personal API key goes bare. An OAuth token needs the Bearer scheme.
@@ -281,7 +282,8 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
   // record. Linear serves an upload to a request that carries the workspace credential.
   const document = proofPack === null ? null : await readProofPackDocument(proofPack, linearCredential);
   const checks = proofPack === null ? "" : readSection(proofPack, "### Checks");
-  const checkLines = checks.split("\n").filter((line) => /^- (PASS|FAIL|BLOCKED|MANUAL_REQUIRED) /.test(line));
+  // Linear stores a list item with `*`, whatever marker Factoree posted.
+  const checkLines = checks.split("\n").filter((line) => /^[-*] (PASS|FAIL|BLOCKED|MANUAL_REQUIRED) /.test(line));
   const assertionLines = checkLines.filter((line) => / VAL-[A-Z]+-\d+:/.test(line));
   const reviewLine = checkLines.find((line) => line.includes(" Independent review: "));
   const verificationLines = checkLines.filter((line) => !assertionLines.includes(line) && line !== reviewLine);
@@ -330,7 +332,7 @@ export const runLiveAcceptance = async (env: NodeJS.ProcessEnv): Promise<number>
   });
 
   const pullRequestSection = proofPack?.match(/\*\*Pull request:\*\* \S+/)?.[0] ?? "";
-  const prUrlMatch = pullRequestSection.match(/https:\/\/github\.com\/\S+\/pull\/\d+/);
+  const prUrlMatch = pullRequestSection.match(/https:\/\/github\.com\/[^\s)\]>]+\/pull\/\d+/);
   let prConfirmed = false;
   let prDetail = "the Pull request section named no GitHub pull request URL";
   if (prUrlMatch !== null && env.LIVE_GITHUB_TOKEN !== undefined && env.LIVE_GITHUB_REPOSITORY !== undefined) {
