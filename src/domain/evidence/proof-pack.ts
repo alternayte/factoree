@@ -154,7 +154,32 @@ export interface ProofPackInput {
   baseMove?: ProofPackBaseMove | null;
   /** docs/specs/agent-session-usage-and-hangs.md. The usage of every agent session, per role. */
   agentUsage?: AgentUsageTotals;
+  /** Issue 6, DI-15.17. Why the model of the Run is a guess, or null. `defaultModelWarning` builds it. */
+  modelWarning?: string | null;
 }
+
+/**
+ * Issue 6, DI-15.17. With no product model, opencode runs with no `--model` and picks its own
+ * default. With no runner credential either, that default can be a free model with a quota, which
+ * hung a real Run (FAC-45). The warning names the models the sessions reported.
+ */
+export const defaultModelWarning = (input: {
+  productModel: string | null;
+  hasRunnerCredential: boolean;
+  /** The runner and the reported model of each agent session of the Run. */
+  sessions: ReadonlyArray<{ runner: string; model: string | null }>;
+}): string | null => {
+  if (input.productModel !== null || input.hasRunnerCredential) return null;
+  const opencode = input.sessions.filter((session) => session.runner === "opencode");
+  if (opencode.length === 0) return null;
+  const models = [...new Set(opencode.map((session) => session.model).filter((model): model is string => model !== null))];
+  const chosen =
+    models.length === 0 ? "opencode did not report which model it chose" : `opencode chose ${models.map((model) => `\`${model}\``).join(", ")}`;
+  return (
+    `The product sets no model and holds no runner credential, so ${chosen}. ` +
+    "That default can be a free model with a quota. Set a model and a runner credential on the product page."
+  );
+};
 
 export interface ProofPackBaseMove {
   baseBranch: string;
@@ -223,6 +248,7 @@ const openable = (ref: string | null): ref is string => ref !== null && /^https:
  */
 export const needsAttention = (input: ProofPackInput): string[] => {
   const items: string[] = [];
+  if (input.modelWarning !== undefined && input.modelWarning !== null) items.push(input.modelWarning);
   // docs/specs/own-proposals-and-parallel-runs.md. A conflict with the moved branch comes first,
   // because the pull request cannot merge until a human resolves it.
   const move = input.baseMove ?? null;

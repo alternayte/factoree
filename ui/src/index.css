@@ -436,6 +436,43 @@
     background: var(--danger-soft);
   }
 
+  /* Help: a quiet icon button beside a label, and the popover it opens. */
+  .help-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-control);
+    color: var(--mute);
+    outline: none;
+    transition:
+      color var(--fast) var(--ease-out),
+      background-color var(--fast) var(--ease-out),
+      box-shadow var(--fast) var(--ease-out);
+  }
+  .help-trigger:hover,
+  .help-trigger[data-state="open"] {
+    color: var(--ink);
+    background: var(--raised);
+  }
+  .help-trigger:focus-visible {
+    box-shadow: var(--glow-focus);
+  }
+  .popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+    padding: 12px 14px;
+    color: var(--body);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius);
+    background: var(--panel);
+    animation: fade-in var(--fast) var(--ease-out);
+  }
+
   /* Tables scroll inside their card. */
   .table {
     width: 100%;

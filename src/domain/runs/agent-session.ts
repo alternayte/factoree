@@ -62,6 +62,15 @@ export interface AgentSessionStore {
   listForRun(tenantId: string, runId: string): Promise<AgentSessionRecord[]>;
 }
 
+/**
+ * Issue 6. The newest agent sessions of one Product, newest first. The product page shows which
+ * model and effort each role really ran with, because an empty product model means the runner
+ * chose. DI-15.16.
+ */
+export interface ProductAgentSessionReader {
+  listRecentForProduct(tenantId: string, productId: string, limit: number): Promise<AgentSessionRecord[]>;
+}
+
 const USAGE_FIELDS = [
   "inputTokens",
   "outputTokens",

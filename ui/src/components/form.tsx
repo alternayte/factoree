@@ -32,6 +32,7 @@ export function Field({
   errors,
   className,
   trailing,
+  help,
   children,
 }: {
   label: ReactNode;
@@ -39,6 +40,8 @@ export function Field({
   errors?: string[];
   className?: string;
   trailing?: ReactNode;
+  /** help sits right after the label, outside it, so it never joins the name of the control. */
+  help?: ReactNode;
   children: (props: { id: string; "aria-describedby"?: string; "aria-invalid"?: boolean }) => ReactNode;
 }) {
   const id = useId();
@@ -48,9 +51,12 @@ export function Field({
   return (
     <div className={cn("flex min-w-0 flex-col gap-1.5", className)}>
       <div className="flex min-h-5 items-center justify-between gap-2">
-        <label htmlFor={id} className="t-label">
-          {label}
-        </label>
+        <span className="flex min-w-0 items-center gap-1">
+          <label htmlFor={id} className="t-label">
+            {label}
+          </label>
+          {help}
+        </span>
         {trailing}
       </div>
       {children({ id, "aria-describedby": described, "aria-invalid": errors?.length ? true : undefined })}

@@ -176,6 +176,7 @@ describe("AT-04 — Backstage discovery", () => {
             },
           ]),
         remove: () => Promise.resolve(false),
+        lastReads: () => Promise.resolve(new Map()),
       },
       secrets: { read: () => Promise.resolve(null) },
       fixedSources: () => [new LinearContextSource(), new RepositoryContextSource({ reader })],

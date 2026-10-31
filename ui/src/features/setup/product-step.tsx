@@ -6,7 +6,10 @@ import { Button } from "@/components/button";
 import { Field, Input, Select } from "@/components/form";
 import { Alert, ErrorAlert, Section } from "@/components/layout";
 import { ApiError } from "@/lib/api";
-import { AUTONOMY_LEVELS, type AutonomyLevel } from "@/lib/workspace";
+import { AutonomyHelp, AutonomyOptions } from "@/components/policy-help";
+import { levelHelp } from "@/lib/policy-help";
+import { type AutonomyLevel } from "@/lib/workspace";
+import { DEFAULT_MODEL } from "@/features/products/model-defaults";
 import { Actions, FieldGrid, StepFrame } from "./step-frame";
 import { useSetup } from "./setup-context";
 
@@ -119,14 +122,15 @@ export function ProductStep() {
                 </Select>
               )}
             </Field>
-            <Field label="Default autonomy" hint="L2 is the usual start." errors={fieldErrors.defaultAutonomy}>
+            <Field
+              label="Default autonomy"
+              help={<AutonomyHelp />}
+              hint={`${levelHelp(autonomy).detail} L2 is the usual start.`}
+              errors={fieldErrors.defaultAutonomy}
+            >
               {(props) => (
                 <Select {...props} value={autonomy} onChange={(e) => setAutonomy(e.target.value as AutonomyLevel)}>
-                  {AUTONOMY_LEVELS.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
+                  <AutonomyOptions />
                 </Select>
               )}
             </Field>
@@ -147,7 +151,7 @@ export function ProductStep() {
             </Field>
             <Field
               label="Model (optional)"
-              hint="provider/model, for example deepseek/deepseek-chat. Empty uses the runner default."
+              hint={`provider/model, for example deepseek/deepseek-chat. Default: ${DEFAULT_MODEL}.`}
               errors={fieldErrors.model}
               className="sm:col-span-2"
             >

@@ -2,11 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
-import { getProductOptions, getProductQueryKey, listProductsQueryKey } from "@/api/@tanstack/react-query.gen";
+import {
+  getProductOptions,
+  getProductQueryKey,
+  listProductSecretsOptions,
+  listProductsQueryKey,
+} from "@/api/@tanstack/react-query.gen";
 import { activateProduct, deleteProduct, updateProduct } from "@/api/sdk.gen";
 import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
 import { Field, Input, SavedNote, Select, Textarea } from "@/components/form";
+import { AllowedDomainsHelp, AutonomyHelp, AutonomyOptions, RiskCapsHelp } from "@/components/policy-help";
 import {
   Alert,
   Badge,
@@ -21,7 +27,10 @@ import {
 } from "@/components/layout";
 import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
+import { levelHelp } from "@/lib/policy-help";
 import { AUTONOMY_LEVELS, EFFORT_ROLES, EFFORT_SUGGESTIONS, pickWorkspace, type AutonomyLevel } from "@/lib/workspace";
+import { ContextSourcesSection } from "./context-sources-section";
+import { DEFAULT_EFFORT, DEFAULT_MODEL, ModelWarning, RecentSessionsSection } from "./model-defaults";
 import { bodyOf, formOf, LIMITS, type Product, type ProductForm } from "./product-form";
 import { SecretsSection } from "./secrets-section";
 
@@ -95,6 +104,11 @@ function ProductEditor({
   const [attempted, setAttempted] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const dirty = JSON.stringify(form) !== JSON.stringify(formOf(product));
+  // The same query as the secrets section, so the cache answers both.
+  const secrets = useQuery(
+    listProductSecretsOptions({ path: { id: product.id }, query: { linearWorkspaceId } }),
+  );
+  const hasRunnerCredential = secrets.data?.some((secret) => secret.kind === "runner_credential");
 
   const save = useMutation({
     mutationFn: async () => {
@@ -189,7 +203,7 @@ function ProductEditor({
                 />
               )}
             </Field>
-            <Field label="Model" hint="provider/model. Empty uses the runner default.">
+            <Field label="Model" hint={form.model.trim() ? "provider/model." : `Default: ${DEFAULT_MODEL}.`}>
               {(props) => (
                 <Input
                   {...props}
@@ -214,6 +228,10 @@ function ProductEditor({
               )}
             </Field>
           </div>
+          {/* The warning follows the saved model, so it never flickers while the operator types. */}
+          {product.model === null && hasRunnerCredential !== undefined ? (
+            <ModelWarning hasRunnerCredential={hasRunnerCredential} className="mt-4" />
+          ) : null}
         </Section>
 
         <Section
@@ -249,24 +267,29 @@ function ProductEditor({
         >
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-4">
-              <Field label="Default autonomy">
+              <Field
+                label="Default autonomy"
+                help={<AutonomyHelp />}
+                hint={levelHelp(form.defaultAutonomy).detail}
+              >
                 {(props) => (
                   <Select
                     {...props}
-                    className="w-32"
                     disabled={disabled}
                     value={form.defaultAutonomy}
                     onChange={(e) => set("defaultAutonomy", e.target.value as AutonomyLevel)}
                   >
-                    {AUTONOMY_LEVELS.map((level) => (
-                      <option key={level}>{level}</option>
-                    ))}
+                    <AutonomyOptions />
                   </Select>
                 )}
               </Field>
               <RiskCaps value={form.riskCaps} onChange={(caps) => set("riskCaps", caps)} disabled={disabled} />
             </div>
-            <Field label="Allowed domains" hint="One domain per line. Agents reach only these hosts.">
+            <Field
+              label="Allowed domains"
+              help={<AllowedDomainsHelp />}
+              hint="One domain per line. Agents reach only these hosts."
+            >
               {(props) => (
                 <Textarea
                   {...props}
@@ -311,8 +334,10 @@ function ProductEditor({
         ) : null}
       </form>
 
-      <div className="mt-4">
+      <div className="mt-4 flex flex-col gap-4">
         <SecretsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+        <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+        <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
       </div>
 
       <Section title="Details" className="mt-4">
@@ -354,7 +379,7 @@ function EffortSection({
   return (
     <Section
       title="Effort per role"
-      description="The reasoning effort each agent role asks of the model. Empty uses the default."
+      description="The reasoning effort each agent role asks of the model, as the opencode --variant. Claude Code sessions do not take it."
     >
       <datalist id={listId}>
         {EFFORT_SUGGESTIONS.map((s) => (
@@ -363,13 +388,17 @@ function EffortSection({
       </datalist>
       <div className="grid grid-cols-2 gap-x-4 gap-y-3.5 sm:grid-cols-4">
         {EFFORT_ROLES.map((role) => (
-          <Field key={role} label={role[0]!.toUpperCase() + role.slice(1)}>
+          <Field
+            key={role}
+            label={role[0]!.toUpperCase() + role.slice(1)}
+            hint={form.effort[role].trim() ? undefined : `Default: ${DEFAULT_EFFORT}`}
+          >
             {(props) => (
               <Input
                 {...props}
                 list={listId}
                 disabled={disabled}
-                placeholder="Default"
+                placeholder="low, high, max"
                 value={form.effort[role]}
                 onChange={(e) => {
                   const value = e.target.value;
@@ -393,11 +422,17 @@ function RiskCaps({
   onChange: (caps: ProductForm["riskCaps"]) => void;
   disabled: boolean;
 }) {
+  const labelId = useId();
   const update = (index: number, patch: Partial<ProductForm["riskCaps"][number]>) =>
     onChange(value.map((cap, i) => (i === index ? { ...cap, ...patch } : cap)));
   return (
-    <fieldset className="flex flex-col gap-2">
-      <legend className="t-label mb-1.5">Risk caps</legend>
+    <div role="group" aria-labelledby={labelId} className="flex flex-col gap-2">
+      <div className="mb-1.5 flex items-center gap-1">
+        <span id={labelId} className="t-label">
+          Risk caps
+        </span>
+        <RiskCapsHelp />
+      </div>
       <p className="t-hint">A Linear label caps the autonomy of a run that carries it. Labels match without case.</p>
       {value.length === 0 ? <p className="t-hint">No risk caps.</p> : null}
       {value.map((cap, index) => (
@@ -413,13 +448,15 @@ function RiskCaps({
           />
           <Select
             aria-label={`Risk cap ${index + 1} level`}
-            className="w-24"
+            className="w-40"
             disabled={disabled}
             value={cap.level}
             onChange={(e) => update(index, { level: e.target.value as AutonomyLevel })}
           >
             {AUTONOMY_LEVELS.map((level) => (
-              <option key={level}>{level}</option>
+              <option key={level} value={level}>
+                {level} · {levelHelp(level).name}
+              </option>
             ))}
           </Select>
           <Button
@@ -442,7 +479,7 @@ function RiskCaps({
         <Plus className="h-3.5 w-3.5" aria-hidden />
         Add risk cap
       </Button>
-    </fieldset>
+    </div>
   );
 }
 
@@ -477,12 +514,10 @@ function ActivateProduct({
       <p>Factoree takes no work from the team until the product is active.</p>
       {canEdit ? (
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <Field label="Default autonomy" className="w-36">
+          <Field label="Default autonomy" help={<AutonomyHelp />} className="min-w-0 flex-1 basis-64">
             {(props) => (
               <Select {...props} value={level} onChange={(e) => setLevel(e.target.value as AutonomyLevel)}>
-                {AUTONOMY_LEVELS.map((l) => (
-                  <option key={l}>{l}</option>
-                ))}
+                <AutonomyOptions />
               </Select>
             )}
           </Field>

@@ -33,6 +33,9 @@ The first release. Another person can install Factoree from released artefacts a
 - `deploy/compose/compose.yml` starts PostgreSQL, Temporal on the same PostgreSQL, a one-time migration, the API and the worker from the released images.
 - The Helm chart `oci://ghcr.io/alternayte/charts/factoree` deploys the API, the worker and a migration Job against an external PostgreSQL and an external Temporal.
 - `examples/` holds a `.factoree/config.yaml` for a Node web app and for a Go service.
+- The product page shows what an empty model or effort means, warns when the product sets no model, and lists the model and effort of the last agent sessions from `GET /admin/products/:id/agent-sessions`. The proof pack warns when opencode chose its own model and the product holds no runner credential.
+- Help popovers explain the autonomy levels L0 to L4, risk caps and allowed domains on the product page and in setup. Each autonomy option shows its one-line description.
+- A Context sources section on the product page lists, adds, tests and deletes MCP servers and Backstage catalogs, with the time of the last read. `POST /admin/products/:id/context-sources/test` calls the discover tool before a save. The context source routes are in the OpenAPI document.
 - `checks/migrations.sh` fails when a migration of the latest release changes or disappears. `scripts/upgrade-test.sh` migrates a database of the previous release to the working tree.
 
 ### Changed

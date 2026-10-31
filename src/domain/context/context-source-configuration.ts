@@ -40,7 +40,7 @@ export const assertContextSourceId = (id: string): void => {
  * SDD section 18 forbids organization-wide unbounded retrieval by default, so every bound below
  * has a ceiling a configuration cannot raise.
  */
-const backstageSettings = z
+export const backstageSettingsSchema = z
   .object({
     kind: z.literal("backstage").default("backstage"),
     /**
@@ -53,7 +53,7 @@ const backstageSettings = z
   })
   .strict();
 
-const mcpSettings = z
+export const mcpSettingsSchema = z
   .object({
     kind: z.literal("mcp").default("mcp"),
     discoverTool: z.string().min(1),
@@ -71,7 +71,7 @@ const mcpSettings = z
   })
   .strict();
 
-export type BackstageSourceSettings = z.infer<typeof backstageSettings>;
+export type BackstageSourceSettings = z.infer<typeof backstageSettingsSchema>;
 
 export interface McpSourceSettings {
   kind: "mcp";
@@ -98,7 +98,7 @@ export const parseContextSourceSettings = (
   kind: ContextSourceKind,
   settings: unknown,
 ): ContextSourceSettings => {
-  const schema = kind === "backstage" ? backstageSettings : mcpSettings;
+  const schema = kind === "backstage" ? backstageSettingsSchema : mcpSettingsSchema;
   const parsed = schema.safeParse(settings ?? {});
   if (!parsed.success) {
     const detail = parsed.error.issues.map(describeIssue).join("; ");
@@ -116,6 +116,37 @@ export const parseContextSourceSettings = (
     authority: data.authority as AuthorityClass,
     maxCandidates: data.maxCandidates,
   };
+};
+
+/**
+ * The endpoint must be a URL an operator can repair now, not a fault inside a Run. SDD section 60:
+ * a credential in the userinfo, the query or the fragment would reach a log line, an error message
+ * and the Context Contract, so each is refused, and no message echoes the value.
+ */
+export const assertContextSourceEndpoint = (sourceId: string, endpoint: string): void => {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new ContextSourceConfigurationError(`The endpoint "${endpoint}" is not a valid URL.`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new ContextSourceConfigurationError(
+      `The endpoint of the context source "${sourceId}" must be an http or https URL.`,
+    );
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new ContextSourceConfigurationError(
+      `The endpoint of the context source "${sourceId}" carries a user name or a ` +
+        "password. Remove the credential from the URL, and name a Product secret instead.",
+    );
+  }
+  if (url.search !== "" || url.hash !== "") {
+    throw new ContextSourceConfigurationError(
+      `The endpoint of the context source "${sourceId}" carries a query string or a ` +
+        "fragment. An endpoint is a base address, and a credential belongs in a Product secret.",
+    );
+  }
 };
 
 export interface ContextSourceConfigurationRecord {
@@ -154,4 +185,9 @@ export interface ContextSourceConfigurationStore {
   put(input: CreateContextSourceConfigurationInput): Promise<ContextSourceConfigurationRecord>;
   list(tenantId: string, productId: string): Promise<ContextSourceConfigurationRecord[]>;
   remove(tenantId: string, productId: string, sourceId: string): Promise<boolean>;
+  /**
+   * DI-15.18. For each source of the Product, the time of the newest Context Contract that holds
+   * an item from it. A source with no such item is absent from the map.
+   */
+  lastReads(tenantId: string, productId: string): Promise<Map<string, Date>>;
 }

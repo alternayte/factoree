@@ -18,6 +18,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import {
   buildProofPackDocument,
+  defaultModelWarning,
   hashProofPack,
   PROOF_PACK_DOCUMENT_NAME,
   renderProofPack,
@@ -382,6 +383,18 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
             selectionReason: runTargets[0]?.selectionReason ?? "sole member",
           };
 
+    // Issue 6, DI-15.17. Read from the stored Product and sessions, so no workflow input changes.
+    const modelWarning =
+      product === null
+        ? null
+        : defaultModelWarning({
+            productModel: product.model,
+            hasRunnerCredential: (await dependencies.secrets.list(input.tenantId, input.productId)).some(
+              (secret) => secret.kind === "runner_credential",
+            ),
+            sessions: sessionRows,
+          });
+
     const items = contextContract?.items ?? [];
     const proofPackInput = {
       runId: input.runId,
@@ -429,6 +442,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       baseMove: input.baseMove ?? null,
       // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.
       agentUsage: summarizeAgentSessions(sessionRows),
+      modelWarning,
       ...(routing === undefined ? {} : { routing }),
     };
 

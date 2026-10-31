@@ -1289,6 +1289,372 @@ export type PutProductSecretResponses = {
 
 export type PutProductSecretResponse = PutProductSecretResponses[keyof PutProductSecretResponses];
 
+export type ListProductAgentSessionsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+    limit?: number;
+  };
+  url: "/admin/products/{id}/agent-sessions";
+};
+
+export type ListProductAgentSessionsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListProductAgentSessionsError = ListProductAgentSessionsErrors[keyof ListProductAgentSessionsErrors];
+
+export type ListProductAgentSessionsResponses = {
+  /**
+   * Default Response
+   */
+  200: Array<{
+    id: string;
+    runId: string;
+    role: "implementer" | "validator" | "reviewer" | "refiner";
+    attempt: number;
+    runner: string;
+    model: string | null;
+    effort: string | null;
+    outcome: "finished" | "hung" | "failed";
+    durationMs: number;
+    createdAt: string;
+  }>;
+};
+
+export type ListProductAgentSessionsResponse =
+  ListProductAgentSessionsResponses[keyof ListProductAgentSessionsResponses];
+
+export type ListContextSourcesData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/context-sources";
+};
+
+export type ListContextSourcesErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListContextSourcesError = ListContextSourcesErrors[keyof ListContextSourcesErrors];
+
+export type ListContextSourcesResponses = {
+  /**
+   * Default Response
+   */
+  200: Array<{
+    id: string;
+    tenantId: string;
+    productId: string;
+    sourceId: string;
+    kind: "backstage" | "mcp";
+    enabled: boolean;
+    endpoint: string;
+    secretName: string | null;
+    settings:
+      | {
+          kind?: "backstage";
+          primaryComponent?: string | null;
+          maxEntities?: number;
+          includeOwnership?: boolean;
+        }
+      | {
+          kind?: "mcp";
+          discoverTool: string;
+          fetchTool: string;
+          allowedTools?: Array<string>;
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxCandidates?: number;
+        };
+    createdAt: string;
+    updatedAt: string;
+    lastReadAt: string | null;
+  }>;
+};
+
+export type ListContextSourcesResponse = ListContextSourcesResponses[keyof ListContextSourcesResponses];
+
+export type PutContextSourceData = {
+  body: {
+    sourceId: string;
+    kind: "backstage" | "mcp";
+    endpoint: string;
+    enabled?: boolean;
+    secretName?: string | null;
+    settings?:
+      | {
+          kind?: "backstage";
+          primaryComponent?: string | null;
+          maxEntities?: number;
+          includeOwnership?: boolean;
+        }
+      | {
+          kind?: "mcp";
+          discoverTool: string;
+          fetchTool: string;
+          allowedTools?: Array<string>;
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxCandidates?: number;
+        };
+  };
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/context-sources";
+};
+
+export type PutContextSourceErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type PutContextSourceError = PutContextSourceErrors[keyof PutContextSourceErrors];
+
+export type PutContextSourceResponses = {
+  /**
+   * Default Response
+   */
+  201: {
+    id: string;
+    tenantId: string;
+    productId: string;
+    sourceId: string;
+    kind: "backstage" | "mcp";
+    enabled: boolean;
+    endpoint: string;
+    secretName: string | null;
+    settings:
+      | {
+          kind?: "backstage";
+          primaryComponent?: string | null;
+          maxEntities?: number;
+          includeOwnership?: boolean;
+        }
+      | {
+          kind?: "mcp";
+          discoverTool: string;
+          fetchTool: string;
+          allowedTools?: Array<string>;
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxCandidates?: number;
+        };
+    createdAt: string;
+    updatedAt: string;
+  };
+};
+
+export type PutContextSourceResponse = PutContextSourceResponses[keyof PutContextSourceResponses];
+
+export type TestContextSourceData = {
+  body: {
+    sourceId: string;
+    kind: "backstage" | "mcp";
+    endpoint: string;
+    secretName?: string | null;
+    settings?:
+      | {
+          kind?: "backstage";
+          primaryComponent?: string | null;
+          maxEntities?: number;
+          includeOwnership?: boolean;
+        }
+      | {
+          kind?: "mcp";
+          discoverTool: string;
+          fetchTool: string;
+          allowedTools?: Array<string>;
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxCandidates?: number;
+        };
+    credential?: string;
+  };
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/context-sources/test";
+};
+
+export type TestContextSourceErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type TestContextSourceError = TestContextSourceErrors[keyof TestContextSourceErrors];
+
+export type TestContextSourceResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    ok: boolean;
+    message: string;
+    itemCount: number;
+    items: Array<{
+      ref: string;
+      title: string | null;
+    }>;
+  };
+};
+
+export type TestContextSourceResponse = TestContextSourceResponses[keyof TestContextSourceResponses];
+
+export type DeleteContextSourceData = {
+  body?: never;
+  path: {
+    id: string;
+    sourceId: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/context-sources/{sourceId}";
+};
+
+export type DeleteContextSourceErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type DeleteContextSourceError = DeleteContextSourceErrors[keyof DeleteContextSourceErrors];
+
+export type DeleteContextSourceResponses = {
+  /**
+   * Default Response
+   */
+  204: void;
+};
+
+export type DeleteContextSourceResponse = DeleteContextSourceResponses[keyof DeleteContextSourceResponses];
+
 export type GetMeData = {
   body?: never;
   path?: never;

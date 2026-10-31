@@ -30,6 +30,9 @@ import type {
   CreateSetupProductData,
   CreateSetupProductErrors,
   CreateSetupProductResponses,
+  DeleteContextSourceData,
+  DeleteContextSourceErrors,
+  DeleteContextSourceResponses,
   DeleteProductData,
   DeleteProductErrors,
   DeleteProductResponses,
@@ -50,9 +53,15 @@ import type {
   GetSetupStatusResponses,
   ListApiKeysData,
   ListApiKeysResponses,
+  ListContextSourcesData,
+  ListContextSourcesErrors,
+  ListContextSourcesResponses,
   ListLinearTeamsData,
   ListLinearTeamsErrors,
   ListLinearTeamsResponses,
+  ListProductAgentSessionsData,
+  ListProductAgentSessionsErrors,
+  ListProductAgentSessionsResponses,
   ListProductsData,
   ListProductSecretsData,
   ListProductSecretsErrors,
@@ -64,6 +73,9 @@ import type {
   ListSetupLinearTeamsResponses,
   ListWorkspacesData,
   ListWorkspacesResponses,
+  PutContextSourceData,
+  PutContextSourceErrors,
+  PutContextSourceResponses,
   PutLinearAppData,
   PutLinearAppErrors,
   PutLinearAppResponses,
@@ -82,6 +94,9 @@ import type {
   StartSetupLinearInstallData,
   StartSetupLinearInstallErrors,
   StartSetupLinearInstallResponses,
+  TestContextSourceData,
+  TestContextSourceErrors,
+  TestContextSourceResponses,
   UpdateInstallSettingsData,
   UpdateInstallSettingsErrors,
   UpdateInstallSettingsResponses,
@@ -503,6 +518,114 @@ export const putProductSecret = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+export const listProductAgentSessions = <ThrowOnError extends boolean = false>(
+  options: Options<ListProductAgentSessionsData, ThrowOnError>,
+): RequestResult<ListProductAgentSessionsResponses, ListProductAgentSessionsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListProductAgentSessionsResponses, ListProductAgentSessionsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/agent-sessions",
+    ...options,
+  });
+
+export const listContextSources = <ThrowOnError extends boolean = false>(
+  options: Options<ListContextSourcesData, ThrowOnError>,
+): RequestResult<ListContextSourcesResponses, ListContextSourcesErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListContextSourcesResponses, ListContextSourcesErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/context-sources",
+    ...options,
+  });
+
+export const putContextSource = <ThrowOnError extends boolean = false>(
+  options: Options<PutContextSourceData, ThrowOnError>,
+): RequestResult<PutContextSourceResponses, PutContextSourceErrors, ThrowOnError> =>
+  (options.client ?? client).post<PutContextSourceResponses, PutContextSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/context-sources",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const testContextSource = <ThrowOnError extends boolean = false>(
+  options: Options<TestContextSourceData, ThrowOnError>,
+): RequestResult<TestContextSourceResponses, TestContextSourceErrors, ThrowOnError> =>
+  (options.client ?? client).post<TestContextSourceResponses, TestContextSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/context-sources/test",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const deleteContextSource = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteContextSourceData, ThrowOnError>,
+): RequestResult<DeleteContextSourceResponses, DeleteContextSourceErrors, ThrowOnError> =>
+  (options.client ?? client).delete<DeleteContextSourceResponses, DeleteContextSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/context-sources/{sourceId}",
+    ...options,
   });
 
 export const getMe = <ThrowOnError extends boolean = false>(

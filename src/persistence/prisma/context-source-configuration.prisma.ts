@@ -8,6 +8,7 @@ import type {
 import {
   CONTEXT_SOURCE_KINDS,
   ContextSourceConfigurationError,
+  assertContextSourceEndpoint,
   assertContextSourceId,
   parseContextSourceSettings,
 } from "~/domain/context/context-source-configuration.js";
@@ -60,33 +61,7 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
   ): Promise<ContextSourceConfigurationRecord> {
     assertContextSourceId(input.sourceId);
     const settings = parseContextSourceSettings(input.kind, input.settings);
-    // The endpoint must be a URL an operator can repair now, not a fault inside a Run.
-    let endpoint: URL;
-    try {
-      endpoint = new URL(input.endpoint);
-    } catch {
-      throw new ContextSourceConfigurationError(
-        `The endpoint "${input.endpoint}" is not a valid URL.`,
-      );
-    }
-    // SDD section 60. A credential in the userinfo of the endpoint would reach a log line, an
-    // error message, and the Context Contract. The token belongs in a Product secret, which the
-    // source reads through `secretName`. The message never echoes the credential.
-    if (endpoint.username !== "" || endpoint.password !== "") {
-      throw new ContextSourceConfigurationError(
-        `The endpoint of the context source "${input.sourceId}" carries a user name or a ` +
-          "password. Remove the credential from the URL, and name a Product secret instead.",
-      );
-    }
-    // A configuration endpoint is a base address. A query string or a fragment carries no base
-    // address, and it is where a token outside the userinfo hides. The message names the problem
-    // and never echoes the value.
-    if (endpoint.search !== "" || endpoint.hash !== "") {
-      throw new ContextSourceConfigurationError(
-        `The endpoint of the context source "${input.sourceId}" carries a query string or a ` +
-          "fragment. An endpoint is a base address, and a credential belongs in a Product secret.",
-      );
-    }
+    assertContextSourceEndpoint(input.sourceId, input.endpoint);
     const data = {
       tenantId: input.tenantId,
       productId: input.productId,
@@ -118,5 +93,20 @@ export class PrismaContextSourceConfigurationStore implements ContextSourceConfi
       where: { tenantId, productId, sourceId },
     });
     return result.count > 0;
+  }
+
+  async lastReads(tenantId: string, productId: string): Promise<Map<string, Date>> {
+    // A Context Item exists only when its source answered, so the newest one of a source is the
+    // last read that reached a contract. The tenant filter is part of the query, SDD section 52.
+    const groups = await this.prisma.contextItem.groupBy({
+      by: ["sourceId"],
+      where: { tenantId, contextContract: { run: { tenantId, productId } } },
+      _max: { createdAt: true },
+    });
+    const reads = new Map<string, Date>();
+    for (const group of groups) {
+      if (group._max.createdAt !== null) reads.set(group.sourceId, group._max.createdAt);
+    }
+    return reads;
   }
 }

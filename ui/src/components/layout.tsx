@@ -49,8 +49,8 @@ export function Section({
   return (
     <section className={cn("card min-w-0", className)}>
       {title ? (
-        <div className="card-head">
-          <div className="min-w-0">
+        <div className="card-head flex-wrap">
+          <div className="min-w-0 flex-1 basis-56">
             <h2 className="t-section">{title}</h2>
             {description ? <p className="t-hint mt-1">{description}</p> : null}
           </div>

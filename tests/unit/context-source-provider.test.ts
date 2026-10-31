@@ -39,6 +39,7 @@ const storeOf = (rows: ContextSourceConfigurationRecord[]): ContextSourceConfigu
   put: () => Promise.reject(new Error("unused")),
   list: () => Promise.resolve(rows),
   remove: () => Promise.resolve(false),
+  lastReads: () => Promise.resolve(new Map()),
 });
 
 const providerOf = (

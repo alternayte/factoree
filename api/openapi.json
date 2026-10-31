@@ -4257,6 +4257,1122 @@
         }
       }
     },
+    "/admin/products/{id}/agent-sessions": {
+      "get": {
+        "operationId": "listProductAgentSessions",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "runId": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "implementer",
+                          "validator",
+                          "reviewer",
+                          "refiner"
+                        ]
+                      },
+                      "attempt": {
+                        "type": "number"
+                      },
+                      "runner": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "effort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "finished",
+                          "hung",
+                          "failed"
+                        ]
+                      },
+                      "durationMs": {
+                        "type": "number"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "runId",
+                      "role",
+                      "attempt",
+                      "runner",
+                      "model",
+                      "effort",
+                      "outcome",
+                      "durationMs",
+                      "createdAt"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/context-sources": {
+      "post": {
+        "operationId": "putContextSource",
+        "tags": [
+          "context sources"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sourceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "backstage",
+                      "mcp"
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "secretName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "settings": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "default": "backstage",
+                            "type": "string",
+                            "enum": [
+                              "backstage"
+                            ]
+                          },
+                          "primaryComponent": {
+                            "default": null,
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "maxEntities": {
+                            "default": 50,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200
+                          },
+                          "includeOwnership": {
+                            "default": true,
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "default": "mcp",
+                            "type": "string",
+                            "enum": [
+                              "mcp"
+                            ]
+                          },
+                          "discoverTool": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "fetchTool": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "allowedTools": {
+                            "default": [],
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "authority": {
+                            "default": "prose_documentation",
+                            "type": "string",
+                            "enum": [
+                              "work_item_decision",
+                              "approved_product_specification",
+                              "product_documentation",
+                              "accepted_adr",
+                              "approved_architecture_specification",
+                              "architecture_documentation",
+                              "repository_readme",
+                              "machine_readable_contract",
+                              "contract_tests",
+                              "api_documentation",
+                              "prose_documentation",
+                              "source_code",
+                              "executable_tests",
+                              "runtime_behavior",
+                              "declarative_catalog",
+                              "repository_configuration"
+                            ]
+                          },
+                          "maxCandidates": {
+                            "default": 20,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          }
+                        },
+                        "required": [
+                          "discoverTool",
+                          "fetchTool"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "sourceId",
+                  "kind",
+                  "endpoint"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "tenantId": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "sourceId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "backstage",
+                        "mcp"
+                      ]
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "endpoint": {
+                      "type": "string"
+                    },
+                    "secretName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "settings": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "default": "backstage",
+                              "type": "string",
+                              "enum": [
+                                "backstage"
+                              ]
+                            },
+                            "primaryComponent": {
+                              "default": null,
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "maxEntities": {
+                              "default": 50,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 200
+                            },
+                            "includeOwnership": {
+                              "default": true,
+                              "type": "boolean"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "default": "mcp",
+                              "type": "string",
+                              "enum": [
+                                "mcp"
+                              ]
+                            },
+                            "discoverTool": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "fetchTool": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "allowedTools": {
+                              "default": [],
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "authority": {
+                              "default": "prose_documentation",
+                              "type": "string",
+                              "enum": [
+                                "work_item_decision",
+                                "approved_product_specification",
+                                "product_documentation",
+                                "accepted_adr",
+                                "approved_architecture_specification",
+                                "architecture_documentation",
+                                "repository_readme",
+                                "machine_readable_contract",
+                                "contract_tests",
+                                "api_documentation",
+                                "prose_documentation",
+                                "source_code",
+                                "executable_tests",
+                                "runtime_behavior",
+                                "declarative_catalog",
+                                "repository_configuration"
+                              ]
+                            },
+                            "maxCandidates": {
+                              "default": 20,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 100
+                            }
+                          },
+                          "required": [
+                            "discoverTool",
+                            "fetchTool"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "tenantId",
+                    "productId",
+                    "sourceId",
+                    "kind",
+                    "enabled",
+                    "endpoint",
+                    "secretName",
+                    "settings",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listContextSources",
+        "tags": [
+          "context sources"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "tenantId": {
+                        "type": "string"
+                      },
+                      "productId": {
+                        "type": "string"
+                      },
+                      "sourceId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "backstage",
+                          "mcp"
+                        ]
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "endpoint": {
+                        "type": "string"
+                      },
+                      "secretName": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "settings": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "default": "backstage",
+                                "type": "string",
+                                "enum": [
+                                  "backstage"
+                                ]
+                              },
+                              "primaryComponent": {
+                                "default": null,
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "maxEntities": {
+                                "default": 50,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200
+                              },
+                              "includeOwnership": {
+                                "default": true,
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "default": "mcp",
+                                "type": "string",
+                                "enum": [
+                                  "mcp"
+                                ]
+                              },
+                              "discoverTool": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "fetchTool": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "allowedTools": {
+                                "default": [],
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "authority": {
+                                "default": "prose_documentation",
+                                "type": "string",
+                                "enum": [
+                                  "work_item_decision",
+                                  "approved_product_specification",
+                                  "product_documentation",
+                                  "accepted_adr",
+                                  "approved_architecture_specification",
+                                  "architecture_documentation",
+                                  "repository_readme",
+                                  "machine_readable_contract",
+                                  "contract_tests",
+                                  "api_documentation",
+                                  "prose_documentation",
+                                  "source_code",
+                                  "executable_tests",
+                                  "runtime_behavior",
+                                  "declarative_catalog",
+                                  "repository_configuration"
+                                ]
+                              },
+                              "maxCandidates": {
+                                "default": 20,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100
+                              }
+                            },
+                            "required": [
+                              "discoverTool",
+                              "fetchTool"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "lastReadAt": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "tenantId",
+                      "productId",
+                      "sourceId",
+                      "kind",
+                      "enabled",
+                      "endpoint",
+                      "secretName",
+                      "settings",
+                      "createdAt",
+                      "updatedAt",
+                      "lastReadAt"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/context-sources/test": {
+      "post": {
+        "operationId": "testContextSource",
+        "tags": [
+          "context sources"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sourceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "backstage",
+                      "mcp"
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secretName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "settings": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "default": "backstage",
+                            "type": "string",
+                            "enum": [
+                              "backstage"
+                            ]
+                          },
+                          "primaryComponent": {
+                            "default": null,
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "maxEntities": {
+                            "default": 50,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200
+                          },
+                          "includeOwnership": {
+                            "default": true,
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "default": "mcp",
+                            "type": "string",
+                            "enum": [
+                              "mcp"
+                            ]
+                          },
+                          "discoverTool": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "fetchTool": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "allowedTools": {
+                            "default": [],
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "authority": {
+                            "default": "prose_documentation",
+                            "type": "string",
+                            "enum": [
+                              "work_item_decision",
+                              "approved_product_specification",
+                              "product_documentation",
+                              "accepted_adr",
+                              "approved_architecture_specification",
+                              "architecture_documentation",
+                              "repository_readme",
+                              "machine_readable_contract",
+                              "contract_tests",
+                              "api_documentation",
+                              "prose_documentation",
+                              "source_code",
+                              "executable_tests",
+                              "runtime_behavior",
+                              "declarative_catalog",
+                              "repository_configuration"
+                            ]
+                          },
+                          "maxCandidates": {
+                            "default": 20,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          }
+                        },
+                        "required": [
+                          "discoverTool",
+                          "fetchTool"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "credential": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "sourceId",
+                  "kind",
+                  "endpoint"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "itemCount": {
+                      "type": "number"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "title"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "message",
+                    "itemCount",
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/context-sources/{sourceId}": {
+      "delete": {
+        "operationId": "deleteContextSource",
+        "tags": [
+          "context sources"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sourceId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/me": {
       "get": {
         "operationId": "getMe",

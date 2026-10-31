@@ -15,6 +15,7 @@ import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProductRoutes } from "./admin/products.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
+import { registerProductSessionRoutes } from "./admin/product-sessions.routes.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
@@ -139,16 +140,24 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         linearTeams: dependencies.linearTeams,
         runs: dependencies.runs,
       });
+      const sessions = new PrismaAgentSessionStore(dependencies.prisma);
       registerRunRoutes(admin, {
         runs: dependencies.runs,
         tenants: dependencies.tenants,
-        sessions: new PrismaAgentSessionStore(dependencies.prisma),
+        sessions,
+      });
+      registerProductSessionRoutes(admin, {
+        products: dependencies.products,
+        tenants: dependencies.tenants,
+        sessions,
       });
       registerInstallationRoutes(admin, { tenants: dependencies.tenants });
       registerContextSourceRoutes(admin, {
         products: dependencies.products,
         tenants: dependencies.tenants,
         contextSources: new PrismaContextSourceConfigurationStore(dependencies.prisma),
+        repositories: dependencies.repositories,
+        secrets: dependencies.secrets,
       });
       registerSettingsRoutes(admin, {
         prisma: dependencies.prisma,

@@ -1,3 +1,5 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
@@ -27,7 +29,7 @@ let token: string;
 let auth: { authorization: string };
 
 // Every workspace the tests name, except the one a test names to prove a stranger is refused.
-const WORKSPACES = ["ws-context", "ws-context-other", "ws-1", "ws-admin", "ws-bad-skills", "ws-claim", "ws-fields", "ws-github-bind", "ws-github-owner", "ws-github-thief", "ws-kind", "ws-other", "ws-owner", "ws-refuse", "ws-remove", "ws-remove-other", "ws-remove-owner", "ws-repos", "ws-run-owner", "ws-run-sessions", "ws-secret", "ws-skills"];
+const WORKSPACES = ["ws-context", "ws-context-other", "ws-1", "ws-admin", "ws-bad-skills", "ws-claim", "ws-fields", "ws-github-bind", "ws-github-owner", "ws-github-thief", "ws-kind", "ws-other", "ws-owner", "ws-refuse", "ws-remove", "ws-remove-other", "ws-remove-owner", "ws-repos", "ws-run-owner", "ws-run-sessions", "ws-secret", "ws-skills", "ws-sessions", "ws-sessions-other"];
 
 // The route resolves a team key through Linear. This test double never calls the network: it
 // answers a team for a key it was told to resolve, and null for one it was told to refuse.
@@ -794,3 +796,273 @@ describe("the context source endpoints of SDD section 59", () => {
     expect(response.statusCode).toBe(404);
   });
 });
+
+// Issue 6. The product page shows the models and the efforts of the newest sessions.
+describe("the agent sessions of a product", () => {
+  let productId: string;
+  let otherProductId: string;
+
+  const runOf = async (tenantId: string, product: string, key: string) =>
+    prisma.run.create({
+      data: {
+        tenantId,
+        productId: product,
+        linearAgentSessionId: `session-${key}`,
+        temporalWorkflowId: `workflow-${key}`,
+        status: "RECEIVED",
+        autonomyLevel: "L2",
+      },
+    });
+
+  const sessionOf = (tenantId: string, runId: string, role: "implementer" | "reviewer", model: string | null) =>
+    new PrismaAgentSessionStore(prisma).record({
+      tenantId,
+      runId,
+      role,
+      attempt: 1,
+      runner: "opencode",
+      cliSessionId: null,
+      model,
+      effort: null,
+      usage: null,
+      durationMs: 1_000,
+      outcome: "finished",
+      idempotencyKey: `run:${runId}:${role}:1`,
+    });
+
+  beforeAll(async () => {
+    const products = new PrismaProductRegistry(prisma);
+    const tenant = await tenants.ensureTenant("ws-sessions", "Sessions");
+    const product = await products.create({ tenantId: tenant.id, slug: "ses-a", name: "A", linearTeamKey: "SEA", linearTeamId: "team-sea" });
+    const sibling = await products.create({ tenantId: tenant.id, slug: "ses-b", name: "B", linearTeamKey: "SEB", linearTeamId: "team-seb" });
+    const other = await tenants.ensureTenant("ws-sessions-other", "Sessions other");
+    const otherProduct = await products.create({ tenantId: other.id, slug: "ses-o", name: "O", linearTeamKey: "SEO", linearTeamId: "team-seo" });
+    productId = product.id;
+    otherProductId = otherProduct.id;
+    const run = await runOf(tenant.id, product.id, "ses-a");
+    await sessionOf(tenant.id, run.id, "implementer", "opencode/big-pickle");
+    await sessionOf(tenant.id, run.id, "reviewer", null);
+    const siblingRun = await runOf(tenant.id, sibling.id, "ses-b");
+    await sessionOf(tenant.id, siblingRun.id, "implementer", "deepseek/deepseek-chat");
+    const otherRun = await runOf(other.id, otherProduct.id, "ses-o");
+    await sessionOf(other.id, otherRun.id, "implementer", "anthropic/claude");
+  });
+
+  it("returns the sessions of the product only, newest first, with the model each one ran", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/products/${productId}/agent-sessions?linearWorkspaceId=ws-sessions`,
+      headers: auth,
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json<Array<{ role: string; model: string | null }>>();
+    expect(body.map((session) => [session.role, session.model])).toEqual([
+      ["reviewer", null],
+      ["implementer", "opencode/big-pickle"],
+    ]);
+  });
+
+  it("answers 404 for a product of another tenant and 401 without a credential", async () => {
+    const stolen = await app.inject({
+      method: "GET",
+      url: `/admin/products/${otherProductId}/agent-sessions?linearWorkspaceId=ws-sessions`,
+      headers: auth,
+    });
+    expect(stolen.statusCode).toBe(404);
+    const anonymous = await app.inject({
+      method: "GET",
+      url: `/admin/products/${productId}/agent-sessions?linearWorkspaceId=ws-sessions`,
+    });
+    expect(anonymous.statusCode).toBe(401);
+  });
+
+  it("refuses a limit outside 1 to 50", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/admin/products/${productId}/agent-sessions?linearWorkspaceId=ws-sessions&limit=500`,
+      headers: auth,
+    });
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+// Issue 8. The test of a context source before it is saved, and the last read of a saved one.
+describe("the context source test and the last read", () => {
+  const workspace = "ws-context";
+  const CREDENTIAL = "mcp_probe_credential_5551234";
+  let productId: string;
+  let otherTenantProductId: string;
+  let mcp: Server;
+  let mcpUrl: string;
+
+  beforeAll(async () => {
+    const products = new PrismaProductRegistry(prisma);
+    const tenant = await tenants.ensureTenant(workspace, "Context");
+    productId = (await products.create({ tenantId: tenant.id, slug: "ctx-test", name: "Ctx test", linearTeamKey: "CTT", linearTeamId: "team-ctt" })).id;
+    const other = await tenants.ensureTenant("ws-context-other", "Context Other");
+    otherTenantProductId = (await products.create({ tenantId: other.id, slug: "ctx-test-o", name: "O", linearTeamKey: "CTTO", linearTeamId: "team-ctto" })).id;
+
+    // A hostile MCP server: its discover tool echoes the Authorization header in an item title,
+    // and its broken tool echoes it in an error message.
+    mcp = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk: Buffer) => (raw += chunk.toString("utf8")));
+      request.on("end", () => {
+        const message = JSON.parse(raw) as { id?: number; method: string; params?: { name?: string } };
+        const authorization = request.headers.authorization ?? "none";
+        if (message.id === undefined) {
+          response.writeHead(202).end();
+          return;
+        }
+        const reply = (body: unknown) => {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, ...(body as object) }));
+        };
+        if (message.method === "initialize") return reply({ result: { protocolVersion: "2025-06-18", capabilities: {} } });
+        if (message.params?.name === "broken") return reply({ error: { code: -32000, message: `denied for ${authorization}` } });
+        const items = [{ ref: "doc-1", sourceVersion: "v1", title: `seen ${authorization}`, reason: "matches" }];
+        return reply({ result: { content: [{ type: "text", text: JSON.stringify({ items }) }] } });
+      });
+    });
+    await new Promise<void>((resolve) => mcp.listen(0, "127.0.0.1", resolve));
+    mcpUrl = `http://127.0.0.1:${(mcp.address() as AddressInfo).port}/mcp`;
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve) => mcp.close(resolve));
+  });
+
+  const probe = (payload: Record<string, unknown>, target = productId) =>
+    app.inject({
+      method: "POST",
+      url: `/admin/products/${target}/context-sources/test?linearWorkspaceId=${workspace}`,
+      headers: auth,
+      payload,
+    });
+
+  it("calls the discover tool and never returns the credential, typed or stored", async () => {
+    const typed = await probe({
+      sourceId: "docs",
+      kind: "mcp",
+      endpoint: mcpUrl,
+      credential: CREDENTIAL,
+      settings: { discoverTool: "search", fetchTool: "read" },
+    });
+    expect(typed.statusCode).toBe(200);
+    expect(typed.json<{ ok: boolean; itemCount: number }>()).toMatchObject({ ok: true, itemCount: 1 });
+    expect(typed.body).not.toContain(CREDENTIAL);
+
+    const stored = await app.inject({
+      method: "PUT",
+      url: `/admin/products/${productId}/secrets/DOCS_MCP_TOKEN?linearWorkspaceId=${workspace}`,
+      headers: auth,
+      payload: { value: CREDENTIAL },
+    });
+    expect(stored.statusCode).toBe(204);
+    const failed = await probe({
+      sourceId: "docs",
+      kind: "mcp",
+      endpoint: mcpUrl,
+      secretName: "DOCS_MCP_TOKEN",
+      settings: { discoverTool: "broken", fetchTool: "read" },
+    });
+    expect(failed.statusCode).toBe(200);
+    expect(failed.json<{ ok: boolean; message: string }>()).toMatchObject({ ok: false });
+    expect(failed.json<{ message: string }>().message).toContain("denied for Bearer");
+    expect(failed.body).not.toContain(CREDENTIAL);
+  });
+
+  it("refuses what a save refuses, a missing secret, another tenant, and a caller with no credential", async () => {
+    const badSettings = await probe({ sourceId: "docs", kind: "mcp", endpoint: mcpUrl, settings: { discoverTool: "search" } });
+    expect(badSettings.statusCode).toBe(400);
+    const userinfo = await probe({
+      sourceId: "docs",
+      kind: "mcp",
+      endpoint: "https://user:pass@docs.example.test",
+      settings: { discoverTool: "search", fetchTool: "read" },
+    });
+    expect(userinfo.statusCode).toBe(400);
+    expect(userinfo.body).not.toContain("pass@");
+    const missing = await probe({
+      sourceId: "docs",
+      kind: "mcp",
+      endpoint: mcpUrl,
+      secretName: "NO_SUCH_SECRET",
+      settings: { discoverTool: "search", fetchTool: "read" },
+    });
+    expect(missing.statusCode).toBe(400);
+    const foreign = await probe(
+      { sourceId: "docs", kind: "mcp", endpoint: mcpUrl, settings: { discoverTool: "search", fetchTool: "read" } },
+      otherTenantProductId,
+    );
+    expect(foreign.statusCode).toBe(404);
+    const anonymous = await app.inject({
+      method: "POST",
+      url: `/admin/products/${productId}/context-sources/test?linearWorkspaceId=${workspace}`,
+      payload: { sourceId: "docs", kind: "mcp", endpoint: mcpUrl, settings: { discoverTool: "search", fetchTool: "read" } },
+    });
+    expect(anonymous.statusCode).toBe(401);
+  });
+
+  it("lists the time of the newest context contract that holds an item from the source", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${workspace}`,
+      headers: auth,
+      payload: { sourceId: "docs", kind: "mcp", endpoint: mcpUrl, settings: { discoverTool: "search", fetchTool: "read" } },
+    });
+    expect(created.statusCode).toBe(201);
+    const listedBefore = await app.inject({
+      method: "GET",
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${workspace}`,
+      headers: auth,
+    });
+    expect(listedBefore.json<Array<{ lastReadAt: string | null }>>()[0]?.lastReadAt).toBeNull();
+
+    const tenant = await tenants.findByWorkspace(workspace);
+    const run = await prisma.run.create({
+      data: {
+        tenantId: tenant!.id,
+        productId,
+        linearAgentSessionId: "session-ctx-read",
+        temporalWorkflowId: "workflow-ctx-read",
+        status: "RECEIVED",
+        autonomyLevel: "L2",
+      },
+    });
+    const readAt = new Date("2026-10-30T12:00:00.000Z");
+    await prisma.contextContract.create({
+      data: {
+        tenantId: tenant!.id,
+        runId: run.id,
+        version: 1,
+        sha256: "f".repeat(64),
+        document: "{}",
+        items: {
+          create: [
+            {
+              tenantId: tenant!.id,
+              sourceId: "docs",
+              ref: "docs:doc-1",
+              sourceVersion: "v1",
+              authority: "prose_documentation",
+              reason: "matches",
+              classification: "reference",
+              createdAt: readAt,
+            },
+          ],
+        },
+      },
+    });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/admin/products/${productId}/context-sources?linearWorkspaceId=${workspace}`,
+      headers: auth,
+    });
+    expect(listed.json<Array<{ sourceId: string; lastReadAt: string | null }>>()).toEqual([
+      expect.objectContaining({ sourceId: "docs", lastReadAt: readAt.toISOString() }),
+    ]);
+  });
+});
+

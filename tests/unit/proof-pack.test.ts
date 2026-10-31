@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProofPackDocument,
+  defaultModelWarning,
   hashProofPack,
   MAX_LISTED_CHANGED_FILES,
   PROOF_PACK_HEADINGS,
@@ -290,5 +291,30 @@ describe("agent usage (agent-session-usage-and-hangs.md)", () => {
   it("shows no usage line when the Run recorded no session", () => {
     expect(renderProofPack(input({ agentUsage: summarizeAgentSessions([]) }), null)).not.toContain("Agent usage");
     expect(buildProofPackDocument(input()).agentUsage).toBeNull();
+  });
+});
+
+// Issue 6. An empty product model with no runner credential let opencode pick a free model with a
+// quota, and the Run hung (FAC-45). The Proof Pack must say so.
+describe("the default model warning (issue 6)", () => {
+  const sessions = [
+    { runner: "opencode", model: "opencode/big-pickle" },
+    { runner: "claude", model: null },
+  ];
+
+  it("names the model opencode chose and puts the warning first under Needs your attention", () => {
+    const warning = defaultModelWarning({ productModel: null, hasRunnerCredential: false, sessions });
+    expect(warning).toContain("`opencode/big-pickle`");
+    const document = buildProofPackDocument(input({ modelWarning: warning }));
+    expect(document.needsAttention[0]).toBe(warning);
+    expect(renderProofPack(input({ modelWarning: warning }), null)).toContain("opencode/big-pickle");
+  });
+
+  it("warns about nothing when the product sets a model, holds a runner credential, or ran no opencode session", () => {
+    expect(defaultModelWarning({ productModel: "deepseek/deepseek-chat", hasRunnerCredential: false, sessions })).toBeNull();
+    expect(defaultModelWarning({ productModel: null, hasRunnerCredential: true, sessions })).toBeNull();
+    expect(
+      defaultModelWarning({ productModel: null, hasRunnerCredential: false, sessions: [{ runner: "claude", model: null }] }),
+    ).toBeNull();
   });
 });

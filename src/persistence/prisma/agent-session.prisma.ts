@@ -4,11 +4,12 @@ import type {
   AgentSessionRecord,
   AgentSessionRole,
   AgentSessionStore,
+  ProductAgentSessionReader,
   RecordAgentSessionInput,
 } from "~/domain/runs/agent-session.js";
 
 /** docs/specs/agent-session-usage-and-hangs.md. The `AgentSession` table. */
-export class PrismaAgentSessionStore implements AgentSessionStore {
+export class PrismaAgentSessionStore implements AgentSessionStore, ProductAgentSessionReader {
   constructor(private readonly prisma: PrismaClient) {}
 
   async record(input: RecordAgentSessionInput): Promise<AgentSessionRecord> {
@@ -49,6 +50,16 @@ export class PrismaAgentSessionStore implements AgentSessionStore {
     const rows = await this.prisma.agentSession.findMany({
       where: { tenantId, runId },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    return rows.map(toRecord);
+  }
+
+  async listRecentForProduct(tenantId: string, productId: string, limit: number): Promise<AgentSessionRecord[]> {
+    // The tenant filter sits on the session and on its Run. SDD section 52.
+    const rows = await this.prisma.agentSession.findMany({
+      where: { tenantId, run: { tenantId, productId } },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit,
     });
     return rows.map(toRecord);
   }

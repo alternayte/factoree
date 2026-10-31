@@ -13,6 +13,7 @@ import {
   createGitHubAppManifest,
   createProduct,
   createSetupProduct,
+  deleteContextSource,
   deleteProduct,
   deleteProductSecret,
   getInstallSettings,
@@ -21,18 +22,22 @@ import {
   getSetupState,
   getSetupStatus,
   listApiKeys,
+  listContextSources,
   listLinearTeams,
+  listProductAgentSessions,
   listProducts,
   listProductSecrets,
   listSetupLinearTeams,
   listWorkspaces,
   type Options,
+  putContextSource,
   putLinearApp,
   putProductSecret,
   putSandbox,
   revokeApiKey,
   startLinearInstall,
   startSetupLinearInstall,
+  testContextSource,
   updateInstallSettings,
   updateProduct,
 } from "../sdk.gen";
@@ -64,6 +69,9 @@ import type {
   CreateSetupProductData,
   CreateSetupProductError,
   CreateSetupProductResponse,
+  DeleteContextSourceData,
+  DeleteContextSourceError,
+  DeleteContextSourceResponse,
   DeleteProductData,
   DeleteProductError,
   DeleteProductResponse,
@@ -84,9 +92,15 @@ import type {
   GetSetupStatusResponse,
   ListApiKeysData,
   ListApiKeysResponse,
+  ListContextSourcesData,
+  ListContextSourcesError,
+  ListContextSourcesResponse,
   ListLinearTeamsData,
   ListLinearTeamsError,
   ListLinearTeamsResponse,
+  ListProductAgentSessionsData,
+  ListProductAgentSessionsError,
+  ListProductAgentSessionsResponse,
   ListProductsData,
   ListProductSecretsData,
   ListProductSecretsError,
@@ -98,6 +112,9 @@ import type {
   ListSetupLinearTeamsResponse,
   ListWorkspacesData,
   ListWorkspacesResponse,
+  PutContextSourceData,
+  PutContextSourceError,
+  PutContextSourceResponse,
   PutLinearAppData,
   PutLinearAppError,
   PutLinearAppResponse,
@@ -116,6 +133,9 @@ import type {
   StartSetupLinearInstallData,
   StartSetupLinearInstallError,
   StartSetupLinearInstallResponse,
+  TestContextSourceData,
+  TestContextSourceError,
+  TestContextSourceResponse,
   UpdateInstallSettingsData,
   UpdateInstallSettingsError,
   UpdateInstallSettingsResponse,
@@ -563,6 +583,110 @@ export const putProductSecretMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await putProductSecret({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const listProductAgentSessionsQueryKey = (options: Options<ListProductAgentSessionsData>) =>
+  createQueryKey("listProductAgentSessions", options);
+
+export const listProductAgentSessionsOptions = (options: Options<ListProductAgentSessionsData>) =>
+  queryOptions<
+    ListProductAgentSessionsResponse,
+    ListProductAgentSessionsError,
+    ListProductAgentSessionsResponse,
+    ReturnType<typeof listProductAgentSessionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listProductAgentSessions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listProductAgentSessionsQueryKey(options),
+  });
+
+export const listContextSourcesQueryKey = (options: Options<ListContextSourcesData>) =>
+  createQueryKey("listContextSources", options);
+
+export const listContextSourcesOptions = (options: Options<ListContextSourcesData>) =>
+  queryOptions<
+    ListContextSourcesResponse,
+    ListContextSourcesError,
+    ListContextSourcesResponse,
+    ReturnType<typeof listContextSourcesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listContextSources({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listContextSourcesQueryKey(options),
+  });
+
+export const putContextSourceMutation = (
+  options?: Partial<Options<PutContextSourceData>>,
+): UseMutationOptions<PutContextSourceResponse, PutContextSourceError, Options<PutContextSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    PutContextSourceResponse,
+    PutContextSourceError,
+    Options<PutContextSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putContextSource({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const testContextSourceMutation = (
+  options?: Partial<Options<TestContextSourceData>>,
+): UseMutationOptions<TestContextSourceResponse, TestContextSourceError, Options<TestContextSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    TestContextSourceResponse,
+    TestContextSourceError,
+    Options<TestContextSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await testContextSource({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const deleteContextSourceMutation = (
+  options?: Partial<Options<DeleteContextSourceData>>,
+): UseMutationOptions<DeleteContextSourceResponse, DeleteContextSourceError, Options<DeleteContextSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteContextSourceResponse,
+    DeleteContextSourceError,
+    Options<DeleteContextSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteContextSource({
         ...options,
         ...fnOptions,
         throwOnError: true,
