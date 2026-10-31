@@ -26,6 +26,11 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   allowedDomains: [],
   maxRunMinutes: 90,
   organizationSkillsRepository,
+  model: null,
+  effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+  silenceMinutes: 10,
+  sandboxRetentionHours: 24,
+  maxConcurrentRuns: 2,
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -114,7 +119,7 @@ const build = (
       },
     },
     logger,
-    repositoryBaseUrl: "https://github.com",
+    repositoryBaseUrl: () => Promise.resolve("https://github.com"),
   });
   return { service, starter, postedFailures };
 };

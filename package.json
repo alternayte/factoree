@@ -2,6 +2,7 @@
   "name": "factoree",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {
     "node": ">=24 <25"
@@ -16,12 +17,20 @@
     "acceptance:live:local": "FACTOREE_LIVE_PROFILE=local npm run acceptance:live",
     "acceptance:live:sprite": "FACTOREE_LIVE_PROFILE=sprite npm run acceptance:live",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:integration && npm run test:workflow",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run ui:lint && npm run ui:build && npm run gen:check && npm run test:integration && npm run test:workflow",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "db:migrate:dev": "prisma migrate dev"
+    "db:migrate:dev": "prisma migrate dev",
+    "openapi": "node dist/bin/openapi.js",
+    "ui:lint": "npm --prefix ui run lint",
+    "ui:build": "npm --prefix ui run build",
+    "gen:check": "bash checks/gen-check.sh"
   },
   "dependencies": {
+    "@better-auth/api-key": "^1.7.14",
+    "@better-auth/prisma-adapter": "^1.7.14",
+    "@fastify/static": "^10.1.8",
+    "@fastify/swagger": "^9.9.2",
     "@fly/sprites": "^0.2.0",
     "@linear/sdk": "^91.0.0",
     "@prisma/adapter-pg": "^7.9.1",
@@ -30,6 +39,7 @@
     "@temporalio/client": "^1.22.0",
     "@temporalio/worker": "^1.22.0",
     "@temporalio/workflow": "^1.22.0",
+    "better-auth": "^1.7.14",
     "fastify": "^5.12.1",
     "pg": "^8.23.0",
     "playwright": "1.62.1",

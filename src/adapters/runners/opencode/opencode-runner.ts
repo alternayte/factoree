@@ -5,7 +5,7 @@ import type {
   CliUsageContext,
   CliUsageReading,
 } from "../cli-agent-runner.js";
-import { CliAgentRunner, USAGE_READ_TIMEOUT_MS } from "../cli-agent-runner.js";
+import { CliAgentRunner, USAGE_READ_TIMEOUT_MS, type AgentSessionSettings } from "../cli-agent-runner.js";
 import { parseOpenCodeOutput } from "./output-parser.js";
 import { readOpenCodeExport } from "./export-usage.js";
 import type { AgentRole } from "~/domain/runs/agent-runner.js";
@@ -50,10 +50,10 @@ const RESUME_SCRIPT =
 const directoryArguments = (repositoryPath: string | undefined): string[] =>
   repositoryPath === undefined ? [] : ["--dir", repositoryPath];
 
-/** B-3. The model and its reasoning effort, from the worker, as the same kind of parameters. */
-const modelArguments = (model: string | undefined, variant: string | undefined): string[] => [
-  ...(model === undefined ? [] : ["--model", model]),
-  ...(variant === undefined ? [] : ["--variant", variant]),
+/** B-3. The model and its reasoning effort, from the Product, as the same kind of parameters. */
+const modelArguments = (settings: AgentSessionSettings): string[] => [
+  ...(settings.model === null ? [] : ["--model", settings.model]),
+  ...(settings.effort === null ? [] : ["--variant", settings.effort]),
 ];
 
 export interface OpenCodeRunnerOptions extends CliAgentRunnerOptions {
@@ -86,13 +86,17 @@ export class OpenCodeRunner extends CliAgentRunner {
     this.executable = options.executable ?? "opencode";
   }
 
-  /** The model arguments of one role. A role with no variant of its own takes the default. */
-  private modelFor(role: AgentRole): string[] {
-    return modelArguments(this.options.model, this.effortFor(role) ?? undefined);
+  /** A role with no variant of its own takes the default variant. */
+  protected defaultSettings(role: AgentRole): Omit<AgentSessionSettings, "silenceLimitMs"> {
+    return {
+      model: this.options.model ?? null,
+      effort: this.options.roleVariants?.[role] ?? this.options.variant ?? null,
+      executable: null,
+    };
   }
 
-  protected effortFor(role: AgentRole): string | null {
-    return this.options.roleVariants?.[role] ?? this.options.variant ?? null;
+  private executableOf(settings: AgentSessionSettings): string {
+    return settings.executable ?? this.executable;
   }
 
   /**
@@ -102,10 +106,10 @@ export class OpenCodeRunner extends CliAgentRunner {
    * under the project of that directory.
    */
   protected async readUsage(context: CliUsageContext): Promise<CliUsageReading> {
-    const fallbackModel = this.options.model ?? null;
+    const fallbackModel = context.settings.model;
     if (context.sessionId === null) return { usage: null, model: fallbackModel };
     const result = await context.sandbox.exec(context.ref, {
-      file: this.executable,
+      file: this.executableOf(context.settings),
       args: ["export", context.sessionId],
       cwd: context.directory,
       env: { ...context.environment, OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG, OPENCODE_DISABLE_PROJECT_CONFIG: "1" },
@@ -118,14 +122,18 @@ export class OpenCodeRunner extends CliAgentRunner {
     return { usage: reading.usage, model: reading.model ?? fallbackModel };
   }
 
-  protected startCommand(promptFile: string, repositoryPath: string | undefined, role: AgentRole): CliAgentCommand {
+  protected startCommand(
+    promptFile: string,
+    repositoryPath: string | undefined,
+    settings: AgentSessionSettings,
+  ): CliAgentCommand {
     return {
       file: "sh",
       // `sh` fills `$0`, so the arguments of the script start after it.
-      args: ["-c", START_SCRIPT, "sh", ...this.modelFor(role), ...directoryArguments(repositoryPath)],
+      args: ["-c", START_SCRIPT, "sh", ...modelArguments(settings), ...directoryArguments(repositoryPath)],
       env: {
         FACTOREE_PROMPT_FILE: promptFile,
-        FACTOREE_OPENCODE_BIN: this.executable,
+        FACTOREE_OPENCODE_BIN: this.executableOf(settings),
         OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       },
@@ -136,14 +144,14 @@ export class OpenCodeRunner extends CliAgentRunner {
     sessionId: string,
     promptFile: string,
     repositoryPath: string | undefined,
-    role: AgentRole,
+    settings: AgentSessionSettings,
   ): CliAgentCommand {
     return {
       file: "sh",
-      args: ["-c", RESUME_SCRIPT, "sh", ...this.modelFor(role), ...directoryArguments(repositoryPath)],
+      args: ["-c", RESUME_SCRIPT, "sh", ...modelArguments(settings), ...directoryArguments(repositoryPath)],
       env: {
         FACTOREE_PROMPT_FILE: promptFile,
-        FACTOREE_OPENCODE_BIN: this.executable,
+        FACTOREE_OPENCODE_BIN: this.executableOf(settings),
         FACTOREE_OPENCODE_SESSION: sessionId,
         OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",

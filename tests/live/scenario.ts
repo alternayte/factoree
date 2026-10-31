@@ -195,7 +195,7 @@ const waitForAgentActivity = async (linear: LinearClient, issueId: string): Prom
  */
 const checkContextSources = async (env: NodeJS.ProcessEnv): Promise<LiveFact> => {
   const name = "The Product has an enabled Backstage source and an enabled MCP source";
-  const databaseUrl = env.DATABASE_URL ?? "";
+  const databaseUrl = env.FACTOREE_DATABASE_URL ?? "";
   const teamId = env.LIVE_LINEAR_TEAM_ID ?? "";
   const profile = resolveProfile(env);
   const standInNote =

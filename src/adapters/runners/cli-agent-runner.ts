@@ -43,6 +43,8 @@ export interface CliUsageContext {
   /** The environment the session ran with, without the command values. */
   environment: Record<string, string>;
   role: AgentRole;
+  /** The settings the session ran with. */
+  settings: AgentSessionSettings;
   /** The session identifier the output named, or null. */
   sessionId: string | null;
   /** The whole output of the process, stdout then stderr. */
@@ -59,8 +61,28 @@ export interface CliUsageReading {
   model: string | null;
 }
 
+/**
+ * docs/specs/release-0-1-0.md. The settings of one agent session. The Product holds the model,
+ * the effort of each role and the silence limit, and the worker reads them when a session starts.
+ * A resume keeps the settings of the session it continues.
+ */
+export interface AgentSessionSettings {
+  /** `provider/model`, or null for the CLI default. */
+  model: string | null;
+  /** The reasoning effort of the role, or null for the CLI default. */
+  effort: string | null;
+  silenceLimitMs: number;
+  /** The CLI inside the sandbox, or null for the runner default. */
+  executable: string | null;
+}
+
 export interface CliAgentRunnerOptions {
   redactor: Redactor;
+  /**
+   * Reads the settings of a new session. Without it the runner uses its constructor options,
+   * which is what a test does.
+   */
+  settingsFor?: (input: AgentRunInput, runner: string) => Promise<AgentSessionSettings>;
   pollIntervalMs?: number;
   clock?: () => number;
   /**
@@ -90,6 +112,7 @@ interface LiveSession {
   environment: Record<string, string>;
   /** The role of the session. A resume keeps the settings of the role that started it. */
   role: AgentRole;
+  settings: AgentSessionSettings;
   cancelled: boolean;
   /** The model calls of this CLI session that an earlier invocation already reported. */
   counted: Set<string>;
@@ -135,14 +158,18 @@ export abstract class CliAgentRunner implements AgentRunner {
    * session configures itself from. The prompt is a file because Linux carries at most 131072
    * bytes in one environment value, and a real Reviewer prompt measured 202351 bytes.
    */
-  protected abstract startCommand(promptFile: string, repositoryPath: string | undefined, role: AgentRole): CliAgentCommand;
+  protected abstract startCommand(
+    promptFile: string,
+    repositoryPath: string | undefined,
+    settings: AgentSessionSettings,
+  ): CliAgentCommand;
 
   /** The command that continues an existing session with a further prompt. */
   protected abstract resumeCommand(
     sessionId: string,
     promptFile: string,
     repositoryPath: string | undefined,
-    role: AgentRole,
+    settings: AgentSessionSettings,
   ): CliAgentCommand;
 
   /** Reads the output of the tool. An implementation must never throw. */
@@ -155,8 +182,13 @@ export abstract class CliAgentRunner implements AgentRunner {
    */
   protected abstract readUsage(context: CliUsageContext): Promise<CliUsageReading>;
 
-  /** The reasoning effort this runner asks for in one role. Null means the CLI default. */
-  protected abstract effortFor(role: AgentRole): string | null;
+  /** The settings of a session when no `settingsFor` is given: the constructor options. */
+  protected abstract defaultSettings(role: AgentRole): Omit<AgentSessionSettings, "silenceLimitMs">;
+
+  private async settingsOf(input: AgentRunInput): Promise<AgentSessionSettings> {
+    if (this.cliOptions.settingsFor !== undefined) return this.cliOptions.settingsFor(input, this.name);
+    return { ...this.defaultSettings(input.role), silenceLimitMs: this.silenceLimitMs };
+  }
 
   /**
    * Returns the session reference for a run that is still active, as soon as the sandbox
@@ -177,8 +209,9 @@ export abstract class CliAgentRunner implements AgentRunner {
   }
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
+    const settings = await this.settingsOf(input);
     const promptFile = await this.writePrompt(input.sandbox, input.ref, input.prompt);
-    const command = this.startCommand(promptFile, input.repositoryPath, input.role);
+    const command = this.startCommand(promptFile, input.repositoryPath, settings);
     const process = await input.sandbox.startProcess(input.ref, {
       file: command.file,
       args: command.args,
@@ -194,6 +227,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       ...(input.repositoryPath === undefined ? {} : { repositoryPath: input.repositoryPath }),
       environment: input.environment,
       role: input.role,
+      settings,
       cancelled: false,
       counted: new Set<string>(),
       cliSessionId: null,
@@ -216,7 +250,7 @@ export abstract class CliAgentRunner implements AgentRunner {
     }
 
     const promptFile = await this.writePrompt(previous.sandbox, previous.ref, input.prompt);
-    const command = this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath, previous.role);
+    const command = this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath, previous.settings);
     const process = await previous.sandbox.startProcess(previous.ref, {
       file: command.file,
       args: command.args,
@@ -344,7 +378,7 @@ export abstract class CliAgentRunner implements AgentRunner {
         });
       }
 
-      if (this.clock() - lastOutputAt >= this.silenceLimitMs) {
+      if (this.clock() - lastOutputAt >= live.settings.silenceLimitMs) {
         // The session is hung. Factoree ends it here, so the rest of the Run budget stays
         // available to the one retry of docs/specs/agent-session-usage-and-hangs.md. The
         // evidence it already produced is preserved, the same as on a budget timeout.
@@ -359,7 +393,7 @@ export abstract class CliAgentRunner implements AgentRunner {
         return {
           ...result,
           summary:
-            `The ${this.name} session wrote nothing for ${Math.round(this.silenceLimitMs / 1000)} seconds, so ` +
+            `The ${this.name} session wrote nothing for ${Math.round(live.settings.silenceLimitMs / 1000)} seconds, so ` +
             `Factoree ended it. ${result.summary}`.trim(),
         };
       }
@@ -400,6 +434,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       directory: live.repositoryPath ?? live.workingDirectory,
       environment: live.environment,
       role: live.role,
+      settings: live.settings,
       sessionId,
       output,
       counted: live.counted,
@@ -420,10 +455,10 @@ export abstract class CliAgentRunner implements AgentRunner {
       durationMs,
       cancelled: options.cancelled,
       outcome,
-      silenceLimitMs: this.silenceLimitMs,
+      silenceLimitMs: live.settings.silenceLimitMs,
       usage: reading.usage,
       model: reading.model,
-      effort: this.effortFor(live.role),
+      effort: live.settings.effort,
     };
   }
 

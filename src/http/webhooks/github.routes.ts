@@ -13,7 +13,8 @@ import type { Logger } from "~/telemetry/logger.js";
 export interface GitHubWebhookDependencies {
   discovery: DiscoveryService;
   tenants: TenantRegistry;
-  verifySignature: (raw: Buffer, signature: string) => boolean;
+  /** Reads the webhook secret from the install settings for each delivery. */
+  verifySignature: (raw: Buffer, signature: string) => boolean | Promise<boolean>;
   /**
    * Starts the sync of one GitHub App installation, keyed on the installation id so a repeated
    * `installation` event joins the run already in flight rather than start a second one.
@@ -80,7 +81,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
   app.post("/webhooks/github", async (request, reply) => {
     const raw = request.rawBody ?? Buffer.alloc(0);
     const signature = request.headers["x-hub-signature-256"] as string | undefined;
-    if (!dependencies.verifySignature(raw, signature ?? "")) {
+    if (!(await dependencies.verifySignature(raw, signature ?? ""))) {
       return reply.code(401).send({ error: "invalid_signature" });
     }
 

@@ -103,7 +103,7 @@ export interface PublishingActivityDependencies {
   /** Mints the write credential of one publish. SDD section 30 keeps it off every agent session. */
   tokens: GitHubTokenProvider;
   pullRequests: (token: string) => PullRequestPort;
-  gitAuthor: { name: string; email: string };
+  gitAuthor: () => Promise<{ name: string; email: string }>;
   logger: Logger;
   /**
    * The trusted checkout. The default is the real function. A unit test injects a double, so it
@@ -309,6 +309,8 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       ].join("\n");
 
       const publish = dependencies.publishToBranch ?? publishToBranchDefault;
+      // docs/specs/release-0-1-0.md. The git author is an install setting, read for each publish.
+      const author = await dependencies.gitAuthor();
       const publication = await publish({
         cloneUrl: plainUrl,
         token,
@@ -323,8 +325,8 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         // the identical commit SHA, so the second push is a fast-forward no-op. A wall clock
         // value produces a new commit SHA on every attempt, and git then refuses the push.
         commitTimestamp: PUBLICATION_COMMIT_TIMESTAMP,
-        authorName: dependencies.gitAuthor.name,
-        authorEmail: dependencies.gitAuthor.email,
+        authorName: author.name,
+        authorEmail: author.email,
         // The temporary directory holds a clone and a credentialed remote. A removal failure
         // must never replace the original error, so the logger is the only way to observe it.
         onCleanupFailure: (error: unknown) => {

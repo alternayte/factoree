@@ -14,6 +14,7 @@ describe("run status", () => {
       "WAITING_FOR_INPUT",
       "RESOLVING_CONTEXT",
       "BUILDING_VALIDATION_CONTRACT",
+      "QUEUED",
       "PREPARING",
       "IMPLEMENTING",
       "VERIFYING",

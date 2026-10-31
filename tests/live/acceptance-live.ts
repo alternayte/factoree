@@ -11,6 +11,7 @@
  */
 import { unmetRequirementsFor } from "./required-credentials.js";
 import { PROFILE_BANNER, credentialsFor, resolveProfile } from "./profile.js";
+import { readInstallFacts } from "./install-facts.js";
 
 const BLOCKED_EXTERNAL_EXIT = 78;
 
@@ -18,8 +19,10 @@ const main = async (): Promise<number> => {
   const profile = resolveProfile(process.env);
   process.stdout.write(`${PROFILE_BANNER[profile]}\n\n`);
 
-  const requirements = credentialsFor(profile, process.env);
-  const unmet = unmetRequirementsFor(process.env, requirements);
+  // The sandbox provider and its key are install settings in the database.
+  const facts = { ...process.env, ...(await readInstallFacts(process.env)) };
+  const requirements = credentialsFor(profile, facts);
+  const unmet = unmetRequirementsFor(facts, requirements);
   if (unmet.length > 0) {
     process.stdout.write("BLOCKED_EXTERNAL\n\n");
     process.stdout.write(

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startTemporal } from "./support/temporal.js";
+import { startDatabase } from "./support/database.js";
 
 // This suite spawns the compiled artifact in dist/, not the TypeScript source, so it
 // catches a defect that only the build output can show. It proves two facts. First, tsc-alias
@@ -36,23 +37,16 @@ const listTsFiles = async (dir: string): Promise<string[]> => {
 };
 
 // dist/bin/api.js connects to Temporal before it opens its HTTP listener, so the API test
-// needs a real, reachable Temporal address. The suite starts one ephemeral local Temporal
-// server with startTemporal() and points every spawned child at it, through the real
-// TEMPORAL_ADDRESS variable read by src/config/env.ts.
-const dummyEnv = (port: number, temporalAddress: string): NodeJS.ProcessEnv => ({
+// needs a real, reachable Temporal address. It issues the setup token in the database before it
+// listens, so it needs a migrated database too. The suite starts both and points every spawned
+// child at them through the variables src/config/env.ts reads.
+const dummyEnv = (port: number, temporalAddress: string, databaseUrl: string): NodeJS.ProcessEnv => ({
   ...process.env,
-  DATABASE_URL: "postgresql://factoree:factoree@localhost:5432/factoree_dummy",
-  FACTOREE_SECRET_KEY: "3f9a1c7e52b04d86a1e9c3f7b2d50e48".repeat(2),
-  ADMIN_API_TOKEN: "k3Jx9QvT2mWb7RzL5nYc8HdF4pGs1AeU",
-  LINEAR_WEBHOOK_SECRET: "dummy-webhook-secret",
-  SPRITES_TOKEN: "dummy-sprites-token",
-  GITHUB_APP_ID: "123456",
-  GITHUB_APP_PRIVATE_KEY: Buffer.from(
-    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
-  ).toString("base64"),
-  GITHUB_WEBHOOK_SECRET: "dummy-github-webhook-secret",
-  TEMPORAL_ADDRESS: temporalAddress,
-  PORT: String(port),
+  FACTOREE_DATABASE_URL: databaseUrl,
+  FACTOREE_MASTER_KEY: "3f9a1c7e52b04d86a1e9c3f7b2d50e48".repeat(2),
+  FACTOREE_PUBLIC_URL: `http://127.0.0.1:${port}`,
+  FACTOREE_TEMPORAL_ADDRESS: temporalAddress,
+  FACTOREE_PORT: String(port),
 });
 
 // The worker deliberately points at an address nothing listens on, so it exercises the
@@ -109,15 +103,21 @@ describe("built artifact startup", () => {
   const children: ChildProcessByStdio<null, Readable, Readable>[] = [];
   let temporalAddress = "";
   let stopTemporal: () => Promise<void> = () => Promise.resolve();
+  let databaseUrl = "";
+  let stopDatabase: () => Promise<void> = () => Promise.resolve();
 
   beforeAll(async () => {
     const temporal = await startTemporal();
     temporalAddress = temporal.environment.address;
     stopTemporal = temporal.stop;
+    const database = await startDatabase();
+    databaseUrl = database.url;
+    stopDatabase = database.stop;
   }, 60_000);
 
   afterAll(async () => {
     await stopTemporal();
+    await stopDatabase();
   });
 
   afterEach(async () => {
@@ -146,7 +146,7 @@ describe("built artifact startup", () => {
       throw new Error(missingDistMessage);
     }
     const child = spawn(process.execPath, [apiEntry], {
-      env: dummyEnv(TEST_PORT, temporalAddress),
+      env: dummyEnv(TEST_PORT, temporalAddress, databaseUrl),
       stdio: ["ignore", "pipe", "pipe"],
     });
     children.push(child);
@@ -157,6 +157,13 @@ describe("built artifact startup", () => {
     const body = (await response.json()) as { status: string };
     expect(body).toEqual({ status: "ok" });
     expect(output.text()).not.toContain("ERR_MODULE_NOT_FOUND");
+    // docs/specs/release-0-1-0.md. A start with no completed setup names the one-time setup token.
+    const tokenLine = /enter the setup token [A-Za-z0-9_-]{20,}/;
+    const logDeadline = Date.now() + 5_000;
+    while (!tokenLine.test(output.text()) && Date.now() < logDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(output.text()).toMatch(tokenLine);
 
     await terminate(child);
   }, 45_000);
@@ -166,7 +173,7 @@ describe("built artifact startup", () => {
       throw new Error(missingDistMessage);
     }
     const child = spawn(process.execPath, [workerEntry], {
-      env: dummyEnv(TEST_PORT + 1, unreachableTemporalAddress),
+      env: dummyEnv(TEST_PORT + 1, unreachableTemporalAddress, databaseUrl),
       stdio: ["ignore", "pipe", "pipe"],
     });
     children.push(child);

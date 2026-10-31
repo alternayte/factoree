@@ -4,7 +4,9 @@ export default tseslint.config(
   // `tests/live/*.mjs` holds the two acceptance-live module loaders, and `tools/local/*.mjs`
   // holds the operator scripts. They are not TypeScript files, and no tsconfig project contains
   // them, so the typed config cannot parse them.
-  { ignores: ["dist/**", "node_modules/**", "*.mjs", "tests/live/*.mjs", "tools/local/*.mjs"] },
+  // `ui/` is its own npm project with its own ESLint config, and `npm run ui:lint` runs it.
+  // `.claude/` holds agent worktrees, which are other checkouts of this repository.
+  { ignores: ["dist/**", "node_modules/**", "*.mjs", "tests/live/*.mjs", "tools/local/*.mjs", "ui/**", ".claude/**"] },
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {

@@ -1,3 +1,4 @@
+import { resolveGitHubApiBaseUrl, type GitHubApiBaseUrl } from "./api-base-url.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 
@@ -32,7 +33,7 @@ export interface RepositoryDiscoveryClient {
 }
 
 export interface GitHubRepositoryDiscoveryClientOptions {
-  apiBaseUrl?: string;
+  apiBaseUrl?: GitHubApiBaseUrl;
   /** Mints the GitHub App installation token. The client holds no token of its own. */
   tokens: GitHubTokenProvider;
   fetch?: typeof fetch;
@@ -60,12 +61,12 @@ interface GitHubRepositorySummary {
  * the HTTP status and the repository name.
  */
 export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClient {
-  private readonly base: string;
+  private readonly apiBaseUrl: GitHubApiBaseUrl;
   private readonly tokens: GitHubTokenProvider;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: GitHubRepositoryDiscoveryClientOptions) {
-    this.base = (options.apiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+    this.apiBaseUrl = options.apiBaseUrl ?? DEFAULT_API_BASE_URL;
     this.tokens = options.tokens;
     this.fetchImpl = options.fetch ?? fetch;
   }
@@ -77,7 +78,8 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
    */
   async listInstallationRepositories(installationId: string): Promise<DiscoveredRepository[]> {
     const discovered: DiscoveredRepository[] = [];
-    let url: string | null = `${this.base}/installation/repositories?per_page=100`;
+    const base = await resolveGitHubApiBaseUrl(this.apiBaseUrl);
+    let url: string | null = `${base}/installation/repositories?per_page=100`;
     while (url !== null) {
       const response = await this.request(url, installationId);
       const text = await response.text();
@@ -93,7 +95,7 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
       for (const entry of repositories) {
         discovered.push(this.toDiscoveredRepository(entry as GitHubRepositorySummary));
       }
-      url = this.nextPageUrl(response.headers.get("link"));
+      url = this.nextPageUrl(base, response.headers.get("link"));
     }
     return discovered;
   }
@@ -104,7 +106,7 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     githubInstallationId: string,
   ): Promise<RepositoryConfigFile | null> {
     const query = new URLSearchParams({ ref });
-    const url = `${this.base}/repos/${fullName}/contents/${CONFIG_PATH}?${query.toString()}`;
+    const url = `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${fullName}/contents/${CONFIG_PATH}?${query.toString()}`;
     const response = await this.request(url, githubInstallationId);
     if (response.status === 404) return null;
     const text = await response.text();
@@ -154,11 +156,11 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
    * check compares scheme and host, never a string prefix, so `https://api.github.com.evil.example`
    * cannot pass it.
    */
-  private nextPageUrl(linkHeader: string | null): string | null {
+  private nextPageUrl(base: string, linkHeader: string | null): string | null {
     if (linkHeader === null) return null;
     let allowedOrigin: string;
     try {
-      allowedOrigin = new URL(this.base).origin;
+      allowedOrigin = new URL(base).origin;
     } catch {
       return null;
     }

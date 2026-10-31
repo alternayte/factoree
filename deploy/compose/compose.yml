@@ -1,0 +1,95 @@
+# Factoree on one host from the released images. It needs no checkout:
+#   curl -fsSLO https://raw.githubusercontent.com/alternayte/factoree/main/deploy/compose/compose.yml
+#   printf 'FACTOREE_MASTER_KEY=%s\nFACTOREE_PUBLIC_URL=%s\n' "$(openssl rand -hex 32)" 'https://factoree.example.com' > .env
+#   docker compose up -d
+# PostgreSQL holds the Factoree database and the two Temporal databases. Temporal runs on it.
+# The migrate service applies the Factoree migrations once, before the API and the worker start.
+# Pin a release with FACTOREE_IMAGE, for example ghcr.io/alternayte/factoree:0.1.0.
+name: factoree
+
+x-factoree-env: &factoree-env
+  FACTOREE_DATABASE_URL: postgresql://factoree:${POSTGRES_PASSWORD:-factoree}@postgres:5432/factoree
+  FACTOREE_MASTER_KEY: ${FACTOREE_MASTER_KEY:?set FACTOREE_MASTER_KEY in .env, for example with openssl rand -hex 32}
+  FACTOREE_PUBLIC_URL: ${FACTOREE_PUBLIC_URL:-http://localhost:3000}
+  FACTOREE_TEMPORAL_ADDRESS: temporal:7233
+  FACTOREE_TEMPORAL_NAMESPACE: default
+  FACTOREE_TEMPORAL_TASK_QUEUE: factoree
+  FACTOREE_PORT: "3000"
+  FACTOREE_LOG_LEVEL: ${FACTOREE_LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: factoree
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-factoree}
+      POSTGRES_DB: factoree
+    # The data stays when a container is recreated. "docker compose down -v" deletes it.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factoree -d factoree"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+
+  # The official Temporal server. auto-setup creates the temporal and temporal_visibility
+  # databases on the PostgreSQL above, applies their schema and registers the default namespace.
+  temporal:
+    image: temporalio/auto-setup:${TEMPORAL_VERSION:-1.29.1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: factoree
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-factoree}
+      BIND_ON_IP: 0.0.0.0
+      TEMPORAL_BROADCAST_ADDRESS: 127.0.0.1
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator namespace describe -n default --address $$(hostname -i):7233 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    image: ${FACTOREE_IMAGE:-ghcr.io/alternayte/factoree:latest}
+    command: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FACTOREE_DATABASE_URL: postgresql://factoree:${POSTGRES_PASSWORD:-factoree}@postgres:5432/factoree
+    restart: "no"
+
+  api:
+    image: ${FACTOREE_IMAGE:-ghcr.io/alternayte/factoree:latest}
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    environment: *factoree-env
+    ports:
+      - "${FACTOREE_HOST_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  worker:
+    image: ${FACTOREE_IMAGE:-ghcr.io/alternayte/factoree:latest}
+    command: ["worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    environment: *factoree-env
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

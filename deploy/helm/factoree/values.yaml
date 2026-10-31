@@ -1,0 +1,80 @@
+image:
+  repository: ghcr.io/alternayte/factoree
+  # Empty uses the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# The PostgreSQL URL (FACTOREE_DATABASE_URL) comes from a Secret. The chart runs no PostgreSQL.
+database:
+  existingSecret: factoree-db
+  key: url
+
+# The master key (FACTOREE_MASTER_KEY) encrypts the credentials in the database. It comes from a
+# Secret. Keep it: without it the stored credentials cannot be read.
+masterKey:
+  existingSecret: factoree-master-key
+  key: key
+
+# An external Temporal service. The chart runs no Temporal server.
+temporal:
+  # FACTOREE_TEMPORAL_ADDRESS, for example temporal-frontend.temporal.svc:7233 or
+  # my-namespace.a1b2c.tmprl.cloud:7233.
+  address: temporal-frontend.temporal.svc:7233
+  # FACTOREE_TEMPORAL_NAMESPACE
+  namespace: default
+  # FACTOREE_TEMPORAL_TASK_QUEUE
+  taskQueue: factoree
+  # FACTOREE_TEMPORAL_API_KEY from a Secret. Empty sends no API key, for a self-hosted Temporal.
+  apiKey:
+    existingSecret: ""
+    key: api-key
+
+# FACTOREE_PUBLIC_URL: the external base URL for setup, sign-in and the Linear and GitHub webhooks.
+publicURL: http://localhost:3000
+
+# FACTOREE_LOG_LEVEL: debug, info, warn or error.
+logLevel: info
+
+# Extra environment variables of the API and the worker.
+extraEnv: []
+
+api:
+  replicas: 1
+  resources: {}
+  #  requests: { cpu: 100m, memory: 256Mi }
+  #  limits: { memory: 512Mi }
+
+worker:
+  replicas: 1
+  # The worker runs git checkouts and Playwright Chromium.
+  resources: {}
+  #  requests: { cpu: 500m, memory: 1Gi }
+  #  limits: { memory: 2Gi }
+
+migrate:
+  # The Job runs as a pre-install and pre-upgrade hook, before the new pods start.
+  backoffLimit: 2
+  resources: {}
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls: []
+
+serviceAccount:
+  # Empty uses the release full name.
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -8,6 +8,7 @@ import { startDatabase } from "./support/database.js";
 import { startTemporal } from "./support/temporal.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
+import { PrismaRunSlots } from "~/persistence/prisma/run-slots.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import {
   PrismaProductRegistry,
@@ -38,36 +39,12 @@ import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-dis
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
-import type { Env } from "~/config/env.js";
+import { testAuth, testServerEnv, TEST_MASTER_KEY, unusedSetupCalls } from "./support/admin-access.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
 
 const secret = "webhook-secret";
-const env = {
-  DATABASE_URL: "",
-  FACTOREE_SECRET_KEY: "d".repeat(64),
-  ADMIN_API_TOKEN: "t".repeat(32),
-  LINEAR_WEBHOOK_SECRET: secret,
-  GITHUB_APP_ID: "123456",
-  GITHUB_APP_PRIVATE_KEY: Buffer.from(
-    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
-  ).toString("base64"),
-  GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
-  TEMPORAL_ADDRESS: "localhost:7233",
-  TEMPORAL_NAMESPACE: "default",
-  TEMPORAL_TASK_QUEUE: "factoree-at01",
-  PORT: 3000,
-  LOG_LEVEL: "error",
-  SANDBOX_ADAPTER: "local",
-  SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
-  GITHUB_BASE_URL: "https://github.com",
-  GITHUB_API_BASE_URL: "https://api.github.com",
-  FACTOREE_GIT_AUTHOR_NAME: "Factoree",
-  FACTOREE_GIT_AUTHOR_EMAIL: "factoree@users.noreply.github.com",
-  EVIDENCE_STORAGE: "filesystem",
-  EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
-  AGENT_SILENCE_MINUTES: 10,
-} satisfies Env;
+const TASK_QUEUE = "factoree-at01";
 
 const redactor = new Redactor();
 const logger = createLogger({ level: "error", redactor, sink: () => undefined });
@@ -122,7 +99,7 @@ beforeAll(async () => {
   environment = temporal.environment;
   stopTemporal = temporal.stop;
 
-  const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+  const tenants = new PrismaTenantRegistry(prisma, TEST_MASTER_KEY);
   const products = new PrismaProductRegistry(prisma);
   const repositories = new PrismaRepositoryRegistry(prisma);
   const tenant = await tenants.ensureTenant("workspace-123", "Acme");
@@ -154,10 +131,11 @@ beforeAll(async () => {
 
   worker = await Worker.create({
     connection: environment.nativeConnection,
-    taskQueue: env.TEMPORAL_TASK_QUEUE,
+    taskQueue: TASK_QUEUE,
     workflowsPath: new URL("../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname,
     activities: createActivities({
       runs,
+      runSlots: new PrismaRunSlots(prisma),
       products,
       repositories,
       agentSession,
@@ -169,7 +147,7 @@ beforeAll(async () => {
       runners: new AgentRunnerRegistry([new FakeRunner()]),
       sessions: new MemoryAgentSessionStore(),
       executions: new PrismaAgentExecutionRepository(prisma),
-      secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+      secrets: new PrismaSecretStore(prisma, TEST_MASTER_KEY),
       evidence: new PrismaEvidenceStore(prisma),
       redactor,
       reaper: new SpriteReaper({ sandboxes: { fake: fakeSandbox }, runs }),
@@ -192,7 +170,7 @@ beforeAll(async () => {
         findByHead: () => Promise.reject(new Error("this test never publishes")),
         create: () => Promise.reject(new Error("this test never publishes")),
       }),
-      gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
+      gitAuthor: () => Promise.resolve({ name: "Factoree", email: "factoree@users.noreply.github.com" }),
       logger,
       // The Phase 1 path never clones, never reads a private repository, and never publishes,
       // so this double only satisfies the shape.
@@ -211,10 +189,17 @@ beforeAll(async () => {
   });
   workerRun = worker.run();
 
+  // docs/specs/release-0-1-0.md. The Linear webhook secret is an install setting.
+  const access = testAuth(prisma, logger);
+  await access.settings.update({ linear: { webhookSecret: secret } });
   app = buildServer({
-    env,
+    env: testServerEnv,
+    version: "test",
     logger,
     prisma,
+    settings: access.settings,
+    auth: access.auth,
+    setup: unusedSetupCalls,
     tenants,
     products,
     repositories,
@@ -223,17 +208,17 @@ beforeAll(async () => {
       resolveTeamKey: () => Promise.reject(new Error("unused")),
       resolveTeamId: () => Promise.reject(new Error("unused")),
     },
-    secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+    secrets: new PrismaSecretStore(prisma, TEST_MASTER_KEY),
     runs: new PrismaRunRepository(prisma),
     delegation: new DelegationService({
       tenants,
       products,
       repositories,
       webhookLog: new PrismaWebhookLog(prisma),
-      starter: createTemporalWorkflowStarter(environment.client, env.TEMPORAL_TASK_QUEUE),
+      starter: createTemporalWorkflowStarter(environment.client, TASK_QUEUE),
       refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
       logger,
-      repositoryBaseUrl: "https://github.com",
+      repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),
     // This test drives the Phase 1 delegation path, which never exercises the GitHub webhook
     // route. These doubles only satisfy the shape `buildServer` now requires.
@@ -244,7 +229,6 @@ beforeAll(async () => {
       { resolveTeamKey: () => Promise.reject(new Error("unused")), resolveTeamId: () => Promise.reject(new Error("unused")) },
       logger,
     ),
-    verifyGitHubSignature: () => false,
     startInstallationSync: () => Promise.reject(new Error("unused")),
     recordPullRequestPreview: () => Promise.reject(new Error("unused")),
   });

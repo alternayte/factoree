@@ -51,7 +51,8 @@ export interface DelegationDependencies {
   starter: WorkflowStarter;
   refusalNotifier: RefusalNotifier;
   logger: Logger;
-  repositoryBaseUrl: string;
+  /** The GitHub web URL from the install settings, read for each delegation. */
+  repositoryBaseUrl: () => Promise<string>;
 }
 
 export class DelegationService {
@@ -162,9 +163,10 @@ export class DelegationService {
         githubInstallationId: repository.githubInstallationId,
         linearProjects: repository.linearProjects,
       })),
-      repositoryBaseUrl: this.dependencies.repositoryBaseUrl,
+      repositoryBaseUrl: await this.dependencies.repositoryBaseUrl(),
       stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
-      spriteRetentionHours: DEFAULT_PROJECT_DEFAULTS.spriteRetentionHours,
+      // docs/specs/release-0-1-0.md. Retention is a Product setting.
+      spriteRetentionHours: product.sandboxRetentionHours,
       organizationSkillsRepository: product.organizationSkillsRepository,
     };
 

@@ -57,6 +57,8 @@ import {
   DEFAULT_PROJECT_RUNTIME_CONFIG,
 } from "~/domain/runs/project-runtime-config.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
+import type { RunSlotClaim } from "~/domain/runs/run-slots.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 
@@ -191,6 +193,18 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const postedProgress: string[] = [];
   /** Every final response body the workflow posted, in order. */
   const postedFinalResponses: string[] = [];
+  /**
+   * docs/specs/release-0-1-0.md, DI-15.13. A run id in this map answers each slot claim by its
+   * number, which starts at one. A run id absent from it gets a slot at once.
+   */
+  const runSlotClaims = new Map<string, (call: number) => RunSlotClaim>();
+  /** Every recorded `claimRunSlot` run id, in order. */
+  const runSlotCalls: string[] = [];
+  /**
+   * DI-15.14. A run id in this map finds the sandbox provider full on that many preparations of
+   * the work sprite before one succeeds.
+   */
+  const sandboxSlotWaits = new Map<string, number>();
   /** The run ids whose preparation double raises a configuration fault. */
   const configurationFaults = new Set<string>();
   /** The run ids whose `userValidate` double raises a configuration fault. */
@@ -369,6 +383,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       statusCalls.push(input);
       await heldStatuses.get(`${input.runId}:${input.status}`);
     },
+    claimRunSlot: async (input: { runId: string }): Promise<RunSlotClaim> => {
+      runSlotCalls.push(input.runId);
+      const answer = runSlotClaims.get(input.runId);
+      if (answer === undefined) return { granted: true };
+      return answer(runSlotCalls.filter((runId) => runId === input.runId).length);
+    },
     setRunAutonomyLevel: async (input: { autonomyLevel: string }) => {
       autonomyLevels.push(input.autonomyLevel);
     },
@@ -492,6 +512,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       prepared.push(activityInput);
       if (configurationFaults.has(activityInput.runId)) {
         throw new RunConfigurationError("the bootstrap command failed with exit code 1: no such file");
+      }
+      const fullProvider = sandboxSlotWaits.get(activityInput.runId) ?? 0;
+      if (fullProvider > 0) {
+        sandboxSlotWaits.set(activityInput.runId, fullProvider - 1);
+        throw new SandboxSlotUnavailableError("the fake provider runs 2 sandboxes of Factoree, its limit is 2");
       }
       await heldPreparations.get(activityInput.runId);
       return {
@@ -943,6 +968,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     postedProgress,
     postedFinalResponses,
     configurationFaults,
+    runSlotClaims,
+    runSlotCalls,
+    sandboxSlotWaits,
     validatorConfigurationFaults,
     runtimeOverrides,
     verifyOutcomes,

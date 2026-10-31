@@ -1,71 +1,28 @@
 # Quickstart: a live local run
 
-This document runs Factoree against a real Linear workspace, a real GitHub
-repository, a real Fly Sprite, a local Temporal dev server, and a PostgreSQL
-container. `docs/live-acceptance.md` calls this Path A-Sprite. It is not SDD
-section 66 proof.
+This document runs Factoree from a checkout against a real Linear workspace, a
+real GitHub repository, a real sandbox provider, a local Temporal dev server,
+and a PostgreSQL container. With Fly Sprites, `docs/live-acceptance.md` calls
+this Path A-Sprite. It is not SDD section 66 proof.
 
-For the local process sandbox instead of a Fly Sprite, set
-`SANDBOX_ADAPTER=local` and `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`, and run
-`just live-local` at the end. The local sandbox isolates nothing. Use it on a
-development machine only.
+The environment file holds infrastructure only. The setup screens of the UI
+configure the GitHub App, the Linear app, the sandbox provider and the first
+Product. Factoree stores these settings in PostgreSQL and encrypts every
+credential with `FACTOREE_MASTER_KEY`. No setting has an environment fallback.
+
+For the local process sandbox instead of a real provider, set
+`FACTOREE_UNSAFE_LOCAL_SANDBOX=1` in `.env`, select `local` in the sandbox step
+of setup, and run `just live-local` at the end. The local sandbox isolates
+nothing. Use it on a development machine only.
 
 ## 1. Accounts
 
-1. A Linear test workspace. Install the Factoree Linear app on it.
+1. A Linear test workspace. You must be an admin of it.
 2. A GitHub fixture repository. Do not use a production repository.
-3. A Fly.io organization that can create a Sprite.
-4. `jq`, `docker`, and the `temporal` CLI on your machine.
-
-## 1b. Create the Factoree GitHub App
-
-Factoree authenticates to GitHub through one GitHub App. No Product carries a
-`GITHUB_TOKEN` secret. The App mints every clone credential and every
-publish credential itself, scoped to one installation.
-
-1. Go to `github.com/settings/apps/new`, under the account or organization
-   that owns the fixture repository.
-2. Set the webhook URL to the tunnel URL of step 3 below, followed by
-   `/webhooks/github`. Set the webhook secret to a random value. Store it
-   as `GITHUB_WEBHOOK_SECRET` in `.env`.
-3. Grant exactly four repository permissions:
-
-   | Permission | Access |
-   | --- | --- |
-   | Contents | Read and write |
-   | Pull requests | Read and write |
-   | Deployments | Read |
-   | Metadata | Read |
-
-   Grant no other permission.
-4. Under "Subscribe to events", check `Push` and `Deployment status`. A
-   `deployment_status` event carries the pull request preview URL that CI
-   publishes, and Factoree adds it to the Linear session. GitHub delivers the
-   `installation` and the `installation_repositories` events to every App
-   automatically. Neither one appears in the subscription list, so do not
-   look for it there.
-5. Create the App. Note the App ID on the "General" settings page. Store it
-   as `GITHUB_APP_ID` in `.env`.
-6. Under "Private keys" on the same page, generate a private key. GitHub
-   downloads a PEM file.
-7. Encode the PEM to base64 on one line, with a command that runs the same
-   way on macOS and on Linux:
-
-       base64 < private-key.pem | tr -d '\n'
-
-   Do not use `base64 -i`. That flag exists on macOS only. Do not omit
-   `tr -d '\n'`. GNU `base64` wraps its output at 76 columns, and the
-   environment schema of Factoree rejects a value that carries a line
-   break. Store the one-line result as `GITHUB_APP_PRIVATE_KEY` in `.env`.
-8. Install the App on the fixture repository. GitHub assigns a numeric
-   installation ID. Store it as `SETUP_GITHUB_INSTALLATION_ID` in `.env`,
-   together with `SETUP_GITHUB_ACCOUNT_LOGIN` and
-   `SETUP_GITHUB_REPOSITORY`.
-
-A local worker needs a public URL for the webhook. `just tunnel`, in section
-3 below, opens one. Run it first. Set the App's webhook URL to the value
-it prints, before step 2 above. A tunnel URL changes on every restart.
-Update the App's webhook URL again after each restart.
+3. A sandbox provider account: a Fly.io organization that can create a
+   Sprite, or a Kiln host with a key of the Factoree tenant.
+4. A model provider key, unless the Product uses a free model.
+5. `jq`, `docker`, `ngrok`, and the `temporal` CLI on your machine.
 
 ## 2. The environment file
 
@@ -74,76 +31,161 @@ holds a working local default.
 
 | Variable | Value |
 | --- | --- |
-| `ADMIN_API_TOKEN` | Any token of 32 characters. It guards `/admin/*`. |
-| `FACTOREE_SECRET_KEY` | 64 hexadecimal characters. It encrypts the stored secrets. |
-| `LINEAR_WEBHOOK_SECRET` | The webhook signing secret of the Linear app. |
-| `GITHUB_APP_ID` | The App ID of the Factoree GitHub App. Section 1b explains how to create the App. |
-| `GITHUB_APP_PRIVATE_KEY` | The private key of the App, base64-encoded on one line. Section 1b names the exact command. |
-| `GITHUB_WEBHOOK_SECRET` | The webhook secret set on the App. |
-| `SANDBOX_ADAPTER` | `fly-sprites` |
-| `SPRITES_TOKEN` | A Fly.io token that can create and delete a Sprite. |
+| `FACTOREE_MASTER_KEY` | The output of `openssl rand -hex 32`. Factoree refuses the placeholder. Keep the key. A new key makes every stored credential unreadable. |
+| `FACTOREE_PUBLIC_URL` | The URL that `just tunnel` prints. Section 3 starts the tunnel. |
 | `LIVE_LINEAR_API_KEY` | A personal API key of the test workspace. The test driver uses it. |
 | `LIVE_LINEAR_TEAM_ID` | The team the test driver creates its fixture issue in. |
 | `LIVE_GITHUB_TOKEN` | A token with write access to the fixture repository. The test driver uses it. |
 | `LIVE_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
-| `SETUP_LINEAR_WORKSPACE_ID` | The ID of the test workspace. |
-| `SETUP_LINEAR_ACCESS_TOKEN` | The access token of the installed Factoree Linear app. Factoree comments with it. |
-| `SETUP_PRODUCT_SLUG` | A short unique identifier for the bootstrap Product. |
-| `SETUP_LINEAR_TEAM_KEY` | The key of the Linear team the fixture issue belongs to. |
-| `SETUP_GITHUB_INSTALLATION_ID` | The numeric installation ID GitHub assigned to the Factoree app. |
-| `SETUP_GITHUB_ACCOUNT_LOGIN` | The GitHub account or organization the app is installed on. |
-| `SETUP_GITHUB_REPOSITORY` | The fixture repository, as `owner/name`. |
 
 Leave an optional value empty. The `justfile` skips an empty value, so an
-empty `TEMPORAL_API_KEY` or `SPRITES_BASE_URL` does not break the start.
+empty `FACTOREE_TEMPORAL_API_KEY` does not break the start.
 
 `LIVE_GITHUB_TOKEN` belongs to the test driver, which acts as the human
-operator. Factoree needs no GitHub secret: it mints every clone credential
-and every publish credential against the GitHub App installation instead.
+operator. Factoree needs no GitHub token: it mints every clone credential and
+every publish credential against the GitHub App installation instead.
 
 ## 3. Start the stack
 
-Run each command from the repository root, each one in its own terminal.
+Run each command from the repository root. Run each long-running command in
+its own terminal.
 
-    just install     # npm dependencies and the Prisma client
+    just tunnel      # a public URL for the API
+    just install     # npm dependencies of the API and the UI, and the Prisma client
     just up          # the PostgreSQL container
     just migrate     # the Prisma migrations
     just temporal    # the Temporal dev server
     just stubs       # the Backstage stub and the MCP stub
     just worker      # the Temporal worker
-    just api         # the HTTP API
-    just tunnel      # a public URL for the Linear webhook
+    just api         # the HTTP API and the UI
 
-`just worker` and `just api` compile the TypeScript first, so the first start
-is slow.
+Start `just tunnel` first. Copy the URL it prints into `FACTOREE_PUBLIC_URL`
+before you start `just api`. GitHub, Linear and your browser reach the API at
+this URL.
 
-Copy the URL `just tunnel` prints. Set it as the webhook target in the Linear
-app settings of the test workspace.
+`just worker` and `just api` compile the TypeScript first. `just api` also
+builds the UI in `ui/dist` and serves it from the same origin as the API.
 
-## 4. Bootstrap the database records
+## 4. Complete setup
 
-    just bootstrap
+Until setup completes, the API log holds this line:
 
-The command reads `.env` and does several calls against the API. It
-registers the Linear installation, creates the Tenant and the Product, binds
-the GitHub installation, and registers the Backstage row and the MCP row. It
-prints the new Product ID.
+    setup is not complete. Open <FACTOREE_PUBLIC_URL>/setup and enter the setup token <token>
 
-Bootstrap does not create a Repository row. Discovery creates it from the
-`.factoree/config.yaml` file of the fixture repository, when the GitHub App
-reports the repository push to Factoree.
+Open that URL and enter the token. Each start of the API before setup
+completes issues a new token, and the old token stops working. `/setup`
+accepts only the current token until setup completes.
 
-Discovery reads the file when the App is installed on the repository, and on each push to
-the default branch that changes the file. The Sprite holds Claude Code and no opencode, so a
-repository that uses opencode installs it in its bootstrap. The Sprite runs npm 12, which runs
-no install script, so the bootstrap also runs the opencode postinstall (DI-14.19). This file
-runs a Run on the free opencode model:
+Do the steps in this order.
+
+### 4.1 The GitHub App
+
+Factoree authenticates to GitHub through one GitHub App. Setup creates it
+through the GitHub App manifest flow.
+
+1. Enter the App name.
+2. To create the App under an organization, enter the organization. Leave it
+   empty to create the App under your own account.
+3. For GitHub Enterprise, enter its web URL and its API URL. Leave both empty
+   for github.com.
+4. Continue to GitHub, and create the App there.
+
+GitHub creates the App with exactly these repository permissions:
+
+| Permission | Access |
+| --- | --- |
+| Contents | Read and write |
+| Pull requests | Read and write |
+| Deployments | Read |
+| Metadata | Read |
+
+The App subscribes to the `Push` and `Deployment status` events. A
+`deployment_status` event carries the pull request preview URL that CI
+publishes, and Factoree adds it to the Linear session. GitHub delivers the
+`installation` and the `installation_repositories` events to every App
+automatically. The webhook URL is `<FACTOREE_PUBLIC_URL>/webhooks/github`.
+
+GitHub then returns to `/setup/github/created`. Factoree stores the App id, the
+private key, the webhook secret and the client credentials, encrypted.
+
+### 4.2 The Linear app
+
+Create the Linear OAuth application by hand. Linear has no manifest flow.
+
+1. In Linear, open Settings > API > OAuth applications. Create an application.
+2. Add the two callback URLs that setup shows:
+   - `<FACTOREE_PUBLIC_URL>/api/linear/callback`, for the app install.
+   - `<FACTOREE_PUBLIC_URL>/api/auth/callback/linear`, for sign-in.
+3. Turn on webhooks. Set the webhook URL to `<FACTOREE_PUBLIC_URL>/webhooks/linear`.
+   Select the Agent session events.
+4. In setup, enter the client id, the client secret and the webhook signing
+   secret.
+5. Click Install in Linear, and approve the grant.
+
+The install grant acts as the app (`actor=app`), with the scopes `read`,
+`write`, `app:assignable` and `app:mentionable`. The callback stores the
+installation with its refresh token and creates the Tenant. Factoree refreshes
+the Linear access token itself, with the client credentials from this step.
+
+### 4.3 Install the GitHub App
+
+Install the App on the fixture repository. GitHub returns to
+`/setup/github/installed`. Factoree checks that the installation belongs to the
+App, binds it to the Tenant, and starts discovery.
+
+### 4.4 The sandbox provider
+
+Select one provider.
+
+- `kiln`: enter the Kiln URL and the API key. A build from a checkout pins no
+  sandbox image, so enter the image by digest, as `<name>@sha256:<hex>`. For
+  a private image, enter the registry username and the registry token.
+- `fly-sprites`: enter the Fly.io token. The API URL is optional.
+- `local`: setup offers it only when `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`.
+
+The sandbox limit (`sandboxMaxLive`) is optional. Factoree stores it, but this
+build does not enforce it.
+
+### 4.5 The first Product
+
+1. Select the Linear team of the fixture issue. One Linear team maps to one
+   Product.
+2. Enter the slug and the name.
+3. Select the autonomy level. The default is L2.
+4. Enter the model as `provider/model`, for example `deepseek/deepseek-flash`.
+5. For a paid model, enter the name and the value of the model key. The name
+   is the environment variable the agent reads, for example
+   `DEEPSEEK_API_KEY`. Factoree stores the key as a `runner_credential`
+   Product secret.
+
+Factoree creates the Product and activates it at the selected level.
+
+### 4.6 Finish and sign in
+
+Click Finish. Then click "Sign in with Linear". Sign-in is a separate grant
+from the app install.
+
+Only a member of a Linear workspace that has Factoree installed can sign in.
+Factoree refuses every other account. A Linear workspace admin is a Factoree
+admin of that workspace. A member reads the settings. An admin changes them.
+
+## 5. The repository file
+
+Factoree does not create a Repository row through setup. Discovery creates it
+from the `.factoree/config.yaml` file of the fixture repository. Discovery reads
+the file when the App is installed on the repository, and on each push to the
+default branch that changes the file.
+
+The Sprite holds Claude Code and no opencode, so a repository that uses
+opencode installs it in its bootstrap. The Sprite runs npm 12, which runs no
+install script, so the bootstrap also runs the opencode postinstall (DI-14.19).
+This file runs a Run with opencode:
 
     version: 1
     identity:
-      product: <SETUP_PRODUCT_SLUG>
+      product: <PRODUCT_SLUG>
       linear:
-        teamKey: <SETUP_LINEAR_TEAM_KEY>
+        teamKey: <LINEAR_TEAM_KEY>
     bootstrap:
       command: npm install -g --prefix /home/sprite/.local opencode-ai && cd /home/sprite/.local/lib/node_modules/opencode-ai && node postinstall.mjs
     verify:
@@ -157,144 +199,142 @@ runs a Run on the free opencode model:
     sandbox:
       allowedDomains: [registry.npmjs.org, opencode.ai, models.dev]
 
-Set `SETUP_ALLOWED_DOMAINS=registry.npmjs.org,opencode.ai,models.dev` in `.env` before
-`just bootstrap`. The Product allow list is the ceiling, so the repository list cannot add a
-host the Product does not allow.
+The Product allow list is the ceiling, so the repository list cannot add a host
+the Product does not allow. Open the Product on the Products screen. Add
+`registry.npmjs.org`, `opencode.ai` and `models.dev` to its allowed domains,
+plus the host of the model provider.
 
-The two context source rows point at the local stubs of `just stubs`. You
-need no real Backstage instance and no real MCP server for this path.
-`tests/live/scenario.ts` refuses to start unless the Product carries one
-enabled `backstage` row and one enabled `mcp` row, and the stubs answer both.
-To point the rows at a real catalog and a real MCP source instead, set
-`SETUP_BACKSTAGE_URL` and `SETUP_MCP_URL` in `.env`.
+## 6. The settings screens
 
-An `mcp` row must name two tools. `SETUP_MCP_DISCOVER_TOOL` and
-`SETUP_MCP_FETCH_TOOL` hold them, and default to `search` and `fetch`. The
-local stub answers any tool name, so the defaults work.
+After sign-in, the UI holds four screens.
 
-The command is safe to run again. It reuses a Product that already carries
-the same slug, and it overwrites the other records.
+- **Install settings**: the GitHub Enterprise URLs, the Linear client
+  credentials and webhook secret, the sandbox provider, its key, image and
+  limit, and the git author. A change applies with no restart.
+- **Workspaces**: the Linear workspaces with Factoree installed. Only an admin
+  of the workspace that ran setup installs Factoree in another workspace or
+  changes the install settings.
+- **Products**: the model, the effort per role (implementer, refiner,
+  validator, reviewer), the silence limit in minutes, the retention hours, the
+  maximum Run minutes, the autonomy level, the risk caps, the allowed domains
+  and the secrets. `maxConcurrentRuns` (default 2) is stored, but this build
+  does not enforce it.
+- **API keys**: the keys that scripts use for the admin API.
 
-## 4b. Paid models and private repositories
+A change to the model, the effort or the silence limit applies to the next
+agent session. The model and the effort apply to opencode sessions. Claude Code
+runs at its own defaults.
 
-A model provider credential needs a Product secret with the right kind. A
-private repository needs no Product secret at all: install the Factoree
-GitHub App on it, the way section 1b describes, and Factoree mints a
-read-only credential for it. There is no other credential path. The
-`repository_read` secret kind is retired.
-
-A model provider credential, for opencode Zen, DeepSeek, or Anthropic:
-
-    curl -sS -X PUT \
-      "$API_BASE/admin/products/$PRODUCT_ID/secrets/OPENCODE_API_KEY?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
-      -H "Authorization: Bearer $ADMIN_API_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{"value": "<THE KEY>", "kind": "runner_credential"}'
-
-The secret name becomes the environment variable name inside the sandbox, so
-name it exactly as the tool expects. The value reaches the agent process and
-nothing else. It never enters a prompt.
-
-Do not set `injectIntoImplementer` on this secret. The API refuses the
-combination, because SDD section 30 permits the mark on a `test` secret only.
-
-Free models need no credential at all. opencode answers with its own
-`opencode/big-pickle` model when the Product holds no runner credential.
-
-## 4b2. Raise or lower a Product's autonomy, and set its network allow list
-
-`docs/specs/autonomy-levels.md` defines the levels. L0 reports, L1 checks and opens no pull
-request, L2 opens a draft pull request, and L3 opens a pull request that is ready for review.
-Only an operator raises a Product. A Linear label lowers one ticket.
-
-1. Read the current policy:
-
-       curl -sS -H "Authorization: Bearer $ADMIN_API_TOKEN" \
-         "$API_BASE/admin/products/$PRODUCT_ID?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID"
-
-2. Set the default level, the risk caps, the allow list, or any of them:
-
-       curl -sS -X PUT -H "Authorization: Bearer $ADMIN_API_TOKEN" \
-         -H "Content-Type: application/json" \
-         "$API_BASE/admin/products/$PRODUCT_ID?linearWorkspaceId=$SETUP_LINEAR_WORKSPACE_ID" \
-         -d '{"defaultAutonomy":"L3","riskCaps":{"payments":"L2","database-migration":"L3"},"allowedDomains":["registry.npmjs.org"]}'
-
-   - `defaultAutonomy` takes `L0`, `L1`, `L2` or `L3`. Factoree refuses `L4` with 422.
-   - `riskCaps` maps a Linear label to the highest level a ticket with that label can reach. A
-     new Product uses the SDD section 28 labels, each capped at L2. To trust a label fully, set
-     its cap to `L3`.
-   - `allowedDomains` is the egress ceiling of every sandbox of the Product. The repository file
-     can only narrow it. An empty list allows the repository hosts only. A wildcard must name at
-     least two labels, so `*.com` is refused.
-
-3. The response holds the new policy. Factoree writes one `ProductPolicyChange` row for each
-   field that changed.
-
-4. The next delegated Run uses the new values. A Run that has already started keeps its level.
-
-To lower the level of one ticket, add the Linear label `factoree:l0`, `factoree:l1` or
+`docs/specs/autonomy-levels.md` defines the levels. L0 reports, L1 checks and
+opens no pull request, L2 opens a draft pull request, and L3 opens a pull
+request that is ready for review. Only an operator raises a Product. To lower
+the level of one ticket, add the Linear label `factoree:l0`, `factoree:l1` or
 `factoree:l2`. A label never raises the level.
 
-## 4c. Keep the Linear token alive
+With no model and no key, opencode uses its own default model.
 
-A Linear access token lives for twenty-four hours. On the next day every Run fails at its first
-Linear call with `Authentication required`, and the Run ends before it reaches the sandbox.
+## 7. Register the context sources
 
-Run `just linear-auth` to do the whole flow in one command. It opens the Linear authorization
-page, stores the installation with its refresh token and its expiry, and prints the workspace it
-stored. Add the redirect URI `http://localhost:8080/callback` to the Linear application first.
+`tests/live/scenario.ts` refuses to start unless the Product carries one
+enabled `backstage` row and one enabled `mcp` row. The UI has no context source
+screen, so use the admin API.
 
-Factoree refreshes the token itself when it holds three things:
+1. On the API keys screen, create a key. Copy it. Factoree shows it only once.
+   The key starts with `fct_`.
+2. Set the shell values. The Workspaces screen shows the Linear workspace id.
+   The Product page URL ends with the Product id.
 
-1. `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` in `.env`, from the Linear OAuth application.
-2. `SETUP_LINEAR_REFRESH_TOKEN`, the `refresh_token` of the same OAuth response.
-3. `SETUP_LINEAR_EXPIRES_IN`, the `expires_in` of that response, in seconds. Linear returns
-   86400.
+       export API_BASE=http://localhost:3000
+       export API_KEY=<API_KEY>
+       export WORKSPACE=<LINEAR_WORKSPACE_ID>
+       export PRODUCT_ID=<PRODUCT_ID>
 
-`just bootstrap` stores all three. The worker then refreshes the access token five minutes
-before it expires, writes the new pair back, and continues. It also refreshes once and retries
-when Linear rejects a token that was revoked before its expiry.
+3. Register the Backstage stub of `just stubs`:
 
-Without the client credentials Factoree cannot refresh anything. It says so in the log, and an
-operator must store a new token by hand each day.
+       curl -sS -X POST \
+         "$API_BASE/admin/products/$PRODUCT_ID/context-sources?linearWorkspaceId=$WORKSPACE" \
+         -H "Authorization: Bearer $API_KEY" \
+         -H "Content-Type: application/json" \
+         -d '{"sourceId":"backstage-catalog","kind":"backstage","endpoint":"http://localhost:4100","enabled":true}'
 
-## 5. Run the scenario
+4. Register the MCP stub. An `mcp` row must name its discover tool and its
+   fetch tool. The stub answers any tool name.
+
+       curl -sS -X POST \
+         "$API_BASE/admin/products/$PRODUCT_ID/context-sources?linearWorkspaceId=$WORKSPACE" \
+         -H "Authorization: Bearer $API_KEY" \
+         -H "Content-Type: application/json" \
+         -d '{"sourceId":"mcp-source","kind":"mcp","endpoint":"http://localhost:4200","enabled":true,"settings":{"kind":"mcp","discoverTool":"search","fetchTool":"fetch"}}'
+
+You need no real Backstage instance and no real MCP server for this path. To
+use a real catalog and a real MCP source, put their URLs in the `endpoint`
+fields.
+
+A key acts as the person who created it, in that person's workspaces. A key
+cannot create keys. Factoree records every `/admin` call with the user or key
+id. Revoke a key on the API keys screen. The next call with it gets 401.
+
+## 8. Run the scenario
+
+With Fly Sprites:
 
     just live-sprite
+
+With the local sandbox, run `just live-local`. With Kiln, run `just live`.
+`docs/live-acceptance.md` explains each profile.
 
 The command creates a fixture issue in Linear, delegates it to Factoree, and
 waits for the Proof Pack comment. It prints one line per fact it proves, and
 one line per fact it cannot prove.
 
-Exit code 0 means every fact holds. Exit code 78 with `BLOCKED_EXTERNAL`
-means a required value is absent or wrong.
+Exit code 0 means every fact holds. Exit code 78 with `BLOCKED_EXTERNAL` means
+a required value is absent or wrong.
 
-`tests/live/scenario.ts` has never executed against a real service. Expect
-defects on the first run. Read the printed report first, then the worker log,
-then the stub log.
+If the run fails, read the printed report first, then the worker log, then the
+stub log.
 
-## 6. Stop
+To test the Fly Sprite steps alone, run `just smoke owner/name`. Add `--keep`
+to keep the Sprite. The command reads the Sprites token from the install
+settings.
+
+## 9. Stop
 
     just down        # stops PostgreSQL and keeps the data volume
 
 ## Troubleshooting
 
+**The setup token is not valid.** The API issues a new token on each start
+until setup completes. Use the token from the latest log line.
+
 **The API rejects an admin call with 401.** The `Authorization` header must
-carry `Bearer <ADMIN_API_TOKEN>`. `just bootstrap` reads the value from
-`.env` itself.
+carry `Bearer <API_KEY>`. The key is absent, wrong, expired or revoked. Create
+a new key on the API keys screen.
+
+**The API rejects an admin call with 403.** The key or the session belongs to a
+person who is not a member of the workspace, or a member who is not an admin
+makes a change.
+
+**Sign-in is refused.** The Linear account is not a member of a workspace that
+has Factoree installed.
 
 **Publication fails with a configuration error naming the GitHub App
 installation.** The target repository carries no installation, or the
 installation was removed. Install the Factoree GitHub App on the repository
-again.
+again. A new installation has a new id, and after setup completes `/setup`
+cannot bind it. `docs/live-acceptance.md`, "Troubleshooting: missing GitHub
+App installation", holds the admin API call that binds it.
 
-**Factoree never comments in Linear.** The Linear installation record is
-absent or carries a wrong token. Run `just bootstrap` again, or repeat the
-`PUT /admin/linear-installations` call with a correct
-`SETUP_LINEAR_ACCESS_TOKEN`.
+**Factoree never comments in Linear.** The Linear installation is absent or
+its token is not valid. Open the Workspaces screen. Check the token expiry and
+that it is refreshable. Install Factoree in the workspace again if needed.
 
-**The worker starts no Run.** Linear cannot reach the API. Check the tunnel
-still runs, and check the webhook URL in the Linear app settings.
+**The worker starts no Run.** Linear cannot reach the API. Check that the
+tunnel still runs, and check the webhook URL in the Linear app settings.
+
+**The tunnel URL changed.** A free tunnel URL changes on each restart. Put the
+new URL in `FACTOREE_PUBLIC_URL` and restart the API. Then change the webhook
+URL of the GitHub App, and the two callback URLs and the webhook URL of the
+Linear app, to the new URL. The Install settings screen shows each URL.
 
 **The disk fills.** Run `docker builder prune`. Do not run
 `docker volume prune`. It can destroy data of other projects.

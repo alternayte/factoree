@@ -17,6 +17,7 @@ import { readRepositoryConfig, readRepositoryInstructions } from "./repository-c
 import type { CheckpointRef, ProcessRef, Sandbox, SandboxRef } from "./sandbox.js";
 import { BROWSER_TOOL_HOSTS, BROWSER_TOOLS_INSTALL_SCRIPT, BROWSER_TOOLS_POLL_MS, BROWSER_TOOLS_WAIT_MS } from "./browser-tools.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
+import { SandboxSlotUnavailableError } from "./sandbox-slot-error.js";
 import type { WarmSnapshot, WarmSnapshotStore } from "./warm-snapshot.js";
 import type { Logger } from "~/telemetry/logger.js";
 
@@ -76,9 +77,10 @@ export interface SandboxManagerOptions {
   /**
    * docs/specs/proof-pack-and-visual-evidence.md. True when the sandbox runs the Sprite image
    * that `BROWSER_TOOLS_INSTALL_SCRIPT` was proven on. The local adapter runs on the worker host,
-   * where the script must not touch the system packages.
+   * where the script must not touch the system packages. A function decides by adapter name,
+   * because the install settings choose the adapter for each new sandbox.
    */
-  installBrowserTools?: boolean;
+  installBrowserTools?: boolean | ((sandboxName: string) => boolean);
   /**
    * docs/specs/kiln-sandbox-provider.md. Where the warm snapshot of each repository is recorded.
    * Without it, or on an adapter with no `warmSnapshots`, every sandbox starts cold.
@@ -150,6 +152,11 @@ const checkoutHosts = (specs: RepositorySpec[]): string[] => {
 export class SandboxManager {
   constructor(private readonly options: SandboxManagerOptions) {}
 
+  private installsBrowserTools(sandboxName: string): boolean {
+    const option = this.options.installBrowserTools;
+    return typeof option === "function" ? option(sandboxName) : option === true;
+  }
+
   /**
    * `beforeBootstrap` runs after the primary checkout and the read of `.factoree/config.yaml`,
    * and before the reference checkouts and the bootstrap. A check sprite applies the captured
@@ -161,6 +168,8 @@ export class SandboxManager {
     beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
   ): Promise<PreparedSandbox> {
     const sandbox = this.options.sandbox;
+    // docs/specs/release-0-1-0.md. The install settings choose the provider of each new sandbox.
+    await sandbox.refresh?.();
     if (!sandbox.capabilities.enforcesNetworkPolicy && this.options.allowUnenforcedNetwork !== true) {
       throw new NetworkPolicyNotEnforcedError(sandbox.name);
     }
@@ -223,6 +232,8 @@ export class SandboxManager {
       try {
         ref = await sandbox.warmSnapshots.restore(createInput, warm.snapshotId);
       } catch (error) {
+        // DI-15.14. A full provider says nothing about the snapshot, and a cold start needs a slot too.
+        if (error instanceof SandboxSlotUnavailableError) throw error;
         this.options.logger?.warn("the warm snapshot did not restore, so the sandbox starts cold", {
           run_id: input.runId,
           snapshot_id: warm.snapshotId,
@@ -294,7 +305,7 @@ export class SandboxManager {
       // The sandbox image already holds the tools, so such a sandbox installs nothing.
       const wantsBrowserTools = input.browserTools === true && preview !== null && preview.enabled;
       const browserTools =
-        wantsBrowserTools && !sandbox.capabilities.supportsCustomImage && this.options.installBrowserTools === true;
+        wantsBrowserTools && !sandbox.capabilities.supportsCustomImage && this.installsBrowserTools(sandbox.name);
 
       // Policy two. The configured allow list joined with the repository hosts, so the reference
       // checkouts and the bootstrap command both work.

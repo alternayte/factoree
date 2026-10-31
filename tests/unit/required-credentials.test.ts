@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DRIVER_CREDENTIALS,
   COMMON_INFRASTRUCTURE_REQUIREMENTS,
-  LOCAL_SANDBOX_REQUIREMENT,
+  LOCAL_SANDBOX_REQUIREMENTS,
   SPRITE_SANDBOX_REQUIREMENTS,
   unmetRequirementsFor,
 } from "../live/required-credentials.js";
@@ -57,26 +57,28 @@ describe("unmetRequirementsFor", () => {
     ]);
   });
 
-  it("reports an equals requirement as unmet when the variable is absent", () => {
-    const unmet = unmetRequirementsFor({}, [LOCAL_SANDBOX_REQUIREMENT]);
+  const providerRequirement = LOCAL_SANDBOX_REQUIREMENTS[0]!;
+
+  it("reports an equals requirement as unmet when the value is absent", () => {
+    const unmet = unmetRequirementsFor({}, [providerRequirement]);
     expect(unmet).toHaveLength(1);
     expect(unmet[0]!.actual).toBeUndefined();
   });
 
   it("reports an equals requirement as unmet, with the actual value, when the value is wrong", () => {
-    const unmet = unmetRequirementsFor({ SANDBOX_ADAPTER: "fly-sprites" }, [LOCAL_SANDBOX_REQUIREMENT]);
+    const unmet = unmetRequirementsFor({ "install.sandbox.provider": "fly-sprites" }, [providerRequirement]);
     expect(unmet).toHaveLength(1);
     expect(unmet[0]!.actual).toBe("fly-sprites");
   });
 
   it("reports an equals requirement as met when the value matches", () => {
-    const unmet = unmetRequirementsFor({ SANDBOX_ADAPTER: "local" }, [LOCAL_SANDBOX_REQUIREMENT]);
+    const unmet = unmetRequirementsFor({ "install.sandbox.provider": "local" }, [providerRequirement]);
     expect(unmet).toEqual([]);
   });
 
-  it("keeps the sprite sandbox requirements at SANDBOX_ADAPTER and SPRITES_TOKEN", () => {
+  it("keeps the sprite sandbox requirements at the install provider and its key", () => {
     const names = SPRITE_SANDBOX_REQUIREMENTS.map((entry) => entry.name).sort();
-    expect(names).toEqual(["SANDBOX_ADAPTER", "SPRITES_TOKEN"]);
+    expect(names).toEqual(["install.sandbox.apiKey", "install.sandbox.provider"]);
   });
 
   it("documents every common infrastructure requirement in .env.example", async () => {

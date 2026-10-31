@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { loadEnv } from "~/config/env.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -14,41 +15,52 @@ import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { createSyncInstallationStarter, createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
 import { buildServer } from "~/http/server.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
-import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
-import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
+import { PrismaInstallSettingsStore } from "~/persistence/prisma/install-settings.prisma.js";
+import { AuthHandle } from "~/http/auth/auth.js";
+import { issueSetupToken } from "~/http/setup/setup-token.js";
+import {
+  convertGitHubAppManifest,
+  readGitHubAppInstallation,
+} from "~/adapters/github/app-manifest.js";
+import {
+  exchangeLinearCode,
+  listLinearTeams,
+  readLinearOrganization,
+} from "~/adapters/linear/linear-app-flows.js";
+import {
+  githubApiBaseUrl,
+  githubAppCredentials,
+  githubBaseUrl,
+  linearOAuthFromSettings,
+  releaseVersion,
+} from "./install-wiring.js";
 
 const env = loadEnv();
-const redactor = new Redactor([
-  env.ADMIN_API_TOKEN,
-  env.LINEAR_WEBHOOK_SECRET,
-  env.FACTOREE_SECRET_KEY,
-  env.GITHUB_APP_PRIVATE_KEY,
-  env.GITHUB_WEBHOOK_SECRET,
-]);
-const logger = createLogger({ level: env.LOG_LEVEL, redactor });
-const prisma = createPrismaClient(env.DATABASE_URL);
-const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+// docs/specs/release-0-1-0.md. The credentials live in the database, so the master key is the one
+// secret of the environment. A stored credential reaches the log only through a call that names
+// it, and the logger redacts every value it is given here.
+const redactor = new Redactor([env.FACTOREE_MASTER_KEY]);
+const logger = createLogger({ level: env.FACTOREE_LOG_LEVEL, redactor });
+const prisma = createPrismaClient(env.FACTOREE_DATABASE_URL);
+const settings = new PrismaInstallSettingsStore(prisma, env.FACTOREE_MASTER_KEY, (value) => redactor.addSecret(value));
+const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_MASTER_KEY);
 const products = new PrismaProductRegistry(prisma);
 const repositories = new PrismaRepositoryRegistry(prisma);
-const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+const secrets = new PrismaSecretStore(prisma, env.FACTOREE_MASTER_KEY);
 const runs = new PrismaRunRepository(prisma);
 const client = await createTemporalClient(env);
 
 // A Linear access token lives for twenty-four hours. The provider refreshes it before it
-// expires. Without the client credentials the provider can only report the expiry. The route
-// then surfaces that failure to the operator, rather than a resolved team key.
+// expires, with the client credentials the install settings hold at that moment.
 const linearTokens = new LinearTokenProvider({
   tenants,
-  oauth:
-    env.LINEAR_CLIENT_ID === undefined || env.LINEAR_CLIENT_SECRET === undefined
-      ? null
-      : createLinearOAuthClient({ clientId: env.LINEAR_CLIENT_ID, clientSecret: env.LINEAR_CLIENT_SECRET }),
+  oauth: linearOAuthFromSettings(settings),
   logger,
 });
 
@@ -67,10 +79,10 @@ const delegation = new DelegationService({
   products,
   repositories,
   webhookLog: new PrismaWebhookLog(prisma),
-  starter: createTemporalWorkflowStarter(client, env.TEMPORAL_TASK_QUEUE),
+  starter: createTemporalWorkflowStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
   refusalNotifier,
   logger,
-  repositoryBaseUrl: env.GITHUB_BASE_URL,
+  repositoryBaseUrl: githubBaseUrl(settings),
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`
@@ -82,25 +94,17 @@ const linearTeams = new TenantScopedLinearTeamLookup(
 
 // Ruling 1 and ruling 2. One credential path to GitHub: every GitHub adapter mints its token
 // through this one provider, and every mint carries only the scope its one operation needs.
-const githubTokens = new GitHubAppTokenProvider({
-  appId: env.GITHUB_APP_ID,
-  privateKeyBase64: env.GITHUB_APP_PRIVATE_KEY,
-  apiBaseUrl: env.GITHUB_API_BASE_URL,
-});
+const githubTokens = new GitHubAppTokenProvider({ credentials: githubAppCredentials(settings) });
 
 // The GitHub webhook route reads and writes the same `.factoree/config.yaml` declaration
 // `syncInstallationWorkflow` reads, through the same `DiscoveryService`.
 const discoveryClient = new GitHubRepositoryDiscoveryClient({
-  apiBaseUrl: env.GITHUB_API_BASE_URL,
+  apiBaseUrl: githubApiBaseUrl(settings),
   tokens: githubTokens,
 });
 const discovery = new DiscoveryService(discoveryClient, products, repositories, linearTeams, logger);
 
-// Verifies the raw request body against the `X-Hub-Signature-256` header, before any parse.
-const verifyGitHubWebhookSignature = (raw: Buffer, signature: string): boolean =>
-  verifyGitHubSignature({ rawBody: raw, signature, secret: env.GITHUB_WEBHOOK_SECRET }).ok;
-
-const startInstallationSync = createSyncInstallationStarter(client, env.TEMPORAL_TASK_QUEUE);
+const startInstallationSync = createSyncInstallationStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
 
 // docs/specs/proof-pack-and-visual-evidence.md. The Run is over when CI publishes the preview, so
 // the link reaches the Linear session from here. The tenant row carries the workspace id.
@@ -127,10 +131,15 @@ const recordPullRequestPreview = async (input: {
   return true;
 };
 
+const auth = new AuthHandle({ prisma, settings, publicUrl: env.FACTOREE_PUBLIC_URL, masterKey: env.FACTOREE_MASTER_KEY, logger });
+
 const app = buildServer({
   env,
+  version: releaseVersion(),
   logger,
   prisma,
+  settings,
+  auth,
   tenants,
   products,
   repositories,
@@ -139,9 +148,29 @@ const app = buildServer({
   runs,
   delegation,
   discovery,
-  verifyGitHubSignature: verifyGitHubWebhookSignature,
   startInstallationSync,
   recordPullRequestPreview,
+  setup: {
+    github: {
+      convertManifest: (input) => convertGitHubAppManifest(input),
+      readInstallation: (input) => readGitHubAppInstallation(input),
+    },
+    linear: {
+      exchangeCode: (input) => exchangeLinearCode(input),
+      readOrganization: (accessToken) => readLinearOrganization(accessToken),
+      listTeams: async (linearWorkspaceId) => listLinearTeams(await linearTokens.tokenFor(linearWorkspaceId)),
+    },
+  },
+  // dist/bin/api.js sits two levels below the repository root, beside ui/dist.
+  uiRoot: fileURLToPath(new URL("../../ui/dist", import.meta.url)),
 });
-await app.listen({ port: env.PORT, host: "0.0.0.0" });
-logger.info("api started", { step: "boot" });
+// docs/specs/release-0-1-0.md. Until setup ends, each start issues a new one-time setup token and
+// names it once, in the log line below. Only its hash is stored.
+const setupToken = await issueSetupToken(settings);
+await app.listen({ port: env.FACTOREE_PORT, host: "0.0.0.0" });
+logger.info("api started", { step: "boot", public_url: env.FACTOREE_PUBLIC_URL });
+if (setupToken !== null) {
+  logger.info(`setup is not complete. Open ${env.FACTOREE_PUBLIC_URL}/setup and enter the setup token ${setupToken}`, {
+    step: "setup",
+  });
+}

@@ -21,16 +21,17 @@ import { createEvidenceStorage } from "~/adapters/evidence/evidence-storage-fact
 import { createLinearFileUploadApi } from "~/adapters/linear/linear-evidence-storage.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
-import { LocalProcessSandbox } from "~/adapters/sandbox/local/local-process-sandbox.js";
-import { FlySpriteSandbox } from "~/adapters/sandbox/fly-sprites/fly-sprite-sandbox.js";
-import { createSpritesGateway } from "~/adapters/sandbox/fly-sprites/sprites-client.js";
-import { KilnClient } from "~/adapters/sandbox/kiln/kiln-client.js";
-import { KILN_RUNNER_BIN, KilnSandbox } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { KILN_RUNNER_BIN } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { SettingsSandbox } from "~/adapters/sandbox/settings-sandbox.js";
+import { PrismaSandboxLeaseStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
+import { PrismaRunSlots } from "~/persistence/prisma/run-slots.prisma.js";
+import { PrismaInstallSettingsStore } from "~/persistence/prisma/install-settings.prisma.js";
+import type { AgentSessionSettings } from "~/adapters/runners/cli-agent-runner.js";
+import type { AgentRunInput } from "~/domain/runs/agent-runner.js";
 import { PrismaWarmSnapshotStore } from "~/persistence/prisma/warm-snapshot.prisma.js";
 import { buildAgentRunnerRegistry } from "~/adapters/runners/registry.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
-import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
@@ -58,24 +59,27 @@ import { createWorkerConnection } from "~/temporal/connection.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
-import { createLinearOAuthClient } from "~/adapters/linear/linear-oauth.js";
+import { githubApiBaseUrl, githubAppCredentials, linearOAuthFromSettings } from "./install-wiring.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
+import { buildInfo } from "~/config/build-info.js";
+
+// docs/specs/release-0-1-0.md. `factoree --version` answers before the environment loads, so it
+// works with no configuration.
+if (process.argv.includes("--version")) {
+  process.stdout.write(`factoree ${buildInfo.version} (commit ${buildInfo.commit}, built ${buildInfo.buildDate})\n`);
+  process.exit(0);
+}
 
 const env = loadEnv();
-const redactor = new Redactor([
-  env.ADMIN_API_TOKEN,
-  env.LINEAR_WEBHOOK_SECRET,
-  env.FACTOREE_SECRET_KEY,
-  env.GITHUB_APP_PRIVATE_KEY,
-  env.GITHUB_WEBHOOK_SECRET,
-  ...(env.KILN_API_KEY === undefined ? [] : [env.KILN_API_KEY]),
-  ...(env.KILN_REGISTRY_TOKEN === undefined ? [] : [env.KILN_REGISTRY_TOKEN]),
-]);
-const logger = createLogger({ level: env.LOG_LEVEL, redactor });
-const prisma = createPrismaClient(env.DATABASE_URL);
-const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+// docs/specs/release-0-1-0.md. The master key is the one secret of the environment. Every
+// credential the install settings decrypt joins the redactor when it is read.
+const redactor = new Redactor([env.FACTOREE_MASTER_KEY]);
+const logger = createLogger({ level: env.FACTOREE_LOG_LEVEL, redactor });
+const prisma = createPrismaClient(env.FACTOREE_DATABASE_URL);
+const settings = new PrismaInstallSettingsStore(prisma, env.FACTOREE_MASTER_KEY, (value) => redactor.addSecret(value));
+const tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_MASTER_KEY);
 const products = new PrismaProductRegistry(prisma);
 const repositories = new PrismaRepositoryRegistry(prisma);
 
@@ -84,69 +88,72 @@ const repositories = new PrismaRepositoryRegistry(prisma);
 // the client credentials it can only report the expiry, so the operator learns what to configure.
 const linearTokens = new LinearTokenProvider({
   tenants,
-  oauth:
-    env.LINEAR_CLIENT_ID === undefined || env.LINEAR_CLIENT_SECRET === undefined
-      ? null
-      : createLinearOAuthClient({
-          clientId: env.LINEAR_CLIENT_ID,
-          clientSecret: env.LINEAR_CLIENT_SECRET,
-        }),
+  oauth: linearOAuthFromSettings(settings),
   logger,
 });
 const runs = new PrismaRunRepository(prisma);
 
-// SDD section 31. The adapter comes from configuration. The local adapter cannot enforce an
-// egress policy, so SandboxManager accepts it only under the explicit opt in below.
-const createSandbox = (): Sandbox => {
-  switch (env.SANDBOX_ADAPTER) {
-    case "local":
-      return new LocalProcessSandbox({ rootDirectory: env.SANDBOX_LOCAL_ROOT });
-    case "kiln":
-      // docs/specs/kiln-sandbox-provider.md. The env schema requires all three when the adapter is kiln.
-      return new KilnSandbox({
-        client: new KilnClient({ baseUrl: env.KILN_URL ?? "", apiKey: env.KILN_API_KEY ?? "" }),
-        image: env.KILN_IMAGE ?? "",
-        ...(env.KILN_REGISTRY_USERNAME === undefined || env.KILN_REGISTRY_TOKEN === undefined
-          ? {}
-          : { registryCredential: { username: env.KILN_REGISTRY_USERNAME, token: env.KILN_REGISTRY_TOKEN } }),
-      });
-    case "fly-sprites":
-      return new FlySpriteSandbox({
-        gateway: createSpritesGateway({
-          token: env.SPRITES_TOKEN ?? "",
-          ...(env.SPRITES_BASE_URL === undefined ? {} : { baseUrl: env.SPRITES_BASE_URL }),
-        }),
-      });
-  }
-};
-const sandbox = createSandbox();
+// SDD section 31 and docs/specs/release-0-1-0.md. The install settings name the provider. The
+// adapter reads them before each new sandbox, so a provider change needs no restart. The local
+// adapter cannot enforce an egress policy, so SandboxManager accepts it only under the opt in of
+// FACTOREE_UNSAFE_LOCAL_SANDBOX, which the settings check as well.
+const localSandboxAllowed = env.FACTOREE_UNSAFE_LOCAL_SANDBOX === "1";
+// DI-15.14. Every create takes a slot of the install setting sandboxMaxLive, across all workers.
+const sandbox = new SettingsSandbox({
+  settings: async () => (await settings.read()).sandbox,
+  allowLocal: localSandboxAllowed,
+  localRoot: env.FACTOREE_SANDBOX_LOCAL_ROOT,
+  leases: new PrismaSandboxLeaseStore(prisma),
+  logger,
+  onEvicted: (victim) => metrics.sandboxesDestroyed.inc({ adapter: victim.adapter, reason: "LIMIT" }),
+});
+try {
+  await sandbox.refresh();
+} catch (error) {
+  // A worker may start before setup stores a provider. The first Run reads the settings again.
+  logger.warn("the sandbox provider is not configured yet", { step: "boot", error: String(error) });
+}
 
 const sandboxManager = new SandboxManager({
   sandbox,
   logger,
   warmSnapshots: new PrismaWarmSnapshotStore(prisma),
   // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
-  installBrowserTools: env.SANDBOX_ADAPTER === "fly-sprites",
-  ...(env.SANDBOX_ADAPTER === "local" ? { allowUnenforcedNetwork: true } : {}),
+  installBrowserTools: (sandboxName) => sandboxName === "fly-sprites",
+  ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
 });
+
+// docs/specs/release-0-1-0.md. The Product of the Run holds the model, the effort of each role
+// and the silence limit. The worker reads them when a session starts, so a change applies to the
+// next session with no restart. The Product settings name opencode models, so a Claude Code
+// session runs at its CLI defaults.
+const sessionSettings = async (input: AgentRunInput, runner: string): Promise<AgentSessionSettings> => {
+  const run = await prisma.run.findUniqueOrThrow({ where: { id: input.runId }, include: { product: true } });
+  const { product } = run;
+  const effort = {
+    implementer: product.effortImplementer,
+    refiner: product.effortRefiner,
+    validator: product.effortValidator,
+    reviewer: product.effortReviewer,
+  }[input.role];
+  const opencode = runner === "opencode";
+  // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
+  const customImage = (await sandbox.forRef(input.ref)).capabilities.supportsCustomImage;
+  return {
+    model: opencode ? product.model : null,
+    effort: opencode ? effort : null,
+    silenceLimitMs: product.silenceMinutes * 60_000,
+    executable: opencode && customImage ? `${KILN_RUNNER_BIN}/opencode` : null,
+  };
+};
 
 // SDD section 33 names two required adapters. A stock `.factoree/config.yaml` selects
 // `opencode` for the Implementer and `claude` for the User Validator and the Reviewer, so both
 // must be registered before a stock repository can run.
-const runners = buildAgentRunnerRegistry(redactor, {
-  ...(env.OPENCODE_MODEL === undefined ? {} : { model: env.OPENCODE_MODEL }),
-  ...(env.OPENCODE_VARIANT === undefined ? {} : { variant: env.OPENCODE_VARIANT }),
-  roleVariants: {
-    ...(env.OPENCODE_VARIANT_IMPLEMENTER === undefined ? {} : { implementer: env.OPENCODE_VARIANT_IMPLEMENTER }),
-    ...(env.OPENCODE_VARIANT_REFINER === undefined ? {} : { refiner: env.OPENCODE_VARIANT_REFINER }),
-    ...(env.OPENCODE_VARIANT_VALIDATOR === undefined ? {} : { validator: env.OPENCODE_VARIANT_VALIDATOR }),
-    ...(env.OPENCODE_VARIANT_REVIEWER === undefined ? {} : { reviewer: env.OPENCODE_VARIANT_REVIEWER }),
-  },
-  // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
-  ...(sandbox.capabilities.supportsCustomImage ? { executable: `${KILN_RUNNER_BIN}/opencode` } : {}),
-}, { silenceLimitMs: env.AGENT_SILENCE_MINUTES * 60_000 });
+const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings });
 const reaper = new SpriteReaper({
-  sandboxes: { [sandbox.name]: sandbox },
+  // The adapter routes each sandbox to the provider its ref names.
+  sandboxes: { kiln: sandbox, "fly-sprites": sandbox, local: sandbox },
   runs,
   onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
 });
@@ -212,20 +219,16 @@ function isLinearAuthenticationError(error: unknown): boolean {
 // SDD section 18. The reader clones each repository into a temporary mirror, so the worker owns
 // its lifetime and removes the mirrors at shutdown.
 const repositoryReader = new GitRepositoryReader();
-const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+const secrets = new PrismaSecretStore(prisma, env.FACTOREE_MASTER_KEY);
 
 // Ruling 1 and ruling 2. One credential path to GitHub: every GitHub adapter mints its token
 // through this one provider, and every mint carries only the scope its one operation needs.
-const githubTokens = new GitHubAppTokenProvider({
-  appId: env.GITHUB_APP_ID,
-  privateKeyBase64: env.GITHUB_APP_PRIVATE_KEY,
-  apiBaseUrl: env.GITHUB_API_BASE_URL,
-});
+const githubTokens = new GitHubAppTokenProvider({ credentials: githubAppCredentials(settings) });
 
 // Specification section 10. `syncInstallationWorkflow` reads an installation's repositories,
 // and one repository's `.factoree/config.yaml`, through this client.
 const discoveryClient = new GitHubRepositoryDiscoveryClient({
-  apiBaseUrl: env.GITHUB_API_BASE_URL,
+  apiBaseUrl: githubApiBaseUrl(settings),
   tokens: githubTokens,
 });
 
@@ -283,7 +286,7 @@ const previewProbe: ReadinessProbe = async (url) => {
   }
 };
 
-// SDD section 39 and `EVIDENCE_STORAGE`. The Linear access token belongs to one workspace, so
+// SDD section 39 and `FACTOREE_EVIDENCE_STORAGE`. The Linear access token belongs to one workspace, so
 // the port resolves it for the tenant of each artifact. The tenant row carries the workspace
 // identifier.
 const linearFileUploadApiForTenant = async (tenantId: string) => {
@@ -296,8 +299,8 @@ const linearFileUploadApiForTenant = async (tenantId: string) => {
 };
 
 const evidenceStorage = createEvidenceStorage({
-  storage: env.EVIDENCE_STORAGE,
-  localRoot: env.EVIDENCE_LOCAL_ROOT,
+  storage: env.FACTOREE_EVIDENCE_STORAGE,
+  localRoot: env.FACTOREE_EVIDENCE_LOCAL_ROOT,
   linearApiForTenant: linearFileUploadApiForTenant,
 });
 
@@ -316,13 +319,14 @@ const httpValidationFetch: HttpValidationFetch = async (url, init) => {
 
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
-  namespace: env.TEMPORAL_NAMESPACE,
-  taskQueue: env.TEMPORAL_TASK_QUEUE,
+  namespace: env.FACTOREE_TEMPORAL_NAMESPACE,
+  taskQueue: env.FACTOREE_TEMPORAL_TASK_QUEUE,
   // A second workflow, `syncInstallationWorkflow`, joined `agentRunWorkflow` on this taskQueue.
   // The worker bundles one file per `workflowsPath`, so the barrel re-exports both.
   workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
   activities: createActivities({
     runs,
+    runSlots: new PrismaRunSlots(prisma),
     products,
     repositories,
     agentSession,
@@ -353,10 +357,10 @@ const worker = await Worker.create({
     // A fixed-token provider wraps it at no extra cost: no second mint, no second scope.
     pullRequests: (token: string) =>
       new GitHubPullRequests({
-        apiBaseUrl: env.GITHUB_API_BASE_URL,
+        apiBaseUrl: githubApiBaseUrl(settings),
         tokens: { tokenForInstallation: () => Promise.resolve(token) },
       }),
-    gitAuthor: { name: env.FACTOREE_GIT_AUTHOR_NAME, email: env.FACTOREE_GIT_AUTHOR_EMAIL },
+    gitAuthor: async () => (await settings.read()).gitAuthor,
     logger,
     tokens: githubTokens,
     discoveryClient,
@@ -388,7 +392,13 @@ const reapTimer = setInterval(() => {
 }, REAP_INTERVAL_MS);
 reapTimer.unref();
 
-logger.info("worker started", { step: "boot" });
+logger.info("worker started", {
+  step: "boot",
+  version: buildInfo.version,
+  commit: buildInfo.commit,
+  build_date: buildInfo.buildDate,
+  sandbox_image_default: buildInfo.sandboxImageDefault ?? "none",
+});
 try {
   await worker.run();
 } finally {

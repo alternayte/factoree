@@ -1,0 +1,62 @@
+# .factoree/config.yaml for a Node web app with npm, a test suite and a dev server.
+# Copy it to the root of the repository and change the identity and the commands.
+# Factoree rejects an unknown key, so a typo fails the run instead of passing as a default.
+version: 1
+
+identity:
+  # The Factoree product that owns this repository. The product owns secrets, policy and autonomy.
+  product: web-shop
+  linear:
+    # The key of the Linear team that maps to the product.
+    teamKey: WEB
+    # Issues in these Linear projects target this repository with no question.
+    projects:
+      - Storefront
+
+# Runs once in the warm snapshot, after the clone and before any agent.
+bootstrap:
+  command: npm ci
+
+# Factoree runs each command in the check sprite. Every command must exit 0.
+verify:
+  commands:
+    - name: lint
+      run: npm run lint
+    - name: typecheck
+      run: npm run typecheck
+    - name: test
+      run: npm test
+    - name: build
+      run: npm run build
+
+# The preview that the user validator drives with a browser. Factoree waits for readyUrl.
+preview:
+  enabled: true
+  command: npm run dev -- --host 0.0.0.0 --port 5173
+  readyUrl: http://127.0.0.1:5173/
+  timeoutSeconds: 120
+
+# The sandbox image ships opencode, so every role runs on it. claude needs a sandbox with Claude Code.
+agents:
+  implementer: opencode
+  validator: opencode
+  reviewer: opencode
+
+# One budget of implementer repairs covers the whole run.
+repair:
+  maxAttempts: 2
+
+# The product sets the hosts an agent may reach. An empty list takes the whole product list. A
+# list here can only narrow it: a host the product does not allow is dropped.
+sandbox:
+  allowedDomains: []
+
+context:
+  backstage:
+    enabled: false
+  referenceRepositories:
+    automaticDiscovery: false
+
+# The names of product secrets this repository needs. The product holds the values.
+secrets:
+  require: []

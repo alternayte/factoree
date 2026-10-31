@@ -5,14 +5,15 @@
  * as the human operator: it creates a Linear issue and delegates it. The application itself
  * keeps its own Linear and GitHub credentials in the database, not in the environment.
  *
- * The infrastructure requirements name variables `src/config/env.ts` reads. A profile can
- * demand a variable be present, or demand it equal one exact value. `SANDBOX_ADAPTER` is the
- * second kind, because the wrong adapter value must be reported as wrong, not as absent.
+ * The infrastructure requirements name variables `src/config/env.ts` reads, and install settings
+ * the worker reads from the database. A profile can demand a value be present, or demand it
+ * equal one exact value. The sandbox provider is the second kind, because the wrong provider
+ * must be reported as wrong, not as absent.
  */
 export type RequirementKind = "present" | "equals";
 
 export interface LiveRequirement {
-  /** The environment variable name. */
+  /** The environment variable name, or an `install.*` name of `install-facts.ts`. */
   name: string;
   /** The dependency this requirement reaches. */
   dependency: "linear" | "github" | "database" | "temporal" | "sandbox";
@@ -55,80 +56,102 @@ export const DRIVER_CREDENTIALS: LiveRequirement[] = [
 /** Every profile needs a real database and a real Temporal service to run the worker against. */
 export const COMMON_INFRASTRUCTURE_REQUIREMENTS: LiveRequirement[] = [
   {
-    name: "DATABASE_URL",
+    name: "FACTOREE_DATABASE_URL",
     dependency: "database",
     kind: "present",
     description: "The PostgreSQL connection string src/config/env.ts requires.",
   },
   {
-    name: "TEMPORAL_ADDRESS",
+    name: "FACTOREE_TEMPORAL_ADDRESS",
     dependency: "temporal",
     kind: "present",
     description: "The host and port of the Temporal service src/config/env.ts reads.",
   },
   {
-    name: "TEMPORAL_NAMESPACE",
+    name: "FACTOREE_TEMPORAL_NAMESPACE",
     dependency: "temporal",
     kind: "present",
     description: "The Temporal namespace src/config/env.ts reads.",
   },
 ];
 
-/** The `local` profile must prove the worker selects the local sandbox adapter. */
-export const LOCAL_SANDBOX_REQUIREMENT: LiveRequirement = {
-  name: "SANDBOX_ADAPTER",
-  dependency: "sandbox",
-  kind: "equals",
-  value: "local",
-  description: "src/config/env.ts must select the local sandbox adapter for this profile.",
-};
+/**
+ * docs/specs/release-0-1-0.md. The sandbox provider and its key are install settings in the
+ * database, not environment values. `install-facts.ts` reads them under these names, so a
+ * requirement checks what the worker actually reads.
+ */
+export const INSTALL_SANDBOX_PROVIDER = "install.sandbox.provider";
+export const INSTALL_SANDBOX_API_KEY = "install.sandbox.apiKey";
+export const INSTALL_SANDBOX_URL = "install.sandbox.url";
+export const INSTALL_SANDBOX_IMAGE = "install.sandbox.image";
+
+/**
+ * The `local` profile must prove the worker selects the local sandbox adapter, and that the
+ * worker accepts it: the settings refuse the local provider without the unsafe opt in.
+ */
+export const LOCAL_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
+  {
+    name: INSTALL_SANDBOX_PROVIDER,
+    dependency: "sandbox",
+    kind: "equals",
+    value: "local",
+    description: "The install settings must name the local sandbox provider for this profile.",
+  },
+  {
+    name: "FACTOREE_UNSAFE_LOCAL_SANDBOX",
+    dependency: "sandbox",
+    kind: "equals",
+    value: "1",
+    description: "The worker accepts the local sandbox only with this opt in, on a development machine.",
+  },
+];
 
 /** The `sprite` and `full` profiles must prove the worker uses a real Fly Sprite. */
 export const SPRITE_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
   {
-    name: "SANDBOX_ADAPTER",
+    name: INSTALL_SANDBOX_PROVIDER,
     dependency: "sandbox",
     kind: "equals",
     value: "fly-sprites",
-    description: "src/config/env.ts must select the Fly Sprites sandbox adapter for this profile.",
+    description: "The install settings must name the Fly Sprites sandbox provider for this profile.",
   },
   {
-    name: "SPRITES_TOKEN",
+    name: INSTALL_SANDBOX_API_KEY,
     dependency: "sandbox",
     kind: "present",
-    description: "The Fly.io token src/config/env.ts requires when SANDBOX_ADAPTER is fly-sprites.",
+    description: "The Fly.io token, stored in Settings > Install.",
   },
 ];
 
 /**
- * docs/specs/kiln-sandbox-provider.md. With SANDBOX_ADAPTER=kiln, the `full` profile proves the
+ * docs/specs/kiln-sandbox-provider.md. With the Kiln provider, the `full` profile proves the
  * worker uses a real Kiln sandbox from the Factoree sandbox image.
  */
 export const KILN_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
   {
-    name: "SANDBOX_ADAPTER",
+    name: INSTALL_SANDBOX_PROVIDER,
     dependency: "sandbox",
     kind: "equals",
     value: "kiln",
-    description: "src/config/env.ts must select the Kiln sandbox adapter for this profile.",
+    description: "The install settings must name the Kiln sandbox provider for this profile.",
   },
   {
-    name: "KILN_URL",
+    name: INSTALL_SANDBOX_URL,
     dependency: "sandbox",
     kind: "present",
-    description: "The Kiln host src/config/env.ts requires when SANDBOX_ADAPTER is kiln.",
+    description: "The Kiln host, stored in Settings > Install.",
   },
   {
-    name: "KILN_API_KEY",
+    name: INSTALL_SANDBOX_API_KEY,
     dependency: "sandbox",
     kind: "present",
-    description: "A key of the Factoree tenant on the Kiln host.",
+    description: "A key of the Factoree tenant on the Kiln host, stored in Settings > Install.",
   },
   {
-    name: "KILN_IMAGE",
+    name: INSTALL_SANDBOX_IMAGE,
     dependency: "sandbox",
     kind: "present",
-    description: "The Factoree sandbox image by digest, from the sandbox-image workflow.",
+    description: "The Factoree sandbox image by digest: the image override, or the image the release pins.",
   },
 ];
 

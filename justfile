@@ -6,13 +6,14 @@ node_path := "/opt/homebrew/opt/node@24/bin"
 default:
     @just --list
 
-# Install the npm dependencies, then generate the Prisma client.
+# Install the npm dependencies of the API and of the UI, then generate the Prisma client.
 install:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{node_path}}:$PATH"
     npm ci
-    export DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)"
+    npm ci --prefix ui
+    export FACTOREE_DATABASE_URL="$(grep -m1 '^FACTOREE_DATABASE_URL=' .env | cut -d= -f2-)"
     npm run db:generate
 
 # Start the local PostgreSQL container and wait for it to accept a connection.
@@ -39,7 +40,7 @@ migrate:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{node_path}}:$PATH"
-    export DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)"
+    export FACTOREE_DATABASE_URL="$(grep -m1 '^FACTOREE_DATABASE_URL=' .env | cut -d= -f2-)"
     npm run db:migrate
 
 # Start a public tunnel to the local HTTP API, so a real Linear webhook can reach it.
@@ -95,25 +96,8 @@ smoke *ARGS:
     npm run build
     node tools/local/sandbox-smoke.mjs {{ARGS}}
 
-# Run the Linear OAuth flow once, then store the installation with its refresh token.
-linear-auth:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export PATH="{{node_path}}:$PATH"
-    while IFS="=" read -r key value; do
-        [[ -z "${key}" || -z "${value}" || "${key}" == \#* ]] && continue
-        export "${key}=${value}"
-    done < .env
-    node tools/local/linear-auth.mjs
-
-# Register the Linear installation, the Project, the secret, and the context sources.
-bootstrap:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export PATH="{{node_path}}:$PATH"
-    ./tools/local/bootstrap.sh
-
-# Start the HTTP API with the local environment file.
+# Start the HTTP API and the UI with the local environment file. Until setup ends, the log names
+# the one-time setup token. Open FACTOREE_PUBLIC_URL/setup and enter it.
 api:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -123,7 +107,25 @@ api:
         export "${key}=${value}"
     done < .env
     npm run build
+    npm run ui:build
     node dist/bin/api.js
+
+# Write the OpenAPI document from the route schemas, then the UI client from the document.
+gen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    npm run build
+    node dist/bin/openapi.js > api/openapi.json
+    npm --prefix ui run gen:api
+
+# Fail when api/openapi.json or the UI client differs from what `just gen` writes.
+gen-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    npm run build
+    npm run gen:check
 
 # Run the full non-live verification, one stage at a time, with a real aggregate exit code.
 verify:
@@ -146,15 +148,42 @@ verify:
         fi
     }
 
+    run_stage migrations ./checks/migrations.sh
     run_stage lint npm run lint
     run_stage typecheck npm run typecheck
     run_stage unit npm test
     run_stage build npm run build
+    run_stage ui-lint npm run ui:lint
+    run_stage ui-build npm run ui:build
+    run_stage gen-check npm run gen:check
     run_stage integration npm run test:integration
     run_stage workflow npm run test:workflow
 
     rm -f "${log}"
     exit "${status}"
+
+# Docker must run. Pass a ref to upgrade from another commit, for example: just upgrade-test v0.1.0
+# Migrate a database of the previous release tag, or of REF, to the working tree.
+upgrade-test *REF:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{node_path}}:$PATH"
+    ./scripts/upgrade-test.sh {{REF}}
+
+# Build the factoree image from the working tree as factoree:dev.
+image:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker build -f deploy/docker/Dockerfile \
+        --build-arg VERSION="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' package.json)-dev" \
+        --build-arg COMMIT="$(git rev-parse HEAD)" \
+        --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -t factoree:dev .
+
+# Lint and render the Helm chart.
+chart:
+    helm lint deploy/helm/factoree
+    helm template factoree deploy/helm/factoree >/dev/null
 
 # Run the live acceptance scenario against local infrastructure.
 live-local:

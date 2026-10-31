@@ -6,7 +6,12 @@ import type { Logger } from "~/telemetry/logger.js";
 
 export const registerLinearWebhookRoutes = (
   app: FastifyInstance,
-  dependencies: { secret: string; delegation: DelegationService; logger: Logger },
+  dependencies: {
+    /** docs/specs/release-0-1-0.md. The webhook secret of the Linear app, read for each delivery. */
+    secret: () => Promise<string | null>;
+    delegation: DelegationService;
+    logger: Logger;
+  },
 ): void => {
   app.post("/webhooks/linear", async (request, reply) => {
     // The JSON content type parser always stores the exact bytes. Reconstructing the body
@@ -18,10 +23,15 @@ export const registerLinearWebhookRoutes = (
     }
     const parsedBody = request.body as { webhookTimestamp?: number; webhookId?: string } | undefined;
 
+    const secret = await dependencies.secret();
+    if (secret === null) {
+      dependencies.logger.warn("rejected Linear webhook", { step: "receive", reason: "no_webhook_secret" });
+      return reply.code(503).send({ error: "the install settings hold no Linear webhook secret" });
+    }
     const verified = verifyLinearSignature({
       rawBody,
       signature: request.headers["linear-signature"] as string | undefined,
-      secret: dependencies.secret,
+      secret,
       ...(parsedBody?.webhookTimestamp === undefined ? {} : { timestampMs: parsedBody.webhookTimestamp }),
     });
     if (!verified.ok) {

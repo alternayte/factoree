@@ -69,6 +69,7 @@ const build = () => {
   };
   const activities = createRunActivities({
     runs,
+    slots: { claim: () => Promise.resolve({ granted: true }) },
     logger: createLogger({ level: "error", redactor }),
     runners,
     agentSession,

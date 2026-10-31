@@ -64,6 +64,11 @@ class FakeProductRegistry implements ProductRegistry {
       allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
+      model: null,
+      effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+      silenceMinutes: 10,
+      sandboxRetentionHours: 24,
+      maxConcurrentRuns: 2,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -105,6 +110,10 @@ class FakeProductRegistry implements ProductRegistry {
   }
 
   updatePolicy(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
+  }
+
+  updateSettings(): Promise<ProductRecord | null> {
     return Promise.resolve(null);
   }
 
@@ -587,9 +596,9 @@ describe("AT-50 and AT-51: the real GitHub webhook route", () => {
 // already does.
 // ---------------------------------------------------------------------------------------------
 
-const privateKeyBase64 = (() => {
-  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  return Buffer.from(privateKey.export({ type: "pkcs8", format: "pem" }) as string).toString("base64");
+const privateKey = (() => {
+  const { privateKey: key } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return key.export({ type: "pkcs8", format: "pem" }) as string;
 })();
 
 /** A minimal fixture of the GitHub App token-mint endpoint and the repository-contents endpoint. */
@@ -641,7 +650,9 @@ describe("AT-52: the real token provider mints one token per installation", () =
   it("AT-52 mints a token per installation, and never shares one between two", async () => {
     const fixture = await startAppFixtureApi();
     try {
-      const tokens = new GitHubAppTokenProvider({ appId: "app-1", privateKeyBase64, apiBaseUrl: fixture.baseUrl });
+      const tokens = new GitHubAppTokenProvider({
+        credentials: () => Promise.resolve({ appId: "app-1", privateKey, apiBaseUrl: fixture.baseUrl }),
+      });
       const client = new GitHubRepositoryDiscoveryClient({ apiBaseUrl: fixture.baseUrl, tokens });
 
       // Two installations, read concurrently, each through the real client and the real
@@ -783,7 +794,9 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
   it("AT-53 clones and publishes with a minted token, and holds no Product GITHUB_TOKEN", async () => {
     secrets = new MemorySecretStore({});
     const redactor = new Redactor([]);
-    const tokens = new GitHubAppTokenProvider({ appId: "app-1", privateKeyBase64, apiBaseUrl: fixture.baseUrl });
+    const tokens = new GitHubAppTokenProvider({
+        credentials: () => Promise.resolve({ appId: "app-1", privateKey, apiBaseUrl: fixture.baseUrl }),
+      });
 
     const localCloneSeam = (input: TrustedCheckoutInput) => realPublishToBranch({ ...input, cloneUrl: remote.cloneUrl });
 
@@ -807,7 +820,7 @@ describe("AT-53: publication mints its write credential from the GitHub App", ()
       redactor,
       runs,
       pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: fixture.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
-      gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
+      gitAuthor: () => Promise.resolve({ name: "Factoree", email: "factoree@users.noreply.github.com" }),
       logger: createLogger({ level: "error", redactor, sink: () => undefined }),
       publishToBranch: localCloneSeam,
     });

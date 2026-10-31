@@ -4,7 +4,7 @@ const VERSION = "v1";
 
 const toKey = (keyHex: string): Buffer => {
   if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
-    throw new Error("FACTOREE_SECRET_KEY must be 32 bytes of hexadecimal");
+    throw new Error("FACTOREE_MASTER_KEY must be 32 bytes of hexadecimal");
   }
   return Buffer.from(keyHex, "hex");
 };

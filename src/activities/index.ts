@@ -1,5 +1,6 @@
 import type { Logger } from "~/telemetry/logger.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
+import type { RunSlots } from "~/domain/runs/run-slots.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
@@ -43,6 +44,8 @@ import { createDiscoveryActivities } from "./discovery.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
+  /** docs/specs/release-0-1-0.md, DI-15.13. The maxConcurrentRuns slots of each Product. */
+  runSlots: RunSlots;
   products: ProductRegistry;
   repositories: RepositoryRegistry;
   agentSession: AgentSessionPort;
@@ -71,7 +74,7 @@ export interface ActivityDependencies {
   reviewFindings: ReviewFindingStore;
   /** SDD section 46 step 9. The credential of the Project builds the port for each Run. */
   pullRequests: (token: string) => PullRequestPort;
-  gitAuthor: { name: string; email: string };
+  gitAuthor: () => Promise<{ name: string; email: string }>;
   logger: Logger;
   /**
    * Mints every GitHub installation token Factoree needs: the read-only clone credential, the
@@ -87,6 +90,7 @@ export interface ActivityDependencies {
 export const createActivities = (dependencies: ActivityDependencies) => ({
   ...createRunActivities({
     runs: dependencies.runs,
+    slots: dependencies.runSlots,
     logger: dependencies.logger,
     runners: dependencies.runners,
     agentSession: dependencies.agentSession,

@@ -1,0 +1,41 @@
+# Applies the Prisma migrations before an install or an upgrade starts the new pods. A failed Job
+# stops the release, so no pod runs against an unmigrated database.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "factoree.fullname" . }}-migrate
+  labels:
+    {{- include "factoree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "factoree.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      # A pre-install hook runs before the chart's ServiceAccount exists, so the Job uses the
+      # namespace default account. It needs no Kubernetes API access.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "factoree.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "factoree.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          env:
+            {{- include "factoree.databaseEnv" . | nindent 12 }}
+          securityContext:
+            {{- include "factoree.containerSecurityContext" . | nindent 12 }}
+          {{- with .Values.migrate.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- include "factoree.scheduling" . | nindent 6 }}

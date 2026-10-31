@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { GitHubAppTokenProvider, GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 
-const privateKeyBase64 = (() => {
-  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  return Buffer.from(privateKey.export({ type: "pkcs8", format: "pem" }) as string).toString("base64");
+const privateKey = (() => {
+  const { privateKey: key } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return key.export({ type: "pkcs8", format: "pem" }) as string;
 })();
+const credentials = () => Promise.resolve({ appId: "123456", privateKey, apiBaseUrl: "https://api.github.com" });
 
 const build = (overrides: { status?: number; expiresInMs?: number; now?: () => number } = {}) => {
   const calls: string[] = [];
   let minted = 0;
   const provider = new GitHubAppTokenProvider({
-    appId: "123456",
-    privateKeyBase64,
+    credentials,
     fetch: ((url: string) => {
       calls.push(String(url));
       if (overrides.status !== undefined && overrides.status !== 201) {
@@ -77,7 +77,7 @@ describe("GitHubAppTokenProvider", () => {
     const message = (error as Error).message;
     expect(message).toContain("42");
     expect(message).toContain("401");
-    expect(message).not.toContain(privateKeyBase64);
+    expect(message).not.toContain(privateKey);
     expect(message).not.toContain("PRIVATE KEY");
   });
 
@@ -88,8 +88,7 @@ describe("GitHubAppTokenProvider", () => {
       releaseFetch = resolve;
     });
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: (async () => {
         await gate;
@@ -114,8 +113,7 @@ describe("GitHubAppTokenProvider", () => {
   it("retries after a failed in-flight mint instead of replaying the failure", async () => {
     let attempt = 0;
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: (() => {
         attempt += 1;
@@ -148,8 +146,7 @@ describe("GitHubAppTokenProvider", () => {
   it("sends the requested permissions to the mint request", async () => {
     const bodies: string[] = [];
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: ((_url: string, init: RequestInit) => {
         bodies.push(typeof init.body === "string" ? init.body : "");
@@ -172,8 +169,7 @@ describe("GitHubAppTokenProvider", () => {
     const bodies: string[] = [];
     let minted = 0;
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: ((_url: string, init: RequestInit) => {
         bodies.push(typeof init.body === "string" ? init.body : "");
@@ -199,8 +195,7 @@ describe("GitHubAppTokenProvider", () => {
   it("never returns a cached write-scoped token for a read request", async () => {
     let minted = 0;
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: () => {
         minted += 1;
@@ -225,8 +220,7 @@ describe("GitHubAppTokenProvider", () => {
   it("reuses the cache of one scope without minting again", async () => {
     let minted = 0;
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: () => {
         minted += 1;
@@ -252,8 +246,7 @@ describe("GitHubAppTokenProvider", () => {
       releaseFetch = resolve;
     });
     const provider = new GitHubAppTokenProvider({
-      appId: "123456",
-      privateKeyBase64,
+      credentials,
       now: () => 0,
       fetch: async () => {
         await gate;

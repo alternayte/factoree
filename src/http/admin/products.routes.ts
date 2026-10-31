@@ -10,6 +10,20 @@ import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS, ProjectSecretKindError } from "~/domain/products/secret-store.js";
 import { assertRunnerCredential, RunnerCredentialError } from "~/domain/products/runner-credentials.js";
+import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
+import {
+  autonomyLevel,
+  productSchema,
+  productSettingsFields,
+  secretDescriptorSchema,
+  workspaceQuerySchema,
+} from "./schemas.js";
+
+const TAGS = ["products"];
+const productResponse = { 200: schemaOf(productSchema), 400: errorSchema, 403: errorSchema, 404: errorSchema };
+const idParams = schemaOf(z.object({ id: z.string() }));
+const secretParams = schemaOf(z.object({ id: z.string(), name: z.string() }));
+const workspaceQuery = schemaOf(workspaceQuerySchema);
 
 const createSchema = z
   .object({
@@ -26,8 +40,7 @@ const createSchema = z
   .strict();
 
 // docs/specs/autonomy-levels.md. SDD section 27 reserves L4, and Version 1 never merges, so no
-// operator can set it.
-const autonomyLevel = z.enum(["L0", "L1", "L2", "L3"]);
+// operator can set it. `autonomyLevel` in ./schemas.ts holds L0 to L3.
 
 const updateSchema = z
   .object({
@@ -46,6 +59,8 @@ const updateSchema = z
         return z.NEVER;
       }
     }),
+    // docs/specs/release-0-1-0.md. The model, the effort, the silence limit, retention and concurrency.
+    ...productSettingsFields,
   })
   .partial()
   .strict();
@@ -79,9 +94,21 @@ export interface ProductRouteDependencies {
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
+  useSchemasAsDocumentation(app);
   const resolveTenant = async (linearWorkspaceId: string) => dependencies.tenants.findByWorkspace(linearWorkspaceId);
 
-  app.post("/admin/products", async (request, reply) => {
+  app.post(
+    "/admin/products",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "createProduct",
+        security: SESSION_SECURITY,
+        body: schemaOf(createSchema),
+        response: { 201: schemaOf(productSchema), 400: errorSchema, 404: errorSchema, 409: errorSchema },
+      },
+    },
+    async (request, reply) => {
     const parsed = createSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const tenant = await dependencies.tenants.ensureTenant(parsed.data.linearWorkspaceId, parsed.data.workspaceName);
@@ -119,17 +146,42 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       }
       throw error;
     }
-  });
+  },
+  );
 
-  app.get("/admin/products", async (request, reply) => {
+  app.get(
+    "/admin/products",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "listProducts",
+        security: SESSION_SECURITY,
+        querystring: workspaceQuery,
+        response: { 200: schemaOf(z.array(productSchema)), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
     const parsed = tenantQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
     return dependencies.products.list(tenant.id);
-  });
+  },
+  );
 
-  app.get<{ Params: { id: string } }>("/admin/products/:id", async (request, reply) => {
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "getProduct",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        response: productResponse,
+      },
+    },
+    async (request, reply) => {
     const parsed = tenantQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
@@ -137,9 +189,23 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     const product = await dependencies.products.findById(tenant.id, request.params.id);
     if (!product) return reply.code(404).send({ error: "product not found" });
     return product;
-  });
+  },
+  );
 
-  app.put<{ Params: { id: string } }>("/admin/products/:id", async (request, reply) => {
+  app.put<{ Params: { id: string } }>(
+    "/admin/products/:id",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "updateProduct",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        body: schemaOf(updateSchema),
+        response: { ...productResponse, 422: errorSchema },
+      },
+    },
+    async (request, reply) => {
     const query = tenantQuerySchema.safeParse(request.query);
     const body = updateSchema.safeParse(request.body);
     if (!query.success) return reply.code(400).send({ error: "invalid request" });
@@ -168,6 +234,24 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       });
       if (!product) return reply.code(404).send({ error: "product not found" });
     }
+    if (
+      body.data.model !== undefined ||
+      body.data.effort !== undefined ||
+      body.data.silenceMinutes !== undefined ||
+      body.data.sandboxRetentionHours !== undefined ||
+      body.data.maxConcurrentRuns !== undefined
+    ) {
+      product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
+        ...(body.data.model === undefined ? {} : { model: body.data.model }),
+        ...(body.data.effort === undefined ? {} : { effort: body.data.effort }),
+        ...(body.data.silenceMinutes === undefined ? {} : { silenceMinutes: body.data.silenceMinutes }),
+        ...(body.data.sandboxRetentionHours === undefined
+          ? {}
+          : { sandboxRetentionHours: body.data.sandboxRetentionHours }),
+        ...(body.data.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: body.data.maxConcurrentRuns }),
+      });
+      if (!product) return reply.code(404).send({ error: "product not found" });
+    }
     if (body.data.organizationSkillsRepository !== undefined) {
       product = await dependencies.products.updateOrganizationSkillsRepository(
         tenant.id,
@@ -179,9 +263,22 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (product === null) product = await dependencies.products.findById(tenant.id, request.params.id);
     if (!product) return reply.code(404).send({ error: "product not found" });
     return product;
-  });
+  },
+  );
 
-  app.delete<{ Params: { id: string } }>("/admin/products/:id", async (request, reply) => {
+  app.delete<{ Params: { id: string } }>(
+    "/admin/products/:id",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "deleteProduct",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        response: { 204: { type: "null" }, 404: errorSchema, 409: errorSchema },
+      },
+    },
+    async (request, reply) => {
     const query = tenantQuerySchema.safeParse(request.query);
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
@@ -205,9 +302,23 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     const removed = await dependencies.products.remove(tenant.id, request.params.id);
     if (!removed) return reply.code(404).send({ error: "product not found" });
     return reply.code(204).send();
-  });
+  },
+  );
 
-  app.post<{ Params: { id: string } }>("/admin/products/:id/activate", async (request, reply) => {
+  app.post<{ Params: { id: string } }>(
+    "/admin/products/:id/activate",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "activateProduct",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        body: schemaOf(activateSchema),
+        response: productResponse,
+      },
+    },
+    async (request, reply) => {
     const query = tenantQuerySchema.safeParse(request.query);
     const body = activateSchema.safeParse(request.body);
     if (!query.success || !body.success) return reply.code(400).send({ error: "invalid request" });
@@ -221,7 +332,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     const product = await dependencies.products.activate(tenant.id, request.params.id, body.data.defaultAutonomy);
     if (!product) return reply.code(404).send({ error: "product not found" });
     return product;
-  });
+  },
+  );
 
   // Discovery owns the Repository row: a repository declares itself in its own
   // `.factoree/config.yaml`. No route here creates, updates, or deletes one.
@@ -235,7 +347,44 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     return dependencies.repositories.listByProduct(product.id);
   });
 
-  app.put<{ Params: { id: string; name: string } }>("/admin/products/:id/secrets/:name", async (request, reply) => {
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id/secrets",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "listProductSecrets",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        response: { 200: schemaOf(z.array(secretDescriptorSchema)), 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const parsed = tenantQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      // Names, kinds and marks only. A secret value never leaves the store through the API.
+      return dependencies.secrets.list(tenant.id, product.id);
+    },
+  );
+
+  app.put<{ Params: { id: string; name: string } }>(
+    "/admin/products/:id/secrets/:name",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "putProductSecret",
+        security: SESSION_SECURITY,
+        params: secretParams,
+        querystring: workspaceQuery,
+        body: schemaOf(secretBodySchema),
+        response: { 204: { type: "null" }, 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
     const query = tenantQuerySchema.safeParse(request.query);
     // Specification section 30. The Implementer receives a Product secret only when the operator
     // marks it here. The mark defaults to false, so an unmarked secret stays out of the sandbox.
@@ -263,10 +412,21 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       kind: body.data.kind,
     });
     return reply.code(204).send();
-  });
+  },
+  );
 
   app.delete<{ Params: { id: string; name: string } }>(
     "/admin/products/:id/secrets/:name",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "deleteProductSecret",
+        security: SESSION_SECURITY,
+        params: secretParams,
+        querystring: workspaceQuery,
+        response: { 204: { type: "null" }, 404: errorSchema },
+      },
+    },
     async (request, reply) => {
       const query = tenantQuerySchema.safeParse(request.query);
       if (!query.success) return reply.code(400).send({ error: query.error.flatten() });

@@ -43,7 +43,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
 
   try {
     execFileSync("npx", ["prisma", "migrate", "deploy"], {
-      env: { ...process.env, DATABASE_URL: url },
+      env: { ...process.env, FACTOREE_DATABASE_URL: url },
       stdio: "inherit",
     });
   } catch (error) {

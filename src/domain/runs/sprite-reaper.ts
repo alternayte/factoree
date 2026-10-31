@@ -25,7 +25,8 @@ export interface SpriteReaperOptions {
   onDestroyed?: (entry: ExpiredSandbox) => void;
 }
 
-const DEFAULT_WORKSPACE_PATH = "/home/sprite/workspace";
+/** The one workspace path every adapter uses. A delete needs a complete `SandboxRef`. */
+export const DEFAULT_WORKSPACE_PATH = "/home/sprite/workspace";
 const DEFAULT_BATCH_SIZE = 50;
 
 /**

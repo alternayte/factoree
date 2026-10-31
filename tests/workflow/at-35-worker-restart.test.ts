@@ -26,6 +26,8 @@ const activities = {
     return { runId: `run-${input.linearAgentSessionId}`, created: createCalls.length === 1 };
   },
   setRunStatus: async () => undefined,
+  // DI-15.13. The Product has a free slot.
+  claimRunSlot: async () => ({ granted: true }),
   setRunAutonomyLevel: async () => undefined,
   // Specification section 10. This Run holds one repository, so `selectTarget` never gates it,
   // and the double only needs to return a target id.

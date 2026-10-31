@@ -1,6 +1,7 @@
 name: sandbox-image
 # docs/specs/kiln-sandbox-provider.md. Builds sandbox/Dockerfile and publishes it to ghcr.io. The job
-# summary names the digest. KILN_IMAGE takes that digest, so every run records its exact toolchain.
+# summary names the digest. A development build pins no sandbox image, so its install settings take
+# this digest as the image override. A release builds its own and bakes it in (release.yml).
 on:
   push:
     branches: [main]
@@ -30,4 +31,4 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/factoree-sandbox:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/factoree-sandbox:latest
-      - run: echo "KILN_IMAGE=ghcr.io/${{ github.repository_owner }}/factoree-sandbox@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - run: echo "Sandbox image override: ghcr.io/${{ github.repository_owner }}/factoree-sandbox@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,211 @@
+name: release
+
+# docs/specs/release-0-1-0.md. A v*.*.* tag publishes one consistent release: the sandbox image,
+# the factoree image with that sandbox digest baked in, the Helm chart and the GitHub release.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Check out the repository.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check that the tag, package.json and Chart.yaml agree.
+        id: version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          bad=0
+          got=$(node -p 'require("./package.json").version')
+          [ "$got" = "$want" ] || { echo "::error::package.json version is ${got}, the tag is ${want}"; bad=1; }
+          grep -qx "version: ${want}" deploy/helm/factoree/Chart.yaml || { echo "::error::deploy/helm/factoree/Chart.yaml version is not ${want}"; bad=1; }
+          grep -qx "appVersion: \"${want}\"" deploy/helm/factoree/Chart.yaml || { echo "::error::deploy/helm/factoree/Chart.yaml appVersion is not ${want}"; bad=1; }
+          [ "$bad" -eq 0 ] || exit 1
+          echo "value=${want}" >> "$GITHUB_OUTPUT"
+
+      - name: Check that the CHANGELOG has a section for the version.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for ${version}"
+            exit 1
+          fi
+
+      - name: Check the released migrations.
+        run: ./checks/migrations.sh
+
+  # The sandbox image is linux/amd64 only: Chrome for Testing ships no linux arm64
+  # chrome-headless-shell, which sandbox/Dockerfile installs (DI-15.08).
+  sandbox-image:
+    name: sandbox-image
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - name: Check out the repository.
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry.
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push the sandbox image.
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: sandbox
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/factoree-sandbox:${{ needs.check.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/factoree-sandbox:${{ github.sha }}
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+      - name: Name the sandbox image by digest.
+        id: ref
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/factoree-sandbox@${{ steps.build.outputs.digest }}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "Sandbox image: \`${image}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  image:
+    name: image
+    needs: [check, sandbox-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the repository.
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU.
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry.
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Compute the image tags.
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/factoree
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - name: Read the build date.
+        id: date
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the image.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.check.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.date.outputs.value }}
+            SANDBOX_IMAGE=${{ needs.sandbox-image.outputs.image }}
+          cache-from: type=gha,scope=factoree
+          cache-to: type=gha,mode=max,scope=factoree
+
+      - name: Check the version of the pushed image.
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/factoree:${{ needs.check.outputs.version }}"
+          docker run --rm --platform linux/amd64 "$image" --version | tee version.txt
+          grep -q "factoree ${{ needs.check.outputs.version }} " version.txt
+
+  chart:
+    name: chart
+    needs: [check, image]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/chart.yml
+    with:
+      tag: ${{ github.ref_name }}
+
+  github-release:
+    name: github-release
+    needs: [check, sandbox-image, image, chart]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository.
+        uses: actions/checkout@v4
+
+      - name: Extract the release notes from the changelog.
+        run: |
+          version="${{ needs.check.outputs.version }}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no section for ${version}" >&2
+            exit 1
+          fi
+          {
+            echo
+            echo "### Artefacts"
+            echo
+            echo "- Image: \`ghcr.io/${{ github.repository_owner }}/factoree:${version}\`"
+            echo "- Sandbox image: \`${{ needs.sandbox-image.outputs.image }}\`"
+            echo "- Helm chart: \`oci://ghcr.io/${{ github.repository_owner }}/charts/factoree --version ${version}\`"
+          } >> notes.md
+
+      - name: Create the GitHub release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A tag with a suffix, such as v0.2.0-rc.1, is a prerelease. Any other tag is the latest.
+          flags="--latest"
+          case "${GITHUB_REF_NAME}" in *-*) flags="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file notes.md $flags

@@ -4,7 +4,7 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-The work queue is done. The owner reviews `hardening/review-fixes` and decides the merge. Open work R-10 and H-3, H-5 to H-15 stays below.
+Release 0.1.0 is built and staged, not committed. A human commits it, makes the repository public, pushes the tag `v0.1.0`, and runs the spec's live checks: setup with the browser OAuth flows on a clean machine, one c-dash run to READY_FOR_HUMAN, the sign-in and API key checks, `maxConcurrentRuns` 1 with two issues, and `sandboxMaxLive` at the live count with one retained sandbox. Drain the workers before the upgrade (DI-15.13). Open work R-10 and H-3, H-5 to H-12 and H-15 stays below.
 
 ## Work queue
 
@@ -21,12 +21,14 @@ The work queue is done. The owner reviews `hardening/review-fixes` and decides t
 | W-9 | DONE | Build `docs/specs/proof-pack-and-visual-evidence.md`. | W-8 | DI-14.20 to DI-14.26. FAC-52 on alternayte/c-dash (2026-10-31): READY_FOR_HUMAN, draft PR #12, inline screenshots from the check sprite, `proof-pack.json` equal to the admin API document. The "Preview" link waits for the App installation to accept Deployments read and the `deployment_status` event. |
 | W-10 | DONE | Build `docs/specs/kiln-sandbox-provider.md`. | W-9, alternayte/kiln#16 | DI-14.27 to DI-14.35. `SANDBOX_ADAPTER=kiln just live` passed all 11 §67 checks on FAC-56 (2026-10-31), Run b0bed25b, draft pull request alternayte/factoree-live-fixture#3, about 8 minutes from delegation. Kiln v0.9.5 fixed the snapshot deadline (alternayte/kiln#18). FAC-58 started both sprites from the warm snapshot, and preparation took 5 seconds. |
 | W-11 | DONE | Build `docs/specs/own-proposals-and-parallel-runs.md`. Closes H-14 and H-16. | W-10 | DI-14.36 to DI-14.38. `tests/unit/propose-target.test.ts`, `tests/unit/refiner-proposal.test.ts`, `tests/workflow/at-28-moved-base.test.ts`, `tests/workflow/target-selection.test.ts`, `tests/workflow/refiner.workflow.test.ts`, the moved-base case in `tests/integration/trusted-checkout.test.ts`. Live on 2026-10-31: `just live` on Kiln passed all 11 §67 checks on FAC-58, Run 9c2f8931, pull request alternayte/factoree-live-fixture#4, with no human answer. Factoree took three decisions (target, one implied criterion, one refiner answer), and the work sprite and the check sprite started from the warm snapshot. |
+| W-12 | DONE | Build part 2 of `docs/specs/release-0-1-0.md`: the `FACTOREE_` environment, install and Product settings in the database, `/setup`, sign-in with Linear, API keys, the OpenAPI document and the UI in `ui/`. Closes B-3. | W-11 | DI-14.49 to DI-14.56. `tests/unit/setup-token.test.ts`, `tests/integration/settings-and-access.test.ts`, `tests/unit/worker-redactor.test.ts`. `just verify` exit 0 (2026-10-31): unit 1343 passed and 7 skipped, integration 303, workflow 119. The manifest and OAuth redirects to github.com and linear.app were driven up to the redirect only. |
+| W-13 | DONE | Build parts 1 and 3 of `docs/specs/release-0-1-0.md` and join them with part 2: the release machinery (DI-15.01 to DI-15.10), the pinned sandbox image from the build info (DI-15.11), only `FACTOREE_DATABASE_URL` (DI-15.12), `QUEUED` and `maxConcurrentRuns` (DI-15.13), `sandboxMaxLive` (DI-15.14, DI-15.15). Closes H-13. | W-12 | `tests/integration/throughput-limits.test.ts`, `tests/workflow/run-queue.workflow.test.ts`, `tests/unit/sandbox-settings-problem.test.ts`. `just verify` exit 0 (2026-10-31): unit 1348 passed and 7 skipped, integration 319, workflow 124. |
 
 ## State at the last commit
 
-- Status: SDD §69 phases 1 to 12 are complete, and the two specs in `docs/specs/` are built except Change Sets (AT-44, AT-45). Version 1 is not done: 88 of the 99 §67 items pass, and the 11 "Live proof" items are `BLOCKED_EXTERNAL` (B-1).
-- Last verified run: `just verify` exit 0 on `hardening/review-fixes` after W-8 (2026-10-29). Unit 1294 passed and 7 skipped, integration 286, workflow 112.
-- The repository has the remote `origin`. No phase has pushed to it. Ask the human before a push.
+- Status: SDD §69 phases 1 to 12 are complete, and the specs in `docs/specs/` are built except Change Sets (AT-44, AT-45). Release 0.1.0 is built in the working tree and not committed. The §66 live proof passed on Kiln (W-10, W-11) before the release work.
+- Last verified run: `just verify` exit 0 on the uncommitted 0.1.0 working tree (2026-10-31). Unit 1348 passed and 7 skipped, integration 319, workflow 124.
+- The repository has the remote `origin`. No phase has pushed to it. Ask the human before a push, a tag or a change of visibility.
 
 ## Open work
 
@@ -59,7 +61,7 @@ Each item names the SDD section that it affects. The adversarial review of 2026-
 - H-11 §60: human-authored goal text is not redacted at every persistence boundary. `LinearEvidenceStorage` has never run against a live account. `head -c N -- path` is not verified on the Fly Sprites base image.
 
 - H-12 §10, §62: the SDD names OpenTelemetry and OTLP. The code uses `prom-client`. No runner gets a model, turn or spend limit. The cost part is CLOSED by `docs/specs/agent-session-usage-and-hangs.md`: the `AgentSession` table holds the tokens and the cost of each agent session, and the Proof Pack shows the totals.
-- H-13 §12: no LICENSE, README, Dockerfile or deploy manifest exists. `package.json` is private, and the justfile hardcodes a Homebrew Node path.
+- H-13 CLOSED by W-13. §12: no LICENSE, README, Dockerfile or deploy manifest existed. The release has all of them, the image, the Compose file and the Helm chart.
 - H-14 CLOSED by W-11. §10 of `docs/specs/multi-repo-tenancy.md`: `DelegationService` passes `repositoryProposal: null`, so a Product with more than one repository always asks a human for the target.
 - H-16 CLOSED by W-11. §46, §50: parallel Runs on one repository. Each Run proves one patch on one base SHA, and the publication check fails it with STALE_BASE when the branch moved (FAC-48, 2026-10-31: a merge into c-dash main during the Run). With several issues worked at once in separate sandboxes, every merge forces each other Run to be delegated again from nothing. The owner wants Runs that do not block each other or stop each other from opening a pull request. Grill: re-verify the same patch on the new base automatically, keep the human answers, and decide when a rebase conflict needs a human.
 - H-17 CLOSED by `docs/specs/agent-session-usage-and-hangs.md`. §33, §50: an agent CLI that stops writing output and does not exit hangs the Run until the budget ends. FAC-45, 2026-10-30: the free opencode model hit its quota, `opencode run` logged the error and kept running, and the activity kept heartbeating. Detect a session with no output for a bounded time and end it.
@@ -73,6 +75,8 @@ Each item names the SDD section that it affects. The adversarial review of 2026-
 - `CATEGORY_BY_REASON` is a total `Record` (DI-12.1). Classify a new failure reason. Do not make the type partial.
 - The ESLint ignore list is narrow. Do not widen `tests/live/*.mjs` to `**/*.mjs`.
 - The workflow never calls `destroySandbox`. The Sprite reaper deletes Sprites after retention. `harness.destroyed` is never populated, so do not assert on it.
+- Every sandbox create and delete goes through `SettingsSandbox`, which keeps the `SandboxLease` rows (DI-15.14). A path that calls a provider adapter directly breaks the `sandboxMaxLive` count.
+- A Run holds its `maxConcurrentRuns` slot until its status is terminal (DI-15.13). Every end of the workflow must still write a terminal status through `completeRun`.
 
 ## Known test behaviour
 
@@ -80,14 +84,18 @@ Each item names the SDD section that it affects. The adversarial review of 2026-
 - Never run two suites at the same time. Another project's testcontainers on the same Docker daemon can reset the shared PostgreSQL connection (`read ECONNRESET`), so rerun the stage alone before you debug it. Docker and Temporal test servers compete, and a whole verification run was lost this way.
 - `vitest.integration.config.ts` runs `tests/integration` and `tests/acceptance` with one PostgreSQL container per run. `global-setup.ts` migrates a template database, and each test gets a copy.
 - `vitest.workflow.config.ts` bundles the two workflows once in `global-setup.ts`. The workflow suite takes about 140 s.
+- The time-skipping test environment skips a workflow timer only while the test awaits `handle.result()`. A test that polls a query with `waitFor` across a `condition` timeout waits in real time.
 - `waitFor` in `tests/workflow/support/harness.ts` takes an optional `describe` callback. On a timeout it reports the poll count and the last observed value.
-- `npx prisma generate` needs a `DATABASE_URL`. Any value works.
+- `npx prisma generate` needs a `FACTOREE_DATABASE_URL`. Any value works.
 - A pipeline hides the exit code of the command before it. `just verify` runs each stage alone and returns a real aggregate exit code.
 
 ## Laptop flow
 
 - Node 24 LTS. `.nvmrc` names 24. The justfile puts `/opt/homebrew/opt/node@24/bin` first on `PATH`.
-- `just install`, `just up`, `just migrate`, `just temporal`, then `just worker` and `just api` in their own terminals.
+- `just install`, `just up`, `just migrate`, `just temporal`, then `just worker` and `just api` in their own terminals. `.env` holds infrastructure only (`.env.example`).
+- On a fresh database the API log line `setup is not complete. Open <url>/setup and enter the setup token <token>` names a one-time setup token. Open `FACTOREE_PUBLIC_URL/setup` and enter it. Setup stores the GitHub App, the Linear app, the sandbox provider and the first Product. After setup, sign in with Linear. Scripts send an API key from the API keys screen as `Authorization: Bearer`.
+- `just gen` writes `api/openapi.json` and the UI client in `ui/src/api`. `ui/` is its own npm project: `npm ci --prefix ui`.
+- `just image` builds `factoree:dev` from the working tree. `deploy/compose/compose.yml` runs it with `FACTOREE_IMAGE=factoree:dev`.
 - `docs/quickstart.md` runs one live local Run. `docs/live-acceptance.md` holds the three live profiles (`local`, `sprite`, `full`). Only `full` is §66 proof.
 
 ## Test layout
@@ -100,5 +108,5 @@ Each item names the SDD section that it affects. The adversarial review of 2026-
 
 ## How to run checks
 
-- `just verify` is the gate: lint, typecheck, unit, build, integration and workflow, one stage at a time. `npm run verify` stops at the first failing stage.
-- CI: `.github/workflows/ci.yml` runs `npm run verify` after `npx playwright install --with-deps chromium`.
+- `just verify` is the gate: lint, typecheck, unit, build, ui-lint, ui-build, gen-check, integration and workflow, one stage at a time. `npm run verify` stops at the first failing stage.
+- CI: `.github/workflows/ci.yml` runs `npm ci --prefix ui`, then `npm run verify` after `npx playwright install --with-deps chromium`.

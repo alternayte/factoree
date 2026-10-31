@@ -1,3 +1,4 @@
+import type { CliAgentRunnerOptions } from "~/adapters/runners/cli-agent-runner.js";
 import { OpenCodeRunner, type OpenCodeRunnerOptions } from "~/adapters/runners/opencode/opencode-runner.js";
 import { ClaudeCodeRunner } from "~/adapters/runners/claude-code/claude-code-runner.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
@@ -18,10 +19,15 @@ export const buildAgentRunnerRegistry = (
   redactor: Redactor,
   // docs/specs/kiln-sandbox-provider.md. `executable` is the root-owned CLI of the sandbox image.
   opencode: OpenCodeSettings = {},
-  // docs/specs/agent-session-usage-and-hangs.md. The silence limit of every session, from
-  // AGENT_SILENCE_MINUTES. Absent means the runner default of ten minutes.
-  sessions: { silenceLimitMs?: number } = {},
+  // docs/specs/agent-session-usage-and-hangs.md and docs/specs/release-0-1-0.md. The worker passes
+  // `settingsFor`, which reads the model, the effort and the silence limit of the Run's Product
+  // for each new session. A test passes a fixed silence limit instead.
+  sessions: Pick<CliAgentRunnerOptions, "silenceLimitMs" | "settingsFor"> = {},
 ): AgentRunnerRegistry => {
-  const shared = { redactor, ...(sessions.silenceLimitMs === undefined ? {} : { silenceLimitMs: sessions.silenceLimitMs }) };
+  const shared = {
+    redactor,
+    ...(sessions.silenceLimitMs === undefined ? {} : { silenceLimitMs: sessions.silenceLimitMs }),
+    ...(sessions.settingsFor === undefined ? {} : { settingsFor: sessions.settingsFor }),
+  };
   return new AgentRunnerRegistry([new OpenCodeRunner({ ...shared, ...opencode }), new ClaudeCodeRunner(shared)]);
 };

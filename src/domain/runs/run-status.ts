@@ -4,6 +4,9 @@ export const RUN_STATUSES = [
   "WAITING_FOR_INPUT",
   "RESOLVING_CONTEXT",
   "BUILDING_VALIDATION_CONTRACT",
+  // docs/specs/release-0-1-0.md. The Product runs its maxConcurrentRuns already. The Run waits
+  // here, before PREPARING, and starts in delegation order. DI-15.13.
+  "QUEUED",
   "PREPARING",
   "IMPLEMENTING",
   "VERIFYING",

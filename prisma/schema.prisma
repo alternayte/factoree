@@ -18,6 +18,7 @@ model Tenant {
   runs              Run[]
   webhooks          ProcessedWebhook[]
   warmSnapshots     WarmSnapshot[]
+  linearMembers     LinearMember[]
 }
 
 model GitHubInstallation {
@@ -110,6 +111,9 @@ model Run {
   createdAt                DateTime  @default(now())
   startedAt                DateTime?
   completedAt              DateTime?
+  // docs/specs/release-0-1-0.md, DI-15.13. The moment the Run took one of its Product's
+  // maxConcurrentRuns slots. A Run holds the slot until its status is terminal.
+  slotGrantedAt            DateTime?
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   evidence                 Evidence[]
@@ -120,7 +124,7 @@ model Run {
   targets                  RunTarget[]
 
   @@index([tenantId])
-  @@index([productId])
+  @@index([productId, status])
   @@index([spriteRetainUntil])
 }
 
@@ -380,6 +384,22 @@ model WarmSnapshot {
   @@unique([tenantId, adapter, repositoryUrl])
 }
 
+// docs/specs/release-0-1-0.md, DI-15.14. One live sandbox of a provider that Factoree created, from
+// the reservation before the create until the delete. sandboxMaxLive counts these rows.
+model SandboxLease {
+  id            String    @id @default(uuid())
+  adapter       String
+  runId         String
+  // Null between the reservation and the end of the create.
+  sandboxId     String?
+  createdAt     DateTime  @default(now())
+  // Set while a worker deletes this retained sandbox to free its slot.
+  evictingSince DateTime?
+
+  @@unique([adapter, sandboxId])
+  @@index([adapter, createdAt])
+}
+
 model Product {
   id             String   @id @default(uuid())
   tenantId       String
@@ -397,6 +417,20 @@ model Product {
   // R-4. The egress ceiling of every sandbox of this Product. A repository can only narrow it.
   allowedDomains String[] @default([])
   maxRunMinutes  Int      @default(90)
+  // docs/specs/release-0-1-0.md. The opencode model of every agent session of this Product, as
+  // `provider/model`. Null means the opencode default model.
+  model          String?
+  // The reasoning effort of each role. Null means the CLI default for that role.
+  effortImplementer String?
+  effortRefiner     String?
+  effortValidator   String?
+  effortReviewer    String?
+  // The silence limit: an agent session that writes no output for this many minutes is hung.
+  silenceMinutes Int      @default(10)
+  // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
+  sandboxRetentionHours Int @default(24)
+  // The most Runs of this Product that run at one time. The gate before PREPARING enforces it (DI-15.13).
+  maxConcurrentRuns Int   @default(2)
   // SDD section 16. A Product can define one organization-wide skills repository. The value is
   // an owner and repository slug, the same shape a Repository's `fullName` uses.
   organizationSkillsRepository String?
@@ -494,4 +528,160 @@ model ProductPolicyChange {
 
   @@index([productId])
   @@index([tenantId])
+}
+
+// docs/specs/release-0-1-0.md. The install settings. One row, with the id "install". Every
+// credential column holds AES-256-GCM cipher text under FACTOREE_MASTER_KEY. No value has an
+// environment fallback.
+model InstallSettings {
+  id                          String    @id @default("install")
+  githubAppId                 String?
+  githubAppSlug               String?
+  githubAppClientId           String?
+  githubAppClientSecretCipher String?
+  githubAppPrivateKeyCipher   String?
+  githubWebhookSecretCipher   String?
+  githubBaseUrl               String    @default("https://github.com")
+  githubApiBaseUrl            String    @default("https://api.github.com")
+  linearClientId              String?
+  linearClientSecretCipher    String?
+  linearWebhookSecretCipher   String?
+  // kiln, fly-sprites or local.
+  sandboxProvider             String?
+  // The Kiln host, or the Sprites API base URL. Null means the provider default.
+  sandboxUrl                  String?
+  sandboxApiKeyCipher         String?
+  // A sandbox image by digest. Null means the image the release pins.
+  sandboxImage                String?
+  sandboxRegistryUsername     String?
+  sandboxRegistryTokenCipher  String?
+  // The provider's limit of live sandboxes. The worker enforces it (DI-15.14). Null means no limit.
+  sandboxMaxLive              Int?
+  gitAuthorName               String    @default("Factoree")
+  gitAuthorEmail              String    @default("factoree@users.noreply.github.com")
+  // The SHA-256 of the one-time setup token. The token itself is never stored.
+  setupTokenHash              String?
+  // The tenant whose Linear workspace admins administer the install settings.
+  operatorTenantId            String?
+  setupCompletedAt            DateTime?
+  updatedAt                   DateTime  @updatedAt
+}
+
+// One Linear account of a signed-in user, as Linear reported it at the last sign-in. Factoree
+// writes this row, and better-auth never reads it.
+model LinearMember {
+  id           String   @id @default(uuid())
+  // The Linear user id. better-auth stores the same value as Account.accountId.
+  linearUserId String   @unique
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  admin        Boolean
+  checkedAt    DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// Every call of the administration API, with the user or the API key that made it.
+model AdminAuditEntry {
+  id         String   @id @default(uuid())
+  userId     String?
+  apiKeyId   String?
+  method     String
+  path       String
+  statusCode Int
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// better-auth. The models and fields follow better-auth 1.7 and its api-key plugin.
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean
+  image         String?
+  createdAt     DateTime
+  updatedAt     DateTime
+  sessions      Session[]
+  accounts      Account[]
+
+  @@map("auth_user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@index([userId])
+  @@map("auth_account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime
+  updatedAt  DateTime
+
+  @@index([identifier])
+  @@map("auth_verification")
+}
+
+model Apikey {
+  id                  String    @id
+  configId            String    @default("default")
+  name                String?
+  start               String?
+  referenceId         String
+  prefix              String?
+  key                 String
+  refillInterval      Int?
+  refillAmount        Int?
+  lastRefillAt        DateTime?
+  enabled             Boolean?  @default(true)
+  rateLimitEnabled    Boolean?  @default(true)
+  rateLimitTimeWindow Int?
+  rateLimitMax        Int?
+  requestCount        Int?      @default(0)
+  remaining           Int?
+  lastRequest         DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+  permissions         String?
+  metadata            String?
+
+  @@index([configId])
+  @@index([referenceId])
+  @@index([key])
+  @@map("auth_apikey")
 }

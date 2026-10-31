@@ -114,7 +114,7 @@ describe("LinearTokenProvider", () => {
       clock: () => new Date("2026-08-29T00:00:00Z").getTime(),
     });
 
-    await expect(provider.tokenFor("ws-1")).rejects.toThrow(/LINEAR_CLIENT_ID/);
+    await expect(provider.tokenFor("ws-1")).rejects.toThrow(/Settings > Install/);
   });
 
   it("keeps serving a token that still works when the refresh fails", async () => {

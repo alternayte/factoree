@@ -1,7 +1,6 @@
 import { createPrivateKey, createSign } from "node:crypto";
 import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
 
-const DEFAULT_API_BASE_URL = "https://api.github.com";
 /** Refresh under this margin. A long operation must not race the expiry boundary. */
 const REFRESH_MARGIN_MS = 300_000;
 
@@ -47,14 +46,32 @@ const cacheKey = (
 
 type CacheEntry = { token: string; expiresAtMs: number };
 
+/** The App identity. docs/specs/release-0-1-0.md: the install settings hold it. */
+export interface GitHubAppCredentials {
+  appId: string;
+  /** The PEM of the App private key. */
+  privateKey: string;
+  apiBaseUrl: string;
+}
+
 /** The fields a `GitHubAppTokenProvider` needs to mint a token for one installation. */
 export interface GitHubAppTokenProviderOptions {
-  appId: string;
-  privateKeyBase64: string;
-  apiBaseUrl?: string;
+  /** Read for each mint, so a changed App identity applies with no restart. */
+  credentials: () => Promise<GitHubAppCredentials>;
   fetch?: typeof fetch;
   now?: () => number;
 }
+
+/** Signs the App JWT. `iat` is backdated against clock skew. `exp` sits inside the ten-minute ceiling. */
+export const signGitHubAppJwt = (appId: string, privateKeyPem: string, nowMs: number): string => {
+  const header = base64Url(Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const seconds = Math.floor(nowMs / 1000);
+  const payload = base64Url(Buffer.from(JSON.stringify({ iat: seconds - 60, exp: seconds + 540, iss: appId })));
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${payload}`);
+  signer.end();
+  return `${header}.${payload}.${base64Url(signer.sign(createPrivateKey(privateKeyPem)))}`;
+};
 
 /**
  * Mints a GitHub App installation access token. The provider signs a short-lived App JWT with
@@ -99,33 +116,20 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
     return minted.token;
   }
 
-  /** Signs the App JWT. `iat` is backdated against clock skew. `exp` sits inside the ten-minute ceiling. */
-  private signJwt(nowMs: number): string {
-    const header = base64Url(Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })));
-    const seconds = Math.floor(nowMs / 1000);
-    const payload = base64Url(
-      Buffer.from(JSON.stringify({ iat: seconds - 60, exp: seconds + 540, iss: this.options.appId })),
-    );
-    const signer = createSign("RSA-SHA256");
-    signer.update(`${header}.${payload}`);
-    signer.end();
-    const key = createPrivateKey(Buffer.from(this.options.privateKeyBase64, "base64").toString("utf8"));
-    return `${header}.${payload}.${base64Url(signer.sign(key))}`;
-  }
-
   private async mint(
     githubInstallationId: string,
     nowMs: number,
     scope: GitHubTokenScope | undefined,
     repositories: string[] | undefined,
   ): Promise<CacheEntry> {
-    const base = (this.options.apiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+    const credentials = await this.options.credentials();
+    const base = credentials.apiBaseUrl.replace(/\/+$/, "");
     const url = `${base}/app/installations/${githubInstallationId}/access_tokens`;
     const fetchImpl = this.options.fetch ?? fetch;
     const response = await fetchImpl(url, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${this.signJwt(nowMs)}`,
+        authorization: `Bearer ${signGitHubAppJwt(credentials.appId, credentials.privateKey, nowMs)}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
         ...(scope === undefined && repositories === undefined ? {} : { "content-type": "application/json" }),

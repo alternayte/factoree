@@ -93,7 +93,7 @@ export interface WorkSandbox {
 /** docs/specs/check-isolation.md. The preparation input of the Run, and the work sprite to read. */
 export interface PrepareCheckSandboxActivityInput extends PrepareSandboxActivityInput {
   work: WorkSandbox;
-  /** The check sprite of the previous attempt, destroyed once the new one exists. */
+  /** The check sprite of the previous attempt, destroyed before the new one starts. */
   previous: { spriteId: string; adapter: string; workspacePath: string } | null;
   attempt: number;
 }
@@ -363,6 +363,21 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
         baseSha: input.work.baseSha,
       });
 
+      // The check sprite of the previous attempt checked a patch the repair replaced. It goes
+      // before the new one starts, so one Run holds at most two live sandboxes and a Run at the
+      // provider limit never waits on a slot its own old sprite holds (DI-15.14).
+      if (input.previous !== null) {
+        const previous = input.previous;
+        const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
+          dependencies.sandbox.destroy({
+            id: previous.spriteId,
+            adapter: previous.adapter,
+            workspacePath: previous.workspacePath,
+          }),
+        );
+        if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
+      }
+
       let applied: VerifiedPatch | null = null;
       const prepared = await build(dependencies, input, async (ref, primaryPath) => {
         await applyPatch(patchDependencies, {
@@ -385,18 +400,6 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
           dependencies.sandboxManager.release(prepared),
         );
         throw new PatchError("the check sprite did not check out the base SHA of the work sprite");
-      }
-
-      if (input.previous !== null) {
-        const previous = input.previous;
-        const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
-          dependencies.sandbox.destroy({
-            id: previous.spriteId,
-            adapter: previous.adapter,
-            workspacePath: previous.workspacePath,
-          }),
-        );
-        if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
       }
 
       metrics.sandboxesCreated.inc({

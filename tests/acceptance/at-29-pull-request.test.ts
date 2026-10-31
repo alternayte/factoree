@@ -127,7 +127,7 @@ beforeAll(async () => {
     redactor,
     runs,
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
-    gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
+    gitAuthor: () => Promise.resolve({ name: "Factoree", email: "factoree@users.noreply.github.com" }),
     logger: createLogger({ level: "debug", redactor, sink: (line) => logLines.push(line) }),
     publishToBranch: seam,
   });
@@ -264,7 +264,7 @@ describe("AT-29: the publication opens exactly one evidence-bearing pull request
       runs: memoryRuns(),
       pullRequests: (token: string) =>
         new GitHubPullRequests({ apiBaseUrl: hostileApi.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
-      gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
+      gitAuthor: () => Promise.resolve({ name: "Factoree", email: "factoree@users.noreply.github.com" }),
       logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
       publishToBranch: (value: TrustedCheckoutInput) => {
         attempted.push(value.cloneUrl);

@@ -34,6 +34,11 @@ class FakeProductRegistry implements ProductRegistry {
       allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
+      model: null,
+      effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+      silenceMinutes: 10,
+      sandboxRetentionHours: 24,
+      maxConcurrentRuns: 2,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -86,6 +91,10 @@ class FakeProductRegistry implements ProductRegistry {
   }
 
   updatePolicy(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
+  }
+
+  updateSettings(): Promise<ProductRecord | null> {
     return Promise.resolve(null);
   }
 

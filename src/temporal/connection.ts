@@ -10,15 +10,15 @@ import { agentRunWorkflow, humanInputSignal, stopSignal } from "~/workflows/agen
 import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/workflows/sync-installation.workflow.js";
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 
-const tlsOptions = (env: Env) => (env.TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.TEMPORAL_API_KEY });
+const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
 
 export const createTemporalClient = async (env: Env): Promise<Client> => {
-  const connection = await Connection.connect({ address: env.TEMPORAL_ADDRESS, ...tlsOptions(env) });
-  return new Client({ connection, namespace: env.TEMPORAL_NAMESPACE });
+  const connection = await Connection.connect({ address: env.FACTOREE_TEMPORAL_ADDRESS, ...tlsOptions(env) });
+  return new Client({ connection, namespace: env.FACTOREE_TEMPORAL_NAMESPACE });
 };
 
 export const createWorkerConnection = async (env: Env): Promise<NativeConnection> =>
-  NativeConnection.connect({ address: env.TEMPORAL_ADDRESS, ...tlsOptions(env) });
+  NativeConnection.connect({ address: env.FACTOREE_TEMPORAL_ADDRESS, ...tlsOptions(env) });
 
 // A signal for a workflow that is not running is a normal outcome, not a request failure.
 // The Run already ended, or the stop arrived before the start.

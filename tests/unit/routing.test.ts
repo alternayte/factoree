@@ -17,6 +17,11 @@ const product = (id: string, linearTeamId: string): ProductRecord => ({
   allowedDomains: [],
   maxRunMinutes: 90,
   organizationSkillsRepository: null,
+  model: null,
+  effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+  silenceMinutes: 10,
+  sandboxRetentionHours: 24,
+  maxConcurrentRuns: 2,
   createdAt: new Date(),
   updatedAt: new Date(),
 });

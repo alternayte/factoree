@@ -25,7 +25,7 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - Provider SDKs live in `src/adapters` only. ESLint refuses them in `src/domain` and `src/workflows`.
 - Code in `src/workflows` must stay deterministic for Temporal replay. Side effects go in `src/activities`.
 - Imports use the `~/` alias for `src`. `npm run build` rewrites it with tsc-alias.
-- `npx prisma generate` needs a DATABASE_URL. Any value works.
+- `npx prisma generate` needs a FACTOREE_DATABASE_URL. Any value works.
 - An agent claim is never evidence. Factoree runs the checks and decides from the artefacts.
 
 ## Domain words

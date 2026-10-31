@@ -116,10 +116,16 @@ export interface Sandbox {
   readonly name: string;
   readonly capabilities: SandboxCapabilities;
   /** The sandbox image by digest, when `supportsCustomImage` is true. */
-  readonly image?: string;
+  readonly image?: string | undefined;
   /** Present only when the adapter can start a sandbox from a warm snapshot. */
-  readonly warmSnapshots?: WarmSnapshots;
+  readonly warmSnapshots?: WarmSnapshots | undefined;
 
+  /**
+   * docs/specs/release-0-1-0.md. Re-reads the provider settings, so the next sandbox uses the
+   * provider the install settings name now. `SandboxManager` calls it before it prepares a
+   * sandbox. An adapter with fixed settings leaves it out.
+   */
+  refresh?(): Promise<void>;
   create(input: SandboxCreateInput): Promise<SandboxRef>;
   /**
    * Holds an environment that every later `exec` and `startProcess` on this sandbox receives.

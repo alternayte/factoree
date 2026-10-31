@@ -195,7 +195,7 @@ const build = (options: {
     redactor,
     runs,
     pullRequests: () => pullRequests,
-    gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
+    gitAuthor: () => Promise.resolve({ name: "Factoree", email: "factoree@users.noreply.github.com" }),
     logger: createLogger({ level: "debug", redactor, sink: (line) => lines.push(line) }),
     publishToBranch,
   };

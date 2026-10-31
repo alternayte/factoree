@@ -84,6 +84,7 @@ describe("buildImplementerInput", () => {
       ["ADMIN_API_TOKEN", "reject"],
       ["ADMIN_TOKEN", "reject"],
       ["FACTOREE_ADMIN_KEY", "reject"],
+      ["FACTOREE_MASTER_KEY", "reject"],
       ["FACTOREE_SECRET_KEY", "reject"],
       ["GH", "reject"],
       ["GH_PAT", "reject"],

@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import { registerProductRoutes } from "~/http/admin/products.routes.js";
-import type { CreateProductInput, ProductRecord, ProductRegistry } from "~/domain/products/product-registry.js";
+import type { CreateProductInput, ProductRecord, ProductRegistry, ProductSettingsUpdate } from "~/domain/products/product-registry.js";
 import type {
   RepositoryRecord,
   RepositoryRegistry,
@@ -58,6 +58,11 @@ class FakeProductRegistry implements ProductRegistry {
       allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 90,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
+      model: null,
+      effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+      silenceMinutes: 10,
+      sandboxRetentionHours: 24,
+      maxConcurrentRuns: 2,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -139,6 +144,22 @@ class FakeProductRegistry implements ProductRegistry {
       ...row,
       ...(policy.defaultAutonomy === undefined ? {} : { defaultAutonomy: policy.defaultAutonomy }),
       ...(policy.riskCaps === undefined ? {} : { riskCaps: policy.riskCaps }),
+    };
+    this.rows.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
+  updateSettings(tenantId: string, id: string, settings: ProductSettingsUpdate): Promise<ProductRecord | null> {
+    const row = this.rows.get(id);
+    if (!row || row.tenantId !== tenantId) return Promise.resolve(null);
+    const effort = Object.fromEntries(Object.entries(settings.effort ?? {}).filter(([, value]) => value !== undefined));
+    const updated: ProductRecord = {
+      ...row,
+      ...(settings.model === undefined ? {} : { model: settings.model }),
+      effort: { ...row.effort, ...effort },
+      ...(settings.silenceMinutes === undefined ? {} : { silenceMinutes: settings.silenceMinutes }),
+      ...(settings.sandboxRetentionHours === undefined ? {} : { sandboxRetentionHours: settings.sandboxRetentionHours }),
+      ...(settings.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: settings.maxConcurrentRuns }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "factoree.fullname" . }}-api
+  labels:
+    {{- include "factoree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "factoree.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "factoree.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "factoree.serviceAccountName" . }}
+      securityContext:
+        {{- include "factoree.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "factoree.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["api"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          env:
+            {{- include "factoree.env" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            {{- include "factoree.containerSecurityContext" . | nindent 12 }}
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- include "factoree.scheduling" . | nindent 6 }}

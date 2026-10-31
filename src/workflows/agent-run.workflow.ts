@@ -42,6 +42,9 @@ import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias.
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
+// The workflow bundler resolves a relative path only. Both modules import nothing at run time.
+import { SANDBOX_SLOT_UNAVAILABLE_TYPE } from "../domain/runs/sandbox-slot-error.js";
+import { queuedMessage } from "../domain/runs/run-slots.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
 import { buildRepositoryUrl } from "../domain/products/repository-url.js";
@@ -204,14 +207,33 @@ const buildSandboxActivities = (budgetMs: number) =>
     startToCloseTimeout: `${Math.min(PREPARE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
     // SDD section 49: a semantic failure must not consume the infrastructure retry policy. A
-    // configuration fault repeats on every attempt, so it fails fast.
+    // configuration fault repeats on every attempt, so it fails fast. A full sandbox provider is
+    // not a fault: the workflow waits for a slot itself (DI-15.14), so the retry policy must not
+    // spend its attempts on it.
     retry: {
       maximumAttempts: 3,
       initialInterval: "5 seconds",
       backoffCoefficient: 2,
-      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE],
+      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE, SANDBOX_SLOT_UNAVAILABLE_TYPE],
     },
   });
+
+/**
+ * docs/specs/release-0-1-0.md, DI-15.13. How often a queued Run asks for a slot of its Product.
+ * The Linear line changes only when the position changes.
+ */
+const RUN_SLOT_POLL_MS = 20_000;
+
+/** DI-15.14. How long a Run waits before it asks the sandbox provider for a slot again. */
+const SANDBOX_SLOT_POLL_MS = 30_000;
+
+/** Reports whether a failure, or any cause below it, is the full sandbox provider of DI-15.14. */
+const isSandboxSlotUnavailable = (error: unknown): boolean => {
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ApplicationFailure && current.type === SANDBOX_SLOT_UNAVAILABLE_TYPE) return true;
+  }
+  return false;
+};
 
 /**
  * Reports whether a failure, or any cause below it, is the configuration error of the domain.
@@ -479,7 +501,8 @@ export async function agentRunWorkflow(
   // `maxRunMinutes` can be a fraction. A whole number of milliseconds, with a floor of one
   // second, keeps every derived Temporal duration valid.
   const runBudgetMs = Math.max(1_000, Math.round(input.maxRunMinutes * 60_000));
-  const deadline = Date.now() + runBudgetMs;
+  // DI-15.13. A wait in QUEUED is not work, so the deadline moves by the time the Run waited there.
+  let deadline = Date.now() + runBudgetMs;
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
   // A terminal write must run even when the workflow scope is cancelled, or the Run row stays in
@@ -930,6 +953,63 @@ export async function agentRunWorkflow(
     return { runId: id, status };
   };
 
+  /**
+   * docs/specs/release-0-1-0.md, DI-15.13. The gate before PREPARING. A Run over its Product's
+   * maxConcurrentRuns waits in QUEUED. Linear shows its position, and a new line follows only
+   * when the position changes. A stop ends the wait, and the Run leaves the queue as CANCELLED.
+   * It answers the terminal result of a stopped Run, or null once the Run holds a slot.
+   */
+  const waitForRunSlot = async (): Promise<AgentRunWorkflowResult | null> => {
+    let queuedSince: number | null = null;
+    let shownAhead: number | null = null;
+    for (;;) {
+      const claim = await activities.claimRunSlot({ runId: id });
+      if (claim.granted) break;
+      if (queuedSince === null) {
+        queuedSince = Date.now();
+        // The claim wrote QUEUED to the row in the same transaction that counted the queue.
+        status = "QUEUED";
+      }
+      if (claim.ahead !== shownAhead) {
+        shownAhead = claim.ahead;
+        const message = queuedMessage(claim.ahead);
+        await notify(() => activities.postProgress({ sessionId: input.agentSessionId, message }));
+      }
+      if (await condition(() => stopRequested, RUN_SLOT_POLL_MS)) return await cancelRun();
+    }
+    if (queuedSince !== null) deadline += Date.now() - queuedSince;
+    return null;
+  };
+
+  /**
+   * docs/specs/release-0-1-0.md, DI-15.14. A sandbox preparation that finds the provider at
+   * sandboxMaxLive, with no retained sandbox to delete, waits here and asks again. The wait never
+   * fails the Run. Only a stop or the Run budget ends it, and then the answer is null.
+   */
+  const withSandboxSlot = async <T>(prepare: (budgetMs: number) => Promise<T>): Promise<T | null> => {
+    let told = false;
+    for (;;) {
+      if (remainingMs() === 0) return null;
+      try {
+        return await prepare(remainingMs());
+      } catch (error) {
+        if (!isSandboxSlotUnavailable(error)) throw error;
+      }
+      if (!told) {
+        told = true;
+        await notify(() =>
+          activities.postProgress({
+            sessionId: input.agentSessionId,
+            message:
+              "The sandbox provider runs its limit of live sandboxes, and none of them is retained " +
+              "for inspection. Factoree waits for a free sandbox.",
+          }),
+        );
+      }
+      if (await condition(() => stopRequested, Math.max(1, Math.min(SANDBOX_SLOT_POLL_MS, remainingMs())))) return null;
+    }
+  };
+
   try {
     await activities.acknowledgeSession({
       sessionId: input.agentSessionId,
@@ -1290,10 +1370,14 @@ export async function agentRunWorkflow(
         goal: refined.goal,
       };
 
+      // docs/specs/release-0-1-0.md, DI-15.13. A Run over its Product's maxConcurrentRuns waits
+      // in QUEUED here, before any sandbox or agent session costs anything.
+      const stoppedInQueue = await waitForRunSlot();
+      if (stoppedInQueue !== null) return stoppedInQueue;
+
       status = "PREPARING";
       await activities.setRunStatus({ runId: id, status });
 
-      const sandboxActivities = buildSandboxActivities(remainingMs());
       // The work sprite and every check sprite are prepared from the same input.
       const prepareInput = {
         runId: id,
@@ -1313,7 +1397,12 @@ export async function agentRunWorkflow(
       // closure.
       let preparedSandbox: PrepareSandboxActivityOutput;
       try {
-        preparedSandbox = await sandboxActivities.prepareSandbox(prepareInput);
+        const work = await withSandboxSlot((budgetMs) => buildSandboxActivities(budgetMs).prepareSandbox(prepareInput));
+        if (work === null) {
+          if (stopRequested) return await cancelRun();
+          return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+        preparedSandbox = work;
       } catch (error) {
         // A configuration fault is not an infrastructure fault. The Run ends in
         // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
@@ -1607,7 +1696,7 @@ export async function agentRunWorkflow(
         const previousCheck: PrepareCheckSandboxActivityOutput | null = checkSandbox;
         let checked: PrepareCheckSandboxActivityOutput;
         try {
-          checked = await buildSandboxActivities(remainingMs()).prepareCheckSandbox({
+          const check = await withSandboxSlot((budgetMs) => buildSandboxActivities(budgetMs).prepareCheckSandbox({
             ...prepareInput,
             work: {
               spriteId: preparedSandbox.spriteId,
@@ -1625,7 +1714,12 @@ export async function agentRunWorkflow(
                     workspacePath: previousCheck.workspacePath,
                   },
             attempt,
-          });
+          }));
+          if (check === null) {
+            if (stopRequested) return await cancelRun();
+            return await failRun("RUN_TIMEOUT", timeoutMessage);
+          }
+          checked = check;
         } catch (error) {
           if (isConfigurationFault(error)) {
             return await failRun(

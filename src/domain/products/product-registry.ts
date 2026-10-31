@@ -14,8 +14,35 @@ export interface ProductRecord {
   maxRunMinutes: number;
   /** Specification section 16. The organization-wide skills repository slug, or null. */
   organizationSkillsRepository: string | null;
+  /** docs/specs/release-0-1-0.md. The opencode model as `provider/model`, or null for its default. */
+  model: string | null;
+  /** The reasoning effort of each role, or null for the CLI default. */
+  effort: ProductEffort;
+  /** The silence limit of an agent session, in minutes. */
+  silenceMinutes: number;
+  /** SDD section 51. The hours a finished sandbox stays before the reaper deletes it. */
+  sandboxRetentionHours: number;
+  /** The most Runs of this Product at one time. The gate before PREPARING enforces it (DI-15.13). */
+  maxConcurrentRuns: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ProductEffort {
+  implementer: string | null;
+  refiner: string | null;
+  validator: string | null;
+  reviewer: string | null;
+}
+
+/** docs/specs/release-0-1-0.md. The Product settings an operator changes in the UI. */
+export interface ProductSettingsUpdate {
+  model?: string | null;
+  /** An absent role keeps its effort, and null clears it. */
+  effort?: { [Role in keyof ProductEffort]?: string | null | undefined };
+  silenceMinutes?: number;
+  sandboxRetentionHours?: number;
+  maxConcurrentRuns?: number;
 }
 
 export interface CreateProductInput {
@@ -78,6 +105,8 @@ export interface ProductRegistry {
    * policy history row for each field whose value changed, in one transaction.
    */
   updatePolicy(tenantId: string, id: string, policy: ProductPolicyUpdate): Promise<ProductRecord | null>;
+  /** docs/specs/release-0-1-0.md. Changes the model, the effort, the silence limit, retention and concurrency. */
+  updateSettings(tenantId: string, id: string, settings: ProductSettingsUpdate): Promise<ProductRecord | null>;
 }
 
 export interface ProductPolicyUpdate {

@@ -14,42 +14,20 @@ import { DelegationService } from "~/domain/runs/delegation-service.js";
 import { buildServer } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
-import type { Env } from "~/config/env.js";
+import { seedAdminKey, testAuth, testServerEnv, TEST_MASTER_KEY, unusedSetupCalls } from "./support/admin-access.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
-
-const token = "t".repeat(32);
-const env = {
-  DATABASE_URL: "",
-  FACTOREE_SECRET_KEY: "c".repeat(64),
-  ADMIN_API_TOKEN: token,
-  LINEAR_WEBHOOK_SECRET: "webhook-secret",
-  GITHUB_APP_ID: "123456",
-  GITHUB_APP_PRIVATE_KEY: Buffer.from(
-    "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
-  ).toString("base64"),
-  GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
-  TEMPORAL_ADDRESS: "localhost:7233",
-  TEMPORAL_NAMESPACE: "default",
-  TEMPORAL_TASK_QUEUE: "factoree",
-  PORT: 3000,
-  LOG_LEVEL: "error",
-  SANDBOX_ADAPTER: "local",
-  SANDBOX_LOCAL_ROOT: "/tmp/factoree-sandboxes",
-  GITHUB_BASE_URL: "https://github.com",
-  GITHUB_API_BASE_URL: "https://api.github.com",
-  FACTOREE_GIT_AUTHOR_NAME: "Factoree",
-  FACTOREE_GIT_AUTHOR_EMAIL: "factoree@users.noreply.github.com",
-  EVIDENCE_STORAGE: "filesystem",
-  EVIDENCE_LOCAL_ROOT: "/tmp/factoree-evidence-test",
-  AGENT_SILENCE_MINUTES: 10,
-} satisfies Env;
 
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let app: ReturnType<typeof buildServer>;
 let tenants: PrismaTenantRegistry;
+let token: string;
+let auth: { authorization: string };
+
+// Every workspace the tests name, except the one a test names to prove a stranger is refused.
+const WORKSPACES = ["ws-context", "ws-context-other", "ws-1", "ws-admin", "ws-bad-skills", "ws-claim", "ws-fields", "ws-github-bind", "ws-github-owner", "ws-github-thief", "ws-kind", "ws-other", "ws-owner", "ws-refuse", "ws-remove", "ws-remove-other", "ws-remove-owner", "ws-repos", "ws-run-owner", "ws-run-sessions", "ws-secret", "ws-skills"];
 
 // The route resolves a team key through Linear. This test double never calls the network: it
 // answers a team for a key it was told to resolve, and null for one it was told to refuse.
@@ -63,16 +41,24 @@ beforeAll(async () => {
   const database = await startDatabase();
   stop = database.stop;
   prisma = createPrismaClient(database.url);
-  tenants = new PrismaTenantRegistry(prisma, env.FACTOREE_SECRET_KEY);
+  tenants = new PrismaTenantRegistry(prisma, TEST_MASTER_KEY);
+  const logger = createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined });
+  const access = testAuth(prisma, logger);
+  token = (await seedAdminKey(prisma, access.auth, { workspaces: WORKSPACES })).key;
+  auth = { authorization: `Bearer ${token}` };
   app = buildServer({
-    env,
-    logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
+    env: testServerEnv,
+    version: "test",
+    logger,
     prisma,
+    settings: access.settings,
+    auth: access.auth,
+    setup: unusedSetupCalls,
     tenants,
     products: new PrismaProductRegistry(prisma),
     repositories: new PrismaRepositoryRegistry(prisma),
     linearTeams: fakeLinearTeams(["NOPE"]),
-    secrets: new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY),
+    secrets: new PrismaSecretStore(prisma, TEST_MASTER_KEY),
     runs: new PrismaRunRepository(prisma),
     delegation: new DelegationService({
       tenants,
@@ -82,7 +68,7 @@ beforeAll(async () => {
       starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
       refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
-      repositoryBaseUrl: "https://github.com",
+      repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),
     // This test drives the Products administration route, which never exercises the GitHub
     // webhook route. These doubles only satisfy the shape `buildServer` now requires.
@@ -93,7 +79,6 @@ beforeAll(async () => {
       fakeLinearTeams(["NOPE"]),
       createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
     ),
-    verifyGitHubSignature: () => false,
     startInstallationSync: () => Promise.reject(new Error("unused")),
     recordPullRequestPreview: () => Promise.reject(new Error("unused")),
   });
@@ -106,7 +91,6 @@ afterAll(async () => {
   await stop();
 });
 
-const auth = { authorization: `Bearer ${token}` };
 
 describe("administration API", () => {
   it("reports health and readiness", async () => {
@@ -491,7 +475,7 @@ describe("administration API", () => {
 
     const stored = await prisma.productSecret.findFirstOrThrow({ where: { productId: product.id } });
     expect(JSON.stringify(stored)).not.toContain("ghp_super_secret_value_12345678");
-    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    const secrets = new PrismaSecretStore(prisma, TEST_MASTER_KEY);
     expect(await secrets.get(stored.tenantId, product.id, "GITHUB_TOKEN")).toBe(
       "ghp_super_secret_value_12345678",
     );
@@ -536,7 +520,7 @@ describe("administration API", () => {
     });
     expect(read.statusCode).toBe(204);
 
-    const secrets = new PrismaSecretStore(prisma, env.FACTOREE_SECRET_KEY);
+    const secrets = new PrismaSecretStore(prisma, TEST_MASTER_KEY);
     const stored = await prisma.productSecret.findFirstOrThrow({
       where: { productId: product.id, name: "OPENCODE_API_KEY" },
     });
@@ -637,14 +621,15 @@ describe("the GitHub installation binding endpoint", () => {
     expect(row.tenantId).toBe(owner?.id);
   });
 
-  it("answers 404 for a tenant that does not exist", async () => {
+  it("refuses a workspace the caller is no member of, before any tenant lookup", async () => {
+    // docs/specs/release-0-1-0.md. A key acts only in the workspaces of the person who made it.
     const response = await app.inject({
       method: "PUT",
       url: "/admin/github-installations",
       headers: auth,
       payload: { linearWorkspaceId: "ws-no-such-tenant", githubInstallationId: "9002", accountLogin: "nobody" },
     });
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(403);
   });
 
   it("rejects a request without the administration token", async () => {

@@ -4,12 +4,15 @@ import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
+import type { RunSlotClaim, RunSlots } from "~/domain/runs/run-slots.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 import { failureCategoryOf } from "~/domain/runs/failure-category.js";
 
 export interface RunActivityDependencies {
   runs: RunRepository;
+  /** docs/specs/release-0-1-0.md, DI-15.13. The maxConcurrentRuns slots of each Product. */
+  slots: RunSlots;
   logger: Logger;
   runners: AgentRunnerRegistry;
   agentSession: AgentSessionPort;
@@ -59,6 +62,20 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
         reason: input.repairReason ?? "VERIFICATION",
       });
     }
+  },
+
+  /**
+   * docs/specs/release-0-1-0.md, DI-15.13. Grants the Run a slot of its Product before PREPARING,
+   * or writes QUEUED and reports how many Runs are ahead. The workflow polls it while it waits.
+   */
+  async claimRunSlot(input: { runId: string }): Promise<RunSlotClaim> {
+    const claim = await dependencies.slots.claim(input.runId);
+    dependencies.logger.info(claim.granted ? "run slot granted" : "run queued", {
+      run_id: input.runId,
+      step: "queue",
+      ...(claim.granted ? {} : { ahead: claim.ahead }),
+    });
+    return claim;
   },
 
   /**

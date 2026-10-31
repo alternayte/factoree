@@ -130,7 +130,7 @@ const buildActivities = (api: GitHubFixtureApi) => {
     redactor,
     runs: { setPublication: () => Promise.resolve() } as unknown as RunRepository,
     pullRequests: (token: string) => new GitHubPullRequests({ apiBaseUrl: api.baseUrl, tokens: { tokenForInstallation: () => Promise.resolve(token) } }),
-    gitAuthor: AUTHOR,
+    gitAuthor: () => Promise.resolve(AUTHOR),
     logger: createLogger({ level: "debug", redactor, sink: () => undefined }),
     publishToBranch: (value: TrustedCheckoutInput) => {
       attempted.push(value.branch);

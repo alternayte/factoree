@@ -6,6 +6,7 @@ import type {
   ProductPolicyUpdate,
   ProductRecord,
   ProductRegistry,
+  ProductSettingsUpdate,
 } from "~/domain/products/product-registry.js";
 import type {
   RepositoryRecord,
@@ -47,6 +48,14 @@ type ProductRow = {
   allowedDomains: string[];
   maxRunMinutes: number;
   organizationSkillsRepository: string | null;
+  model: string | null;
+  effortImplementer: string | null;
+  effortRefiner: string | null;
+  effortValidator: string | null;
+  effortReviewer: string | null;
+  silenceMinutes: number;
+  sandboxRetentionHours: number;
+  maxConcurrentRuns: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -61,11 +70,20 @@ const toRiskCaps = (value: Prisma.JsonValue | null): Record<string, string> | nu
   return caps;
 };
 
-const toProduct = (row: ProductRow): ProductRecord => ({
-  ...row,
-  riskCaps: toRiskCaps(row.riskCaps),
-  status: row.status === "active" ? "active" : "pending",
-});
+const toProduct = (row: ProductRow): ProductRecord => {
+  const { effortImplementer, effortRefiner, effortValidator, effortReviewer, ...rest } = row;
+  return {
+    ...rest,
+    riskCaps: toRiskCaps(row.riskCaps),
+    status: row.status === "active" ? "active" : "pending",
+    effort: {
+      implementer: effortImplementer,
+      refiner: effortRefiner,
+      validator: effortValidator,
+      reviewer: effortReviewer,
+    },
+  };
+};
 
 type RepositoryRow = {
   id: string;
@@ -228,6 +246,24 @@ export class PrismaProductRegistry implements ProductRegistry {
       }
       return toProduct(row);
     });
+  }
+
+  async updateSettings(tenantId: string, id: string, settings: ProductSettingsUpdate): Promise<ProductRecord | null> {
+    const data = Object.fromEntries(
+      Object.entries({
+        model: settings.model,
+        effortImplementer: settings.effort?.implementer,
+        effortRefiner: settings.effort?.refiner,
+        effortValidator: settings.effort?.validator,
+        effortReviewer: settings.effort?.reviewer,
+        silenceMinutes: settings.silenceMinutes,
+        sandboxRetentionHours: settings.sandboxRetentionHours,
+        maxConcurrentRuns: settings.maxConcurrentRuns,
+      }).filter(([, value]) => value !== undefined),
+    );
+    const updated = await this.prisma.product.updateMany({ where: { tenantId, id }, data });
+    if (updated.count === 0) return null;
+    return this.findById(tenantId, id);
   }
 
   async remove(tenantId: string, id: string): Promise<boolean> {

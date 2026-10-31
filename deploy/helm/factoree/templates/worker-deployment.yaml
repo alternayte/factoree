@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "factoree.fullname" . }}-worker
+  labels:
+    {{- include "factoree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "factoree.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "factoree.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "factoree.serviceAccountName" . }}
+      securityContext:
+        {{- include "factoree.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "factoree.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["worker"]
+          env:
+            {{- include "factoree.env" . | nindent 12 }}
+          securityContext:
+            {{- include "factoree.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            # Checkouts, the browser profile and local evidence live here. All state is in
+            # PostgreSQL and Temporal, so the volume needs no persistence.
+            - name: tmp
+              mountPath: /tmp
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- include "factoree.scheduling" . | nindent 6 }}

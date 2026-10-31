@@ -5,7 +5,7 @@ import type {
   CliUsageContext,
   CliUsageReading,
 } from "../cli-agent-runner.js";
-import { CliAgentRunner } from "../cli-agent-runner.js";
+import { CliAgentRunner, type AgentSessionSettings } from "../cli-agent-runner.js";
 import { parseClaudeOutput } from "./output-parser.js";
 
 export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
@@ -50,29 +50,37 @@ export class ClaudeCodeRunner extends CliAgentRunner {
     this.executable = options.executable ?? "claude";
   }
 
-  protected startCommand(promptFile: string): CliAgentCommand {
+  protected startCommand(promptFile: string, _repositoryPath: string | undefined, settings: AgentSessionSettings): CliAgentCommand {
     return {
       file: "sh",
       args: ["-c", START_SCRIPT],
-      env: { FACTOREE_PROMPT_FILE: promptFile, FACTOREE_CLAUDE_BIN: this.executable },
+      env: { FACTOREE_PROMPT_FILE: promptFile, FACTOREE_CLAUDE_BIN: settings.executable ?? this.executable },
     };
   }
 
-  protected resumeCommand(sessionId: string, promptFile: string): CliAgentCommand {
+  protected resumeCommand(
+    sessionId: string,
+    promptFile: string,
+    _repositoryPath: string | undefined,
+    settings: AgentSessionSettings,
+  ): CliAgentCommand {
     return {
       file: "sh",
       args: ["-c", RESUME_SCRIPT],
       env: {
         FACTOREE_PROMPT_FILE: promptFile,
-        FACTOREE_CLAUDE_BIN: this.executable,
+        FACTOREE_CLAUDE_BIN: settings.executable ?? this.executable,
         FACTOREE_CLAUDE_SESSION: sessionId,
       },
     };
   }
 
-  /** Factoree passes no effort flag to Claude Code, so every role runs at the CLI default. */
-  protected effortFor(): string | null {
-    return null;
+  /**
+   * Factoree passes no model and no effort flag to Claude Code, so every role runs at the CLI
+   * default. The Product model and effort settings name opencode models.
+   */
+  protected defaultSettings(): Omit<AgentSessionSettings, "silenceLimitMs"> {
+    return { model: null, effort: null, executable: null };
   }
 
   protected parseOutput(text: string): CliAgentParse {

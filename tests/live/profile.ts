@@ -10,13 +10,15 @@
  *
  * Every profile requires the four driver credentials of `required-credentials.ts`, plus a real
  * database and a real Temporal service, because both the worker and the scenario need them to
- * run. Only the sandbox adapter requirement differs between the profiles.
+ * run. Only the sandbox provider requirement differs between the profiles. The provider is an
+ * install setting, so `install-facts.ts` reads it from the database before the check.
  */
 import {
   COMMON_INFRASTRUCTURE_REQUIREMENTS,
   DRIVER_CREDENTIALS,
   KILN_SANDBOX_REQUIREMENTS,
-  LOCAL_SANDBOX_REQUIREMENT,
+  INSTALL_SANDBOX_PROVIDER,
+  LOCAL_SANDBOX_REQUIREMENTS,
   SPRITE_SANDBOX_REQUIREMENTS,
   type LiveRequirement,
 } from "./required-credentials.js";
@@ -26,7 +28,7 @@ export type LiveProfile = "local" | "sprite" | "full";
 const commonRequirements: LiveRequirement[] = [...DRIVER_CREDENTIALS, ...COMMON_INFRASTRUCTURE_REQUIREMENTS];
 
 const REQUIREMENTS_BY_PROFILE: Record<LiveProfile, LiveRequirement[]> = {
-  local: [...commonRequirements, LOCAL_SANDBOX_REQUIREMENT],
+  local: [...commonRequirements, ...LOCAL_SANDBOX_REQUIREMENTS],
   sprite: [...commonRequirements, ...SPRITE_SANDBOX_REQUIREMENTS],
   full: [...commonRequirements, ...SPRITE_SANDBOX_REQUIREMENTS],
 };
@@ -35,8 +37,8 @@ const REQUIREMENTS_BY_PROFILE: Record<LiveProfile, LiveRequirement[]> = {
  * The requirement list of one profile. The full list is the anti-weakening guard. A `full` run
  * on Kiln swaps the Sprite requirements for the Kiln ones, and keeps every other requirement.
  */
-export const credentialsFor = (profile: LiveProfile, env: NodeJS.ProcessEnv = {}): LiveRequirement[] =>
-  profile === "full" && env.SANDBOX_ADAPTER === "kiln"
+export const credentialsFor = (profile: LiveProfile, facts: NodeJS.ProcessEnv = {}): LiveRequirement[] =>
+  profile === "full" && facts[INSTALL_SANDBOX_PROVIDER] === "kiln"
     ? [...commonRequirements, ...KILN_SANDBOX_REQUIREMENTS]
     : REQUIREMENTS_BY_PROFILE[profile];
 

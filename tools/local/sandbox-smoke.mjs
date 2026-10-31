@@ -22,6 +22,7 @@ import { runVerification } from "../../dist/domain/runs/verification.js";
 import { buildActionPolicy } from "../../dist/domain/policy/action-policy.js";
 import { createPrismaClient } from "../../dist/persistence/prisma/client.js";
 import { decryptSecret } from "../../dist/domain/policy/crypto.js";
+import { PrismaInstallSettingsStore } from "../../dist/persistence/prisma/install-settings.prisma.js";
 import { createLogger } from "../../dist/telemetry/logger.js";
 import { Redactor } from "../../dist/telemetry/redaction.js";
 
@@ -35,21 +36,34 @@ const need = (name) => {
   return value;
 };
 
-const spritesToken = need("SPRITES_TOKEN");
-const slug = need("SETUP_GITHUB_REPOSITORY");
-const baseUrl = process.env.GITHUB_BASE_URL ?? "https://github.com";
-const branch = process.env.SETUP_DEFAULT_BRANCH ?? "main";
+// docs/specs/release-0-1-0.md. The Sprites token and the GitHub URL are install settings, read the
+// way the worker reads them. The repository and its branch are the arguments of this script.
+const databaseUrl = need("FACTOREE_DATABASE_URL");
+const masterKey = need("FACTOREE_MASTER_KEY");
+const slug = process.argv.slice(2).find((argument) => !argument.startsWith("--"));
+if (slug === undefined) {
+  console.error("Name the repository: just smoke owner/name [--keep]. SMOKE_BRANCH sets the branch.");
+  process.exit(1);
+}
+const branch = process.env.SMOKE_BRANCH ?? "main";
+
+const prisma = createPrismaClient(databaseUrl);
+const installSettings = await new PrismaInstallSettingsStore(prisma, masterKey).read();
+if (installSettings.sandbox.provider !== "fly-sprites" || installSettings.sandbox.apiKey === null) {
+  console.error("The install settings name no Fly Sprites provider with a token. Store one in Settings > Install.");
+  process.exit(1);
+}
+const spritesToken = installSettings.sandbox.apiKey;
+const baseUrl = installSettings.github.baseUrl;
 const repositoryUrl = `${baseUrl.replace(/\/+$/, "")}/${slug.replace(/\.git$/, "")}.git`;
 
-/** The runner credentials of the Project, read the way an activity reads them. */
+/** The runner credentials of the Products, read the way an activity reads them. */
 const runnerEnvironment = async () => {
-  if (process.env.DATABASE_URL === undefined || process.env.FACTOREE_SECRET_KEY === undefined) return {};
-  const prisma = createPrismaClient(process.env.DATABASE_URL);
   try {
-    const rows = await prisma.projectSecret.findMany({ where: { kind: "runner_credential" } });
+    const rows = await prisma.productSecret.findMany({ where: { kind: "runner_credential" } });
     const environment = {};
     for (const row of rows) {
-      environment[row.name] = decryptSecret(row.valueCipher, process.env.FACTOREE_SECRET_KEY);
+      environment[row.name] = decryptSecret(row.valueCipher, masterKey);
     }
     return environment;
   } finally {

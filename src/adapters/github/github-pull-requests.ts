@@ -1,3 +1,4 @@
+import { resolveGitHubApiBaseUrl, type GitHubApiBaseUrl } from "./api-base-url.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import type {
   CreatePullRequestInput,
@@ -50,7 +51,7 @@ export class GitHubApiError extends Error {
 }
 
 export interface GitHubPullRequestsOptions {
-  apiBaseUrl: string;
+  apiBaseUrl: GitHubApiBaseUrl;
   /** Mints the GitHub write credential. SDD section 30 keeps it on the control plane only. */
   tokens: GitHubTokenProvider;
   fetch?: typeof fetch;
@@ -62,12 +63,12 @@ export interface GitHubPullRequestsOptions {
  * method mints one against the installation id the caller supplies, immediately before the call.
  */
 export class GitHubPullRequests implements PullRequestPort {
-  private readonly base: string;
+  private readonly apiBaseUrl: GitHubApiBaseUrl;
   private readonly tokens: GitHubTokenProvider;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: GitHubPullRequestsOptions) {
-    this.base = options.apiBaseUrl.replace(/\/+$/, "");
+    this.apiBaseUrl = options.apiBaseUrl;
     this.tokens = options.tokens;
     this.fetchImpl = options.fetch ?? fetch;
   }
@@ -77,7 +78,7 @@ export class GitHubPullRequests implements PullRequestPort {
     const owner = slug.split("/")[0] ?? "";
     const query = new URLSearchParams({ head: `${owner}:${headBranch}`, state: "all", per_page: "1" });
     const body = await this.call(
-      `${this.base}/repos/${slug}/pulls?${query.toString()}`,
+      `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/pulls?${query.toString()}`,
       { method: "GET" },
       githubInstallationId,
       slug,
@@ -103,7 +104,7 @@ export class GitHubPullRequests implements PullRequestPort {
     let body: unknown;
     try {
       body = await this.call(
-        `${this.base}/repos/${slug}/pulls/${number}`,
+        `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/pulls/${number}`,
         { method: "GET" },
         githubInstallationId,
         slug,
@@ -122,7 +123,7 @@ export class GitHubPullRequests implements PullRequestPort {
   async create(input: CreatePullRequestInput, githubInstallationId: string): Promise<PullRequestRecord> {
     assertRepositorySlug(input.slug);
     const body = await this.call(
-      `${this.base}/repos/${input.slug}/pulls`,
+      `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${input.slug}/pulls`,
       {
         method: "POST",
         body: JSON.stringify({

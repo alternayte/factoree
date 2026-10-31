@@ -1,0 +1,61 @@
+# .factoree/config.yaml for a Go HTTP service with go test and a health endpoint.
+# Copy it to the root of the repository and change the identity and the commands.
+# Factoree rejects an unknown key, so a typo fails the run instead of passing as a default.
+version: 1
+
+identity:
+  # The Factoree product that owns this repository. The product owns secrets, policy and autonomy.
+  product: payments
+  linear:
+    # The key of the Linear team that maps to the product.
+    teamKey: PAY
+    # Issues in these Linear projects target this repository with no question.
+    projects:
+      - Payments API
+
+# Runs once in the warm snapshot, after the clone and before any agent. The sandbox image holds
+# no Go toolchain, so the bootstrap installs the version of go.mod into ~/.local, which is on the
+# PATH of every sandbox command. The product allow list must permit go.dev, dl.google.com,
+# proxy.golang.org and sum.golang.org.
+bootstrap:
+  command: >-
+    mkdir -p "$HOME/.local/bin"
+    && curl -fsSL https://go.dev/dl/go1.25.3.linux-amd64.tar.gz | tar -xz -C "$HOME/.local"
+    && ln -sf "$HOME/.local/go/bin/go" "$HOME/.local/go/bin/gofmt" "$HOME/.local/bin/"
+    && go mod download
+
+# Factoree runs each command in the check sprite. Every command must exit 0.
+verify:
+  commands:
+    - name: vet
+      run: go vet ./...
+    - name: test
+      run: go test ./...
+    - name: build
+      run: go build ./...
+
+# The service the user validator calls with HTTP assertions. Factoree waits for readyUrl.
+preview:
+  enabled: true
+  command: go run ./cmd/server -addr 0.0.0.0:8080
+  readyUrl: http://127.0.0.1:8080/healthz
+  timeoutSeconds: 180
+
+# The sandbox image ships opencode, so every role runs on it. claude needs a sandbox with Claude Code.
+agents:
+  implementer: opencode
+  validator: opencode
+  reviewer: opencode
+
+# One budget of implementer repairs covers the whole run.
+repair:
+  maxAttempts: 2
+
+# The product sets the hosts an agent may reach. An empty list takes the whole product list. A
+# list here can only narrow it: a host the product does not allow is dropped.
+sandbox:
+  allowedDomains: []
+
+# The names of product secrets this repository needs. The product holds the values.
+secrets:
+  require: []

@@ -98,6 +98,8 @@ describe("AT-33 tenant isolation", () => {
         // ProjectSecret, so neither name appears here any more.
         "GitHubInstallation",
         "LinearInstallation",
+        // docs/specs/release-0-1-0.md. The membership a Linear sign-in records, in one tenant.
+        "LinearMember",
         "ProcessedWebhook",
         "Product",
         // docs/specs/autonomy-levels.md. One row for each Product policy change.
@@ -130,7 +132,25 @@ describe("AT-33 tenant isolation", () => {
    * table that carries no `tenantId` fails this test until a human adds it here on purpose, so
    * nobody can add an untenanted table by accident.
    */
-  const NOT_TENANT_OWNED = ["Tenant", "_prisma_migrations"];
+  const NOT_TENANT_OWNED = [
+    "Tenant",
+    "_prisma_migrations",
+    // docs/specs/release-0-1-0.md and DI-14.53. The install settings are the one row of the
+    // install. A better-auth user can be a member of several tenants (one Linear account per
+    // workspace), so the user, its sessions, accounts, verifications and API keys hold no single
+    // tenant: `LinearMember` carries the tenant, and every admin call checks it. An audit entry
+    // records calls that name no workspace, and refused calls with no person.
+    "AdminAuditEntry",
+    "InstallSettings",
+    // DI-15.14. sandboxMaxLive is the limit of one provider account, shared by every tenant, so a
+    // lease counts sandboxes across tenants. It names the Run, and no API reads it.
+    "SandboxLease",
+    "auth_account",
+    "auth_apikey",
+    "auth_session",
+    "auth_user",
+    "auth_verification",
+  ];
 
   it("gives every other table a tenant column", async () => {
     const tenanted = new Set(await tenantedTableNames());

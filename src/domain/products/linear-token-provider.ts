@@ -82,9 +82,8 @@ export class LinearTokenProvider {
     if (options.force === true || installation.expiresAt !== null) {
       throw new LinearInstallationError(
         `The Linear access token of workspace ${linearWorkspaceId} expired, and Factoree could ` +
-          "not refresh it. Store a new token with PUT /admin/linear-installations, including " +
-          "its refresh token, and set LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET so a later " +
-          "token refreshes on its own.",
+          "not refresh it. Install the Linear app again from the Workspaces screen, and store the " +
+          "Linear client id and secret in Settings > Install, so a later token refreshes on its own.",
       );
     }
     return installation.accessToken;

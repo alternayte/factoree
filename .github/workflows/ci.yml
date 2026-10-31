@@ -6,17 +6,22 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    # The Prisma CLI resolves DATABASE_URL eagerly, so every CLI call needs a value.
+    # The Prisma CLI resolves FACTOREE_DATABASE_URL eagerly, so every CLI call needs a value.
     # The integration tests inject the real per-container URL, so a placeholder is correct.
     env:
-      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+      FACTOREE_DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
       - run: npm ci
+      # The verify gate lints and builds the UI, and checks its generated client.
+      - run: npm ci --prefix ui
       - run: npx prisma generate
       # `tests/integration/playwright-browser-driver.test.ts` drives a real browser, and the
       # runner carries none. The integration stage never reached it before, because the unit
@@ -24,3 +29,42 @@ jobs:
       # is enough: `src/adapters/browser/playwright/playwright-browser-driver.ts` launches it.
       - run: npx playwright install --with-deps chromium
       - run: npm run verify
+  # docs/specs/release-0-1-0.md. A released migration never changes, and the previous release
+  # migrates to this commit. Both pass with a message while no release tag exists.
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: ./checks/migrations.sh
+      - run: ./scripts/upgrade-test.sh
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/factoree
+      - run: helm template factoree deploy/helm/factoree > /dev/null
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: factoree:ci
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=factoree
+      - run: docker run --rm factoree:ci --version
