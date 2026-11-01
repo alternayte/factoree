@@ -6,6 +6,7 @@ import type { WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapsho
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"a".repeat(64)}`;
+const TEMPLATE = `factoree-${"a".repeat(16)}-2c-4096m`;
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
 const CONFIG_SHA = "1111111111111111111111111111111111111111";
 
@@ -22,6 +23,7 @@ class WarmFakeSandbox extends FakeSandbox {
   readonly removed: string[] = [];
   restoreFails = false;
   readonly warmSnapshots: WarmSnapshots = {
+    template: TEMPLATE,
     take: (ref: SandboxRef) => {
       this.calls.push("snapshot");
       const id = `snap-${this.taken.length + 1}`;
@@ -82,11 +84,11 @@ const input = {
   browserTools: true,
 };
 
-const stored = (configSha: string, image = IMAGE): WarmSnapshot => ({
+const stored = (configSha: string, template = TEMPLATE): WarmSnapshot => ({
   tenantId: "tenant-1",
   adapter: "fake",
   repositoryUrl: "https://github.com/acme/app.git",
-  image,
+  template,
   configSha,
   snapshotId: "snap-old",
 });
@@ -109,10 +111,11 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
   it("removes the snapshot a new one replaces", async () => {
     const sandbox = new WarmFakeSandbox(CONFIG_SHA);
     const store = new MemoryWarmSnapshotStore();
-    await store.save(stored(CONFIG_SHA, `ghcr.io/alternayte/factoree-sandbox@sha256:${"b".repeat(64)}`));
+    // A snapshot of another size (docs/specs/kiln-sandbox-size.md).
+    await store.save(stored(CONFIG_SHA, `factoree-${"a".repeat(16)}-4c-4096m`));
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
-    // Another image digest: the run starts cold, and its snapshot replaces the old one.
+    // Another template: the run starts cold, and its snapshot replaces the old one.
     expect(sandbox.calls).not.toContain("restore");
     expect(sandbox.removed).toEqual(["snap-old"]);
   });

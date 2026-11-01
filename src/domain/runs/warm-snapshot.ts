@@ -1,6 +1,6 @@
 /**
  * docs/specs/kiln-sandbox-provider.md. The warm snapshot of one repository: the sandbox right after
- * the clone and the bootstrap, before any agent runs. It is valid for one sandbox image and one
+ * the clone and the bootstrap, before any agent runs. It is valid for one Kiln template and one
  * `.factoree/config.yaml` blob. A change of either makes a new snapshot on the next run.
  */
 export interface WarmSnapshot {
@@ -8,7 +8,8 @@ export interface WarmSnapshot {
   /** The adapter that holds the snapshot. A snapshot id means nothing to another adapter. */
   adapter: string;
   repositoryUrl: string;
-  image: string;
+  /** docs/specs/kiln-sandbox-size.md. The template the snapshot holds: the image digest and the size. */
+  template: string;
   /** The git blob SHA of `.factoree/config.yaml` at the commit the snapshot holds. */
   configSha: string;
   snapshotId: string;

@@ -85,6 +85,10 @@ export type GetSetupStatusResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -208,6 +212,10 @@ export type ConvertGitHubAppManifestResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -286,6 +294,10 @@ export type PutLinearAppResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -402,6 +414,10 @@ export type AdoptSetupLinearInstallResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -489,6 +505,10 @@ export type BindGitHubInstallationResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -508,6 +528,8 @@ export type PutSandboxData = {
     registryUsername?: string | null;
     registryToken?: string | null;
     maxLive?: number | null;
+    vcpus?: number | null;
+    memoryMb?: number | null;
   };
   path?: never;
   query?: never;
@@ -570,6 +592,10 @@ export type PutSandboxResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -760,6 +786,10 @@ export type CompleteSetupResponses = {
       provider: string | null;
       localAllowed: boolean;
       pinnedImage: string | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
     };
     product: {
       done: boolean;
@@ -1725,6 +1755,12 @@ export type GetInstallSettingsResponses = {
       registryUsername: string | null;
       registryTokenSet: boolean;
       maxLive: number | null;
+      vcpus: number | null;
+      memoryMb: number | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
       localAllowed: boolean;
     };
     gitAuthor: {
@@ -1755,6 +1791,8 @@ export type UpdateInstallSettingsData = {
       registryUsername?: string | null;
       registryToken?: string | null;
       maxLive?: number | null;
+      vcpus?: number | null;
+      memoryMb?: number | null;
     };
     gitAuthor?: {
       name?: string;
@@ -1817,6 +1855,12 @@ export type UpdateInstallSettingsResponses = {
       registryUsername: string | null;
       registryTokenSet: boolean;
       maxLive: number | null;
+      vcpus: number | null;
+      memoryMb: number | null;
+      defaultSize: {
+        vcpus: number;
+        memoryMb: number;
+      };
       localAllowed: boolean;
     };
     gitAuthor: {

@@ -34,6 +34,8 @@ class MemorySettings implements InstallSettingsStore {
         registryUsername: null,
         registryToken: null,
         maxLive: null,
+        vcpus: null,
+        memoryMb: null,
       },
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       operatorTenantId: null,

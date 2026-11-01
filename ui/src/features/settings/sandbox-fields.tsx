@@ -11,7 +11,12 @@ export type SandboxForm = {
   registryUsername: string;
   registryToken: string;
   maxLive: string;
+  vcpus: string;
+  memoryMb: string;
 };
+
+/** The Kiln sandbox size an empty field keeps. */
+export type SandboxSize = { vcpus: number; memoryMb: number };
 
 export const emptySandboxForm: SandboxForm = {
   provider: "kiln",
@@ -21,6 +26,8 @@ export const emptySandboxForm: SandboxForm = {
   registryUsername: "",
   registryToken: "",
   maxLive: "",
+  vcpus: "",
+  memoryMb: "",
 };
 
 export const PROVIDER_LABELS: Record<SandboxProvider, string> = {
@@ -42,6 +49,7 @@ export function SandboxFields({
   disabled,
   stored,
   pinnedImage,
+  defaultSize,
   fieldErrors = {},
 }: {
   value: SandboxForm;
@@ -50,6 +58,7 @@ export function SandboxFields({
   disabled?: boolean;
   stored?: { apiKey: boolean; registryToken: boolean; image?: boolean };
   pinnedImage?: string | null;
+  defaultSize: SandboxSize;
   fieldErrors?: Record<string, string[]>;
 }) {
   const set = <K extends keyof SandboxForm>(key: K, next: SandboxForm[K]) => onChange({ ...value, [key]: next });
@@ -139,6 +148,48 @@ export function SandboxFields({
           />
         )}
       </Field>
+      {value.provider === "kiln" ? (
+        <>
+          <Field
+            label="vCPUs per sandbox (optional)"
+            hint={`Empty uses ${defaultSize.vcpus}. A change builds a new Kiln template, and each repository starts cold once.`}
+            errors={fieldErrors.vcpus}
+          >
+            {(props) => (
+              <Input
+                {...props}
+                type="number"
+                min={1}
+                max={32}
+                step={1}
+                disabled={disabled}
+                placeholder={String(defaultSize.vcpus)}
+                value={value.vcpus}
+                onChange={(e) => set("vcpus", e.target.value)}
+              />
+            )}
+          </Field>
+          <Field
+            label="Memory per sandbox in MB (optional)"
+            hint={`Empty uses ${defaultSize.memoryMb}. Memory × the live sandbox limit must fit the memory of the Kiln host.`}
+            errors={fieldErrors.memoryMb}
+          >
+            {(props) => (
+              <Input
+                {...props}
+                type="number"
+                min={1024}
+                max={1048576}
+                step={1}
+                disabled={disabled}
+                placeholder={String(defaultSize.memoryMb)}
+                value={value.memoryMb}
+                onChange={(e) => set("memoryMb", e.target.value)}
+              />
+            )}
+          </Field>
+        </>
+      ) : null}
       <Field
         label={imageRequired ? "Sandbox image" : "Sandbox image override (optional)"}
         className="sm:col-span-2"
@@ -209,8 +260,21 @@ export function SandboxFields({
 
 /** parseMaxLive turns the input into a positive integer, null for empty, or undefined when it is not valid. */
 export function parseMaxLive(input: string): number | null | undefined {
+  return parseWhole(input, 1, Number.MAX_SAFE_INTEGER);
+}
+
+/** parseSize reads the vCPU and memory inputs: null for empty, or a string that names the bad field. */
+export function parseSize(form: SandboxForm): { vcpus: number | null; memoryMb: number | null } | string {
+  const vcpus = parseWhole(form.vcpus, 1, 32);
+  if (vcpus === undefined) return "The vCPUs must be a whole number from 1 to 32.";
+  const memoryMb = parseWhole(form.memoryMb, 1024, 1048576);
+  if (memoryMb === undefined) return "The memory must be a whole number of MB from 1024 to 1048576.";
+  return { vcpus, memoryMb };
+}
+
+function parseWhole(input: string, min: number, max: number): number | null | undefined {
   const trimmed = input.trim();
   if (!trimmed) return null;
   const n = Number(trimmed);
-  return Number.isInteger(n) && n > 0 ? n : undefined;
+  return Number.isInteger(n) && n >= min && n <= max ? n : undefined;
 }

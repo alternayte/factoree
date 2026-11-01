@@ -102,6 +102,11 @@ export interface SandboxCapabilities {
  * sandbox from it. Only an adapter that can fork a saved state into a new sandbox has it.
  */
 export interface WarmSnapshots {
+  /**
+   * docs/specs/kiln-sandbox-size.md. The template a new sandbox starts from: the image digest and
+   * the size. A snapshot of another template holds another toolchain or size, and is not used.
+   */
+  readonly template: string;
   /** Saves the sandbox as it is now, and returns the snapshot id. The sandbox keeps running. */
   take(ref: SandboxRef): Promise<string>;
   /** Starts a new sandbox from a snapshot, with the egress policy the snapshot recorded. */

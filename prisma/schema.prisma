@@ -376,7 +376,8 @@ model WarmSnapshot {
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   adapter       String
   repositoryUrl String
-  image         String
+  // docs/specs/kiln-sandbox-size.md. The Kiln template: the image digest and the size.
+  template      String
   configSha     String
   snapshotId    String
   createdAt     DateTime @default(now())
@@ -557,6 +558,9 @@ model InstallSettings {
   sandboxRegistryTokenCipher  String?
   // The provider's limit of live sandboxes. The worker enforces it (DI-15.14). Null means no limit.
   sandboxMaxLive              Int?
+  // docs/specs/kiln-sandbox-size.md. The size of each Kiln sandbox. Null means the default.
+  sandboxVcpus                Int?
+  sandboxMemoryMb             Int?
   gitAuthorName               String    @default("Factoree")
   gitAuthorEmail              String    @default("factoree@users.noreply.github.com")
   // The SHA-256 of the one-time setup token. The token itself is never stored.

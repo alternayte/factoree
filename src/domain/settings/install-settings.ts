@@ -44,7 +44,25 @@ export interface SandboxSettings {
   registryToken: string | null;
   /** The provider's limit of live sandboxes. The worker enforces it (DI-15.14). */
   maxLive: number | null;
+  /** docs/specs/kiln-sandbox-size.md. The vCPUs of each Kiln sandbox. Null means the default. */
+  vcpus: number | null;
+  /** docs/specs/kiln-sandbox-size.md. The memory of each Kiln sandbox in MB. Null means the default. */
+  memoryMb: number | null;
 }
+
+/** docs/specs/kiln-sandbox-size.md. The vCPUs and the memory of a Kiln sandbox, fixed by its template. */
+export interface KilnSandboxSize {
+  vcpus: number;
+  memoryMb: number;
+}
+
+export const DEFAULT_KILN_SANDBOX_SIZE: KilnSandboxSize = { vcpus: 2, memoryMb: 4096 };
+
+/** The size of each Kiln sandbox: the stored values, or the default. */
+export const kilnSandboxSize = (settings: SandboxSettings): KilnSandboxSize => ({
+  vcpus: settings.vcpus ?? DEFAULT_KILN_SANDBOX_SIZE.vcpus,
+  memoryMb: settings.memoryMb ?? DEFAULT_KILN_SANDBOX_SIZE.memoryMb,
+});
 
 export interface GitAuthorSettings {
   name: string;

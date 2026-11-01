@@ -14,13 +14,16 @@ import type {
   WarmSnapshots,
 } from "~/domain/runs/sandbox.js";
 import { normalizeNetworkPolicy, SandboxError } from "~/domain/runs/sandbox.js";
+import { DEFAULT_KILN_SANDBOX_SIZE, type KilnSandboxSize } from "~/domain/settings/install-settings.js";
 import type { KilnClient, KilnTemplateRequest } from "./kiln-client.js";
 import { isKilnConflict, isKilnNotFound } from "./kiln-client.js";
 
 export interface KilnSandboxOptions {
   client: KilnClient;
-  /** The Factoree sandbox image, `<name>@sha256:<hex>`. One template serves one digest. */
+  /** The Factoree sandbox image, `<name>@sha256:<hex>`. One template serves one digest and one size. */
   image: string;
+  /** docs/specs/kiln-sandbox-size.md. The size of every sandbox. Absent means the default. */
+  size?: KilnSandboxSize;
   /** The registry login for a private image. It reaches the template build only. */
   registryCredential?: { username: string; token: string };
   /** The first delay between two reads of a process. A test sets it to zero. */
@@ -49,7 +52,8 @@ const KILN_BASE_ENVIRONMENT: Record<string, string> = {
 // The prepare attempt is thirty minutes, and a retry keeps polling the same build.
 const TEMPLATE_WAIT_MS = 20 * 60_000;
 const TEMPLATE_POLL_MS = 5_000;
-const TEMPLATE_RESOURCES = { vcpus: 2, memory_mb: 4096, disk_mb: 16_384 };
+const TEMPLATE_DISK_MB = 16_384;
+
 
 // A work sprite waits for check sprites and repairs between agent sessions. A persistent sandbox
 // sleeps after this idle time and wakes on the next call with its disk and processes intact. Kiln
@@ -84,6 +88,7 @@ export class KilnSandbox implements Sandbox {
   readonly warmSnapshots: WarmSnapshots;
 
   private readonly template: string;
+  private readonly size: KilnSandboxSize;
   private templateReady: Promise<void> | null = null;
   private readonly attached = new Map<string, Record<string, string>>();
   /** The output read so far, by sandbox and process. A process this worker never read starts at zero. */
@@ -91,8 +96,10 @@ export class KilnSandbox implements Sandbox {
 
   constructor(private readonly options: KilnSandboxOptions) {
     this.image = options.image;
-    this.template = templateName(options.image);
+    this.size = options.size ?? DEFAULT_KILN_SANDBOX_SIZE;
+    this.template = templateName(options.image, this.size);
     this.warmSnapshots = {
+      template: this.template,
       take: (ref) => this.options.client.snapshot(ref.id),
       restore: async (input, snapshotId) => {
         // The copy names this run, not the run whose sandbox took the snapshot (issue #5).
@@ -297,7 +304,9 @@ export class KilnSandbox implements Sandbox {
     const request: KilnTemplateRequest = {
       name: this.template,
       image: this.image,
-      ...TEMPLATE_RESOURCES,
+      vcpus: this.size.vcpus,
+      memory_mb: this.size.memoryMb,
+      disk_mb: TEMPLATE_DISK_MB,
       setup: [],
       // Factoree replaces the list on each sandbox before the first command.
       egress_allow: [],
@@ -327,11 +336,15 @@ export class KilnSandbox implements Sandbox {
   }
 }
 
-/** One template per image digest. A Kiln name allows lower-case letters, digits and dashes. */
-export const templateName = (image: string): string => {
+/**
+ * docs/specs/kiln-sandbox-size.md. One template per image digest and size, so a size change builds
+ * a new template and leaves the old one to the runs that still use it. A Kiln name allows
+ * lower-case letters, digits and dashes.
+ */
+export const templateName = (image: string, size: KilnSandboxSize): string => {
   const digest = /@sha256:([0-9a-f]{64})$/.exec(image)?.[1];
   if (digest === undefined) throw new Error(`the Kiln image must name a digest, received "${image}"`);
-  return `factoree-${digest.slice(0, 16)}`;
+  return `factoree-${digest.slice(0, 16)}-${size.vcpus}c-${size.memoryMb}m`;
 };
 
 const outputKey = (ref: SandboxRef, process: ProcessRef): string => `${ref.id}/${process.id}`;

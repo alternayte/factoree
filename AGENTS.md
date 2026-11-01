@@ -53,6 +53,7 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - self-check: the implementer's own browser checks in the work sprite. Its output never reaches the proof pack. Avoid: implementer evidence, implementer demo.
 - warm snapshot: the Kiln snapshot of one repository, taken after the clone and the bootstrap and before any agent runs. A run and its check sprites fork from it. Avoid: golden sprite, cache sprite.
 - sandbox image: the OCI image that sandbox/Dockerfile builds, with the toolchain and the root-owned runner CLIs, pinned by digest. Avoid: base image, sprite image, golden image.
+- Kiln template: the Kiln build of the sandbox image at one sandbox size, named by the image digest and the size. A warm snapshot belongs to one Kiln template. Avoid: template image, sandbox template.
 - determined proposal: a proposal backed by a rule or a cited source that a reviewer can check. Factoree takes it without asking. Avoid: recommended default, auto-accept, best guess.
 - implied criterion: a criterion no ticket sentence states, but one cited sentence directly implies. It freezes with an implied-by source. Avoid: inferred criterion, assumed criterion.
 - new criterion: a criterion that adds behaviour no ticket sentence implies. Factoree drops it and lists it under Not built. Avoid: extra criterion, scope creep.

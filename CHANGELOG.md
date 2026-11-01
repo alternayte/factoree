@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - The implementer prompt states the checks that Factoree runs after the implementer finishes and that a failed check returns as repair findings. It no longer tells the implementer to start the preview command, so the implementer does not run a production build in the work sprite. When the work sprite holds agent-browser, the prompt says so, and a browser check is optional.
+- The install settings hold the vCPUs and the memory of each Kiln sandbox. The default stays 2 vCPUs and 4096 MB. A size change builds a new Kiln template, and each repository starts cold once. The migration renames the warm snapshot column `image` to `template`, so restart the worker and the API after `just migrate`.
 - The user validator prompt states that the verify commands already passed, that Factoree runs the Validation Plan, and that the preview may still be building. The validator writes the plan from the source and does not start the app or run the checks again.
 
 ## [0.1.0] - 2026-11-01

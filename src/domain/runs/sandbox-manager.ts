@@ -202,10 +202,10 @@ export class SandboxManager {
   private async warmSnapshotFor(input: PrepareSandboxInput): Promise<WarmSnapshot | null> {
     const sandbox = this.options.sandbox;
     const store = this.options.warmSnapshots;
-    if (store === undefined || sandbox.warmSnapshots === undefined || sandbox.image === undefined) return null;
+    if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.primary.url });
-    // A snapshot of another image holds an old toolchain. The cold run replaces it.
-    return warm !== null && warm.image === sandbox.image ? warm : null;
+    // A snapshot of another template holds an old toolchain or size. The cold run replaces it.
+    return warm !== null && warm.template === sandbox.warmSnapshots.template ? warm : null;
   }
 
   /**
@@ -444,14 +444,14 @@ export class SandboxManager {
   private async saveWarmSnapshot(input: PrepareSandboxInput, ref: SandboxRef, configSha: string): Promise<void> {
     const sandbox = this.options.sandbox;
     const store = this.options.warmSnapshots;
-    if (store === undefined || sandbox.warmSnapshots === undefined || sandbox.image === undefined) return;
+    if (store === undefined || sandbox.warmSnapshots === undefined) return;
     try {
       const snapshotId = await sandbox.warmSnapshots.take(ref);
       const replaced = await store.save({
         tenantId: input.tenantId,
         adapter: sandbox.name,
         repositoryUrl: input.primary.url,
-        image: sandbox.image,
+        template: sandbox.warmSnapshots.template,
         configSha,
         snapshotId,
       });

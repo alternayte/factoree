@@ -11,7 +11,7 @@ export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
 
   async save(snapshot: WarmSnapshot): Promise<WarmSnapshot | null> {
     const key = { tenantId: snapshot.tenantId, adapter: snapshot.adapter, repositoryUrl: snapshot.repositoryUrl };
-    const fields = { image: snapshot.image, configSha: snapshot.configSha, snapshotId: snapshot.snapshotId };
+    const fields = { template: snapshot.template, configSha: snapshot.configSha, snapshotId: snapshot.snapshotId };
     return this.prisma.$transaction(async (tx) => {
       const previous = await tx.warmSnapshot.findUnique({ where: { tenantId_adapter_repositoryUrl: key } });
       await tx.warmSnapshot.upsert({
@@ -39,14 +39,14 @@ const toSnapshot = (row: {
   tenantId: string;
   adapter: string;
   repositoryUrl: string;
-  image: string;
+  template: string;
   configSha: string;
   snapshotId: string;
 }): WarmSnapshot => ({
   tenantId: row.tenantId,
   adapter: row.adapter,
   repositoryUrl: row.repositoryUrl,
-  image: row.image,
+  template: row.template,
   configSha: row.configSha,
   snapshotId: row.snapshotId,
 });

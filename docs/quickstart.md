@@ -143,8 +143,16 @@ Select one provider.
 - `fly-sprites`: enter the Fly.io token. The API URL is optional.
 - `local`: setup offers it only when `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`.
 
-The sandbox limit (`sandboxMaxLive`) is optional. Factoree stores it, but this
-build does not enforce it.
+The sandbox limit (`sandboxMaxLive`) is optional. At the limit Factoree deletes
+its oldest retained sandbox, or the run waits for a free one. One run holds two
+live sandboxes: the work sprite and its check sprite.
+
+For `kiln`, the vCPUs and the memory of each sandbox are optional. Empty fields
+use 2 vCPUs and 4096 MB. Kiln does not refuse a size the host cannot hold, so
+make memory × the sandbox limit fit the memory of the Kiln host. On a Scaleway
+Dedibox Start-2-L (12 threads, 32 GB), 4096 MB and a limit of 6 leave headroom
+for three runs. A size change builds a new Kiln template, and the next run of
+each repository starts cold.
 
 ### 4.5 The first Product
 

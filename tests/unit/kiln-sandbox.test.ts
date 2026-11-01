@@ -4,7 +4,7 @@ import { KilnSandbox, templateName } from "~/adapters/sandbox/kiln/kiln-sandbox.
 import { SandboxError } from "~/domain/runs/sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"c".repeat(64)}`;
-const TEMPLATE = `factoree-${"c".repeat(16)}`;
+const TEMPLATE = `factoree-${"c".repeat(16)}-2c-4096m`;
 
 interface Call {
   method: string;
@@ -168,7 +168,36 @@ describe("KilnSandbox (docs/specs/kiln-sandbox-provider.md)", () => {
   });
 
   it("refuses an image named by tag, because one template serves one digest", () => {
-    expect(() => templateName("ghcr.io/alternayte/factoree-sandbox:latest")).toThrow(/digest/);
+    expect(() => templateName("ghcr.io/alternayte/factoree-sandbox:latest", { vcpus: 2, memoryMb: 4096 })).toThrow(
+      /digest/,
+    );
+  });
+
+  it("builds the template of the size it was given, under a name that holds the size (docs/specs/kiln-sandbox-size.md)", async () => {
+    const sized = `factoree-${"c".repeat(16)}-4c-6144m`;
+    let built = false;
+    const { client, calls } = fakeKiln((call) => {
+      if (call.method === "GET" && call.path === `/v1/templates/${sized}`) {
+        return built ? { status: 200, body: { name: sized, image: IMAGE, state: "ready" } } : undefined;
+      }
+      if (call.method === "POST" && call.path === "/v1/templates") {
+        built = true;
+        return { status: 202, body: { name: sized, image: IMAGE, state: "building" } };
+      }
+      if (call.method === "POST" && call.path === "/v1/sandboxes") return { status: 201, body: { id: "sb1" } };
+      return undefined;
+    });
+    const sandbox = new KilnSandbox({ client, image: IMAGE, size: { vcpus: 4, memoryMb: 6144 }, pollMs: 0 });
+    expect(sandbox.warmSnapshots.template).toBe(sized);
+    await sandbox.create({ runId: "r", tenantId: "t", productId: "p" });
+
+    expect(calls.find((call) => call.path === "/v1/templates")?.body).toMatchObject({
+      name: sized,
+      vcpus: 4,
+      memory_mb: 6144,
+      disk_mb: 16_384,
+    });
+    expect(calls.find((call) => call.path === "/v1/sandboxes")?.body).toMatchObject({ template: sized });
   });
 });
 

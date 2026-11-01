@@ -13,7 +13,7 @@ import type {
   ServiceRef,
   WarmSnapshots,
 } from "~/domain/runs/sandbox.js";
-import { requireSetting, type SandboxSettings } from "~/domain/settings/install-settings.js";
+import { kilnSandboxSize, requireSetting, type SandboxSettings } from "~/domain/settings/install-settings.js";
 import { SandboxSlots, type RetainedSandbox, type SandboxLeaseStore } from "~/domain/runs/sandbox-slots.js";
 import { DEFAULT_WORKSPACE_PATH } from "~/domain/runs/sprite-reaper.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -98,6 +98,7 @@ export class SettingsSandbox implements Sandbox {
             apiKey: requireSetting(settings.apiKey, "Kiln API key"),
           }),
           image: requireSetting(settings.image ?? buildInfo.sandboxImageDefault, "sandbox image"),
+          size: kilnSandboxSize(settings),
           ...(settings.registryUsername === null || settings.registryToken === null
             ? {}
             : { registryCredential: { username: settings.registryUsername, token: settings.registryToken } }),
@@ -140,6 +141,7 @@ export class SettingsSandbox implements Sandbox {
     const snapshots = this.active().warmSnapshots;
     if (snapshots === undefined) return undefined;
     return {
+      template: snapshots.template,
       take: async (ref) => {
         const owner = (await this.forRef(ref)).warmSnapshots;
         if (owner === undefined) throw new Error(`the ${ref.adapter} adapter takes no warm snapshot`);

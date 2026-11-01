@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { applyPatch, type InstallSettings, type InstallSettingsStore } from "~/domain/settings/install-settings.js";
+import { applyPatch, DEFAULT_KILN_SANDBOX_SIZE, type InstallSettings, type InstallSettingsStore } from "~/domain/settings/install-settings.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
@@ -85,6 +85,8 @@ const setupStatusSchema = z.object({
     localAllowed: z.boolean(),
     /** The sandbox image this release pins. Null in a build from a checkout, where Kiln needs an image. */
     pinnedImage: z.string().nullable(),
+    /** docs/specs/kiln-sandbox-size.md. The Kiln sandbox size that an empty field keeps. */
+    defaultSize: z.object({ vcpus: z.number(), memoryMb: z.number() }),
   }),
   product: stepSchema.extend({ slugs: z.array(z.string()) }),
 });
@@ -209,6 +211,7 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
         provider: settings.sandbox.provider,
         localAllowed: dependencies.localSandboxAllowed,
         pinnedImage: buildInfo.sandboxImageDefault,
+        defaultSize: DEFAULT_KILN_SANDBOX_SIZE,
       },
       product: { done: products.length > 0, slugs: products.map((product) => product.slug) },
     };

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
+import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
 import { buildInfo } from "~/config/build-info.js";
 
 /**
@@ -98,6 +98,9 @@ export const installSettingsUpdateSchema = z
         registryUsername: z.string().min(1).nullable(),
         registryToken: z.string().min(1).nullable(),
         maxLive: z.number().int().positive().nullable(),
+        // docs/specs/kiln-sandbox-size.md. Kiln accepts 1 to 32 vCPUs. npm ci needs 1024 MB.
+        vcpus: z.number().int().min(1).max(32).nullable(),
+        memoryMb: z.number().int().min(1024).max(1_048_576).nullable(),
       })
       .partial()
       .strict(),
@@ -144,6 +147,9 @@ export const installSettingsViewSchema = z.object({
     registryUsername: z.string().nullable(),
     registryTokenSet: z.boolean(),
     maxLive: z.number().nullable(),
+    vcpus: z.number().nullable(),
+    memoryMb: z.number().nullable(),
+    defaultSize: z.object({ vcpus: z.number(), memoryMb: z.number() }),
     localAllowed: z.boolean(),
   }),
   gitAuthor: z.object({ name: z.string(), email: z.string() }),
@@ -193,6 +199,9 @@ export const viewInstallSettings = (
     registryUsername: settings.sandbox.registryUsername,
     registryTokenSet: settings.sandbox.registryToken !== null,
     maxLive: settings.sandbox.maxLive,
+    vcpus: settings.sandbox.vcpus,
+    memoryMb: settings.sandbox.memoryMb,
+    defaultSize: DEFAULT_KILN_SANDBOX_SIZE,
     localAllowed,
   },
   gitAuthor: settings.gitAuthor,

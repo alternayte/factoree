@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api";
 import {
   emptySandboxForm,
   parseMaxLive,
+  parseSize,
   PROVIDER_LABELS,
   SandboxFields,
   type SandboxForm,
@@ -37,6 +38,11 @@ export function SandboxStep() {
       setLocalError("The live sandbox limit must be a whole number above 0.");
       return;
     }
+    const size = parseSize(form);
+    if (typeof size === "string") {
+      setLocalError(size);
+      return;
+    }
     setLocalError(null);
     // The API patches: an absent field keeps the stored value. Setup sends only what the operator entered.
     const body: PutSandboxData["body"] = { provider: form.provider };
@@ -46,6 +52,8 @@ export function SandboxStep() {
     if (form.registryUsername.trim()) body.registryUsername = form.registryUsername.trim();
     if (form.registryToken.trim()) body.registryToken = form.registryToken.trim();
     if (maxLive !== null) body.maxLive = maxLive;
+    if (form.provider === "kiln" && size.vcpus !== null) body.vcpus = size.vcpus;
+    if (form.provider === "kiln" && size.memoryMb !== null) body.memoryMb = size.memoryMb;
     save.mutate(body);
   }
 
@@ -75,6 +83,7 @@ export function SandboxStep() {
             onChange={setForm}
             localAllowed={status.sandbox.localAllowed}
             pinnedImage={status.sandbox.pinnedImage}
+            defaultSize={status.sandbox.defaultSize}
             stored={
               current ? { apiKey: current !== "local", registryToken: false, image: status.sandbox.done } : undefined
             }

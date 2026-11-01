@@ -13,6 +13,8 @@ const kiln: SandboxSettings = {
   registryUsername: null,
   registryToken: null,
   maxLive: null,
+  vcpus: null,
+  memoryMb: null,
 };
 
 const pinned = "ghcr.io/alternayte/factoree-sandbox@sha256:" + "a".repeat(64);

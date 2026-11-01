@@ -9,7 +9,7 @@ import { CopyValue } from "@/components/copy";
 import { Field, FieldGrid, Input, SavedNote } from "@/components/form";
 import { Alert, Badge, ErrorAlert, KeyValue, PageHeader, Section, SkeletonCard, Stack } from "@/components/layout";
 import { useMe } from "@/lib/session";
-import { parseMaxLive, SandboxFields, type SandboxForm, type SandboxProvider } from "./sandbox-fields";
+import { parseMaxLive, parseSize, SandboxFields, type SandboxForm, type SandboxProvider } from "./sandbox-fields";
 
 type Settings = GetInstallSettingsResponse;
 type Patch = UpdateInstallSettingsData["body"];
@@ -284,6 +284,8 @@ function sandboxFormOf(s: Settings["sandbox"]): SandboxForm {
     registryUsername: s.registryUsername ?? "",
     registryToken: "",
     maxLive: s.maxLive === null ? "" : String(s.maxLive),
+    vcpus: s.vcpus === null ? "" : String(s.vcpus),
+    memoryMb: s.memoryMb === null ? "" : String(s.memoryMb),
   };
 }
 
@@ -291,6 +293,8 @@ function sandboxFormOf(s: Settings["sandbox"]): SandboxForm {
 function sandboxPatch(form: SandboxForm, s: Settings["sandbox"]): NonNullable<Patch["sandbox"]> | string {
   const maxLive = parseMaxLive(form.maxLive);
   if (maxLive === undefined) return "The live sandbox limit must be a whole number above 0.";
+  const size = parseSize(form);
+  if (typeof size === "string") return size;
   const patch: NonNullable<Patch["sandbox"]> = {};
   const text = (v: string) => (v.trim() ? v.trim() : null);
   if (form.provider !== s.provider) patch.provider = form.provider;
@@ -300,6 +304,8 @@ function sandboxPatch(form: SandboxForm, s: Settings["sandbox"]): NonNullable<Pa
   if (text(form.registryUsername) !== s.registryUsername) patch.registryUsername = text(form.registryUsername);
   if (form.registryToken.trim()) patch.registryToken = form.registryToken.trim();
   if (maxLive !== s.maxLive) patch.maxLive = maxLive;
+  if (size.vcpus !== s.vcpus) patch.vcpus = size.vcpus;
+  if (size.memoryMb !== s.memoryMb) patch.memoryMb = size.memoryMb;
   return patch;
 }
 
@@ -329,6 +335,7 @@ function SandboxSection({ settings, canEdit }: { settings: Settings; canEdit: bo
           disabled={!canEdit}
           stored={{ apiKey: s.apiKeySet, registryToken: s.registryTokenSet }}
           pinnedImage={s.pinnedImage}
+          defaultSize={s.defaultSize}
         />
         {typeof patch === "string" ? <Alert tone="danger">{patch}</Alert> : null}
         <ErrorAlert error={save.error} />

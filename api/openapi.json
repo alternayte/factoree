@@ -223,13 +223,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -605,13 +621,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -898,13 +930,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -1231,13 +1279,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -1514,13 +1578,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -1703,6 +1783,30 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "vcpus": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "memoryMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 1048576
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -1877,13 +1981,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -2487,13 +2607,29 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
                         }
                       },
                       "required": [
                         "done",
                         "provider",
                         "localAllowed",
-                        "pinnedImage"
+                        "pinnedImage",
+                        "defaultSize"
                       ]
                     },
                     "product": {
@@ -5630,6 +5766,33 @@
                             "null"
                           ]
                         },
+                        "vcpus": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "memoryMb": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
+                        },
                         "localAllowed": {
                           "type": "boolean"
                         }
@@ -5643,6 +5806,9 @@
                         "registryUsername",
                         "registryTokenSet",
                         "maxLive",
+                        "vcpus",
+                        "memoryMb",
+                        "defaultSize",
                         "localAllowed"
                       ]
                     },
@@ -5784,6 +5950,30 @@
                             "type": "integer",
                             "exclusiveMinimum": 0,
                             "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "vcpus": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 32
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "memoryMb": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1024,
+                            "maximum": 1048576
                           },
                           {
                             "type": "null"
@@ -5976,6 +6166,33 @@
                             "null"
                           ]
                         },
+                        "vcpus": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "memoryMb": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "defaultSize": {
+                          "type": "object",
+                          "properties": {
+                            "vcpus": {
+                              "type": "number"
+                            },
+                            "memoryMb": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "vcpus",
+                            "memoryMb"
+                          ]
+                        },
                         "localAllowed": {
                           "type": "boolean"
                         }
@@ -5989,6 +6206,9 @@
                         "registryUsername",
                         "registryTokenSet",
                         "maxLive",
+                        "vcpus",
+                        "memoryMb",
+                        "defaultSize",
                         "localAllowed"
                       ]
                     },
