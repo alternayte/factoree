@@ -4,7 +4,7 @@ This file records where the build stopped. `decisions.md` is the authoritative r
 
 ## Next step
 
-Release 0.1.0 is built and staged, not committed. A human commits it, makes the repository public, pushes the tag `v0.1.0`, and runs the spec's live checks: setup with the browser OAuth flows on a clean machine, one c-dash run to READY_FOR_HUMAN, the sign-in and API key checks, `maxConcurrentRuns` 1 with two issues, and `sandboxMaxLive` at the live count with one retained sandbox. Drain the workers before the upgrade (DI-15.13). Open work R-10 and H-3, H-5 to H-12 and H-15 stays below.
+Release 0.1.0 is committed on `main`, with the implementer and validator prompt facts and the Kiln sandbox size (DI-15.26 to DI-15.28). The repository is private and the tag `v0.1.0` is not pushed. `/setup` and c-dash runs to READY_FOR_HUMAN passed on this install (FAC-65 to FAC-69). With `maxConcurrentRuns` 1, FAC-70 queued behind FAC-69, Linear showed "Queued: 1 runs ahead.", and FAC-70 started 4 s after FAC-69 ended. With `sandboxMaxLive` 6 at 6 live Kiln sandboxes, FAC-69 deleted the oldest retained sandbox for its work sprite and again for its check sprite. The live sign-in check with a second Linear account is not run; `tests/integration/settings-and-access.test.ts` covers the membership hook and the API key revoke. A human then pushes `v0.1.0`, runs the README Compose commands on a clean machine, and makes the repository and its GHCR packages public. Drain the workers before the upgrade (DI-15.13). Open work R-10 and H-3, H-5 to H-12 and H-15 stays below.
 
 ## Work queue
 

@@ -6,12 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-
-- The implementer prompt states the checks that Factoree runs after the implementer finishes and that a failed check returns as repair findings. It no longer tells the implementer to start the preview command, so the implementer does not run a production build in the work sprite. When the work sprite holds agent-browser, the prompt says so, and a browser check is optional.
-- The install settings hold the vCPUs and the memory of each Kiln sandbox. The default is 4 vCPUs and 4096 MB, up from 2 vCPUs. A size change builds a new Kiln template, and each repository starts cold once. The migration renames the warm snapshot column `image` to `template`, so restart the worker and the API after `just migrate`.
-- The user validator prompt states that the verify commands already passed, that Factoree runs the Validation Plan, and that the preview may still be building. The validator writes the plan from the source and does not start the app or run the checks again.
-
 ## [0.1.0] - 2026-11-01
 
 The first release. Another person can install Factoree from released artefacts and run it with no checkout.
@@ -43,6 +37,9 @@ The first release. Another person can install Factoree from released artefacts a
 - The product page shows what an empty model or effort means, warns when the product sets no model, and lists the model and effort of the last agent sessions from `GET /admin/products/:id/agent-sessions`. The proof pack warns when opencode chose its own model and the product holds no runner credential.
 - Help popovers explain the autonomy levels L0 to L4, risk caps and allowed domains on the product page and in setup. Each autonomy option shows its one-line description.
 - A Context sources section on the product page lists, adds, tests and deletes MCP servers and Backstage catalogs, with the time of the last read. `POST /admin/products/:id/context-sources/test` calls the discover tool before a save. The context source routes are in the OpenAPI document.
+- The implementer prompt names the verify commands that Factoree runs after the implementer finishes, and says that a failed check returns as repair findings. It never names the preview command, so the implementer does not run a production build in the work sprite. When the work sprite holds agent-browser, the prompt says so, and a browser check is optional.
+- The user validator prompt states that the verify commands already passed, that Factoree runs the Validation Plan, and that the preview may still be building. The validator writes the plan from the source and does not start the app or run the checks again.
+- The install settings hold the vCPUs and the memory of each Kiln sandbox, 4 vCPUs and 4096 MB by default. The Kiln template name holds the image digest and the size, so a size change builds a new template, and each repository starts cold once.
 - `checks/migrations.sh` fails when a migration of the latest release changes or disappears. `scripts/upgrade-test.sh` migrates a database of the previous release to the working tree.
 
 ### Changed
