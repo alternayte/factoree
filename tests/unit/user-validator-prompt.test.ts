@@ -23,7 +23,7 @@ describe("buildUserValidatorInput", () => {
     expect(built.prompt).toContain("Add the health endpoint.");
     expect(built.prompt).toContain("# Validation Contract");
     expect(built.prompt).toContain("/workspace/validation/plan.json");
-    expect(built.promptVersion).toBe("user-validator@4");
+    expect(built.promptVersion).toBe("user-validator@5");
     expect(built.promptVersion).toBe(USER_VALIDATOR_PROMPT_VERSION);
   });
 
@@ -41,6 +41,13 @@ describe("buildUserValidatorInput", () => {
       previewBaseUrl: "http://127.0.0.1:8080",
     });
     expect(built.prompt).toContain("http://127.0.0.1:8080");
+  });
+
+  it("states that verification passed, that Factoree runs the plan, and that the preview may be building (FAC-65)", () => {
+    const prompt = buildUserValidatorInput({ ...base, previewBaseUrl: "http://127.0.0.1:8080" }).prompt;
+    expect(prompt).toContain("already ran the verify commands");
+    expect(prompt).toContain("Factoree executes every check of your Validation Plan");
+    expect(prompt).toContain("may still be building");
   });
 
   it("states that no preview exists when the repository configures none", () => {

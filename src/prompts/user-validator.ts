@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@4";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@5";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -43,7 +43,16 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
         ? "The repository configures no preview. State plainly that you cannot check an " +
             "assertion that needs one."
         : `The exposed preview base URL is ${fields.previewBaseUrl}. Every browser step and ` +
-            "every HTTP request resolves against this URL.",
+            "every HTTP request resolves against this URL. The preview may still be building " +
+            "while you write the plan, and it may not answer yet.",
+    ),
+    section(
+      "What Factoree does",
+      [
+        "Factoree already ran the verify commands of the repository in this sandbox, and they passed.",
+        "Factoree executes every check of your Validation Plan after you write it.",
+        "Write the plan from the source and the frozen Validation Contract. A check you run yourself is not evidence.",
+      ].join("\n"),
     ),
     section(
       "Validation Plan",
