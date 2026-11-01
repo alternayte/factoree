@@ -1,5 +1,6 @@
 import type { ExpiredSandboxRun } from "./run-repository.js";
 import type { Sandbox } from "./sandbox.js";
+import type { WarmSnapshotStore } from "./warm-snapshot.js";
 
 export type ExpiredSandbox = ExpiredSandboxRun;
 
@@ -23,6 +24,8 @@ export interface SpriteReaperOptions {
    * holds no metric registry of its own.
    */
   onDestroyed?: (entry: ExpiredSandbox) => void;
+  /** The warm snapshots that no row names any more. The reaper removes each one it can. */
+  retiredSnapshots?: Pick<WarmSnapshotStore, "listRetired" | "dropRetired">;
 }
 
 /** The one workspace path every adapter uses. A delete needs a complete `SandboxRef`. */
@@ -59,6 +62,23 @@ export class SpriteReaper {
       this.options.onDestroyed?.(entry);
       destroyed += 1;
     }
+    // After the sandboxes: a deleted sandbox no longer reads the snapshot it started from.
+    await this.removeRetiredSnapshots();
     return destroyed;
+  }
+
+  private async removeRetiredSnapshots(): Promise<void> {
+    const store = this.options.retiredSnapshots;
+    if (store === undefined) return;
+    for (const retired of await store.listRetired(this.options.batchSize ?? DEFAULT_BATCH_SIZE)) {
+      const snapshots = this.options.sandboxes[retired.adapter]?.warmSnapshots;
+      if (snapshots === undefined) continue;
+      try {
+        // False: a live sandbox still reads it. The next pass tries again.
+        if (await snapshots.remove(retired.snapshotId)) await store.dropRetired(retired);
+      } catch {
+        // One provider fault must not stop the batch. The next pass retries this snapshot.
+      }
+    }
   }
 }

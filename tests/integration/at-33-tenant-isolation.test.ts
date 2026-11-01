@@ -106,6 +106,8 @@ describe("AT-33 tenant isolation", () => {
         "ProductPolicyChange",
         "ProductSecret",
         "Repository",
+        // DI-15.29. A retired warm snapshot still holds one tenant's checkout.
+        "RetiredWarmSnapshot",
         // SDD section 53 and SDD section 52. Phase 8 added the ReviewFinding table, and it is
         // tenant-owned as well.
         "ReviewFinding",

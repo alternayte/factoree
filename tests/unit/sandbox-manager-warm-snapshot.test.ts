@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import type { SandboxCreateInput, SandboxRef, WarmSnapshots } from "~/domain/runs/sandbox.js";
-import type { WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
+import type { RetiredWarmSnapshot, WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"a".repeat(64)}`;
@@ -22,6 +22,8 @@ class WarmFakeSandbox extends FakeSandbox {
   readonly restored: string[] = [];
   readonly removed: string[] = [];
   restoreFails = false;
+  /** Kiln refuses the delete of a snapshot that a live sandbox still reads. */
+  removeRefused = false;
   readonly warmSnapshots: WarmSnapshots = {
     template: TEMPLATE,
     take: (ref: SandboxRef) => {
@@ -37,8 +39,9 @@ class WarmFakeSandbox extends FakeSandbox {
       return Promise.resolve({ id: `warm-${input.runId}`, adapter: this.name, workspacePath: "/workspace" });
     },
     remove: (snapshotId: string) => {
+      if (this.removeRefused) return Promise.resolve(false);
       this.removed.push(snapshotId);
-      return Promise.resolve();
+      return Promise.resolve(true);
     },
   };
 
@@ -70,6 +73,18 @@ class MemoryWarmSnapshotStore implements WarmSnapshotStore {
   }
   forget(snapshot: WarmSnapshot): Promise<void> {
     if (this.rows.get(this.key(snapshot))?.snapshotId === snapshot.snapshotId) this.rows.delete(this.key(snapshot));
+    return Promise.resolve();
+  }
+  readonly retired = new Map<string, RetiredWarmSnapshot>();
+  retire(snapshot: RetiredWarmSnapshot): Promise<void> {
+    this.retired.set(`${snapshot.adapter}|${snapshot.snapshotId}`, { ...snapshot });
+    return Promise.resolve();
+  }
+  listRetired(limit: number): Promise<RetiredWarmSnapshot[]> {
+    return Promise.resolve([...this.retired.values()].slice(0, limit));
+  }
+  dropRetired(snapshot: RetiredWarmSnapshot): Promise<void> {
+    this.retired.delete(`${snapshot.adapter}|${snapshot.snapshotId}`);
     return Promise.resolve();
   }
 }
@@ -118,6 +133,28 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
     // Another template: the run starts cold, and its snapshot replaces the old one.
     expect(sandbox.calls).not.toContain("restore");
     expect(sandbox.removed).toEqual(["snap-old"]);
+    expect([...store.retired.values()]).toEqual([]);
+  });
+
+  it("keeps a replaced snapshot that a live sandbox still reads, so the reaper removes it later", async () => {
+    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    sandbox.removeRefused = true;
+    const store = new MemoryWarmSnapshotStore();
+    await store.save(stored(CONFIG_SHA, `factoree-${"a".repeat(16)}-4c-4096m`));
+    await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
+
+    // No row names snap-old any more, so without the record it would stay on the provider for ever.
+    expect([...store.retired.values()]).toEqual([{ tenantId: "tenant-1", adapter: "fake", snapshotId: "snap-old" }]);
+  });
+
+  it("records a snapshot that did not restore, so the reaper removes it", async () => {
+    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    sandbox.restoreFails = true;
+    const store = new MemoryWarmSnapshotStore();
+    await store.save(stored(CONFIG_SHA));
+    await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
+
+    expect(store.retired.has("fake|snap-old")).toBe(true);
   });
 
   it("starts from the warm snapshot, moves the checkout to the run ref and runs the bootstrap again", async () => {

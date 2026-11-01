@@ -18,6 +18,7 @@ model Tenant {
   runs              Run[]
   webhooks          ProcessedWebhook[]
   warmSnapshots     WarmSnapshot[]
+  retiredSnapshots  RetiredWarmSnapshot[]
   linearMembers     LinearMember[]
 }
 
@@ -383,6 +384,20 @@ model WarmSnapshot {
   createdAt     DateTime @default(now())
 
   @@unique([tenantId, adapter, repositoryUrl])
+}
+
+// DI-15.29. A warm snapshot that no WarmSnapshot row names any more and that the provider still
+// holds: a replaced one that a live sandbox still read, or one that did not restore. The reaper
+// removes it, and drops the row once the provider lets the snapshot go.
+model RetiredWarmSnapshot {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  adapter    String
+  snapshotId String
+  createdAt  DateTime @default(now())
+
+  @@unique([adapter, snapshotId])
 }
 
 // docs/specs/release-0-1-0.md, DI-15.14. One live sandbox of a provider that Factoree created, from

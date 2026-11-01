@@ -111,8 +111,11 @@ export interface WarmSnapshots {
   take(ref: SandboxRef): Promise<string>;
   /** Starts a new sandbox from a snapshot, with the egress policy the snapshot recorded. */
   restore(input: SandboxCreateInput, snapshotId: string): Promise<SandboxRef>;
-  /** Removes a snapshot. A snapshot that has gone is removed. */
-  remove(snapshotId: string): Promise<void>;
+  /**
+   * Removes a snapshot. A snapshot that has gone is removed. False means the provider kept it,
+   * because a live sandbox still reads it, and a later call must try again.
+   */
+  remove(snapshotId: string): Promise<boolean>;
 }
 
 /** SDD section 31. */

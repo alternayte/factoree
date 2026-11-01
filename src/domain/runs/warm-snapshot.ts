@@ -15,6 +15,17 @@ export interface WarmSnapshot {
   snapshotId: string;
 }
 
+/**
+ * A snapshot that no row names any more and that the provider still holds: one that a new
+ * snapshot replaced, or one that did not restore. The reaper removes it.
+ */
+export interface RetiredWarmSnapshot {
+  /** The tenant whose checkout the snapshot holds. */
+  tenantId: string;
+  adapter: string;
+  snapshotId: string;
+}
+
 /** One warm snapshot per tenant, adapter and repository. A new one replaces the old one. */
 export interface WarmSnapshotStore {
   find(key: { tenantId: string; adapter: string; repositoryUrl: string }): Promise<WarmSnapshot | null>;
@@ -22,4 +33,9 @@ export interface WarmSnapshotStore {
   save(snapshot: WarmSnapshot): Promise<WarmSnapshot | null>;
   /** Forgets the snapshot, only while it is still the stored one. */
   forget(snapshot: WarmSnapshot): Promise<void>;
+  /** Records a snapshot to remove later. A second record of the same snapshot changes nothing. */
+  retire(snapshot: RetiredWarmSnapshot): Promise<void>;
+  listRetired(limit: number): Promise<RetiredWarmSnapshot[]>;
+  /** Drops the record once the provider removed the snapshot. */
+  dropRetired(snapshot: RetiredWarmSnapshot): Promise<void>;
 }

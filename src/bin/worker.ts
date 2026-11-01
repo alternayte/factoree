@@ -114,10 +114,11 @@ try {
   logger.warn("the sandbox provider is not configured yet", { step: "boot", error: String(error) });
 }
 
+const warmSnapshots = new PrismaWarmSnapshotStore(prisma);
 const sandboxManager = new SandboxManager({
   sandbox,
   logger,
-  warmSnapshots: new PrismaWarmSnapshotStore(prisma),
+  warmSnapshots,
   // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
   installBrowserTools: (sandboxName) => sandboxName === "fly-sprites",
   ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
@@ -156,6 +157,7 @@ const reaper = new SpriteReaper({
   sandboxes: { kiln: sandbox, "fly-sprites": sandbox, local: sandbox },
   runs,
   onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
+  retiredSnapshots: warmSnapshots,
 });
 
 // The Linear access token belongs to the workspace of the Run. The session id carries the

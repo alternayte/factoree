@@ -1,5 +1,5 @@
 import type { FactoreePrismaClient } from "./client.js";
-import type { WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
+import type { RetiredWarmSnapshot, WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 
 export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -31,6 +31,29 @@ export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
         repositoryUrl: snapshot.repositoryUrl,
         snapshotId: snapshot.snapshotId,
       },
+    });
+  }
+
+  async retire(snapshot: RetiredWarmSnapshot): Promise<void> {
+    const key = { adapter: snapshot.adapter, snapshotId: snapshot.snapshotId };
+    await this.prisma.retiredWarmSnapshot.upsert({
+      where: { adapter_snapshotId: key },
+      create: { ...key, tenantId: snapshot.tenantId },
+      update: {},
+    });
+  }
+
+  async listRetired(limit: number): Promise<RetiredWarmSnapshot[]> {
+    return this.prisma.retiredWarmSnapshot.findMany({
+      select: { tenantId: true, adapter: true, snapshotId: true },
+      orderBy: { createdAt: "asc" },
+      take: limit,
+    });
+  }
+
+  async dropRetired(snapshot: RetiredWarmSnapshot): Promise<void> {
+    await this.prisma.retiredWarmSnapshot.deleteMany({
+      where: { adapter: snapshot.adapter, snapshotId: snapshot.snapshotId },
     });
   }
 }

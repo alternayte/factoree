@@ -240,6 +240,8 @@ export class SandboxManager {
           detail: String(error).slice(0, 500),
         });
         await this.options.warmSnapshots?.forget(warm);
+        // No row names the snapshot now, and it still holds disk on the provider.
+        await this.options.warmSnapshots?.retire({ tenantId: warm.tenantId, adapter: warm.adapter, snapshotId: warm.snapshotId });
         return null;
       }
       this.options.logger?.info("the sandbox starts from the warm snapshot", {
@@ -455,7 +457,13 @@ export class SandboxManager {
         configSha,
         snapshotId,
       });
-      if (replaced !== null) await sandbox.warmSnapshots.remove(replaced.snapshotId);
+      if (replaced !== null) {
+        // The record comes first, so a remove that throws or that the provider refuses because a
+        // live sandbox still reads the snapshot leaves it to the reaper, and never orphans it.
+        const retired = { tenantId: replaced.tenantId, adapter: replaced.adapter, snapshotId: replaced.snapshotId };
+        await store.retire(retired);
+        if (await sandbox.warmSnapshots.remove(replaced.snapshotId)) await store.dropRetired(retired);
+      }
       this.options.logger?.info("the warm snapshot of the repository is saved", {
         run_id: input.runId,
         snapshot_id: snapshotId,

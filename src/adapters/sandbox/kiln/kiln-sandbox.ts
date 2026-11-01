@@ -113,8 +113,11 @@ export class KilnSandbox implements Sandbox {
         } catch (error) {
           // A snapshot that has gone is removed. A snapshot a live sandbox still reads stays, and
           // Kiln refuses the delete with a conflict.
-          if (!isKilnNotFound(error) && !isKilnConflict(error)) throw error;
+          if (isKilnNotFound(error)) return true;
+          if (isKilnConflict(error)) return false;
+          throw error;
         }
+        return true;
       },
     };
   }
