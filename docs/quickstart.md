@@ -204,6 +204,22 @@ the Product does not allow. Open the Product on the Products screen. Add
 `registry.npmjs.org`, `opencode.ai` and `models.dev` to its allowed domains,
 plus the host of the model provider.
 
+On Kiln, the bootstrap runs again in every sandbox that forks the warm
+snapshot: the work sprite and each check sprite. Write it so that a second run
+with the same lockfile does almost nothing, and so that it never rewrites a
+tracked file, because a rewritten lockfile enters the verified patch.
+
+- `go mod download`, `dotnet restore --locked-mode`, `uv sync --frozen` and
+  `pnpm install --frozen-lockfile` already skip work that is done.
+- `npm ci` deletes `node_modules` on every run. Skip it when the lockfile is
+  unchanged:
+
+      h=$(sha256sum package-lock.json | cut -c1-64) && { [ "$(cat node_modules/.lock-sha 2>/dev/null)" = "$h" ] || { npm ci && echo "$h" > node_modules/.lock-sha; }; }
+
+- `npm install` rewrites `package-lock.json`. Do not use it in a bootstrap.
+- Do not build the app in the bootstrap. Each sandbox pays for the build, and
+  the preview builds again.
+
 ## 6. The settings screens
 
 After sign-in, the UI holds four screens.
