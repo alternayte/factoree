@@ -810,10 +810,10 @@ export async function agentRunWorkflow(
         skills: attemptInput.prepared.skills,
         repairFindings: attemptInput.repairFindings,
         stagingRead: attemptInput.prepared.runtime.stagingRead,
-        selfCheck:
-          attemptInput.prepared.selfCheckReady === true && attemptInput.prepared.preview !== null
-            ? { previewCommand: attemptInput.prepared.preview.command, readyUrl: attemptInput.prepared.preview.readyUrl }
-            : null,
+        // docs/specs/implementer-self-check.md. Facts only: the checks Factoree runs, and whether
+        // agent-browser is installed. The preview command stays with the check sprite.
+        verifyCommands: attemptInput.prepared.verifyCommands,
+        selfCheck: attemptInput.prepared.selfCheckReady === true,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
         ...((attemptInput.continueSession ?? null) === null ? {} : { continueSession: attemptInput.continueSession }),

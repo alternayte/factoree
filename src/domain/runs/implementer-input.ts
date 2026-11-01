@@ -16,11 +16,10 @@ export interface BuildImplementerInput {
   repairFindings: string[];
   /** Non-production Project test secrets only. See SDD section 30. */
   projectTestSecrets: Record<string, string>;
-  /**
-   * docs/specs/proof-pack-and-visual-evidence.md. The preview the implementer can start and open
-   * with agent-browser to check its own work, or null when the work sprite has no browser tools.
-   */
-  selfCheck?: { previewCommand: string; readyUrl: string } | null;
+  /** docs/specs/implementer-self-check.md. The checks Factoree runs after the implementer finishes. */
+  verifyCommands?: Array<{ name: string; run: string }>;
+  /** docs/specs/implementer-self-check.md. True when the work sprite holds agent-browser. */
+  selfCheck?: boolean;
 }
 
 export interface ImplementerInput {
@@ -183,7 +182,8 @@ export const buildImplementerInput = (input: BuildImplementerInput): Implementer
       referenceRepositoryPaths: input.referenceRepositoryPaths,
       repositoryInstructions: input.repositoryInstructions,
       skills: input.skills,
-      selfCheck: input.selfCheck ?? null,
+      verifyCommands: input.verifyCommands ?? [],
+      selfCheck: input.selfCheck === true,
       actionPolicyLines: input.actionPolicy.describe(),
       repairFindings: input.repairFindings,
     }),

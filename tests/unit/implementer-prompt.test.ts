@@ -23,7 +23,7 @@ const SAMPLE: ImplementerPromptFields = {
  * rendered text, which changes this hash, which fails this test. The failure message tells a
  * developer to bump IMPLEMENTER_PROMPT_VERSION and to record the new hash here.
  */
-const EXPECTED_TEMPLATE_HASH = "be208edda1e86e35cd4f6383429577284d54c672de92711b884b695d523f181f";
+const EXPECTED_TEMPLATE_HASH = "874b6025fba58ddf3881d13f5106cee02e8be72d48fe277a33751f01f403a7ec";
 
 describe("renderImplementerPrompt version guard", () => {
   it("keeps IMPLEMENTER_PROMPT_VERSION synchronized with the template text", () => {
@@ -39,7 +39,7 @@ describe("renderImplementerPrompt version guard", () => {
   });
 
   it("stamps the prompt version as a value that changes only with the template", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/6");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/7");
   });
 });
 
@@ -54,23 +54,27 @@ describe("renderImplementerPrompt skills", () => {
   });
 
   it("reports the prompt version 4", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/6");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/7");
   });
 });
 
-describe("renderImplementerPrompt self-check (proof-pack-and-visual-evidence.md)", () => {
-  it("names the preview and agent-browser when the work sprite holds the browser tools", () => {
-    const rendered = renderImplementerPrompt({
-      ...SAMPLE,
-      selfCheck: { previewCommand: "npm start", readyUrl: "http://localhost:3000/" },
-    });
-    expect(rendered).toContain("## Check your work in a browser");
-    expect(rendered).toContain("`npm start`");
-    expect(rendered).toContain("`agent-browser open <url>");
-    expect(rendered).toContain("They are not evidence.");
+describe("renderImplementerPrompt checks and self-check (implementer-self-check.md)", () => {
+  const verifyCommands = [
+    { name: "type-check", run: "npm run type-check" },
+    { name: "test", run: "npm test" },
+  ];
+
+  it("states the checks Factoree runs and scripts no preview start", () => {
+    const rendered = renderImplementerPrompt({ ...SAMPLE, verifyCommands, selfCheck: true });
+    expect(rendered).toContain("type-check: `npm run type-check`");
+    expect(rendered).toContain("test: `npm test`");
+    expect(rendered).toContain("repair findings");
+    expect(rendered).toContain("agent-browser is installed");
+    expect(rendered).not.toContain("npm run build");
+    expect(rendered).not.toContain("localhost");
   });
 
   it("names no browser when the work sprite has no browser tools", () => {
-    expect(renderImplementerPrompt({ ...SAMPLE, selfCheck: null })).not.toContain("Check your work in a browser");
+    expect(renderImplementerPrompt({ ...SAMPLE, verifyCommands, selfCheck: false })).not.toContain("agent-browser");
   });
 });

@@ -1,6 +1,6 @@
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/6";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/7";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -15,10 +15,15 @@ export interface ImplementerPromptFields {
   actionPolicyLines: string[];
   repairFindings: string[];
   /**
-   * docs/specs/proof-pack-and-visual-evidence.md. The preview the implementer can start and open
-   * with agent-browser to check its own work, or null when the work sprite has no browser tools.
+   * docs/specs/implementer-self-check.md. The checks Factoree runs after the implementer
+   * finishes. The prompt states them as facts and scripts no procedure.
    */
-  selfCheck?: { previewCommand: string; readyUrl: string } | null;
+  verifyCommands?: Array<{ name: string; run: string }>;
+  /**
+   * docs/specs/implementer-self-check.md. True when the work sprite holds agent-browser. The
+   * prompt never names the preview command, so the implementer starts no production build.
+   */
+  selfCheck?: boolean;
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -61,19 +66,22 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
         "Each rule names the mechanism that holds it outside this prompt. A rule you cannot see still applies.",
     ),
     section("Repair findings", list(fields.repairFindings, "None. This is the first attempt.")),
-    ...(fields.selfCheck === undefined || fields.selfCheck === null
-      ? []
-      : [
-          section(
-            "Check your work in a browser",
-            [
-              `Start the app with \`${fields.selfCheck.previewCommand}\` from the primary worktree, in the background.`,
-              `Open ${fields.selfCheck.readyUrl} with \`agent-browser open <url>\`, and read the page with \`agent-browser snapshot\`.`,
-              "Check every visible criterion of the Validation Contract this way before you finish. Stop the app when you are done.",
-              "Your browser checks help you. They are not evidence. Factoree checks the change itself in a new sandbox.",
-            ].join("\n"),
-          ),
-        ]),
+    section(
+      "Checks after you finish",
+      [
+        list(
+          (fields.verifyCommands ?? []).map((command) => `${command.name}: \`${command.run}\``),
+          "The repository names no check commands.",
+        ),
+        "",
+        "Factoree runs these checks in a new sandbox after you finish.",
+        "A failed check returns to you as repair findings, and each repair uses the repair budget of the Run.",
+        "You can run any of these checks yourself. Your result is not evidence.",
+        ...(fields.selfCheck === true
+          ? ["agent-browser is installed. A browser check of your own work is optional, and it is not evidence."]
+          : []),
+      ].join("\n"),
+    ),
     section(
       "Rules",
       [

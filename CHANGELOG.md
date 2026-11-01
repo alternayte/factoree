@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The implementer prompt states the checks that Factoree runs after the implementer finishes and that a failed check returns as repair findings. It no longer tells the implementer to start the preview command, so the implementer does not run a production build in the work sprite. When the work sprite holds agent-browser, the prompt says so, and a browser check is optional.
+
 ## [0.1.0] - 2026-11-01
 
 The first release. Another person can install Factoree from released artefacts and run it with no checkout.

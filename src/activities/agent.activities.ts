@@ -10,6 +10,7 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { buildImplementerInput } from "~/domain/runs/implementer-input.js";
+import type { VerificationCommand } from "~/domain/runs/project-runtime-config.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
@@ -55,10 +56,15 @@ export interface ImplementActivityInput {
   repairFindings: string[];
   stagingRead: boolean;
   /**
-   * docs/specs/proof-pack-and-visual-evidence.md. The preview the implementer can start and open
-   * with agent-browser to check its own work, or null when the work sprite has no browser tools.
+   * docs/specs/implementer-self-check.md. The checks Factoree runs after the implementer
+   * finishes. Absent in a history recorded before the prompt stated them.
    */
-  selfCheck?: { previewCommand: string; readyUrl: string } | null;
+  verifyCommands?: VerificationCommand[];
+  /**
+   * docs/specs/implementer-self-check.md. True when the work sprite holds agent-browser. An
+   * activity scheduled before this change carries the old preview object, which means the same.
+   */
+  selfCheck?: boolean | { previewCommand: string; readyUrl: string } | null;
 
   timeoutMs: number;
   /**
@@ -164,7 +170,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       actionPolicy,
       repairFindings: input.repairFindings,
       projectTestSecrets,
-      selfCheck: input.selfCheck ?? null,
+      verifyCommands: input.verifyCommands ?? [],
+      selfCheck: input.selfCheck !== undefined && input.selfCheck !== null && input.selfCheck !== false,
     });
 
     // SDD section 30. The runner credential is attached again here, because the attachment lives
