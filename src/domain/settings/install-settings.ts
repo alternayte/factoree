@@ -56,7 +56,7 @@ export interface KilnSandboxSize {
   memoryMb: number;
 }
 
-export const DEFAULT_KILN_SANDBOX_SIZE: KilnSandboxSize = { vcpus: 2, memoryMb: 4096 };
+export const DEFAULT_KILN_SANDBOX_SIZE: KilnSandboxSize = { vcpus: 4, memoryMb: 4096 };
 
 /** The size of each Kiln sandbox: the stored values, or the default. */
 export const kilnSandboxSize = (settings: SandboxSettings): KilnSandboxSize => ({

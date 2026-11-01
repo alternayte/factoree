@@ -4,7 +4,7 @@ import { KilnSandbox, templateName } from "~/adapters/sandbox/kiln/kiln-sandbox.
 import { SandboxError } from "~/domain/runs/sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"c".repeat(64)}`;
-const TEMPLATE = `factoree-${"c".repeat(16)}-2c-4096m`;
+const TEMPLATE = `factoree-${"c".repeat(16)}-4c-4096m`;
 
 interface Call {
   method: string;
