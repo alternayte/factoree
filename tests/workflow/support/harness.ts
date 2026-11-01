@@ -235,6 +235,14 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     string,
     (attempt: number) => UserValidateActivityOutput
   >();
+  /**
+   * A run id in this map runs the given function in place of the `userValidate` double, for
+   * example the real activity over in-memory doubles. DI-15.23.
+   */
+  const userValidateDelegates = new Map<
+    string,
+    (activityInput: UserValidateActivityInput) => Promise<UserValidateActivityOutput>
+  >();
   /** A run id in this map holds the user validation pass open until the test resolves the promise. */
   const heldUserValidations = new Map<string, Promise<void>>();
   /** The run ids whose live User Validator session the activity observed a cancellation for. */
@@ -672,6 +680,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           clearInterval(heartbeat);
         }
       }
+      const delegate = userValidateDelegates.get(activityInput.runId);
+      if (delegate !== undefined) return await delegate(activityInput);
       const outcome = userValidationOutcomes.get(activityInput.runId);
       if (outcome !== undefined) return outcome(activityInput.attempt);
       return {
@@ -981,6 +991,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldValidations,
     userValidateCalls,
     userValidationOutcomes,
+    userValidateDelegates,
     heldUserValidations,
     cancelledLiveValidations,
     reviewCalls,

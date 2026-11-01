@@ -1,103 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
-import { createValidationActivities } from "~/activities/validation.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
-import { createEvidencePersistence } from "~/activities/evidence.activities.js";
-import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
-import type { AgentExecutionRecord, RecordAgentExecutionInput } from "~/domain/runs/agent-execution.js";
-import type {
-  RecordAssertionResultInput,
-  ValidationAssertionResultRecord,
-  ValidationResultStore,
-} from "~/domain/validation/validation-result-store.js";
-import type {
-  StoredValidationContract,
-  ValidationContractStore,
-} from "~/domain/validation/validation-contract-store.js";
-import type { EvidenceStorage, PutArtifactInput, StoredArtifact } from "~/domain/evidence/evidence-storage.js";
-import { hashArtifactBytes } from "~/domain/evidence/evidence-storage.js";
-import type { BrowserDriver, BrowserRunResult, BrowserScenario } from "~/domain/validation/browser-driver.js";
-import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
-import type { ReadinessProbe } from "~/domain/runs/preview.js";
-import { Redactor } from "~/telemetry/redaction.js";
-import { createLogger } from "~/telemetry/logger.js";
+import {
+  AgentSessionUnavailableError,
+  type AgentResumeInput,
+  type AgentRunResult,
+  type AgentSessionRef,
+} from "~/domain/runs/agent-runner.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
-import { FakeEvidenceStore } from "../support/fake-evidence-store.js";
-import { MemorySecretStore } from "../support/memory-secret-store.js";
-import { MemoryAgentSessionStore } from "../support/memory-agent-session-store.js";
-
-const passingBrowserResult: BrowserRunResult = {
-  passed: true,
-  steps: [{ index: 0, action: "goto", passed: true, detail: "navigated to /" }],
-  consoleLines: ["ready"],
-  network: [{ method: "GET", url: "/", status: 200 }],
-  artifacts: [{ kind: "screenshot", name: "final", contentType: "image/png", bytes: new Uint8Array([1]) }],
-  failureReason: null,
-};
-
-class FakeBrowserDriver implements BrowserDriver {
-  readonly name = "fake-browser";
-  readonly calls: BrowserScenario[] = [];
-  result: BrowserRunResult = passingBrowserResult;
-
-  /** Runs inside the browser step, so a test can let time pass while the step runs. */
-  during: (() => Promise<void>) | null = null;
-
-  async run(scenario: BrowserScenario): Promise<BrowserRunResult> {
-    this.calls.push(scenario);
-    if (this.during !== null) await this.during();
-    return this.result;
-  }
-}
-
-const okFetch: HttpValidationFetch = () => Promise.resolve({ status: 200, headers: {}, body: "ok" });
-const readyProbe: ReadinessProbe = () => Promise.resolve({ status: 200 });
-
-class FakeResultStore implements ValidationResultStore {
-  readonly rows: ValidationAssertionResultRecord[] = [];
-  private readonly keys = new Set<string>();
-
-  record(input: RecordAssertionResultInput): Promise<ValidationAssertionResultRecord> {
-    const key = `${input.runId}:${input.validationAssertionId}:${input.attempt}`;
-    if (this.keys.has(key)) {
-      return Promise.resolve(this.rows.find((row) => `${row.runId}:${row.validationAssertionId}:${row.attempt}` === key)!);
-    }
-    this.keys.add(key);
-    const row: ValidationAssertionResultRecord = {
-      id: `result-${this.rows.length + 1}`,
-      tenantId: input.tenantId,
-      runId: input.runId,
-      validationAssertionId: input.validationAssertionId,
-      assertionKey: input.assertionKey,
-      result: input.result,
-      reason: input.reason,
-      attempt: input.attempt,
-      createdAt: new Date(),
-    };
-    this.rows.push(row);
-    return Promise.resolve(row);
-  }
-
-  listForRun(tenantId: string, runId: string): Promise<ValidationAssertionResultRecord[]> {
-    return Promise.resolve(this.rows.filter((row) => row.tenantId === tenantId && row.runId === runId));
-  }
-}
-
-class FakeEvidenceStorage implements EvidenceStorage {
-  readonly name = "fake-storage";
-  readonly puts: PutArtifactInput[] = [];
-
-  put(input: PutArtifactInput): Promise<StoredArtifact> {
-    this.puts.push(input);
-    return Promise.resolve({
-      storageRef: `fake://${input.runId}/${input.name}`,
-      sha256: hashArtifactBytes(input.bytes),
-      byteLength: input.bytes.byteLength,
-    });
-  }
-}
+import { build, input, planFiles, planText, rejectedPlan } from "../support/user-validate-fixture.js";
 
 /**
  * Rejects every `exposeService` call, the way `FlySpriteSandbox` does today (a recorded Phase 2
@@ -109,145 +22,6 @@ class NoExposeSandbox extends FakeSandbox {
   }
 }
 
-const browserAssertion = {
-  id: "VAL-UI-001",
-  rowId: "row-ui-1",
-  requirement: "AC-1",
-  statement: "The dashboard shows the user's name after login.",
-  method: "browser" as const,
-  evidence: ["screenshot" as const],
-  preconditions: [],
-};
-
-const httpAssertion = {
-  id: "VAL-API-001",
-  rowId: "row-api-1",
-  requirement: "AC-2",
-  statement: "GET /health returns 200.",
-  method: "http" as const,
-  evidence: ["request-response" as const],
-  preconditions: [],
-};
-
-const storedContract: StoredValidationContract = {
-  id: "contract-1",
-  tenantId: "tenant-1",
-  runId: "run-1",
-  version: 1,
-  sha256: "deadbeef",
-  workItem: "FAC-1",
-  goal: "Ship the dashboard.",
-  document: "# Validation Contract\n\nVAL-UI-001, VAL-API-001",
-  assertions: [browserAssertion, httpAssertion],
-  createdAt: new Date(),
-};
-
-class FakeContractStore implements ValidationContractStore {
-  save(): Promise<StoredValidationContract> {
-    return Promise.resolve(storedContract);
-  }
-
-  findByRun(): Promise<StoredValidationContract | null> {
-    return Promise.resolve(storedContract);
-  }
-}
-
-const planText = JSON.stringify({
-  version: 1,
-  entries: [
-    {
-      assertionId: "VAL-UI-001",
-      kind: "browser",
-      steps: [
-        { action: "goto", path: "/" },
-        { action: "expectText", selector: "h1", text: "Welcome" },
-      ],
-    },
-    {
-      assertionId: "VAL-API-001",
-      kind: "http",
-      request: {
-        method: "GET",
-        path: "/health",
-        headers: {},
-        body: null,
-        expectStatus: 200,
-        expectBodyContains: null,
-      },
-    },
-  ],
-});
-
-/**
- * Models `PrismaAgentExecutionRepository`, which upserts on the unique `idempotencyKey`. A
- * double that always pushes a new row cannot catch a duplicate write on a Temporal retry.
- */
-class FakeAgentExecutionRepository {
-  readonly rows: AgentExecutionRecord[] = [];
-  private readonly keys = new Map<string, AgentExecutionRecord>();
-
-  record(recordInput: RecordAgentExecutionInput): Promise<AgentExecutionRecord> {
-    const existing = this.keys.get(recordInput.idempotencyKey);
-    if (existing !== undefined) return Promise.resolve(existing);
-    const row: AgentExecutionRecord = { ...recordInput, id: `exec-${this.rows.length + 1}`, createdAt: new Date() };
-    this.rows.push(row);
-    this.keys.set(recordInput.idempotencyKey, row);
-    return Promise.resolve(row);
-  }
-
-  listForRun(): Promise<AgentExecutionRecord[]> {
-    return Promise.resolve(this.rows);
-  }
-}
-
-const build = (runner: FakeRunner, sandbox: FakeSandbox = new FakeSandbox()) => {
-  sandbox.scriptExec(/^cat /, { exitCode: 0, stdout: planText });
-  const executions = new FakeAgentExecutionRepository();
-  const evidence = new FakeEvidenceStore();
-  const results = new FakeResultStore();
-  const storage = new FakeEvidenceStorage();
-  const browser = new FakeBrowserDriver();
-  const redactor = new Redactor();
-  const logger = createLogger({ level: "error", redactor, sink: () => undefined });
-  const activities = createValidationActivities({
-    contracts: new FakeContractStore(),
-    runs: { setValidationContractVersion: () => Promise.resolve() } as never,
-    logger,
-    userValidation: {
-      sandbox,
-      runners: new AgentRunnerRegistry([runner]),
-      sessions: new MemoryAgentSessionStore(),
-      executions,
-      secrets: new MemorySecretStore(),
-      redactor,
-      browser,
-      fetchImpl: okFetch,
-      probe: readyProbe,
-      evidencePersistence: createEvidencePersistence({ evidence, results, storage, logger }),
-    },
-  });
-  return { activities, sandbox, executions, evidence, results, storage, browser };
-};
-
-const input = {
-  runId: "run-1",
-  tenantId: "tenant-1",
-  productId: "project-1",
-  runnerName: "opencode",
-  spriteId: "sprite-1",
-  adapter: "fake",
-  workspacePath: "/workspace",
-  primaryPath: "/workspace/primary",
-  goal: "Add the health endpoint.",
-  preview: {
-    enabled: true,
-    command: "npm run dev -- --port 8080",
-    readyUrl: "http://127.0.0.1:8080/health",
-    timeoutSeconds: 5,
-  },
-  timeoutMs: 60_000,
-  attempt: 1,
-};
 
 describe("the userValidate activity", () => {
   it("runs a fresh validator session and records its prompt version", async () => {
@@ -480,5 +254,157 @@ describe("the userValidate activity, a session that wrote no plan", () => {
 
     expect(runner.resumes).toHaveLength(1);
     expect(output.results.every((result) => result.result === "BLOCKED")).toBe(true);
+  });
+});
+
+describe("the userValidate activity, a rejected Validation Plan (DI-15.23)", () => {
+  // FAC-63: the validator wrote a browser assertion as a command check, the plan rules rejected
+  // the whole plan, and the Run ended VALIDATION_BLOCKED with no assertion executed.
+  const commandReason = 'is a "command" check, but the frozen method "browser" requires a "browser" check.';
+  const pathReason = '"//evil.example/health", which is not a relative preview path';
+
+  const run = (activities: ReturnType<typeof build>["activities"]): Promise<UserValidateActivityOutput> =>
+    new MockActivityEnvironment().run(
+      (activityInput: typeof input) => activities.userValidate(activityInput),
+      input,
+    );
+
+  it("asks nothing more when the first plan is valid", async () => {
+    const runner = new FakeRunner();
+    const { activities, sessions, logLines } = build(runner);
+
+    const output = await run(activities);
+
+    expect(output.passed).toBe(true);
+    expect(runner.runs).toHaveLength(1);
+    expect(runner.resumes).toHaveLength(0);
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual(["run:run-1:validator:1"]);
+    expect(logLines.some((line) => line["message"] === "validation plan rejected; asking the validator to correct it")).toBe(false);
+  });
+
+  it("resumes the session once with every reason, then runs the corrected plan", async () => {
+    const runner = new FakeRunner();
+    const { activities, sessions, results, browser, logLines } = build(runner, planFiles(rejectedPlan, planText));
+
+    const output = await run(activities);
+
+    expect(runner.runs).toHaveLength(1);
+    expect(runner.resumes).toHaveLength(1);
+    const prompt = runner.resumes[0]!.input.prompt;
+    expect(prompt).toContain(commandReason);
+    expect(prompt).toContain(pathReason);
+    expect(prompt).toContain('VAL-UI-001: frozen method "browser". Its entry must be a "browser" check.');
+    expect(prompt).toContain('VAL-API-001: frozen method "http". Its entry must be a "http" check.');
+    expect(prompt).toContain("/workspace/validation/plan-corrected.json");
+    expect(prompt).toContain("full corrected Validation Plan");
+    // The assertions of the corrected plan executed.
+    expect(browser.calls).toHaveLength(1);
+    expect(output.passed).toBe(true);
+    expect(results.rows.map((row) => row.result)).toEqual(["PASS", "PASS"]);
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual([
+      "run:run-1:validator:1",
+      "run:run-1:validator:1:plan-correction",
+    ]);
+    expect(sessions.rows[1]).toMatchObject({ role: "validator", attempt: 1 });
+    const rejection = logLines.find((line) => line["message"] === "validation plan rejected; asking the validator to correct it");
+    expect(JSON.stringify(rejection?.["reasons"])).toContain("VAL-UI-001");
+    expect(JSON.stringify(rejection?.["reasons"])).toContain("VAL-API-001");
+  });
+
+  it("blocks every automated assertion with both reasons when the corrected plan is rejected too", async () => {
+    const stillWrong = JSON.stringify({
+      version: 1,
+      entries: [{ assertionId: "VAL-UI-001", kind: "browser", steps: [{ action: "goto", path: "/" }] }],
+    });
+    const runner = new FakeRunner();
+    const { activities, browser } = build(runner, planFiles(rejectedPlan, stillWrong));
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(browser.calls).toHaveLength(0);
+    expect(output.hasBlocked).toBe(true);
+    expect(output.hasFailure).toBe(false);
+    for (const result of output.results) {
+      expect(result.result).toBe("BLOCKED");
+      expect(result.reason).toContain(`Factoree rejected the first Validation Plan: The Validation Plan entry for "VAL-UI-001" ${commandReason}`);
+      expect(result.reason).toContain("It then rejected the corrected Validation Plan:");
+      expect(result.reason).toContain("asserts nothing");
+    }
+  });
+
+  it("names a missing corrected plan beside the first reason", async () => {
+    const runner = new FakeRunner();
+    const { activities } = build(runner, planFiles(rejectedPlan, null));
+
+    const output = await run(activities);
+
+    expect(output.results.every((result) => result.result === "BLOCKED")).toBe(true);
+    expect(output.results[0]?.reason).toContain("The validator wrote no corrected Validation Plan.");
+    expect(output.results[0]?.reason).toContain(commandReason);
+  });
+
+  it("starts one fresh session with the correction when the CLI named no session", async () => {
+    // The runner names the session by its process, so no CLI session exists to resume.
+    const runner = new FakeRunner("opencode", {
+      session: { sessionId: "process-fake", processId: "process-fake", runner: "opencode" },
+    });
+    const { activities, executions, sessions, results } = build(
+      runner,
+      planFiles(rejectedPlan, planText, () => runner.runs.length > 1),
+    );
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(0);
+    expect(runner.runs).toHaveLength(2);
+    const fresh = runner.runs[1]!;
+    expect(fresh.prompt).toContain("# User Validator instructions");
+    expect(fresh.prompt).toContain("# Validation Plan correction");
+    expect(fresh.prompt).toContain(commandReason);
+    expect(fresh.prompt).toContain("/workspace/validation/plan-corrected.json");
+    expect(fresh.prompt).not.toContain("/workspace/validation/plan.json");
+    expect(fresh.promptVersion).toBe("user-validator@4+user-validator-plan-correction@1");
+    expect(output.passed).toBe(true);
+    expect(results.rows.map((row) => row.result)).toEqual(["PASS", "PASS"]);
+    expect(executions.rows.map((row) => row.idempotencyKey)).toEqual([
+      "run:run-1:validator:1",
+      "run:run-1:validator:1:plan-correction",
+    ]);
+    expect(sessions.rows).toHaveLength(2);
+  });
+
+  it("starts one fresh session when this worker cannot resume the session", async () => {
+    class RemoteSessionRunner extends FakeRunner {
+      override resume(session: AgentSessionRef): Promise<AgentRunResult> {
+        return Promise.reject(new AgentSessionUnavailableError(this.name, session.sessionId));
+      }
+    }
+    const runner = new RemoteSessionRunner();
+    const { activities } = build(runner, planFiles(rejectedPlan, planText, () => runner.runs.length > 1));
+
+    const output = await run(activities);
+
+    expect(runner.runs).toHaveLength(2);
+    expect(runner.runs[1]!.prompt).toContain("# Validation Plan correction");
+    expect(output.passed).toBe(true);
+  });
+
+  it("starts one fresh session when the resume fails and writes no plan", async () => {
+    class FailingResumeRunner extends FakeRunner {
+      override async resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+        const result = await super.resume(session, resumeInput);
+        return { ...result, completed: false, exitCode: 1 };
+      }
+    }
+    const runner = new FailingResumeRunner();
+    const { activities } = build(runner, planFiles(rejectedPlan, planText, () => runner.runs.length > 1));
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.runs).toHaveLength(2);
+    expect(runner.runs[1]!.prompt).toContain("# Validation Plan correction");
+    expect(output.passed).toBe(true);
   });
 });

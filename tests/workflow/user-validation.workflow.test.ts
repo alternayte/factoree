@@ -4,6 +4,8 @@ import { agentRunWorkflow, stopSignal } from "~/workflows/agent-run.workflow.js"
 import { buildWorkflowId } from "~/temporal/workflow-id.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import { createWorkflowHarness, hold, waitFor } from "./support/harness.js";
+import { FakeRunner } from "../support/fake-runner.js";
+import { build, input as validateInput, planFiles, planText, rejectedPlan } from "../support/user-validate-fixture.js";
 
 let environment: TestWorkflowEnvironment;
 
@@ -14,6 +16,7 @@ const {
   implementCalls,
   userValidateCalls,
   userValidationOutcomes,
+  userValidateDelegates,
   heldUserValidations,
   heldStatuses,
   cancelledLiveValidations,
@@ -292,5 +295,78 @@ describe("USER_VALIDATING", () => {
       failureReason: "CONFIGURATION_INVALID",
     });
     expect(userValidatesOf(runId)).toHaveLength(1);
+  });
+});
+
+describe("USER_VALIDATING, a rejected Validation Plan (DI-15.23)", () => {
+  /**
+   * Runs the real `userValidate` activity over in-memory doubles. The first plan breaks the plan
+   * rules, and the corrected plan file holds `corrected`.
+   */
+  const realValidator = (runId: string, corrected: string) => {
+    const runner = new FakeRunner();
+    const { activities, results } = build(runner, planFiles(rejectedPlan, corrected, () => runner.resumes.length > 0));
+    userValidateDelegates.set(runId, (activityInput) =>
+      activities.userValidate({
+        ...validateInput,
+        runId: activityInput.runId,
+        attempt: activityInput.attempt,
+        timeoutMs: activityInput.timeoutMs,
+      }),
+    );
+    return { runner, results };
+  };
+
+  it("corrects the plan inside the pass, runs the assertions, and keeps the repair budget", async () => {
+    const runId = "run-ses-uv10";
+    // No repair is allowed, so a correction that spent one could not reach the review.
+    runtimeOverrides.set(runId, { repairMaxAttempts: 0 });
+    const { runner, results } = realValidator(runId, planText);
+    const releaseReview = hold(heldReviews, runId);
+
+    await runWorker(async () => {
+      const handle = await startRun("ses-uv10");
+      await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-uv10");
+      await handle.signal(stopSignal);
+      await waitFor(() => cancelledLiveReviews.includes(runId), "the live cancellation of ses-uv10");
+      releaseReview();
+      await handle.result();
+    });
+    heldReviews.delete(runId);
+    userValidateDelegates.delete(runId);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(userValidatesOf(runId)).toHaveLength(1);
+    expect(implementsOf(runId)).toHaveLength(1);
+    expect(statusesOf(runId)).not.toContain("REPAIRING");
+    expect(statusesOf(runId)).toContain("REVIEWING");
+    expect(results.rows.filter((row) => row.runId === runId).map((row) => row.result)).toEqual(["PASS", "PASS"]);
+  });
+
+  it("ends VALIDATION_BLOCKED with both reasons when the corrected plan is rejected too", async () => {
+    const runId = "run-ses-uv11";
+    runtimeOverrides.set(runId, { repairMaxAttempts: 2 });
+    const stillWrong = JSON.stringify({
+      version: 1,
+      entries: [{ assertionId: "VAL-UI-001", kind: "browser", steps: [{ action: "goto", path: "/" }] }],
+    });
+    const { runner, results } = realValidator(runId, stillWrong);
+
+    await runWorker(async () => {
+      const handle = await startRun("ses-uv11");
+      await handle.result();
+    });
+    userValidateDelegates.delete(runId);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(userValidatesOf(runId)).toHaveLength(1);
+    expect(statusesOf(runId)).not.toContain("REPAIRING");
+    expect(completionsOf(runId).at(-1)).toMatchObject({ status: "FAILED", failureReason: "VALIDATION_BLOCKED" });
+    const reasons = results.rows.filter((row) => row.runId === runId).map((row) => row.reason);
+    expect(reasons).toHaveLength(2);
+    for (const reason of reasons) {
+      expect(reason).toContain("Factoree rejected the first Validation Plan:");
+      expect(reason).toContain("It then rejected the corrected Validation Plan:");
+    }
   });
 });

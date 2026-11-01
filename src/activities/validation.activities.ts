@@ -8,8 +8,19 @@ import { buildValidationContract } from "~/domain/validation/validation-contract
 import { validateValidationContract } from "~/domain/validation/validation-contract.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
-import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import { agentSessionKey, describeSilenceLimit, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import {
+  AgentSessionUnavailableError,
+  type AgentRunResult,
+  type AgentRunner,
+  type AgentRunnerRegistry,
+  type AgentSessionRef,
+} from "~/domain/runs/agent-runner.js";
+import {
+  agentSessionKey,
+  describeSilenceLimit,
+  planCorrectionSessionKey,
+  type AgentSessionStore,
+} from "~/domain/runs/agent-session.js";
 import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
@@ -22,7 +33,8 @@ import { startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } fr
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
-import { buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
+import { buildPlanCorrection, buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
+import { parseValidationPlan, ValidationPlanInvalidError } from "~/domain/validation/validation-plan.js";
 import { runUserValidation } from "~/domain/validation/user-validator.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
@@ -169,6 +181,17 @@ const manualIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>):
   assertions
     .filter((assertion) => assertion.method === "manual" || assertion.method === "code_review")
     .map((assertion) => assertion.id);
+
+/** The reasons the plan rules reject one plan text for, or null when the plan is valid. */
+const planRejectionOf = (planText: string, contract: ValidationContract): string[] | null => {
+  try {
+    parseValidationPlan(planText, contract);
+    return null;
+  } catch (error) {
+    if (error instanceof ValidationPlanInvalidError) return error.reasons;
+    throw error;
+  }
+};
 
 /** SDD section 63 names this file. */
 export const createValidationActivities = (dependencies: ValidationActivityDependencies) => ({
@@ -427,7 +450,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         context.heartbeat();
       }, VALIDATOR_HEARTBEAT_INTERVAL_MS);
 
-      let running = true;
+      let running = false;
       let pendingTimer: NodeJS.Timeout | null = null;
 
       const cancelLiveSession = async (): Promise<void> => {
@@ -465,8 +488,20 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const onCancel = (): void => {
         void cancelLiveSession();
       };
-      if (context.cancellationSignal.aborted) onCancel();
-      else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
+      // A stop cancels the live session of each agent part: the first session, and the one
+      // correction round of DI-15.23.
+      const cancellable = async <T>(part: () => Promise<T>): Promise<T> => {
+        running = true;
+        if (context.cancellationSignal.aborted) onCancel();
+        else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
+        try {
+          return await part();
+        } finally {
+          running = false;
+          if (pendingTimer !== null) clearTimeout(pendingTimer);
+          context.cancellationSignal.removeEventListener("abort", onCancel);
+        }
+      };
 
       // DI-14.41. The contract already says whether a preview is needed, so its build starts now
       // and runs while the validator writes its plan. The rejection is observed at once, so a
@@ -487,9 +522,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       // The duration of each part reaches the log, so a slow validation names its slow part.
       const sessionStarted = Date.now();
-      let sessionResult: AgentRunResult;
-      try {
-        sessionResult = await runner.run({
+      const sessionResult: AgentRunResult = await cancellable(() =>
+        runner.run({
           runId: input.runId,
           tenantId: input.tenantId,
           role: "validator",
@@ -503,12 +537,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           environment: validatorInput.environment,
           actionPolicy,
           timeoutMs: input.timeoutMs,
-        });
-      } finally {
-        running = false;
-        if (pendingTimer !== null) clearTimeout(pendingTimer);
-        context.cancellationSignal.removeEventListener("abort", onCancel);
-      }
+        }),
+      );
 
       // Step 7. One AgentExecution row per validator pass.
       await uv.executions.record({
@@ -587,11 +617,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         };
       }
 
-      const planText = planResult.exitCode === 0 ? planResult.stdout : null;
-
-      // Step 9. Executes the plan against the frozen contract. `ValidationContract.version`
-      // stays the literal `1` of SDD section 24, so the stored row's numeric `version` column
-      // must be dropped here rather than passed through.
+      // `ValidationContract.version` stays the literal `1` of SDD section 24, so the stored row's
+      // numeric `version` column must be dropped here rather than passed through.
       const frozenContract: ValidationContract = {
         version: 1,
         runId: storedContract.runId,
@@ -599,6 +626,159 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         goal: storedContract.goal,
         assertions: storedContract.assertions,
       };
+
+      let planText = planResult.exitCode === 0 ? planResult.stdout : null;
+      let rejectedPlanReason: string | undefined;
+
+      // DI-15.23, amending SDD section 36. A plan the rules reject proves nothing, although the
+      // change may be correct (FAC-63). Factoree asks the validator once for a corrected plan, with
+      // the exact reasons, inside this pass. The frozen contract and the plan rules stay as they
+      // are, and the repair budget is not touched. A stop gets no correction round.
+      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract);
+      const stopped = context.cancellationSignal.aborted || invocations.some((result) => result.cancelled);
+      if (firstRejection !== null && !stopped) {
+        const reasons = firstRejection.map((reason) => uv.redactor.redactText(reason));
+        rejectedPlanReason = reasons.join(" ");
+        const logFields = {
+          tenant_id: input.tenantId,
+          product_id: input.productId,
+          run_id: input.runId,
+          step: "user_validate",
+          attempt: input.attempt,
+        };
+        dependencies.logger.warn("validation plan rejected; asking the validator to correct it", {
+          ...logFields,
+          reasons,
+        });
+
+        // A new file, so a session that writes nothing cannot leave the rejected plan in place.
+        const correctedPlanPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}-corrected.json`;
+        const correction = buildPlanCorrection({
+          reasons,
+          assertions: storedContract.assertions,
+          planPath: correctedPlanPath,
+        });
+        const correctionKey = planCorrectionSessionKey(input.runId, input.attempt, afterHang);
+        const readCorrectedPlan = () => uv.sandbox.exec(ref, { file: "cat", args: [correctedPlanPath] });
+
+        const correctionInvocations: AgentRunResult[] = [];
+        const correctedResult = await cancellable(async () => {
+          // The last invocation is the live CLI session. A runner that never learned a CLI
+          // session identifier names the session by its process, and that cannot be resumed.
+          const last = invocations.at(-1)!.session;
+          let resumed: AgentRunResult | null = null;
+          if (last.sessionId !== last.processId) {
+            try {
+              resumed = await runner.resume(last, { prompt: correction.prompt, timeoutMs: input.timeoutMs });
+              correctionInvocations.push(resumed);
+            } catch (error) {
+              // Another worker holds the session, so this one cannot resume it.
+              if (!(error instanceof AgentSessionUnavailableError)) throw error;
+            }
+          }
+          let read = await readCorrectedPlan();
+          const resumeFailed =
+            resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
+          if (resumeFailed && read.exitCode !== 0 && !context.cancellationSignal.aborted) {
+            dependencies.logger.warn("the validator session cannot be resumed; starting one fresh session to correct the plan", {
+              ...logFields,
+              resumed: resumed !== null,
+            });
+            // The fresh session reads the normal prompt, with the corrected plan path, and then
+            // the same correction message.
+            const freshInput = buildUserValidatorInput({
+              goal: input.goal,
+              validationContract: storedContract.document,
+              primaryRepositoryPath: input.primaryPath,
+              planPath: correctedPlanPath,
+              previewBaseUrl,
+              actionPolicy,
+              projectTestSecrets,
+            });
+            const promptVersion = `${freshInput.promptVersion}+${correction.promptVersion}`;
+            const fresh = await runner.run({
+              runId: input.runId,
+              tenantId: input.tenantId,
+              role: "validator",
+              sandbox: uv.sandbox,
+              ref,
+              workingDirectory: validationDirectory,
+              repositoryPath: input.primaryPath,
+              prompt: `${freshInput.prompt}\n\n${correction.prompt}`,
+              promptVersion,
+              environment: freshInput.environment,
+              actionPolicy,
+              timeoutMs: input.timeoutMs,
+            });
+            correctionInvocations.push(fresh);
+            await uv.executions.record({
+              tenantId: input.tenantId,
+              runId: input.runId,
+              role: "validator",
+              runner: runner.name,
+              model: null,
+              sessionRef: fresh.session.sessionId,
+              promptVersion,
+              durationMs: fresh.durationMs,
+              finalResult: {
+                completed: fresh.completed,
+                exitCode: fresh.exitCode,
+                cancelled: fresh.cancelled,
+                summary: fresh.summary,
+              },
+              idempotencyKey: correctionKey,
+            });
+            read = await readCorrectedPlan();
+          }
+          return read;
+        });
+
+        await recordAgentSession(
+          { sessions: uv.sessions, logger: dependencies.logger },
+          {
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runId: input.runId,
+            role: "validator",
+            attempt: input.attempt,
+            runner: runner.name,
+            idempotencyKey: correctionKey,
+          },
+          correctionInvocations,
+        );
+
+        const correctionHang = hangOf(correctionInvocations);
+        if (correctionHang !== null) {
+          return {
+            passed: false,
+            results: [],
+            hasFailure: false,
+            hasManual: false,
+            hasBlocked: false,
+            summary: `The User Validator session wrote no output for ${describeSilenceLimit(correctionHang.silenceLimitMs)} while it corrected its plan, so Factoree stopped it.`,
+            failures: [],
+            sessionId: sessionResult.session.sessionId,
+            previewUrl: null,
+            hang: correctionHang,
+          };
+        }
+
+        planText = correctedResult.exitCode === 0 ? correctedResult.stdout : null;
+        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract);
+        if (planText === null || secondRejection !== null) {
+          dependencies.logger.warn("the corrected validation plan was rejected", {
+            ...logFields,
+            reasons:
+              secondRejection === null
+                ? ["The validator wrote no corrected Validation Plan."]
+                : secondRejection.map((reason) => uv.redactor.redactText(reason)),
+          });
+        } else {
+          dependencies.logger.info("the corrected validation plan was accepted", logFields);
+        }
+      }
+
+      // Step 9. Executes the plan against the frozen contract.
       const sessionMs = Date.now() - sessionStarted;
       const executionStarted = Date.now();
       // From here the pass owns the early preview, and it stops the preview on every path.
@@ -624,6 +804,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           environment: projectTestSecrets,
           timeoutMs: input.timeoutMs,
           ...(handedOver === undefined ? {} : { earlyPreview: handedOver }),
+          ...(rejectedPlanReason === undefined ? {} : { rejectedPlanReason }),
         },
       );
 

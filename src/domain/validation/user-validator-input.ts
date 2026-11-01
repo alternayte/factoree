@@ -1,6 +1,13 @@
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
 import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.js";
-import { USER_VALIDATOR_PROMPT_VERSION, renderUserValidatorPrompt } from "~/prompts/user-validator.js";
+import {
+  USER_VALIDATOR_PLAN_CORRECTION_VERSION,
+  USER_VALIDATOR_PROMPT_VERSION,
+  renderPlanCorrectionPrompt,
+  renderUserValidatorPrompt,
+} from "~/prompts/user-validator.js";
+import type { ValidationAssertion } from "~/domain/validation/validation-contract.js";
+import { planKindForMethod } from "~/domain/validation/validation-plan.js";
 
 export interface BuildUserValidatorInput {
   goal: string;
@@ -78,3 +85,34 @@ export const buildUserValidatorInput = (input: BuildUserValidatorInput): UserVal
     environment: { ...input.projectTestSecrets },
   };
 };
+
+export interface BuildPlanCorrectionInput {
+  /** Every reason Factoree rejected the first plan for, already redacted. */
+  reasons: string[];
+  /** The assertions of the frozen contract. The validator already holds them. */
+  assertions: ReadonlyArray<Pick<ValidationAssertion, "id" | "method">>;
+  planPath: string;
+}
+
+export interface PlanCorrection {
+  prompt: string;
+  promptVersion: string;
+}
+
+/**
+ * DI-15.23. The correction message of the one correction round. A resumed session receives it
+ * alone. A fresh session receives it after the normal prompt, so its prompt version names both.
+ */
+export const buildPlanCorrection = (input: BuildPlanCorrectionInput): PlanCorrection => ({
+  prompt: renderPlanCorrectionPrompt({
+    reasons: input.reasons,
+    assertions: input.assertions.map((assertion) => {
+      const kind = planKindForMethod(assertion.method);
+      return kind === null
+        ? `${assertion.id}: frozen method "${assertion.method}". No automated check can answer it, so the plan holds no entry for it.`
+        : `${assertion.id}: frozen method "${assertion.method}". Its entry must be a "${kind}" check.`;
+    }),
+    planPath: input.planPath,
+  }),
+  promptVersion: USER_VALIDATOR_PLAN_CORRECTION_VERSION,
+});

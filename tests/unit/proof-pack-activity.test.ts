@@ -460,3 +460,44 @@ describe("publishProofPack", () => {
     expect(attention).toContain("No result row exists for this assertion.");
   });
 });
+
+describe("publishProofPack, a corrected Validation Plan (DI-15.23)", () => {
+  const sessionRow = (attempt: number, idempotencyKey: string) => ({
+    tenantId: "t1",
+    runId: "run-1",
+    role: "validator" as const,
+    attempt,
+    runner: "opencode",
+    cliSessionId: null,
+    model: null,
+    effort: null,
+    usage: null,
+    durationMs: 10,
+    outcome: "finished" as const,
+    idempotencyKey,
+  });
+
+  it("names the pass whose first plan Factoree rejected, and only that pass", async () => {
+    const sessions = new MemoryAgentSessionStore();
+    await sessions.record(sessionRow(1, "run:run-1:validator:1"));
+    await sessions.record(sessionRow(2, "run:run-1:validator:2"));
+    await sessions.record(sessionRow(2, "run:run-1:validator:2:plan-correction"));
+    const harness = build({ sessions });
+
+    await harness.activities.publishProofPack(input);
+
+    const checks = harness.posted[0]!.slice(harness.posted[0]!.indexOf("### Checks"));
+    expect(checks).toContain(
+      "- Validation Plan, attempt 2: Factoree rejected the validator's first plan and asked once for a corrected plan. The corrected plan passed the plan rules and ran.",
+    );
+    expect(checks).not.toContain("attempt 1:");
+    expect(JSON.parse(harness.documents[0]!)).toMatchObject({ planCorrections: [{ attempt: 2, outcome: "finished" }] });
+  });
+
+  it("says nothing of a plan correction when every first plan was valid", async () => {
+    const harness = build();
+    await harness.activities.publishProofPack(input);
+    expect(harness.posted[0]).not.toContain("Validation Plan, attempt");
+    expect(JSON.parse(harness.documents[0]!)).toMatchObject({ planCorrections: [] });
+  });
+});

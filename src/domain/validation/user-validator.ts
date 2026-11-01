@@ -58,6 +58,12 @@ export interface UserValidationInput {
    * instead of starting its own, and stops it on every path, the paths that never need it too.
    */
   earlyPreview?: Promise<PreviewHandle>;
+  /**
+   * DI-15.23. Set when `planText` is the corrected plan of the one correction round: the reasons
+   * Factoree rejected the first plan for. A corrected plan that fails again blocks every automated
+   * assertion with both reasons.
+   */
+  rejectedPlanReason?: string;
 }
 
 const MANUAL_REASON = "SDD section 36: this assertion needs a human. Factoree cannot prove it.";
@@ -336,8 +342,11 @@ const validate = async (
   // Rule 2. No plan, or an invalid plan, blocks every automated assertion.
   let plan: ValidationPlan | null = null;
   let planFailureReason: string | null = null;
+  const corrected = input.rejectedPlanReason !== undefined;
   if (input.planText === null) {
-    planFailureReason = "The validator wrote no Validation Plan.";
+    planFailureReason = corrected
+      ? "The validator wrote no corrected Validation Plan."
+      : "The validator wrote no Validation Plan.";
   } else {
     try {
       plan = parseValidationPlan(input.planText, contract);
@@ -348,6 +357,11 @@ const validate = async (
         throw error;
       }
     }
+  }
+  if (planFailureReason !== null && corrected) {
+    planFailureReason =
+      `Factoree rejected the first Validation Plan: ${input.rejectedPlanReason!} ` +
+      `It then rejected the corrected Validation Plan: ${planFailureReason}`;
   }
 
   const outcomesById = new Map<string, AssertionOutcome>();

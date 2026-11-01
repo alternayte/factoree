@@ -39,9 +39,17 @@ export interface ValidationPlan {
 }
 
 export class ValidationPlanInvalidError extends Error {
-  constructor(message: string) {
-    super(message);
+  /**
+   * Every reason Factoree rejected the plan for, in plan order. The message joins them. DI-15.23:
+   * the correction prompt names each one, so one correction round can repair them all.
+   */
+  readonly reasons: string[];
+
+  constructor(reasons: string | string[]) {
+    const list = typeof reasons === "string" ? [reasons] : reasons;
+    super(list.join(" "));
     this.name = "ValidationPlanInvalidError";
+    this.reasons = list;
   }
 }
 
@@ -146,50 +154,54 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
   const plan = parsed.data;
   const assertionsById = new Map(contract.assertions.map((assertion) => [assertion.id, assertion]));
   const seen = new Set<string>();
+  // DI-15.23. Every entry is checked, and every reason is kept, so the validator learns all of
+  // them at once. The rules are those of SDD section 25, unchanged.
+  const reasons: string[] = [];
 
   for (const entry of plan.entries) {
     const assertion = assertionsById.get(entry.assertionId);
     if (assertion === undefined) {
-      return fail(
+      reasons.push(
         `The Validation Plan holds an entry for "${entry.assertionId}", which names no ` +
           "assertion of the frozen Validation Contract.",
       );
+      continue;
     }
 
     if (seen.has(entry.assertionId)) {
-      fail(`The Validation Plan holds more than one entry for "${entry.assertionId}".`);
+      reasons.push(`The Validation Plan holds more than one entry for "${entry.assertionId}".`);
     }
     seen.add(entry.assertionId);
 
     const requiredKind = planKindForMethod(assertion.method);
     if (requiredKind === null) {
-      return fail(
+      reasons.push(
         `The Validation Plan holds an entry for "${entry.assertionId}", whose frozen method ` +
           `"${assertion.method}" cannot be automated. The plan cannot claim to automate a ` +
           "manual or a code_review assertion.",
       );
+      continue;
     }
     if (entry.kind !== requiredKind) {
-      fail(
+      reasons.push(
         `The Validation Plan entry for "${entry.assertionId}" is a "${entry.kind}" check, but ` +
           `the frozen method "${assertion.method}" requires a "${requiredKind}" check.`,
       );
     }
 
     if (entry.kind === "browser") {
-      if (entry.steps.length === 0) {
-        fail(`The Validation Plan browser entry for "${entry.assertionId}" holds no step.`);
-      }
       const first = entry.steps[0];
-      if (first === undefined || first.action !== "goto") {
-        fail(
+      if (first === undefined) {
+        reasons.push(`The Validation Plan browser entry for "${entry.assertionId}" holds no step.`);
+      } else if (first.action !== "goto") {
+        reasons.push(
           `The Validation Plan browser entry for "${entry.assertionId}" must begin with a ` +
             "goto step.",
         );
       }
       const hasExpectation = entry.steps.some((step) => step.action.startsWith("expect"));
-      if (!hasExpectation) {
-        fail(
+      if (entry.steps.length > 0 && !hasExpectation) {
+        reasons.push(
           `The Validation Plan browser entry for "${entry.assertionId}" asserts nothing. It ` +
             "must hold at least one step whose action begins with expect.",
         );
@@ -198,7 +210,7 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
       // replaces the origin, so an assertion can drive a foreign host and still report PASS.
       for (const step of entry.steps) {
         if (step.action === "goto" && !isPreviewRelativePath(step.path)) {
-          fail(
+          reasons.push(
             `The Validation Plan browser entry for "${entry.assertionId}" holds the goto path ` +
               `"${step.path}", which is not a relative preview path. A path must begin with a ` +
               "single slash, and the character after that slash must be neither a slash nor a " +
@@ -209,7 +221,7 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
     }
 
     if (entry.kind === "http" && !isPreviewRelativePath(entry.request.path)) {
-      fail(
+      reasons.push(
         `The Validation Plan http entry for "${entry.assertionId}" holds the path ` +
           `"${entry.request.path}", which is not a relative preview path. A path must begin ` +
           "with a single slash, and the character after that slash must be neither a slash nor " +
@@ -217,6 +229,8 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
       );
     }
   }
+
+  if (reasons.length > 0) throw new ValidationPlanInvalidError(reasons);
 
   return plan;
 };

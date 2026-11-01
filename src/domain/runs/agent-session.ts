@@ -215,3 +215,16 @@ export const describeAgentRole = (role: AgentSessionRole): string =>
  */
 export const agentSessionKey = (runId: string, role: AgentSessionRole, attempt: number | null, afterHang: boolean): string =>
   `run:${runId}:${role}${attempt === null ? "" : `:${attempt}`}${afterHang ? ":after-hang" : ""}`;
+
+const PLAN_CORRECTION_SUFFIX = ":plan-correction";
+
+/**
+ * DI-15.23. The key of the one session that corrects a rejected Validation Plan. It keeps the
+ * attempt of its pass and adds a marker, so it writes its own row beside the first session.
+ */
+export const planCorrectionSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
+  `${agentSessionKey(runId, "validator", attempt, afterHang)}${PLAN_CORRECTION_SUFFIX}`;
+
+/** True for the row of a plan correction session. The Proof Pack reads it. */
+export const isPlanCorrectionSession = (row: Pick<RecordAgentSessionInput, "role" | "idempotencyKey">): boolean =>
+  row.role === "validator" && row.idempotencyKey.endsWith(PLAN_CORRECTION_SUFFIX);

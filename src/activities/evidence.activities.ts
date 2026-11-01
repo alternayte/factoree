@@ -10,7 +10,7 @@ import type { ContextContractStore } from "~/domain/context/context-contract-sto
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
-import { summarizeAgentSessions, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import { isPlanCorrectionSession, summarizeAgentSessions, type AgentSessionStore } from "~/domain/runs/agent-session.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -443,6 +443,11 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.
       agentUsage: summarizeAgentSessions(sessionRows),
       modelWarning,
+      // DI-15.23. A plan correction session marks a pass whose first Validation Plan was rejected.
+      planCorrections: sessionRows
+        .filter(isPlanCorrectionSession)
+        .map((row) => ({ attempt: row.attempt, outcome: row.outcome }))
+        .sort((left, right) => left.attempt - right.attempt),
       ...(routing === undefined ? {} : { routing }),
     };
 

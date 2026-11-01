@@ -4,7 +4,7 @@ import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validati
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { ReviewCategory, ReviewSeverity } from "~/domain/review/review-report.js";
 import type { EvidenceKind } from "~/domain/evidence/evidence.js";
-import type { AgentUsageTotals } from "~/domain/runs/agent-session.js";
+import type { AgentSessionOutcome, AgentUsageTotals } from "~/domain/runs/agent-session.js";
 
 /**
  * SDD section 47, amended by docs/specs/proof-pack-and-visual-evidence.md. The Proof Pack has a
@@ -113,6 +113,15 @@ export interface ProofPackRouting {
   selectionReason: string;
 }
 
+/**
+ * DI-15.23. One pass in which Factoree rejected the first Validation Plan and asked the validator
+ * once for a corrected one. `outcome` is the outcome of the correction session.
+ */
+export interface ProofPackPlanCorrection {
+  attempt: number;
+  outcome: AgentSessionOutcome;
+}
+
 export interface ProofPackInput {
   runId: string;
   workItem: { title: string; url: string | null };
@@ -156,6 +165,8 @@ export interface ProofPackInput {
   agentUsage?: AgentUsageTotals;
   /** Issue 6, DI-15.17. Why the model of the Run is a guess, or null. `defaultModelWarning` builds it. */
   modelWarning?: string | null;
+  /** DI-15.23. The passes whose first Validation Plan Factoree rejected, in attempt order. */
+  planCorrections?: ProofPackPlanCorrection[];
 }
 
 /**
@@ -199,6 +210,8 @@ export interface ProofPackDocument {
   needsAttention: string[];
   visualEvidenceGap: string | null;
   assertions: ProofPackAssertion[];
+  /** DI-15.23. The passes whose first Validation Plan Factoree rejected. */
+  planCorrections: ProofPackPlanCorrection[];
   checks: ProofPackCheck[];
   review: { verdict: "pass" | "fail"; passes: number; findings: ProofPackFinding[] };
   context: {
@@ -298,6 +311,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   baseMove: input.baseMove ?? null,
   visualEvidenceGap: input.visualEvidenceGap,
   assertions: input.assertions,
+  planCorrections: input.planCorrections ?? [],
   checks: input.checks,
   review: { verdict: input.reviewVerdict, passes: input.reviewPasses, findings: input.findings },
   context: {
@@ -353,6 +367,14 @@ const evidenceLinks = (assertion: ProofPackAssertion): string => {
   return links.length === 0 ? "" : ` ${links.join(" ")}`;
 };
 
+/** DI-15.23. One line per pass whose first Validation Plan Factoree rejected. */
+export const planCorrectionLine = (correction: ProofPackPlanCorrection): string =>
+  `- Validation Plan, attempt ${correction.attempt}: Factoree rejected the validator's first plan ` +
+  "and asked once for a corrected plan" +
+  (correction.outcome === "hung"
+    ? ". That session hung, and a fresh validator session wrote the plan that ran."
+    : ". The corrected plan passed the plan rules and ran.");
+
 const checkLines = (input: ProofPackInput): string[] => {
   const blocking = input.findings.filter((finding) => finding.blocking).length;
   return [
@@ -362,6 +384,7 @@ const checkLines = (input: ProofPackInput): string[] => {
     ...input.assertions.map(
       (assertion) => `- ${assertion.result} ${assertion.id}: ${line(assertion.statement)}${evidenceLinks(assertion)}`,
     ),
+    ...(input.planCorrections ?? []).map(planCorrectionLine),
     `- ${blocking === 0 ? "PASS" : "FAIL"} Independent review: ${input.reviewPasses} ` +
       `${input.reviewPasses === 1 ? "pass" : "passes"}, ${input.findings.length} ` +
       `${input.findings.length === 1 ? "finding" : "findings"}, ${blocking} blocking.`,

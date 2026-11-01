@@ -64,3 +64,39 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
       ].join("\n"),
     ),
   ].join("\n");
+
+/** SDD section 56. Change this value whenever the correction template below changes. DI-15.23. */
+export const USER_VALIDATOR_PLAN_CORRECTION_VERSION = "user-validator-plan-correction@1";
+
+export interface PlanCorrectionPromptFields {
+  /** Every reason Factoree rejected the plan for, as the plan rules state it. */
+  reasons: string[];
+  /** One line per frozen assertion: its identifier, its frozen method and the check it needs. */
+  assertions: string[];
+  /** The file the corrected plan goes to. It is a new file, so a missing write cannot pass. */
+  planPath: string;
+}
+
+/**
+ * DI-15.23. The one correction round after Factoree rejected the Validation Plan. It names only
+ * the rejection reasons and the frozen contract the validator already holds, so it reveals
+ * nothing the fresh context of SDD section 36 must not see.
+ */
+export const renderPlanCorrectionPrompt = (fields: PlanCorrectionPromptFields): string =>
+  [
+    "# Validation Plan correction",
+    "",
+    "Factoree rejected the Validation Plan for this Validation Contract, and it ran no check. " +
+      "It rejected the plan for these reasons:",
+    "",
+    list(fields.reasons, "No reason was recorded."),
+    "",
+    "The frozen method of each assertion is binding. You must not change it, and the plan must " +
+      "use the check kind that the method requires:",
+    "",
+    list(fields.assertions, "The contract holds no assertion."),
+    "",
+    `Write the full corrected Validation Plan, as one JSON document, to ${fields.planPath}. ` +
+      "Write every entry again, not only the entries that changed. Write the file and nothing " +
+      "else. Do not answer with the plan in a message. Factoree asks for a correction only once.",
+  ].join("\n");
