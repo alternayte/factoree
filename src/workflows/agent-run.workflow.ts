@@ -11,6 +11,7 @@ import {
   proxyActivities,
   setHandler,
   sleep,
+  workflowInfo,
 } from "@temporalio/workflow";
 import type { RunStatus } from "~/domain/runs/run-status.js";
 import type { Activities } from "~/activities/index.js";
@@ -40,7 +41,6 @@ import type { AgentRunProductRepositoryInput } from "../domain/runs/product-repo
 
 export type { AgentRunProductRepositoryInput };
 
-import { buildWorkflowId } from "../temporal/workflow-id.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias.
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
@@ -540,7 +540,9 @@ export async function agentRunWorkflow(
     productId: input.productId,
     linearIssueId: input.linearIssueId,
     linearAgentSessionId: input.agentSessionId,
-    temporalWorkflowId: buildWorkflowId(input.workspaceId, input.agentSessionId),
+    // docs/specs/run-recovery.md. The id this workflow runs under. A follow-up run shares the agent
+    // session of the failed run and has a workflow id of its own.
+    temporalWorkflowId: workflowInfo().workflowId,
     autonomyLevel: input.autonomyLevel,
     // docs/specs/run-visibility.md. The run list names the issue.
     workItemTitle: input.workItem.title,

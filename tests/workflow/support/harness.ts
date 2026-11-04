@@ -337,6 +337,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const heldPublishes = new Map<string, Promise<void>>();
   /** Every activity name the workflow called, in order. */
   const activityOrder: string[] = [];
+  /** docs/specs/run-recovery.md. Every createRun input, so a test reads the workflow id it recorded. */
+  const createRunCalls: Array<{ linearAgentSessionId: string; temporalWorkflowId: string; followUpOfRunId?: string }> = [];
   /** Every question the workflow elicited, in order. */
   const elicitations: string[] = [];
   /** Every autonomy level the workflow wrote to the Run after Refinement, in order. */
@@ -386,8 +388,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     statusCalls.filter((entry) => entry.runId === runId).map((entry) => entry.status);
 
   const activities = {
-    createRun: async (input: { linearAgentSessionId: string }) => {
+    createRun: async (input: { linearAgentSessionId: string; temporalWorkflowId: string; followUpOfRunId?: string }) => {
       created.push(input.linearAgentSessionId);
+      createRunCalls.push(input);
       return {
         runId: `run-${input.linearAgentSessionId}`,
         created: created.filter((id) => id === input.linearAgentSessionId).length === 1,
@@ -1041,6 +1044,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     targetIdentityOutcomes,
     targetIdentityCalls,
     activityOrder,
+    createRunCalls,
     workItemLabels,
     workItemProjects,
     failingLabelReads,

@@ -56,6 +56,21 @@ describe("PrismaRunRepository", () => {
     expect(await prisma.run.count({ where: { linearAgentSessionId: "session-2" } })).toBe(1);
   });
 
+  // docs/specs/run-recovery.md. A follow-up run shares the session and has a workflow of its own.
+  it("creates a follow-up run in the same session, and finds the newest run of the session", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const failed = await repository.createIfAbsent(input("session-follow-up"));
+    const followUp = await repository.createIfAbsent({
+      ...input("session-follow-up"),
+      temporalWorkflowId: `linear:ws-a:session-follow-up:follow-up:${failed.run.id}`,
+      followUpOfRunId: failed.run.id,
+    });
+
+    expect(followUp.created).toBe(true);
+    expect(followUp.run.id).not.toBe(failed.run.id);
+    expect((await repository.findByAgentSession(tenantA, "session-follow-up"))?.id).toBe(followUp.run.id);
+  });
+
   it("hides a Run from another tenant", async () => {
     const repository = new PrismaRunRepository(prisma);
     const created = await repository.createIfAbsent(input("session-3"));

@@ -172,4 +172,24 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
     expect(activityOrder.slice(orderBefore)).toContain("describeRunFailure");
     expect(postedErrors.slice(errorsBefore)).toEqual([expect.stringContaining("the repair budget is spent")]);
   });
+
+  // docs/specs/run-recovery.md. A follow-up run shares the session and makes a run of its own,
+  // under its own workflow id. FAC-73 on 0.4.0 reused the failed run's row instead.
+  it("records the follow-up run under its own workflow id, linked to the failed run", async () => {
+    const workflowId = `${buildWorkflowId("workspace-123", "ses-follow-up")}:follow-up:run-failed`;
+    await runWorker(async () =>
+      (
+        await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId,
+          args: [{ ...input("ses-follow-up"), followUpOfRunId: "run-failed" }],
+        })
+      ).result(),
+    );
+
+    expect(harness.createRunCalls.find((call) => call.linearAgentSessionId === "ses-follow-up")).toMatchObject({
+      temporalWorkflowId: workflowId,
+      followUpOfRunId: "run-failed",
+    });
+  });
 });
