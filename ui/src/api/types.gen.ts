@@ -521,7 +521,7 @@ export type BindGitHubInstallationResponse = BindGitHubInstallationResponses[key
 
 export type PutSandboxData = {
   body: {
-    provider: "kiln" | "fly-sprites" | "local";
+    provider: "kiln" | "e2b" | "fly-sprites" | "local";
     url?: string | null;
     apiKey?: string;
     image?: string | null;
@@ -1788,7 +1788,7 @@ export type GetInstallSettingsResponses = {
       signInCallbackUrl: string;
     };
     sandbox: {
-      provider: "kiln" | "fly-sprites" | "local" | null;
+      provider: "kiln" | "e2b" | "fly-sprites" | "local" | null;
       url: string | null;
       apiKeySet: boolean;
       image: string | null;
@@ -1825,7 +1825,7 @@ export type UpdateInstallSettingsData = {
       webhookSecret?: string;
     };
     sandbox?: {
-      provider?: "kiln" | "fly-sprites" | "local";
+      provider?: "kiln" | "e2b" | "fly-sprites" | "local";
       url?: string | null;
       apiKey?: string;
       image?: string | null;
@@ -1888,7 +1888,7 @@ export type UpdateInstallSettingsResponses = {
       signInCallbackUrl: string;
     };
     sandbox: {
-      provider: "kiln" | "fly-sprites" | "local" | null;
+      provider: "kiln" | "e2b" | "fly-sprites" | "local" | null;
       url: string | null;
       apiKeySet: boolean;
       image: string | null;

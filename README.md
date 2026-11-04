@@ -62,7 +62,7 @@ The environment holds only infrastructure. Factoree keeps every other setting in
 3. **GitHub App.** Factoree creates its GitHub App from a manifest. GitHub asks you to confirm and returns to setup.
 4. **Linear app.** In Linear, create an OAuth application (Settings, API, OAuth applications) with the two callback URLs and the webhook URL that the step shows. Enter its client ID, client secret and webhook signing secret, then install the app in your Linear workspace.
 5. **GitHub App install.** Install the App on the accounts that own the repositories that Factoree changes.
-6. **Sandbox provider.** Choose Kiln or Fly Sprites and enter its URL and key. A released image pins its sandbox image, so the image field can stay empty. Set the live sandbox limit to the limit of your provider account.
+6. **Sandbox provider.** Choose Kiln, E2B or Fly Sprites and enter its URL and key. A released image pins its sandbox image, so the image field can stay empty. Set the live sandbox limit to the limit of your provider account.
 7. **First product.** Choose a Linear team. Enter the model and, if the model needs one, its API key. The product starts at L2 unless you choose another level.
 8. **Finish.** The setup token stops working. From then on, sign in with Linear. A Linear workspace admin is a Factoree admin and changes the install and product settings in the UI. Scripts send an API key from the API keys screen as `Authorization: Bearer <key>`.
 9. Add a `.factoree/config.yaml` to a repository that the GitHub App can reach. Start from [`examples/node-web-app`](examples/node-web-app/.factoree/config.yaml) or [`examples/go-service`](examples/go-service/.factoree/config.yaml).

@@ -641,9 +641,9 @@ model InstallSettings {
   linearClientId              String?
   linearClientSecretCipher    String?
   linearWebhookSecretCipher   String?
-  // kiln, fly-sprites or local.
+  // kiln, e2b, fly-sprites or local.
   sandboxProvider             String?
-  // The Kiln host, or the Sprites API base URL. Null means the provider default.
+  // The Kiln host, the Sprites API base URL, or a self-hosted E2B URL. Null means the provider default.
   sandboxUrl                  String?
   sandboxApiKeyCipher         String?
   // A sandbox image by digest. Null means the image the release pins.

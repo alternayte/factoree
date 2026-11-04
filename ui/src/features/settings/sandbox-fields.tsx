@@ -1,7 +1,7 @@
 import { Field, Input, Select } from "@/components/form";
 import { Badge } from "@/components/layout";
 
-export type SandboxProvider = "kiln" | "fly-sprites" | "local";
+export type SandboxProvider = "kiln" | "e2b" | "fly-sprites" | "local";
 
 export type SandboxForm = {
   provider: SandboxProvider;
@@ -32,6 +32,7 @@ export const emptySandboxForm: SandboxForm = {
 
 export const PROVIDER_LABELS: Record<SandboxProvider, string> = {
   kiln: "Kiln",
+  e2b: "E2B",
   "fly-sprites": "Fly Sprites",
   local: "Local (development only)",
 };
@@ -63,10 +64,12 @@ export function SandboxFields({
 }) {
   const set = <K extends keyof SandboxForm>(key: K, next: SandboxForm[K]) => onChange({ ...value, [key]: next });
   const providers: SandboxProvider[] =
-    localAllowed || value.provider === "local" ? ["kiln", "fly-sprites", "local"] : ["kiln", "fly-sprites"];
+    localAllowed || value.provider === "local" ? ["kiln", "e2b", "fly-sprites", "local"] : ["kiln", "e2b", "fly-sprites"];
   const keyLabel = value.provider === "fly-sprites" ? "Fly Sprites token" : "API key";
-  // A Kiln install with no pinned image and no stored override needs an image (sandboxSettingsProblem).
-  const imageRequired = value.provider === "kiln" && !pinnedImage && !stored?.image;
+  // A Kiln or E2B install with no pinned image and no stored override needs an image (sandboxSettingsProblem).
+  const customImage = value.provider === "kiln" || value.provider === "e2b";
+  const imageRequired = customImage && !pinnedImage && !stored?.image;
+  const providerName = PROVIDER_LABELS[value.provider];
   return (
     <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
       <Field label="Provider" errors={fieldErrors.provider}>
@@ -92,7 +95,13 @@ export function SandboxFields({
       ) : (
         <Field
           label={value.provider === "kiln" ? "Kiln URL" : "API URL (optional)"}
-          hint={value.provider === "kiln" ? undefined : "Empty uses the provider default."}
+          hint={
+            value.provider === "kiln"
+              ? undefined
+              : value.provider === "e2b"
+                ? "Empty uses e2b.app. A self-hosted E2B names its domain by this URL."
+                : "Empty uses the provider default."
+          }
           errors={fieldErrors.url}
         >
           {(props) => (
@@ -148,11 +157,11 @@ export function SandboxFields({
           />
         )}
       </Field>
-      {value.provider === "kiln" ? (
+      {customImage ? (
         <>
           <Field
             label="vCPUs per sandbox (optional)"
-            hint={`Empty uses ${defaultSize.vcpus}. A change builds a new Kiln template, and each repository starts cold once.`}
+            hint={`Empty uses ${defaultSize.vcpus}. A change builds a new ${providerName} template, and each repository starts cold once.`}
             errors={fieldErrors.vcpus}
           >
             {(props) => (
@@ -171,7 +180,9 @@ export function SandboxFields({
           </Field>
           <Field
             label="Memory per sandbox in MB (optional)"
-            hint={`Empty uses ${defaultSize.memoryMb}. Memory × the live sandbox limit must fit the memory of the Kiln host.`}
+            hint={`Empty uses ${defaultSize.memoryMb}.${
+              value.provider === "kiln" ? " Memory × the live sandbox limit must fit the memory of the Kiln host." : ""
+            }`}
             errors={fieldErrors.memoryMb}
           >
             {(props) => (
@@ -199,8 +210,8 @@ export function SandboxFields({
               Empty uses the image this release pins:{" "}
               <span className="font-mono break-all text-body">{pinnedImage}</span>
             </>
-          ) : value.provider === "kiln" ? (
-            "This build pins no sandbox image, so Kiln needs one. A reference pinned by digest, such as ghcr.io/acme/sandbox@sha256:…."
+          ) : customImage ? (
+            `This build pins no sandbox image, so ${providerName} needs one. A reference pinned by digest, such as ghcr.io/acme/sandbox@sha256:….`
           ) : (
             "A reference pinned by digest, such as ghcr.io/acme/sandbox@sha256:…."
           )

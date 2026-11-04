@@ -21,8 +21,8 @@ Linear issue ──delegate──▶ API ──start──▶ Workflow engine �
 | Workflow engine | Runs each run as one durable workflow, with retries and timers. | Temporal |
 | Worker | Runs the workflow steps: sandbox control, publication, the browser for evidence. | Node worker |
 | Database | Tenants, products, repositories, runs, contracts, evidence, decisions, and the install and product settings. Every stored credential is encrypted with `FACTOREE_MASTER_KEY`. | PostgreSQL |
-| Sandbox provider | Isolated VMs with an egress allow list, detached processes, a published port, and snapshots. | Kiln or Fly Sprites |
-| Sandbox image | The toolchain and the root-owned agent CLIs. Kiln only. Each release pins its digest, and the install settings can override it. | `sandbox/Dockerfile` on ghcr.io |
+| Sandbox provider | Isolated VMs with an egress allow list, detached processes, a published port, and snapshots. | Kiln, E2B or Fly Sprites |
+| Sandbox image | The toolchain and the root-owned agent CLIs. Kiln and E2B only. Each release pins its digest, and the install settings can override it. | `sandbox/Dockerfile` on ghcr.io |
 | Release | One image with `api`, `worker` and `migrate`, a Compose file, a Helm chart, and release notes from the CHANGELOG, all from one `v*.*.*` tag. `GET /version` names the build. | `ghcr.io/alternayte/factoree` |
 | Agent CLI and model | The refiner, implementer, validator and reviewer sessions. | opencode with DeepSeek |
 | Browser | Captures screenshots and video of the check sandbox's preview. | Playwright on the worker |
@@ -34,7 +34,7 @@ Linear issue ──delegate──▶ API ──start──▶ Workflow engine �
 - PostgreSQL, a Temporal service, the API and the worker.
 - The environment holds infrastructure only: `FACTOREE_DATABASE_URL`, `FACTOREE_MASTER_KEY`, the `FACTOREE_TEMPORAL_*` values, `FACTOREE_PUBLIC_URL`, `FACTOREE_PORT` and `FACTOREE_LOG_LEVEL`.
 - A public URL for the API, so browsers, Linear and GitHub reach it.
-- A Linear workspace, a GitHub account or organization, a sandbox provider account (Kiln or Fly Sprites), and a model provider key.
+- A Linear workspace, a GitHub account or organization, a sandbox provider account (Kiln, E2B or Fly Sprites), and a model provider key.
 - `deploy/compose/compose.yml` runs all four on one machine. The Helm chart in `deploy/helm/factoree` runs the API and the worker against your PostgreSQL and Temporal.
 - Setup in the UI at `/setup`, with the one-time token from the API log, creates the GitHub App, installs the Linear app, installs the GitHub App on the repositories, stores the sandbox provider and creates the first product. The settings screens change these values later, with no restart.
 - In each repository: `.factoree/config.yaml` with the product, the bootstrap command, the checks, the egress allow list, and an optional preview command.

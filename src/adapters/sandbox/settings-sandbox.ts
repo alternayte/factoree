@@ -19,6 +19,8 @@ import { DEFAULT_WORKSPACE_PATH } from "~/domain/runs/sprite-reaper.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { KilnClient } from "./kiln/kiln-client.js";
 import { KilnSandbox } from "./kiln/kiln-sandbox.js";
+import { createE2BGateway } from "./e2b/e2b-client.js";
+import { E2BSandbox } from "./e2b/e2b-sandbox.js";
 import { buildInfo } from "~/config/build-info.js";
 import { FlySpriteSandbox } from "./fly-sprites/fly-sprite-sandbox.js";
 import { createSpritesGateway } from "./fly-sprites/sprites-client.js";
@@ -96,6 +98,19 @@ export class SettingsSandbox implements Sandbox {
           client: new KilnClient({
             baseUrl: requireSetting(settings.url, "Kiln URL"),
             apiKey: requireSetting(settings.apiKey, "Kiln API key"),
+          }),
+          image: requireSetting(settings.image ?? buildInfo.sandboxImageDefault, "sandbox image"),
+          size: kilnSandboxSize(settings),
+          ...(settings.registryUsername === null || settings.registryToken === null
+            ? {}
+            : { registryCredential: { username: settings.registryUsername, token: settings.registryToken } }),
+        });
+      case "e2b":
+        // docs/specs/e2b-sandbox-provider.md. A self-hosted E2B names its domain by its URL.
+        return new E2BSandbox({
+          gateway: createE2BGateway({
+            apiKey: requireSetting(settings.apiKey, "E2B API key"),
+            ...(settings.url === null ? {} : { domain: new URL(settings.url).hostname }),
           }),
           image: requireSetting(settings.image ?? buildInfo.sandboxImageDefault, "sandbox image"),
           size: kilnSandboxSize(settings),

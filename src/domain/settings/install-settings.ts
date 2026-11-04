@@ -10,7 +10,7 @@
  * fingerprint of its own settings changes.
  */
 
-export const SANDBOX_PROVIDERS = ["kiln", "fly-sprites", "local"] as const;
+export const SANDBOX_PROVIDERS = ["kiln", "e2b", "fly-sprites", "local"] as const;
 export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 
 export interface GitHubAppSettings {
@@ -35,7 +35,10 @@ export interface LinearAppSettings {
 
 export interface SandboxSettings {
   provider: SandboxProvider | null;
-  /** The Kiln host, or the Sprites API base URL. Null means the provider default. */
+  /**
+   * The Kiln host, the Sprites API base URL, or the URL of a self-hosted E2B, whose host name is the
+   * E2B domain. Null means the provider default.
+   */
   url: string | null;
   apiKey: string | null;
   /** A sandbox image by digest, over the image the release pins. */

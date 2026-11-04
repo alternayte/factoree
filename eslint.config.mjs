@@ -25,7 +25,7 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["@linear/sdk*", "@prisma/client*", "octokit*", "@octokit/*"],
+              group: ["@linear/sdk*", "@prisma/client*", "octokit*", "@octokit/*", "e2b", "e2b/*"],
               message: "Provider SDKs belong in src/adapters (SDD section 14)."
             }
           ]

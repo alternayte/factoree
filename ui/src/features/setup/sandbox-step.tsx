@@ -52,8 +52,8 @@ export function SandboxStep() {
     if (form.registryUsername.trim()) body.registryUsername = form.registryUsername.trim();
     if (form.registryToken.trim()) body.registryToken = form.registryToken.trim();
     if (maxLive !== null) body.maxLive = maxLive;
-    if (form.provider === "kiln" && size.vcpus !== null) body.vcpus = size.vcpus;
-    if (form.provider === "kiln" && size.memoryMb !== null) body.memoryMb = size.memoryMb;
+    if ((form.provider === "kiln" || form.provider === "e2b") && size.vcpus !== null) body.vcpus = size.vcpus;
+    if ((form.provider === "kiln" || form.provider === "e2b") && size.memoryMb !== null) body.memoryMb = size.memoryMb;
     save.mutate(body);
   }
 

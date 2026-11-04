@@ -20,7 +20,7 @@ nothing. Use it on a development machine only.
 1. A Linear test workspace. You must be an admin of it.
 2. A GitHub fixture repository. Do not use a production repository.
 3. A sandbox provider account: a Fly.io organization that can create a
-   Sprite, or a Kiln host with a key of the Factoree tenant.
+   Sprite, a Kiln host with a key of the Factoree tenant, or an E2B account.
 4. A model provider key, unless the Product uses a free model.
 5. `jq`, `docker`, `ngrok`, and the `temporal` CLI on your machine.
 
@@ -140,6 +140,9 @@ Select one provider.
 - `kiln`: enter the Kiln URL and the API key. A build from a checkout pins no
   sandbox image, so enter the image by digest, as `<name>@sha256:<hex>`. For
   a private image, enter the registry username and the registry token.
+- `e2b`: enter the E2B API key. The URL is optional. Enter it only for a
+  self-hosted E2B. Its host name is the E2B domain. The image rules of `kiln`
+  apply.
 - `fly-sprites`: enter the Fly.io token. The API URL is optional.
 - `local`: setup offers it only when `FACTOREE_UNSAFE_LOCAL_SANDBOX=1`.
 
@@ -147,7 +150,7 @@ The sandbox limit (`sandboxMaxLive`) is optional. At the limit Factoree deletes
 its oldest retained sandbox, or the run waits for a free one. One run holds two
 live sandboxes: the work sprite and its check sprite.
 
-For `kiln`, the vCPUs and the memory of each sandbox are optional. Empty fields
+For `kiln` and `e2b`, the vCPUs and the memory of each sandbox are optional. Empty fields
 use 4 vCPUs and 4096 MB. Kiln does not refuse a size the host cannot hold, so
 make memory × the sandbox limit fit the memory of the Kiln host. On a Scaleway
 Dedibox Start-2-L (12 threads, 32 GB), 4096 MB and a limit of 6 leave headroom
@@ -345,7 +348,7 @@ With Fly Sprites:
 
     just live-sprite
 
-With the local sandbox, run `just live-local`. With Kiln, run `just live`.
+With the local sandbox, run `just live-local`. With Kiln or E2B, run `just live`.
 `docs/live-acceptance.md` explains each profile.
 
 The command creates a fixture issue in Linear, delegates it to Factoree, and

@@ -35,6 +35,13 @@ describe("sandboxSettingsProblem and the pinned sandbox image", () => {
     expect(sandboxSettingsProblem(kiln, false)).toMatch(/pins no sandbox image/);
   });
 
+  it("refuses E2B without an API key, and accepts it with no URL", () => {
+    buildInfo.sandboxImageDefault = pinned;
+    const e2b: SandboxSettings = { ...kiln, provider: "e2b", url: null, apiKey: "e2b-key" };
+    expect(sandboxSettingsProblem(e2b, false)).toBeNull();
+    expect(sandboxSettingsProblem({ ...e2b, apiKey: null }, false)).toBe("E2B needs an API key");
+  });
+
   it("accepts the override when the build pins none", () => {
     buildInfo.sandboxImageDefault = null;
     expect(sandboxSettingsProblem({ ...kiln, image: pinned }, false)).toBeNull();
