@@ -16,6 +16,7 @@ const {
   userValidationOutcomes,
   runtimeOverrides,
   activityOrder,
+  postedProgress,
   input,
   runWorker,
 } = harness;
@@ -111,6 +112,12 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
       expect(attempt.slice(0, 2)).toEqual(["implement", "verify"]);
       expect(attempt.slice(2).sort()).toEqual(["review", "userValidate"]);
     }
+
+    // The human sees that the repair started, why, and what the implementer received.
+    expect(postedProgress).toContain(
+      "Factoree starts repair 1 of 2, because user validation did not pass. The implementer receives 1 finding. " +
+        "Factoree posts again when it checks the new change.",
+    );
 
     // The failing assertion carries into the repair's implement call.
     expect(implementsOf(runId)).toHaveLength(2);

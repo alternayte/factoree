@@ -151,6 +151,9 @@ export interface RunSnapshot {
  */
 const PARALLEL_REVIEW_PATCH = "run-speed-parallel-review";
 
+/** A repair start posts one progress line, so a long repair never looks dead in Linear. */
+const REPAIR_PROGRESS_PATCH = "repair-progress";
+
 /** docs/specs/skill-registry.md. Skill proposals and the run outcome reach the skill sources. */
 const SKILL_REGISTRY_PATCH = "skill-registry-signals";
 
@@ -680,6 +683,23 @@ export async function agentRunWorkflow(
         message:
           `The ${describeAgentRole(role)} session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, ` +
           `so Factoree stopped it and ${next}.`,
+      }),
+    );
+  };
+
+  /**
+   * Tells the human that a repair starts, why, and what the implementer receives. A repair session
+   * can run for many minutes with no other post, and Linear marks such a session stale.
+   */
+  const announceRepair = async (repair: number, limit: number, reason: string, findings: number): Promise<void> => {
+    if (!patched(REPAIR_PROGRESS_PATCH)) return;
+    await notify(() =>
+      activities.postProgress({
+        sessionId: input.agentSessionId,
+        message:
+          `Factoree starts repair ${repair} of ${limit}, because ${reason}. ` +
+          `The implementer receives ${findings} ${findings === 1 ? "finding" : "findings"}. ` +
+          "Factoree posts again when it checks the new change.",
       }),
     );
   };
@@ -1894,6 +1914,7 @@ export async function agentRunWorkflow(
             repairCount,
             repairReason: "VERIFICATION",
           });
+          await announceRepair(repairCount, maxRepairs, "deterministic verification did not pass", repairFindings.length);
           continue;
         }
 
@@ -2068,6 +2089,14 @@ export async function agentRunWorkflow(
               repairCount,
               repairReason: "VALIDATION",
             });
+            await announceRepair(
+              repairCount,
+              maxRepairs,
+              reviewFindings.length === 0
+                ? "user validation did not pass"
+                : "user validation did not pass and the review found blocking findings",
+              repairFindings.length,
+            );
             continue;
           }
 
@@ -2225,6 +2254,7 @@ export async function agentRunWorkflow(
         repairFindings = review.failures;
         status = "REPAIRING";
         await activities.setRunStatus({ runId: id, status, repairCount, repairReason: "REVIEW" });
+        await announceRepair(repairCount, maxRepairs, "the independent review found blocking findings", repairFindings.length);
         continue;
       }
 
