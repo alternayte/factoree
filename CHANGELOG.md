@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-04
+
+### Fixed
+
+- A follow-up run reused the row of the failed run it follows up and ended on an internal error. The run now records the workflow id it runs under, so a follow-up run gets a row of its own.
+
 ## [0.4.0] - 2026-11-04
 
 ### Added
