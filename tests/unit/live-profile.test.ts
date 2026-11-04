@@ -52,6 +52,15 @@ describe("the live acceptance profile split", () => {
     expect(requirement?.value).toBe("kiln");
   });
 
+  it("swaps the Sprite requirements for the E2B ones in the full profile on E2B", () => {
+    const names = credentialsFor("full", { "install.sandbox.provider": "e2b" })
+      .filter((entry) => entry.dependency === "sandbox")
+      .map((entry) => entry.name);
+    expect(names.sort()).toEqual(["install.sandbox.apiKey", "install.sandbox.image", "install.sandbox.provider"].sort());
+    const requirement = credentialsFor("full", { "install.sandbox.provider": "e2b" }).find((entry) => entry.name === "install.sandbox.provider");
+    expect(requirement?.value).toBe("e2b");
+  });
+
   it("requires the install settings to name fly-sprites in the full profile", () => {
     const requirement = credentialsFor("full").find((entry) => entry.name === "install.sandbox.provider");
     expect(requirement?.kind).toBe("equals");

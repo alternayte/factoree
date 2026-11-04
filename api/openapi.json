@@ -1720,6 +1720,7 @@
                     "type": "string",
                     "enum": [
                       "kiln",
+                      "e2b",
                       "fly-sprites",
                       "local"
                     ]
@@ -5721,6 +5722,7 @@
                               "type": "string",
                               "enum": [
                                 "kiln",
+                                "e2b",
                                 "fly-sprites",
                                 "local"
                               ]
@@ -5892,6 +5894,7 @@
                         "type": "string",
                         "enum": [
                           "kiln",
+                          "e2b",
                           "fly-sprites",
                           "local"
                         ]
@@ -6121,6 +6124,7 @@
                               "type": "string",
                               "enum": [
                                 "kiln",
+                                "e2b",
                                 "fly-sprites",
                                 "local"
                               ]

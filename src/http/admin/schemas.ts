@@ -219,6 +219,10 @@ export const sandboxSettingsProblem = (sandbox: InstallSettings["sandbox"], loca
       if (sandbox.apiKey === null) return "Kiln needs an API key";
       if (sandbox.image === null && buildInfo.sandboxImageDefault === null) return "this build pins no sandbox image, so Kiln needs an image";
       break;
+    case "e2b":
+      if (sandbox.apiKey === null) return "E2B needs an API key";
+      if (sandbox.image === null && buildInfo.sandboxImageDefault === null) return "this build pins no sandbox image, so E2B needs an image";
+      break;
     case "fly-sprites":
       if (sandbox.apiKey === null) return "Fly Sprites needs a token";
       break;

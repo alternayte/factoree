@@ -159,7 +159,7 @@ const sessionSettings = async (input: AgentRunInput, runner: string): Promise<Ag
 const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings });
 const reaper = new SpriteReaper({
   // The adapter routes each sandbox to the provider its ref names.
-  sandboxes: { kiln: sandbox, "fly-sprites": sandbox, local: sandbox },
+  sandboxes: { kiln: sandbox, e2b: sandbox, "fly-sprites": sandbox, local: sandbox },
   runs,
   onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
   retiredSnapshots: warmSnapshots,

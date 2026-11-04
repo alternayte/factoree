@@ -155,6 +155,32 @@ export const KILN_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
   },
 ];
 
+/**
+ * docs/specs/e2b-sandbox-provider.md. With the E2B provider, the `full` profile proves the worker
+ * uses a real E2B sandbox from the Factoree sandbox image.
+ */
+export const E2B_SANDBOX_REQUIREMENTS: LiveRequirement[] = [
+  {
+    name: INSTALL_SANDBOX_PROVIDER,
+    dependency: "sandbox",
+    kind: "equals",
+    value: "e2b",
+    description: "The install settings must name the E2B sandbox provider for this profile.",
+  },
+  {
+    name: INSTALL_SANDBOX_API_KEY,
+    dependency: "sandbox",
+    kind: "present",
+    description: "The E2B API key, stored in Settings > Install.",
+  },
+  {
+    name: INSTALL_SANDBOX_IMAGE,
+    dependency: "sandbox",
+    kind: "present",
+    description: "The Factoree sandbox image by digest: the image override, or the image the release pins.",
+  },
+];
+
 /** One requirement the environment does not meet, with the actual value it found, if any. */
 export interface UnmetRequirement {
   requirement: LiveRequirement;
