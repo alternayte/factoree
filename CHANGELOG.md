@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-04
+
+### Added
+
+- A failed run posts what blocked it, from its recorded assertion results and review findings, and example replies. A reply in the same Linear agent session starts a follow-up run that refines the issue again with the reply as the highest decision, so the reply can drop or change a criterion. The follow-up run sees the facts and the last patch of the failed run, and starts from the base with a new repair budget.
+- A browser assertion that fails runs once more in the same check sprite. When the second run passes, the assertion is unstable: it spends no repair, the pull request is a draft, and the proof pack lists it first under Needs your attention.
+
+### Changed
+
+- A reply after a run that succeeded, was cancelled or failed on its configuration gets one line in Linear and starts no run.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added
