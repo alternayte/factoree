@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
+### Added
+
+- A Runs page lists every run of a workspace, newest first, with its work item, status, duration, cost, repairs and pull request, filtered by product and status. A run page shows why the run ended, its stage timeline, every agent session with tokens, cost, model time and tool time, the assertion results of each attempt, the review findings and the skills.
+- An admin opens the Temporal UI at `/temporal` with the Factoree sign-in. It is read-only, and everyone else gets 404. The compose stack and the Helm chart run it with no published port.
+
+### Changed
+
+- The control plane UI uses the width of a desktop screen: content up to 1440 px, centered, with the product page and the install settings in two columns.
+
 ## [0.2.2] - 2026-11-04
 
 ### Added
