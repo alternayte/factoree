@@ -58,6 +58,8 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - skill registry: an external service that holds reviewed, versioned skills and resolves a set to pinned versions. Skael is one. Avoid: skill store, skill catalog.
 - skill resolution: the pinned list of skill names, versions and digests that one run uses, named by its resolution id. Avoid: skill snapshot, skill lock.
 - skill proposal: a draft skill the implementer writes in a run, sent to a person for review and never applied by Factoree. Avoid: skill submission, learned skill.
+- follow-up run: a new run that a human reply starts in the agent session of a failed run. It refines again with the reply as a decision, with a new work sprite and repair budget. Avoid: retry, rerun, restart.
+- unstable assertion: an assertion whose re-run in the same check sprite gives a different result. It is neither passed nor failed and starts no repair. Avoid: flaky test, intermittent assertion.
 - sandbox image: the OCI image that sandbox/Dockerfile builds, with the toolchain and the root-owned runner CLIs, pinned by digest. Avoid: base image, sprite image, golden image.
 - Kiln template: the Kiln build of the sandbox image at one sandbox size, named by the image digest and the size. A warm snapshot belongs to one Kiln template. Avoid: template image, sandbox template.
 - determined proposal: a proposal backed by a rule or a cited source that a reviewer can check. Factoree takes it without asking. Avoid: recommended default, auto-accept, best guess.
