@@ -67,10 +67,20 @@ export function RunPage({ runId, ws }: { runId: string; ws?: string }) {
       </>
     );
   }
-  return <RunDetail run={run.data} crumb={back} admin={workspace.admin} />;
+  return <RunDetail run={run.data} crumb={back} admin={workspace.admin} workspaceId={workspace.linearWorkspaceId} />;
 }
 
-function RunDetail({ run, crumb, admin }: { run: Run; crumb: React.ReactNode; admin: boolean }) {
+function RunDetail({
+  run,
+  crumb,
+  admin,
+  workspaceId,
+}: {
+  run: Run;
+  crumb: React.ReactNode;
+  admin: boolean;
+  workspaceId: string;
+}) {
   const identifier = issueIdentifier(run.workItemUrl);
   return (
     <>
@@ -89,6 +99,14 @@ function RunDetail({ run, crumb, admin }: { run: Run; crumb: React.ReactNode; ad
           </span>
         }
       />
+      {run.followUpOfRunId ? (
+        <Alert tone="info" className="mb-4">
+          This run follows up a failed run.{" "}
+          <Link to="/runs/$runId" params={{ runId: run.followUpOfRunId }} search={{ ws: workspaceId }} className="link">
+            Open the failed run
+          </Link>
+        </Alert>
+      ) : null}
       {run.failureMessage ? (
         <Alert tone="warning" className="mb-4" title="Why the run ended">
           {run.failureMessage}

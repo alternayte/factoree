@@ -472,13 +472,28 @@ const validate = async (
         });
       } else if (entry.kind === "browser") {
         // Rule 8.
-        outcome = await executeBrowserAssertion(
-          dependencies,
+        outcome = enforceRequiredEvidence(
           assertion,
-          entry,
-          handle!,
-          input.timeoutMs,
+          await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs),
         );
+        // docs/specs/run-recovery.md. A failed browser assertion runs once more in the same check
+        // sprite. A different result makes it unstable: not proven, and not worth a repair.
+        if (outcome.result === "FAIL") {
+          const rerun = enforceRequiredEvidence(
+            assertion,
+            await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs),
+          );
+          if (rerun.result === "PASS") {
+            outcome = {
+              ...outcome,
+              result: "UNSTABLE",
+              reason:
+                "The browser check failed once and passed when Factoree ran it again in the same sandbox, " +
+                `so Factoree cannot prove it. The failed run said: ${outcome.reason}`,
+              artifacts: [...outcome.artifacts, ...rerun.artifacts],
+            };
+          }
+        }
       } else {
         // Rule 9.
         outcome = await executeCommandAssertion(dependencies, input, assertion, entry);

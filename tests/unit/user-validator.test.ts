@@ -292,6 +292,36 @@ describe("runUserValidation", () => {
     expect(outcome.failures[0]).toContain(contract.assertions[0]!.statement);
   });
 
+  // docs/specs/run-recovery.md. A browser check that flips by timing is unstable, not failed.
+  it("marks a browser assertion unstable when it fails and then passes in the same sandbox", async () => {
+    const browser = new FakeBrowserDriver();
+    const failing: BrowserRunResult = { ...passingBrowserResult, passed: false, failureReason: "Expected text to be visible." };
+    let calls = 0;
+    browser.run = (scenario) => {
+      browser.calls.push(scenario);
+      calls += 1;
+      return Promise.resolve(calls === 1 ? failing : passingBrowserResult);
+    };
+    const outcome = await runUserValidation(buildDeps({ browser }), buildInput());
+
+    const browserOutcome = outcome.outcomes.find((entry) => entry.assertionId === "VAL-UI-001")!;
+    expect(browser.calls).toHaveLength(2);
+    expect(browserOutcome.result).toBe("UNSTABLE");
+    expect(browserOutcome.reason).toContain("Expected text to be visible.");
+    expect(outcome.passed).toBe(false);
+    // An unstable assertion never reaches a repair.
+    expect(outcome.failures.some((failure) => failure.includes("VAL-UI-001"))).toBe(false);
+  });
+
+  it("keeps a browser assertion failed when its re-run fails too", async () => {
+    const browser = new FakeBrowserDriver();
+    browser.result = { ...passingBrowserResult, passed: false, failureReason: "Expected text to be visible." };
+    const outcome = await runUserValidation(buildDeps({ browser }), buildInput());
+
+    expect(browser.calls).toHaveLength(2);
+    expect(outcome.outcomes.find((entry) => entry.assertionId === "VAL-UI-001")?.result).toBe("FAIL");
+  });
+
   it("blocks an assertion the plan does not cover", async () => {
     const deps = buildDeps();
     const onlyHttpPlan = JSON.stringify({

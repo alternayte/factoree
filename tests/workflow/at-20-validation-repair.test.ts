@@ -17,6 +17,8 @@ const {
   runtimeOverrides,
   activityOrder,
   postedProgress,
+  postedErrors,
+  publishCalls,
   input,
   runWorker,
 } = harness;
@@ -124,5 +126,50 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
     expect(implementsOf(runId)[1]?.repairFindings).toEqual([
       expect.stringContaining("VAL-API-002"),
     ]);
+  });
+
+  // docs/specs/run-recovery.md. A check that flips by timing spends no repair, and the change
+  // reaches a human as a draft.
+  it("publishes a draft and spends no repair when the only unproven assertion is unstable", async () => {
+    const runId = "run-ses-unstable";
+    runtimeOverrides.set(runId, { repairMaxAttempts: 2 });
+    verifyOutcomes.set(runId, () => true);
+    userValidationOutcomes.set(runId, () => ({
+      ...failing,
+      results: [{ assertionId: "VAL-API-002", result: "UNSTABLE", reason: "It failed once and passed on a re-run." }],
+      hasFailure: false,
+      hasUnstable: true,
+      failures: [],
+      summary: "1 of 1 assertions did not pass.",
+    }));
+
+    const result = await runWorker(async () =>
+      (
+        await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "ses-unstable"),
+          args: [{ ...input("ses-unstable"), product: { ...input("ses-unstable").product, defaultAutonomy: "L3" } }],
+        })
+      ).result(),
+    );
+
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    expect(statusCalls.filter((entry) => entry.runId === runId && entry.status === "REPAIRING")).toEqual([]);
+    expect(publishCalls.find((call) => call.runId === runId)?.draft).toBe(true);
+  });
+
+  it("builds the failure post of a run that spent its repairs from the run facts", async () => {
+    const runId = "run-ses-failure-post";
+    runtimeOverrides.set(runId, { repairMaxAttempts: 0 });
+    verifyOutcomes.set(runId, () => true);
+    userValidationOutcomes.set(runId, () => failing);
+    const errorsBefore = postedErrors.length;
+    const orderBefore = activityOrder.length;
+
+    const result = await runWorker(async () => (await startRun("ses-failure-post")).result());
+
+    expect(result.status).toBe("FAILED");
+    expect(activityOrder.slice(orderBefore)).toContain("describeRunFailure");
+    expect(postedErrors.slice(errorsBefore)).toEqual([expect.stringContaining("the repair budget is spent")]);
   });
 });

@@ -69,7 +69,7 @@ beforeAll(async () => {
       repositories: new PrismaRepositoryRegistry(prisma),
       webhookLog: new PrismaWebhookLog(prisma),
       starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
-      refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
+      refusalNotifier: { postFailure: () => Promise.resolve(undefined), postResponse: () => Promise.resolve(undefined) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
       repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),

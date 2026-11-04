@@ -1,5 +1,8 @@
 import { metrics } from "~/telemetry/metrics.js";
-import { buildWorkflowId } from "~/temporal/workflow-id.js";
+import { buildFollowUpWorkflowId, buildWorkflowId } from "~/temporal/workflow-id.js";
+import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
+import { noFollowUpLine, renderFollowUpDescription, takesFollowUp } from "~/domain/runs/run-recovery.js";
+import type { RunViewReader } from "~/domain/runs/run-view.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
@@ -14,6 +17,17 @@ import type { WebhookLog } from "~/domain/runs/run-repository.js";
  */
 export interface RefusalNotifier {
   postFailure(workspaceId: string, sessionId: string, message: string): Promise<void>;
+  /** docs/specs/run-recovery.md. A plain answer on the agent session, not a failure. */
+  postResponse(workspaceId: string, sessionId: string, message: string): Promise<void>;
+}
+
+/** docs/specs/run-recovery.md. What the delegation reads of the earlier runs of a session. */
+export interface SessionRuns {
+  findByAgentSession(
+    tenantId: string,
+    agentSessionId: string,
+  ): Promise<{ id: string; status: RunStatus; temporalWorkflowId: string; pullRequestUrl: string | null } | null>;
+  lastPatch(tenantId: string, runId: string): Promise<string | null>;
 }
 import type { AgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import { classifyAgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
@@ -39,6 +53,7 @@ export type DelegationOutcome =
   | { kind: "stopped"; workflowId: string }
   | { kind: "prompt_forwarded"; workflowId: string }
   | { kind: "not_running"; workflowId: string }
+  | { kind: "follow_up_refused"; status: string }
   | { kind: "ignored"; reason: string }
   | { kind: "unconfigured"; reason: string }
   | { kind: "blocked_routing"; reason: string };
@@ -53,6 +68,9 @@ export interface DelegationDependencies {
   logger: Logger;
   /** The GitHub web URL from the install settings, read for each delegation. */
   repositoryBaseUrl: () => Promise<string>;
+  /** docs/specs/run-recovery.md. The earlier runs of a session, for a reply after a failed run. */
+  sessionRuns?: SessionRuns | undefined;
+  runViews?: RunViewReader | undefined;
 }
 
 export class DelegationService {
@@ -105,15 +123,33 @@ export class DelegationService {
     const command = classifyAgentSessionEvent(event);
 
     if (command.kind === "ignore") return { kind: "ignored", reason: command.reason };
+    // docs/specs/run-recovery.md. A follow-up run shares the session, so the newest run of the
+    // session owns its workflow.
+    const latest = (await this.dependencies.sessionRuns?.findByAgentSession(tenantId, event.agentSession.id)) ?? null;
     if (command.kind === "stop") {
-      const signalled = await this.dependencies.starter.signalStop(workflowId);
+      const target = latest?.temporalWorkflowId ?? workflowId;
+      const signalled = await this.dependencies.starter.signalStop(target);
       metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
-      return signalled ? { kind: "stopped", workflowId } : { kind: "not_running", workflowId };
+      return signalled ? { kind: "stopped", workflowId: target } : { kind: "not_running", workflowId: target };
     }
+    let followUp: { failedRunId: string; reply: string } | null = null;
     if (command.kind === "prompt") {
-      const signalled = await this.dependencies.starter.signalHumanInput(workflowId, command.body);
+      if (latest === null || !isTerminalRunStatus(latest.status)) {
+        const target = latest?.temporalWorkflowId ?? workflowId;
+        const signalled = await this.dependencies.starter.signalHumanInput(target, command.body);
+        metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
+        return signalled ? { kind: "prompt_forwarded", workflowId: target } : { kind: "not_running", workflowId: target };
+      }
+      if (!takesFollowUp(latest.status)) {
+        await this.dependencies.refusalNotifier.postResponse(
+          event.organizationId,
+          event.agentSession.id,
+          noFollowUpLine(latest.status, latest.pullRequestUrl),
+        );
+        return { kind: "follow_up_refused", status: latest.status };
+      }
+      followUp = { failedRunId: latest.id, reply: command.body };
       metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
-      return signalled ? { kind: "prompt_forwarded", workflowId } : { kind: "not_running", workflowId };
     }
 
     const teamId = event.agentSession.issue?.teamId ?? null;
@@ -135,10 +171,14 @@ export class DelegationService {
 
     // SDD section 7 and SDD section 8. The Work Item text travels as the author wrote it. The
     // workflow refines it, resolves the context, and derives the sandbox from the pinned SHAs.
+    const description = event.agentSession.issue?.description ?? "";
     const workItem: AgentRunWorkItemInput = {
       issueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
       title: event.agentSession.issue?.title ?? "",
-      description: event.agentSession.issue?.description ?? "",
+      description:
+        followUp === null
+          ? description
+          : await this.followUpDescription(tenantId, description, followUp.failedRunId, followUp.reply),
       url: event.agentSession.issue?.url ?? null,
       labels: [],
     };
@@ -194,8 +234,10 @@ export class DelegationService {
       return { kind: "unconfigured", reason };
     }
 
+    const runWorkflowId =
+      followUp === null ? workflowId : buildFollowUpWorkflowId(event.organizationId, event.agentSession.id, followUp.failedRunId);
     await this.dependencies.starter.start({
-      workflowId,
+      workflowId: runWorkflowId,
       args: [
         {
           tenantId,
@@ -207,10 +249,24 @@ export class DelegationService {
           maxRunMinutes: product.maxRunMinutes,
           workItem,
           product: workflowProduct,
+          ...(followUp === null ? {} : { followUpOfRunId: followUp.failedRunId }),
         },
       ],
     });
 
-    return { kind: "started", agentSessionId: event.agentSession.id, workflowId };
+    return { kind: "started", agentSessionId: event.agentSession.id, workflowId: runWorkflowId };
+  }
+
+  /** docs/specs/run-recovery.md. The issue text plus the reply and the facts of the failed run. */
+  private async followUpDescription(tenantId: string, description: string, failedRunId: string, reply: string): Promise<string> {
+    const detail = (await this.dependencies.runViews?.detail(tenantId, failedRunId)) ?? null;
+    const patch = (await this.dependencies.sessionRuns?.lastPatch(tenantId, failedRunId)) ?? null;
+    return renderFollowUpDescription({
+      description,
+      reply,
+      failedRunId,
+      run: { assertions: detail?.assertions ?? [], findings: detail?.findings ?? [] },
+      previousPatch: patch === null ? null : Buffer.from(patch, "base64").toString("utf8"),
+    });
   }
 }

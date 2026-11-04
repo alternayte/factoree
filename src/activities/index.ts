@@ -44,6 +44,8 @@ import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
 import { createBuildAheadActivities } from "./build-ahead.activities.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
+import type { RunViewReader } from "~/domain/runs/run-view.js";
+import { createRecoveryActivities } from "./recovery.activities.js";
 import {
   createSkillRegistryActivities,
   type OrganizationSkillsFactory,
@@ -101,6 +103,8 @@ export interface ActivityDependencies {
   skills?: RunSkillStore | undefined;
   skillRegistries?: SkillRegistryFactory | undefined;
   organizationSkills?: OrganizationSkillsFactory | undefined;
+  /** docs/specs/run-recovery.md. The facts of a failed run, for its failure post. */
+  runViews?: RunViewReader | undefined;
 }
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
@@ -225,6 +229,11 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     logger: dependencies.logger,
     skills: dependencies.skills,
+  }),
+  ...createRecoveryActivities({
+    runViews: dependencies.runViews,
+    redactor: dependencies.redactor,
+    logger: dependencies.logger,
   }),
   ...createSkillRegistryActivities({
     sandbox: dependencies.sandbox,

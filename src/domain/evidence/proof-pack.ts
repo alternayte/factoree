@@ -286,6 +286,14 @@ const openable = (ref: string | null): ref is string => ref !== null && /^https:
  */
 export const needsAttention = (input: ProofPackInput): string[] => {
   const items: string[] = [];
+  // docs/specs/run-recovery.md. An unstable assertion is the first thing a human must weigh: the
+  // pull request is a draft because Factoree could not prove it.
+  for (const assertion of input.assertions.filter((candidate) => candidate.result === "UNSTABLE")) {
+    items.push(
+      `${assertion.id} is UNSTABLE, so the pull request is a draft: ${assertion.statement} ${assertion.reason} ` +
+        "Check it by hand before you merge.",
+    );
+  }
   if (input.modelWarning !== undefined && input.modelWarning !== null) items.push(input.modelWarning);
   // docs/specs/own-proposals-and-parallel-runs.md. A conflict with the moved branch comes first,
   // because the pull request cannot merge until a human resolves it.
@@ -314,7 +322,7 @@ export const needsAttention = (input: ProofPackInput): string[] => {
         `${finding.description} It did not block, because ${finding.decisionReason}`,
     );
   }
-  for (const assertion of input.assertions.filter((candidate) => candidate.result !== "PASS")) {
+  for (const assertion of input.assertions.filter((candidate) => candidate.result !== "PASS" && candidate.result !== "UNSTABLE")) {
     items.push(`${assertion.id} is ${assertion.result}: ${assertion.statement} ${assertion.reason}`);
   }
   // A gap Factoree accepted is one of its decisions. Only a gap without one is listed here.

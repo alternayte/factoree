@@ -55,6 +55,8 @@ export interface CreateRunInput {
   /** docs/specs/run-visibility.md. The work item title and URL, so a run list can name the issue. */
   workItemTitle?: string;
   workItemUrl?: string | null;
+  /** docs/specs/run-recovery.md. The failed run this run follows up, or absent. */
+  followUpOfRunId?: string | null;
 }
 
 export interface RunStatusPatch {
@@ -147,7 +149,12 @@ export interface RunTargetPatch {
 export interface RunRepository {
   createIfAbsent(input: CreateRunInput): Promise<{ run: RunRecord; created: boolean }>;
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
+  /** The newest run of the agent session. A follow-up run is newer than the run it follows. */
   findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null>;
+  /** docs/specs/run-recovery.md. Records the last patch a check sprite captured. */
+  recordLastPatch(tenantId: string, runId: string, patchBase64: string): Promise<void>;
+  /** docs/specs/run-recovery.md. The last patch a check sprite captured, or null. */
+  lastPatch(tenantId: string, runId: string): Promise<string | null>;
   updateStatus(id: string, status: RunStatus, patch?: RunStatusPatch): Promise<RunRecord>;
   /**
    * Records the sandbox of the Run and the moment its retention window ends. It reports the

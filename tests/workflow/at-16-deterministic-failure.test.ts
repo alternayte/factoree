@@ -251,6 +251,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "verify",
       "releaseCheckSandbox",
       "completeRun",
+      // docs/specs/run-recovery.md. The failure post reads the recorded facts.
+      "describeRunFailure",
     ]);
     expect(namesFor("run-ses-at16b").filter(isPublishingName)).toEqual([]);
   });

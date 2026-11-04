@@ -1,4 +1,5 @@
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
+import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "~/config/env.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -80,6 +81,11 @@ const refusalNotifier: RefusalNotifier = {
     const linearClient = createLinearAgentClient(await linearTokens.tokenFor(workspaceId));
     await linearClient.fail(sessionId, message);
   },
+  // docs/specs/run-recovery.md. A plain answer to a reply that starts no follow-up run.
+  postResponse: async (workspaceId, sessionId, message) => {
+    const linearClient = createLinearAgentClient(await linearTokens.tokenFor(workspaceId));
+    await linearClient.respond(sessionId, message);
+  },
 };
 
 const delegation = new DelegationService({
@@ -89,6 +95,9 @@ const delegation = new DelegationService({
   webhookLog: new PrismaWebhookLog(prisma),
   starter: createTemporalWorkflowStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
   refusalNotifier,
+  // docs/specs/run-recovery.md. A reply after a failed run starts a follow-up run.
+  sessionRuns: runs,
+  runViews: new PrismaRunViewReader(prisma),
   logger,
   repositoryBaseUrl: githubBaseUrl(settings),
 });

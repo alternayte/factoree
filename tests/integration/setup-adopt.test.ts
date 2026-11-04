@@ -84,7 +84,7 @@ beforeAll(async () => {
         signalStop: vi.fn(() => Promise.resolve(true)),
         signalHumanInput: vi.fn(() => Promise.resolve(true)),
       },
-      refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
+      refusalNotifier: { postFailure: () => Promise.resolve(undefined), postResponse: () => Promise.resolve(undefined) },
       logger,
       repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),

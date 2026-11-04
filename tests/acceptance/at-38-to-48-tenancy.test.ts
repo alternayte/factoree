@@ -89,6 +89,7 @@ const buildDelegationService = (options: { products: ProductRecord[]; repositori
         postedFailures.push({ workspaceId, sessionId, message });
         return Promise.resolve();
       },
+      postResponse: () => Promise.resolve(),
     },
     logger,
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),

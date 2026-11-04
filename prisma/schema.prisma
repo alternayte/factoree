@@ -80,7 +80,12 @@ model Run {
   productId                String
   product                  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   linearIssueId            String?
-  linearAgentSessionId     String    @unique
+  // docs/specs/run-recovery.md. A follow-up run shares the agent session of the run it follows.
+  linearAgentSessionId     String
+  followUpOfRunId          String?   @map("follow_up_of_run_id")
+  // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured, so a
+  // follow-up run can read what the failed run tried.
+  lastPatchBase64          String?   @map("last_patch_base64")
   temporalWorkflowId       String    @unique
   status                   String
   failureReason            String?
@@ -139,6 +144,7 @@ model Run {
   @@index([tenantId])
   @@index([productId, status])
   @@index([spriteRetainUntil])
+  @@index([linearAgentSessionId, createdAt])
 }
 
 model AgentExecution {

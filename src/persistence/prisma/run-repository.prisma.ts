@@ -69,14 +69,16 @@ export class PrismaRunRepository implements RunRepository {
           autonomyLevel: input.autonomyLevel,
           workItemTitle: input.workItemTitle ?? null,
           workItemUrl: input.workItemUrl ?? null,
+          followUpOfRunId: input.followUpOfRunId ?? null,
           status: "RECEIVED",
         },
       });
       return { run: toRecord(row), created: true };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        // One workflow makes one run, so a retried create finds the row of its own workflow.
         const existing = await this.prisma.run.findUnique({
-          where: { linearAgentSessionId: input.linearAgentSessionId },
+          where: { temporalWorkflowId: input.temporalWorkflowId },
         });
         if (existing) return { run: toRecord(existing), created: false };
       }
@@ -92,8 +94,18 @@ export class PrismaRunRepository implements RunRepository {
   async findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: { tenantId, linearAgentSessionId: agentSessionId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
     return row ? toRecord(row) : null;
+  }
+
+  async recordLastPatch(tenantId: string, runId: string, patchBase64: string): Promise<void> {
+    await this.prisma.run.updateMany({ where: { tenantId, id: runId }, data: { lastPatchBase64: patchBase64 } });
+  }
+
+  async lastPatch(tenantId: string, runId: string): Promise<string | null> {
+    const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId }, select: { lastPatchBase64: true } });
+    return row?.lastPatchBase64 ?? null;
   }
 
   async updateStatus(id: string, status: RunStatus, patch: RunStatusPatch = {}): Promise<RunRecord> {

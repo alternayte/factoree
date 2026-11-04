@@ -1470,6 +1470,7 @@ export type GetRunResponses = {
     durationMs: number | null;
     temporalWorkflowId: string;
     autonomyLevel: string;
+    followUpOfRunId: string | null;
     baseSha: string | null;
     commitSha: string | null;
     patchSha256: string | null;

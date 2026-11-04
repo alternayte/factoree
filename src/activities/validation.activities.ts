@@ -129,6 +129,11 @@ export interface UserValidateActivityOutput {
   hasManual: boolean;
   /** True when at least one assertion is BLOCKED. */
   hasBlocked: boolean;
+  /**
+   * docs/specs/run-recovery.md. True when at least one assertion is UNSTABLE. Absent in a history
+   * recorded before the result existed.
+   */
+  hasUnstable?: boolean;
   summary: string;
   /** The failing assertions, formatted for `ImplementActivityInput.repairFindings`. */
   failures: string[];
@@ -878,6 +883,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           (assertionOutcome) => assertionOutcome.result === "MANUAL_REQUIRED",
         ),
         hasBlocked: outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "BLOCKED"),
+        hasUnstable: outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "UNSTABLE"),
         summary: outcome.summary,
         failures: outcome.failures,
         sessionId: sessionResult.session.sessionId,

@@ -70,8 +70,10 @@ const build = (
     products: ProductRecord[];
     repositories: RepositoryRecord[];
     startFails: boolean;
+    latest: { id: string; status: "FAILED" | "READY_FOR_HUMAN" | "IMPLEMENTING"; temporalWorkflowId: string; pullRequestUrl: string | null } | null;
   }> = {},
 ) => {
+  const postedResponses: string[] = [];
   const recorded = new Set<string>();
   const postedFailures: Array<{ workspaceId: string; sessionId: string; message: string }> = [];
   const starter = {
@@ -118,11 +120,27 @@ const build = (
         postedFailures.push({ workspaceId, sessionId, message });
         return Promise.resolve();
       },
+      postResponse: (_workspaceId: string, _sessionId: string, message: string) => {
+        postedResponses.push(message);
+        return Promise.resolve();
+      },
     },
     logger,
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
+    sessionRuns: {
+      findByAgentSession: () => Promise.resolve(overrides.latest ?? null),
+      lastPatch: () => Promise.resolve(Buffer.from("diff --git a/x b/x\n").toString("base64")),
+    },
+    runViews: {
+      list: () => Promise.reject(new Error("unused")),
+      detail: () =>
+        Promise.resolve({
+          assertions: [{ key: "VAL-UI-001", attempt: 1, method: "browser", statement: "Shows Loading configs...", result: "FAIL", reason: "not visible" }],
+          findings: [],
+        } as never),
+    },
   });
-  return { service, starter, postedFailures };
+  return { service, starter, postedFailures, postedResponses };
 };
 
 describe("DelegationService", () => {
@@ -355,5 +373,49 @@ describe("the delegation service and the organization skills repository", () => 
     const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-13");
     expect(outcome.kind).toBe("unconfigured");
     expect(starter.start).not.toHaveBeenCalled();
+  });
+
+  // docs/specs/run-recovery.md. A reply in the session of a failed run starts a follow-up run.
+  describe("a reply after a run", () => {
+    const reply = (body: string) => {
+      const created = JSON.parse(readFileSync("tests/fixtures/linear/agent-session-created.json", "utf8")) as Record<string, unknown>;
+      return agentSessionEventSchema.parse({ ...created, action: "prompted", agentActivity: { content: { type: "prompt", body } } });
+    };
+
+    it("starts a follow-up run after a failed run, with the reply and the facts in the work item", async () => {
+      const { service, starter } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1", pullRequestUrl: null },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("Drop VAL-UI-001."), "delivery-follow-up");
+
+      expect(outcome.kind).toBe("started");
+      const started = starter.start.mock.calls[0]?.[0];
+      expect(started?.workflowId).toMatch(/:follow-up:run-73$/);
+      expect(started?.args[0].followUpOfRunId).toBe("run-73");
+      expect(started?.args[0].workItem.description).toContain("Drop VAL-UI-001.");
+      expect(started?.args[0].workItem.description).toContain("- VAL-UI-001: Shows Loading configs...");
+      expect(started?.args[0].workItem.description).toContain("diff --git a/x b/x");
+    });
+
+    it("answers a reply after a run that succeeded with one line, and starts nothing", async () => {
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-72", status: "READY_FOR_HUMAN", temporalWorkflowId: "w", pullRequestUrl: "https://github.com/acme/web/pull/24" },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("Also change the footer."), "delivery-done");
+
+      expect(outcome).toEqual({ kind: "follow_up_refused", status: "READY_FOR_HUMAN" });
+      expect(starter.start).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([expect.stringContaining("pull/24")]);
+    });
+
+    it("forwards a reply to the newest run while it is active", async () => {
+      const { service, starter } = build({
+        latest: { id: "run-74", status: "IMPLEMENTING", temporalWorkflowId: "linear:w:s:follow-up:run-73", pullRequestUrl: null },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("Use the old label."), "delivery-active");
+
+      expect(outcome).toEqual({ kind: "prompt_forwarded", workflowId: "linear:w:s:follow-up:run-73" });
+      expect(starter.signalHumanInput).toHaveBeenCalledWith("linear:w:s:follow-up:run-73", "Use the old label.");
+    });
   });
 });

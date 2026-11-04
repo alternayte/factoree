@@ -1,4 +1,5 @@
 import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
+import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
 import { OrganizationSkillsRegistry } from "~/adapters/github/organization-skills-registry.js";
 import { GitHubSkillProposals } from "~/adapters/github/github-skill-proposals.js";
@@ -190,7 +191,9 @@ async function call<T>(
   sessionId: string,
   body: (client: ReturnType<typeof createLinearAgentClient>) => Promise<T>,
 ): Promise<T> {
-  const run = await prisma.run.findUnique({
+  // docs/specs/run-recovery.md. A follow-up run shares the session, and every run of it shares
+  // the workspace, so any run of the session names the workspace.
+  const run = await prisma.run.findFirst({
     where: { linearAgentSessionId: sessionId },
     select: { temporalWorkflowId: true },
   });
@@ -381,6 +384,7 @@ const worker = await Worker.create({
     // docs/specs/skill-registry.md. Skael is the one registry kind. The organization skills
     // repository takes a skill proposal as a pull request.
     skills: new PrismaRunSkillStore(prisma),
+    runViews: new PrismaRunViewReader(prisma),
     skillRegistries: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }),
     organizationSkills: ({ slug, repository, githubInstallationId }) =>
       new OrganizationSkillsRegistry({

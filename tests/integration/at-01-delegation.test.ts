@@ -217,7 +217,7 @@ beforeAll(async () => {
       repositories,
       webhookLog: new PrismaWebhookLog(prisma),
       starter: createTemporalWorkflowStarter(environment.client, TASK_QUEUE),
-      refusalNotifier: { postFailure: () => Promise.resolve(undefined) },
+      refusalNotifier: { postFailure: () => Promise.resolve(undefined), postResponse: () => Promise.resolve(undefined) },
       logger,
       repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),

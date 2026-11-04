@@ -91,6 +91,8 @@ export interface RunSkillProposalView {
 export interface RunDetail extends RunListItem {
   temporalWorkflowId: string;
   autonomyLevel: string;
+  /** docs/specs/run-recovery.md. The failed run this run follows up, or null. */
+  followUpOfRunId: string | null;
   baseSha: string | null;
   commitSha: string | null;
   patchSha256: string | null;

@@ -837,6 +837,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         baseMove: baseMoves.get(activityInput.runId) ?? null,
       };
     },
+    // docs/specs/run-recovery.md. The real activity reads the run facts. The double returns the
+    // message, so a test of the failure message reads it unchanged.
+    describeRunFailure: (activityInput: { message: string }): Promise<string> => {
+      activityOrder.push("describeRunFailure");
+      return Promise.resolve(activityInput.message);
+    },
     submitSkillProposals: (activityInput: SubmitSkillProposalsInput): Promise<void> => {
       activityOrder.push("submitSkillProposals");
       skillProposalCalls.push(activityInput);

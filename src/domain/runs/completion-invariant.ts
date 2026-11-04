@@ -19,6 +19,13 @@ export interface PrePublicationInput {
    */
   implementationStartedAt: string | null;
   validationPassed: boolean;
+  /**
+   * docs/specs/run-recovery.md. True when every assertion that did not pass is UNSTABLE. Such a
+   * validation proves nothing about those assertions, so it holds only for a draft pull request.
+   */
+  validationUnstableOnly?: boolean;
+  /** True when the pull request is a draft. */
+  draft?: boolean;
   verificationPassed: boolean;
   blockingFindingCount: number;
   repairCount: number;
@@ -57,7 +64,8 @@ export const prePublicationFailures = (input: PrePublicationInput): string[] => 
   ) {
     failures.push("The Validation Contract froze after implementation started.");
   }
-  if (!input.validationPassed) failures.push("At least one Validation assertion did not pass.");
+  const unstableDraft = input.validationUnstableOnly === true && input.draft === true;
+  if (!input.validationPassed && !unstableDraft) failures.push("At least one Validation assertion did not pass.");
   if (!input.verificationPassed) failures.push("Deterministic verification did not pass.");
   if (input.blockingFindingCount > 0) failures.push("A blocking review finding remains.");
   if (input.repairCount > input.repairLimit) {

@@ -41,6 +41,7 @@ export const runListItemSchema = z.object({
 export const runDetailSchema = runListItemSchema.extend({
   temporalWorkflowId: z.string(),
   autonomyLevel: z.string(),
+  followUpOfRunId: z.string().nullable(),
   baseSha: z.string().nullable(),
   commitSha: z.string().nullable(),
   patchSha256: z.string().nullable(),

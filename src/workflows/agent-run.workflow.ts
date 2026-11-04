@@ -118,6 +118,11 @@ export interface AgentRunWorkflowInput {
   maxRunMinutes: number;
   workItem: AgentRunWorkItemInput;
   product: AgentRunProductInput;
+  /**
+   * docs/specs/run-recovery.md. The failed run this run follows up. Its reply and facts are in the
+   * work item description. Absent for a first run.
+   */
+  followUpOfRunId?: string;
 }
 
 export interface AgentRunWorkflowResult {
@@ -153,6 +158,12 @@ const PARALLEL_REVIEW_PATCH = "run-speed-parallel-review";
 
 /** A repair start posts one progress line, so a long repair never looks dead in Linear. */
 const REPAIR_PROGRESS_PATCH = "repair-progress";
+
+/** docs/specs/run-recovery.md. An unstable-only validation continues to a draft pull request. */
+const UNSTABLE_ASSERTION_PATCH = "unstable-assertion";
+
+/** docs/specs/run-recovery.md. A failed run posts what blocked it and how to reply. */
+const FAILURE_POST_PATCH = "failure-post";
 
 /** docs/specs/skill-registry.md. Skill proposals and the run outcome reach the skill sources. */
 const SKILL_REGISTRY_PATCH = "skill-registry-signals";
@@ -534,6 +545,7 @@ export async function agentRunWorkflow(
     // docs/specs/run-visibility.md. The run list names the issue.
     workItemTitle: input.workItem.title,
     workItemUrl: input.workItem.url,
+    ...(input.followUpOfRunId === undefined ? {} : { followUpOfRunId: input.followUpOfRunId }),
   });
   runId = created.runId;
   // A const holds the identifier, because narrowing of a let does not survive into a closure.
@@ -664,7 +676,17 @@ export async function agentRunWorkflow(
       failureMessage: message,
       completedAt: new Date(Date.now()).toISOString(),
     });
-    await notify(() => activities.postError({ sessionId: input.agentSessionId, message }));
+    // docs/specs/run-recovery.md. A run that can take a follow-up says what blocked it and how
+    // to reply. The post falls back to the message when the facts cannot be read.
+    let post = message;
+    if ((status === "FAILED" || status === "FAILED_REVIEW") && patched(FAILURE_POST_PATCH)) {
+      try {
+        post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+      }
+    }
+    await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
     return { runId: id, status };
   };
 
@@ -1727,6 +1749,9 @@ export async function agentRunWorkflow(
       // writes them just before it breaks, exactly as the three values above do.
       let publishedVerificationPassed = false;
       let publishedValidationPassed = false;
+      // docs/specs/run-recovery.md. True when the published attempt's only unproven assertions are
+      // unstable. Such a run publishes a draft.
+      let publishedValidationUnstableOnly = false;
       let publishedBlockingCount = 0;
       let publishedReviewVerdict: "pass" | "fail" = "fail";
       let publishedReviewPasses = 0;
@@ -2056,7 +2081,16 @@ export async function agentRunWorkflow(
 
         if (stopRequested) return await cancelRun();
 
-        if (!userValidation.passed) {
+        // docs/specs/run-recovery.md. When every assertion that did not pass is unstable, no repair
+        // can help and nothing failed. The run continues to the review and a draft pull request.
+        const unstableOnly =
+          !userValidation.passed &&
+          userValidation.hasUnstable === true &&
+          !userValidation.hasFailure &&
+          !userValidation.hasBlocked &&
+          !userValidation.hasManual &&
+          patched(UNSTABLE_ASSERTION_PATCH);
+        if (!userValidation.passed && !unstableOnly) {
           // SDD section 36. Only a failing assertion can be repaired. A blocked check, or a check
           // that needs a human, cannot be fixed by another Implementer attempt.
           if (userValidation.hasFailure) {
@@ -2232,6 +2266,7 @@ export async function agentRunWorkflow(
           publishedWorktreeSha = review.worktreeSha;
           publishedVerificationPassed = verification.passed;
           publishedValidationPassed = userValidation.passed;
+          publishedValidationUnstableOnly = unstableOnly;
           publishedBlockingCount = review.blockingCount;
           publishedReviewVerdict = review.verdict;
           signalReviewVerdict = review.verdict;
@@ -2271,6 +2306,13 @@ export async function agentRunWorkflow(
 
       // SDD section 68. Every clause that can hold before publication is checked here, so a broken
       // clause stops the Run before a pull request exists, not after.
+      // docs/specs/autonomy-levels.md and check-isolation.md. L2 opens a draft. So does a patch
+      // that changes a file that defines a check, and a run with an unstable assertion
+      // (docs/specs/run-recovery.md).
+      const publishDraft =
+        refined.autonomyLevel !== "L3" ||
+        (checkSandbox?.checkDefiningFiles.length ?? 0) > 0 ||
+        publishedValidationUnstableOnly;
       const unmetBeforePublication = prePublicationFailures({
         workItemReady: refined.status === "ready",
         contextContractVersion,
@@ -2279,6 +2321,8 @@ export async function agentRunWorkflow(
         validationContractFrozenAt: validation.frozenAt,
         implementationStartedAt,
         validationPassed: publishedValidationPassed,
+        validationUnstableOnly: publishedValidationUnstableOnly,
+        draft: publishDraft,
         verificationPassed: publishedVerificationPassed,
         blockingFindingCount: publishedBlockingCount,
         repairCount,
@@ -2340,7 +2384,7 @@ export async function agentRunWorkflow(
         verifiedPatchSha256: published.patchSha256,
         // docs/specs/autonomy-levels.md and check-isolation.md. L2 opens a draft. So does a patch
         // that changes a file that defines a check.
-        draft: refined.autonomyLevel !== "L3" || published.checkDefiningFiles.length > 0,
+        draft: publishDraft,
         repositorySlug: resolvedContext.primary.slug,
         repositoryBaseUrl: input.product.repositoryBaseUrl,
         baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),
@@ -2480,6 +2524,8 @@ export async function agentRunWorkflow(
         validationContractFrozenAt: validation.frozenAt,
         implementationStartedAt,
         validationPassed: publishedValidationPassed,
+        validationUnstableOnly: publishedValidationUnstableOnly,
+        draft: publishDraft,
         verificationPassed: publishedVerificationPassed,
         blockingFindingCount: publishedBlockingCount,
         repairCount,

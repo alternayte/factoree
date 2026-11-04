@@ -1,7 +1,11 @@
 import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validation/validation-contract.js";
 
-/** SDD section 36 lists exactly these results. */
-export const ASSERTION_RESULTS = ["PASS", "FAIL", "BLOCKED", "MANUAL_REQUIRED"] as const;
+/**
+ * SDD section 36 lists the first four. docs/specs/run-recovery.md adds UNSTABLE: a browser
+ * assertion whose re-run in the same check sprite gave a different result. It is not proven, and
+ * no repair can fix it.
+ */
+export const ASSERTION_RESULTS = ["PASS", "FAIL", "BLOCKED", "MANUAL_REQUIRED", "UNSTABLE"] as const;
 
 export type AssertionResult = (typeof ASSERTION_RESULTS)[number];
 
@@ -41,16 +45,19 @@ export interface UserValidationOutcome {
 export const summarizeUserValidation = (outcomes: AssertionOutcome[]): UserValidationOutcome => {
   const passed = outcomes.length > 0 && outcomes.every((outcome) => outcome.result === "PASS");
 
+  // docs/specs/run-recovery.md. An unstable assertion never reaches a repair: no code change fixes
+  // a check that flips by timing.
   const failures = outcomes
-    .filter((outcome) => outcome.result !== "PASS")
+    .filter((outcome) => outcome.result !== "PASS" && outcome.result !== "UNSTABLE")
     .map((outcome) => `${outcome.assertionId} (${outcome.result}): ${outcome.reason}`);
+  const notPassed = outcomes.filter((outcome) => outcome.result !== "PASS").length;
 
   const summary =
     outcomes.length === 0
       ? "User validation produced no outcome."
       : passed
         ? `All ${outcomes.length} assertions passed.`
-        : `${failures.length} of ${outcomes.length} assertions did not pass.`;
+        : `${notPassed} of ${outcomes.length} assertions did not pass.`;
 
   return { passed, outcomes, summary, failures };
 };

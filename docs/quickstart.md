@@ -287,6 +287,10 @@ workflow of a run in the Temporal UI at `<FACTOREE_PUBLIC_URL>/temporal`,
 read-only, with the same sign-in. The compose file runs the Temporal UI with
 no published port.
 
+A run that fails posts what blocked it in Linear. Reply in the same agent
+session with guidance, for example "Drop VAL-UI-001.", and Factoree starts a
+follow-up run that refines the issue again with your reply.
+
 ### 6.1 A skill registry
 
 `docs/specs/skill-registry.md` defines it. A Product can name one Skael server
