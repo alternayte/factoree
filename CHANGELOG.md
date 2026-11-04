@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-04
+
+Faster runs, skills from a skill registry, and E2B as a sandbox provider.
+
+### Added
+
+- A skill registry per product. Skael is the first kind. The product names the registry URL and an optional set, and the service key is the product secret `SKILL_REGISTRY_KEY`. An empty set gives every released skill. Saving resolves the registry once and refuses a setting that does not resolve.
+- For each run, the worker resolves the registry, checks the SHA-256 of every skill archive and unpacks the skills outside the repository checkout of the work sprite. The sandbox gets no key and no route to the registry. Repository skills rank first, then registry skills, then organization skills.
+- The run records the set, the resolution id and each skill it received, with its version and digest, in `run_skill`.
+- Factoree reports the skills each implementer session loaded and the run outcome to the registry.
+- The implementer may write one skill proposal. It never reaches the pull request. Factoree sends it to the registry, or as a pull request to the organization skills repository, for a person to review. The proof pack lists the loaded skills and the proposal.
+- The sandbox provider `e2b`, with one template per image digest and size, egress at the E2B proxy, and a warm snapshot per repository.
+- The `run_stage` table records the start and the end of each stage of a run. Each agent session records its model time and its tool time.
+- The optional repository command `warm.command` runs only when Factoree takes a warm snapshot, so the snapshot holds warm build caches.
+- A build-ahead builds a new warm snapshot when the bootstrap key of a repository changes, when the product allow list changes, or when the sandbox image or size changes, before a run needs it.
+
+### Changed
+
+- The reviewer runs in its own check sprite at the same time as user validation, after verification passes. It no longer receives the user validation evidence. One repair gets the findings of both.
+- The bootstrap key (the bootstrap command, the warm command and the allow list) replaces the configuration SHA as the key of a warm snapshot. The first run of each repository after the upgrade starts cold once.
+- The implementer prompt is `implementer/8`. When a run lists only the first 50 skills, the prompt names the directories of the others.
+
 ## [0.1.0] - 2026-11-01
 
 The first release. Another person can install Factoree from released artefacts and run it with no checkout.
