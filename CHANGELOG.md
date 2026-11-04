@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-04
+
+### Fixed
+
+- The usage of an opencode session with a large transcript was lost. opencode cuts off a large `opencode export` written to a pipe (anomalyco/opencode#57266), so the export arrived as invalid JSON. Factoree now writes the export to a file in the sandbox and reads the file. The session keeps its cost, tokens, model time, tool time and the skills it loaded.
+
 ## [0.2.0] - 2026-11-04
 
 Faster runs, skills from a skill registry, and E2B as a sandbox provider.
