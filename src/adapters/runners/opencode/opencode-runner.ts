@@ -34,6 +34,15 @@ const OPENCODE_CONFIG = JSON.stringify({ permission: { external_directory: "allo
 const START_SCRIPT =
   'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_OPENCODE_BIN" run --print-logs --format json "$@"';
 
+/**
+ * The usage read. opencode 1.19.5 exits before it flushes a large export into a pipe
+ * (anomalyco/opencode#57266), and the sandbox reads stdout through a pipe, so an export over about
+ * 128 KB arrived cut off and parsed as nothing. A file receives the whole export, and `cat`
+ * flushes it. `$1` is the executable and `$2` the session.
+ */
+const EXPORT_SCRIPT =
+  'f=$(mktemp) || exit 1; "$1" export "$2" > "$f" 2>/dev/null; rc=$?; cat "$f"; rm -f "$f"; exit $rc';
+
 /** The same script. It continues the session the environment names. */
 const RESUME_SCRIPT =
   'cat "$FACTOREE_PROMPT_FILE" | "$FACTOREE_OPENCODE_BIN" run --print-logs --format json ' +
@@ -109,8 +118,8 @@ export class OpenCodeRunner extends CliAgentRunner {
     const fallbackModel = context.settings.model;
     if (context.sessionId === null) return { usage: null, model: fallbackModel };
     const result = await context.sandbox.exec(context.ref, {
-      file: this.executableOf(context.settings),
-      args: ["export", context.sessionId],
+      file: "sh",
+      args: ["-c", EXPORT_SCRIPT, "sh", this.executableOf(context.settings), context.sessionId],
       cwd: context.directory,
       env: { ...context.environment, OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG, OPENCODE_DISABLE_PROJECT_CONFIG: "1" },
       timeoutMs: USAGE_READ_TIMEOUT_MS,

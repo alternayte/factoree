@@ -502,14 +502,19 @@ describe("OpenCodeRunner, the usage of a session", () => {
       executable: "/opt/factoree/bin/opencode",
       variant: "max",
     });
-    sandbox.scriptExec(/^\/opt\/factoree\/bin\/opencode export ses_1$/, { stdout: exportText(["a1", "a2"]) });
+    sandbox.scriptExec(/ \/opt\/factoree\/bin\/opencode ses_1$/, { stdout: exportText(["a1", "a2"]) });
 
     const started = runner.run({ ...runInput(sandbox, ref), repositoryPath: "/workspace/primary" });
     await waitUntil(() => sandbox.started.length === 1);
     sandbox.finishProcess("process-2", { stdout: '{"type":"session.start","session":{"id":"ses_1"}}' });
     const result = await started;
 
-    const exported = sandbox.commands.find((command) => command.args[0] === "export");
+    // anomalyco/opencode#57266. The export goes to a file first, because opencode cuts off a
+    // large export written to a pipe.
+    const exported = sandbox.commands.find((command) => command.args.includes("ses_1"));
+    expect(exported?.file).toBe("sh");
+    expect(exported?.args[1]).toContain('export "$2" > "$f"');
+    expect(exported?.args.slice(3)).toEqual(["/opt/factoree/bin/opencode", "ses_1"]);
     expect(exported?.cwd).toBe("/workspace/primary");
     expect(exported?.env?.TEST_API_KEY).toBe("super-secret-value");
     expect(result.usage).toEqual({
@@ -555,7 +560,7 @@ describe("OpenCodeRunner, the usage of a session", () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
     const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
-    sandbox.scriptExec(/ export /, { exitCode: 1, stderr: "Session not found" });
+    sandbox.scriptExec(/ ses_1$/, { exitCode: 1, stderr: "Session not found" });
 
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.started.length === 1);
