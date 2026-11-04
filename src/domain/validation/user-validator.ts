@@ -254,11 +254,25 @@ export const executeBrowserAssertion = async (
 
   const stepsMetadata = {
     assertionId: assertion.id,
+    // docs/specs/browser-network-control.md. A failRequest step makes the error the page shows,
+    // so the proof pack must say that Factoree injected it.
+    injectedFailure: entry.steps.some((step) => step.action === "failRequest"),
     steps: run.steps.map((step) => ({
       index: step.index,
       action: step.action,
       passed: step.passed,
       detail: dependencies.redactor.redactText(step.detail),
+      ...(step.requests === undefined
+        ? {}
+        : {
+            requests: step.requests.map((request) => ({
+              method: request.method,
+              url: dependencies.redactor.redactText(request.url),
+              effect: request.effect,
+              autoReleased: request.autoReleased,
+              failedWith: request.failedWith,
+            })),
+          }),
     })),
   };
   artifacts.push({

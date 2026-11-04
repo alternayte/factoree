@@ -461,6 +461,38 @@ describe("publishProofPack", () => {
   });
 });
 
+describe("publishProofPack, an injected failed request (browser-network-control.md)", () => {
+  const assertionLog = (attempt: number, injectedFailure: boolean): EvidenceRecord => ({
+    id: `log-${attempt}`,
+    tenantId: "t1",
+    runId: "run-1",
+    validationAssertionId: "row-1",
+    kind: "assertion-log",
+    source: "browser:VAL-API-001:assertion-log",
+    createdAt: new Date("2026-01-01T02:00:00.000Z"),
+    sha256: "a".repeat(64),
+    storageRef: null,
+    metadata: { attempt, injectedFailure, steps: [] },
+  });
+
+  it("marks the assertion when the plan of its last attempt used failRequest", async () => {
+    const harness = build({
+      evidence: { listForRun: async () => [assertionLog(1, false), assertionLog(2, true)] },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+    await harness.activities.publishProofPack(input);
+    expect(harness.posted[0]).toContain("(error injected by Factoree with failRequest, not returned by the backend)");
+    expect(JSON.parse(harness.documents[0]!)).toMatchObject({ assertions: [{ id: "VAL-API-001", injectedFailure: true }] });
+  });
+
+  it("does not mark the assertion when only an earlier attempt used failRequest", async () => {
+    const harness = build({
+      evidence: { listForRun: async () => [assertionLog(1, true), assertionLog(2, false)] },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+    await harness.activities.publishProofPack(input);
+    expect(harness.posted[0]).not.toContain("error injected by Factoree");
+  });
+});
+
 describe("publishProofPack, a corrected Validation Plan (DI-15.23)", () => {
   const sessionRow = (attempt: number, idempotencyKey: string) => ({
     tenantId: "t1",

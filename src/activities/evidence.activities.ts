@@ -281,10 +281,16 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     }
 
     const evidenceByAssertion = new Map<string, ProofPackEvidenceRef[]>();
+    // docs/specs/browser-network-control.md. The assertion log of the last attempt records whether
+    // the plan injected a failed request.
+    const injectedFailure = new Set<string>();
     for (const row of evidenceRows) {
       if (row.validationAssertionId === null) continue;
       if (metadataNumber(row.metadata, "attempt") !== lastAttemptByAssertion.get(row.validationAssertionId)) {
         continue;
+      }
+      if (row.kind === "assertion-log" && row.metadata["injectedFailure"] === true) {
+        injectedFailure.add(row.validationAssertionId);
       }
       const list = evidenceByAssertion.get(row.validationAssertionId) ?? [];
       list.push({
@@ -309,6 +315,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         result: outcome?.result ?? "BLOCKED",
         reason: outcome?.reason ?? "No result row exists for this assertion.",
         evidence: evidenceByAssertion.get(assertion.rowId) ?? [],
+        injectedFailure: injectedFailure.has(assertion.rowId),
       };
     });
 

@@ -48,7 +48,16 @@ export interface ProofPackAssertion {
   result: AssertionResult;
   reason: string;
   evidence: ProofPackEvidenceRef[];
+  /**
+   * docs/specs/browser-network-control.md. True when the browser plan of the assertion used
+   * failRequest: the error it checked came from Factoree, not from the backend.
+   */
+  injectedFailure?: boolean;
 }
+
+/** The mark one assertion line carries when its plan injected a failed request. */
+export const INJECTED_FAILURE_NOTE =
+  "(error injected by Factoree with failRequest, not returned by the backend)";
 
 /** SDD section 35. One deterministic check. The retained log stays out of the Proof Pack. */
 export interface ProofPackCheck {
@@ -416,7 +425,9 @@ const checkLines = (input: ProofPackInput): string[] => {
       (check) => `- ${check.passed ? "PASS" : "FAIL"} ${line(check.name)}: \`${line(check.command)}\``,
     ),
     ...input.assertions.map(
-      (assertion) => `- ${assertion.result} ${assertion.id}: ${line(assertion.statement)}${evidenceLinks(assertion)}`,
+      (assertion) =>
+        `- ${assertion.result} ${assertion.id}: ${line(assertion.statement)}` +
+        `${assertion.injectedFailure === true ? ` ${INJECTED_FAILURE_NOTE}` : ""}${evidenceLinks(assertion)}`,
     ),
     ...(input.planCorrections ?? []).map(planCorrectionLine),
     `- ${blocking === 0 ? "PASS" : "FAIL"} Independent review: ${input.reviewPasses} ` +

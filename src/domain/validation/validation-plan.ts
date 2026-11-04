@@ -21,7 +21,38 @@ export type BrowserStep =
   | { action: "reload" }
   | { action: "expectText"; selector: string; text: string }
   | { action: "expectVisible"; selector: string }
-  | { action: "screenshot"; name: string };
+  | { action: "screenshot"; name: string }
+  | { action: "holdRequest"; url: string }
+  | { action: "releaseRequests" }
+  | { action: "failRequest"; url: string; status: FailRequestStatus };
+
+/**
+ * docs/specs/browser-network-control.md. An HTTP error status, or `network` for a request that
+ * fails as a network error. DI-20.01: a status below 400 is no failure, and a 2xx with an empty
+ * body would be a made-up response.
+ */
+export type FailRequestStatus = number | "network";
+
+/** docs/specs/browser-network-control.md. A held request releases itself after this time. */
+export const HOLD_LIMIT_MS = 30_000;
+
+/** The steps that check the page. A hold must be followed by one of them before its release. */
+const CHECK_ACTIONS: ReadonlySet<BrowserStep["action"]> = new Set(["expectText", "expectVisible", "screenshot"]);
+
+/**
+ * docs/specs/browser-network-control.md. The reason a request URL pattern is refused, or null for
+ * a URL glob. A glob begins with `*` or names an http or https URL. A character that only a
+ * regular expression needs is refused, so a reviewer reads the pattern at a glance. DI-20.01.
+ */
+export const requestGlobProblem = (url: string): string | null => {
+  if (!/^(\*|https?:\/\/)/.test(url)) {
+    return "must be a URL glob that begins with *, http:// or https://, such as **/api/configs";
+  }
+  if (/[\^$\\()|[\]+\s]/.test(url)) {
+    return "is a regular expression or holds a character a URL glob does not use. Use * and ** only";
+  }
+  return null;
+};
 
 export interface CommandPlanEntry {
   run: string;
@@ -92,6 +123,15 @@ const browserStepSchema = z.discriminatedUnion("action", [
     .strict(),
   z.object({ action: z.literal("expectVisible"), selector: z.string().min(1) }).strict(),
   z.object({ action: z.literal("screenshot"), name: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("holdRequest"), url: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("releaseRequests") }).strict(),
+  z
+    .object({
+      action: z.literal("failRequest"),
+      url: z.string().min(1),
+      status: z.union([z.number().int().min(400).max(599), z.literal("network")]),
+    })
+    .strict(),
 ]);
 
 const commandPlanEntrySchema = z
@@ -190,13 +230,15 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
     }
 
     if (entry.kind === "browser") {
-      const first = entry.steps[0];
-      if (first === undefined) {
+      // docs/specs/browser-network-control.md. A holdRequest or a failRequest may come before the
+      // first goto, because a request the page makes on load must be matched before it starts.
+      const first = entry.steps.find((step) => step.action !== "holdRequest" && step.action !== "failRequest");
+      if (entry.steps.length === 0) {
         reasons.push(`The Validation Plan browser entry for "${entry.assertionId}" holds no step.`);
-      } else if (first.action !== "goto") {
+      } else if (first?.action !== "goto") {
         reasons.push(
           `The Validation Plan browser entry for "${entry.assertionId}" must begin with a ` +
-            "goto step.",
+            "goto step. Only holdRequest and failRequest steps may come before it.",
         );
       }
       const hasExpectation = entry.steps.some((step) => step.action.startsWith("expect"));
@@ -206,6 +248,34 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
             "must hold at least one step whose action begins with expect.",
         );
       }
+      // docs/specs/browser-network-control.md. A request pattern is a URL glob, and a hold must be
+      // checked before its release, because a hold that checks nothing proves nothing.
+      entry.steps.forEach((step, index) => {
+        if (step.action !== "holdRequest" && step.action !== "failRequest") return;
+        const problem = requestGlobProblem(step.url);
+        if (problem !== null) {
+          reasons.push(
+            `The Validation Plan browser entry for "${entry.assertionId}" holds the ${step.action} url ` +
+              `"${step.url}", which ${problem}.`,
+          );
+        }
+        if (step.action !== "holdRequest") return;
+        let checked = false;
+        for (const later of entry.steps.slice(index + 1)) {
+          if (later.action === "releaseRequests") break;
+          if (CHECK_ACTIONS.has(later.action)) {
+            checked = true;
+            break;
+          }
+        }
+        if (!checked) {
+          reasons.push(
+            `The Validation Plan browser entry for "${entry.assertionId}" holds "${step.url}" at step ` +
+              `${index + 1}, but no expectText, expectVisible or screenshot step follows before the ` +
+              "release. A hold that checks nothing proves nothing.",
+          );
+        }
+      });
       // A goto path resolves against the exposed preview base URL. A protocol-relative path
       // replaces the origin, so an assertion can drive a foreign host and still report PASS.
       for (const step of entry.steps) {

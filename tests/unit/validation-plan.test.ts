@@ -256,6 +256,79 @@ describe("parseValidationPlan", () => {
     ).toThrow(/VAL-UI-001/);
   });
 
+  describe("network control steps (browser-network-control.md)", () => {
+    const browserPlan = (steps: unknown[]): string =>
+      JSON.stringify({ version: 1, entries: [{ assertionId: "VAL-UI-001", kind: "browser", steps }] });
+    const reasonsOf = (steps: unknown[]): string[] => {
+      try {
+        parseValidationPlan(browserPlan(steps), contract);
+      } catch (error) {
+        if (error instanceof ValidationPlanInvalidError) return error.reasons;
+        throw error;
+      }
+      return [];
+    };
+
+    it("accepts a checked hold, a release and a failed request on any host", () => {
+      expect(
+        reasonsOf([
+          { action: "holdRequest", url: "**/graphql" },
+          { action: "failRequest", url: "https://api.example.com/v1/**", status: 500 },
+          { action: "failRequest", url: "**/api/other", status: "network" },
+          { action: "goto", path: "/configs" },
+          { action: "expectText", selector: "main", text: "Loading configs..." },
+          { action: "screenshot", name: "loading" },
+          { action: "releaseRequests" },
+          { action: "expectVisible", selector: "table" },
+        ]),
+      ).toEqual([]);
+    });
+
+    it("rejects a hold that no check follows before its release", () => {
+      const reasons = reasonsOf([
+        { action: "goto", path: "/" },
+        { action: "holdRequest", url: "**/api/configs" },
+        { action: "click", selector: "#load" },
+        { action: "releaseRequests" },
+        { action: "expectVisible", selector: "table" },
+      ]);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toMatch(/holds "\*\*\/api\/configs" at step 2, but no expectText/);
+    });
+
+    it("rejects a hold that no check follows before the scenario ends", () => {
+      const reasons = reasonsOf([
+        { action: "goto", path: "/" },
+        { action: "expectVisible", selector: "table" },
+        { action: "holdRequest", url: "**/api/configs" },
+      ]);
+      expect(reasons.some((reason) => reason.includes("A hold that checks nothing proves nothing."))).toBe(true);
+    });
+
+    it.each(["^https://api\\.example\\.com/.*$", "/api/(configs|users)/", ".*graphql", "/api/configs"])(
+      "rejects the request pattern %s, which is no URL glob",
+      (url) => {
+        const reasons = reasonsOf([
+          { action: "goto", path: "/" },
+          { action: "failRequest", url, status: 500 },
+          { action: "expectVisible", selector: "#error" },
+        ]);
+        expect(reasons).toHaveLength(1);
+        expect(reasons[0]).toContain(`failRequest url "${url}"`);
+      },
+    );
+
+    it("rejects a failRequest status that is no HTTP error", () => {
+      expect(
+        reasonsOf([
+          { action: "goto", path: "/" },
+          { action: "failRequest", url: "**/api", status: 200 },
+          { action: "expectVisible", selector: "#error" },
+        ])[0],
+      ).toMatch(/plan schema/);
+    });
+  });
+
   it("rejects an http entry whose path does not begin with a slash (rule 9)", () => {
     expect(() =>
       parseValidationPlan(

@@ -45,9 +45,45 @@ const PAGE_HTML = `<!doctype html>
 </body>
 </html>`;
 
+// browser-network-control.md. A page whose API call shows a loading state, then the result or
+// the error.
+const CONFIGS_HTML = `<!doctype html>
+<html>
+<body>
+  <p id="status">Loading configs...</p>
+  <script>
+    fetch("/api/configs")
+      .then(function (response) {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then(function (body) {
+        document.getElementById("status").textContent = body.count + " configs";
+        document.body.insertAdjacentHTML("beforeend", '<p id="loaded">loaded</p>');
+      })
+      .catch(function (error) {
+        var reason = error instanceof TypeError ? "network" : error.message;
+        document.body.insertAdjacentHTML("beforeend", '<p id="error">Could not load configs (' + reason + ')</p>');
+      });
+  </script>
+</body>
+</html>`;
+
 const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
   new Promise((resolve) => {
-    const server = createServer((_request, response) => {
+    const server = createServer((request, response) => {
+      if (request.url === "/api/configs") {
+        response.setHeader("Content-Type", "application/json");
+        response.writeHead(200);
+        response.end(JSON.stringify({ count: 2 }));
+        return;
+      }
+      if (request.url === "/configs") {
+        response.setHeader("Content-Type", "text/html");
+        response.writeHead(200);
+        response.end(CONFIGS_HTML);
+        return;
+      }
       response.setHeader("Content-Type", "text/html");
       response.writeHead(200);
       response.end(PAGE_HTML);
@@ -218,5 +254,91 @@ describe("PlaywrightBrowserDriver", () => {
   it("resolves an ordinary goto path onto the preview origin", () => {
     expect(resolveGotoUrl(baseUrl, "/projects/1")).toBe(`${baseUrl}/projects/1`);
     expect(new URL(resolveGotoUrl(baseUrl, "/")).origin).toBe(new URL(baseUrl).origin);
+  });
+
+  describe("network control (browser-network-control.md)", () => {
+    const run = (steps: BrowserScenario["steps"], target = driver) =>
+      target.run({ ...scenario, baseUrl, steps, timeoutMs: 30_000 });
+
+    it("holds a matching request until the release, so the loading state shows every time", async () => {
+      const result = await run([
+        { action: "holdRequest", url: "**/api/configs" },
+        { action: "goto", path: "/configs" },
+        { action: "expectText", selector: "#status", text: "Loading configs..." },
+        { action: "screenshot", name: "loading" },
+        { action: "releaseRequests" },
+        { action: "expectVisible", selector: "#loaded" },
+        { action: "expectText", selector: "#status", text: "2 configs" },
+      ]);
+      expect(result.failureReason).toBeNull();
+      expect(result.passed).toBe(true);
+      expect(result.steps[0]!.requests).toEqual([
+        { method: "GET", url: `${baseUrl}/api/configs`, effect: "held", autoReleased: false, failedWith: null },
+      ]);
+      expect(result.steps[0]!.detail).toBe(`Held 1 request that match **/api/configs: GET ${baseUrl}/api/configs.`);
+      expect(result.steps[4]!.detail).toBe("Released 1 held request.");
+      expect(result.network.some((entry) => entry.url.endsWith("/api/configs") && entry.status === 200)).toBe(true);
+    }, 60_000);
+
+    it("releases a held request by itself after the hold limit", async () => {
+      const result = await run(
+        [
+          { action: "holdRequest", url: "**/api/configs" },
+          { action: "goto", path: "/configs" },
+          { action: "expectText", selector: "#status", text: "Loading configs..." },
+          { action: "expectVisible", selector: "#loaded" },
+        ],
+        new PlaywrightBrowserDriver(500),
+      );
+      expect(result.passed).toBe(true);
+      expect(result.steps[0]!.requests?.[0]?.autoReleased).toBe(true);
+      expect(result.steps[0]!.detail).toContain("(released by the hold limit)");
+    }, 60_000);
+
+    it("releases a held request when the scenario ends", async () => {
+      const started = Date.now();
+      const result = await run([
+        { action: "holdRequest", url: "**/api/configs" },
+        { action: "goto", path: "/configs" },
+        { action: "expectText", selector: "#status", text: "Loading configs..." },
+      ]);
+      expect(result.passed).toBe(true);
+      expect(Date.now() - started).toBeLessThan(20_000);
+      expect(result.steps[0]!.requests?.[0]?.autoReleased).toBe(false);
+    }, 60_000);
+
+    it("answers a matching request with the HTTP status and an empty body", async () => {
+      const result = await run([
+        { action: "failRequest", url: "**/api/configs", status: 500 },
+        { action: "goto", path: "/configs" },
+        { action: "expectText", selector: "#error", text: "Could not load configs (500)" },
+      ]);
+      expect(result.failureReason).toBeNull();
+      expect(result.steps[0]!.requests).toEqual([
+        { method: "GET", url: `${baseUrl}/api/configs`, effect: "failed", autoReleased: false, failedWith: 500 },
+      ]);
+      expect(result.network.some((entry) => entry.url.endsWith("/api/configs") && entry.status === 500)).toBe(true);
+    }, 60_000);
+
+    it("fails a matching request as a network error", async () => {
+      const result = await run([
+        { action: "failRequest", url: "**/api/configs", status: "network" },
+        { action: "goto", path: "/configs" },
+        { action: "expectText", selector: "#error", text: "Could not load configs (network)" },
+      ]);
+      expect(result.failureReason).toBeNull();
+      expect(result.steps[0]!.requests?.[0]?.failedWith).toBe("network");
+      expect(result.network.some((entry) => entry.url.endsWith("/api/configs") && entry.status === null)).toBe(true);
+    }, 60_000);
+
+    it("names no request when nothing matched the pattern", async () => {
+      const result = await run([
+        { action: "failRequest", url: "https://api.example.com/**", status: 503 },
+        { action: "goto", path: "/configs" },
+        { action: "expectVisible", selector: "#loaded" },
+      ]);
+      expect(result.passed).toBe(true);
+      expect(result.steps[0]!.detail).toBe("No request matched https://api.example.com/**.");
+    }, 60_000);
   });
 });

@@ -169,6 +169,14 @@ describe("the Proof Pack body (proof-pack-and-visual-evidence.md)", () => {
     expect(body).toContain("- PASS VAL-API-001: GET /health returns 200.");
   });
 
+  it("marks an assertion whose plan injected a failed request (browser-network-control.md)", () => {
+    const body = render({ assertions: [{ ...uiAssertion, evidence: [], injectedFailure: true }] });
+    expect(body).toContain(
+      "- PASS VAL-UI-001: The footer shows the app version. (error injected by Factoree with failRequest, not returned by the backend)",
+    );
+    expect(render({ assertions: [{ ...uiAssertion, evidence: [] }] })).not.toContain("injected");
+  });
+
   it("writes one line per check, and the review result", () => {
     const body = render();
     expect(body).toContain("- PASS unit: `npm test`");

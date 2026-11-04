@@ -15,12 +15,28 @@ export interface BrowserScenario {
   timeoutMs: number;
 }
 
+/**
+ * docs/specs/browser-network-control.md. One request a holdRequest or a failRequest step
+ * affected, so the proof shows which call the step changed.
+ */
+export interface BrowserControlledRequest {
+  method: string;
+  url: string;
+  effect: "held" | "failed";
+  /** For a held request: true when the hold limit released it, not a releaseRequests step. */
+  autoReleased: boolean;
+  /** For a failed request: the HTTP status it got, or `network`. Null for a held request. */
+  failedWith: number | "network" | null;
+}
+
 export interface BrowserStepResult {
   index: number;
   action: string;
   passed: boolean;
   /** One readable line. It becomes the assertion log. */
   detail: string;
+  /** The requests a holdRequest or a failRequest step affected. Absent for every other step. */
+  requests?: BrowserControlledRequest[];
 }
 
 export interface BrowserArtifact {
