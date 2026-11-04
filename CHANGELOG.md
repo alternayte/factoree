@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-04
+
+### Added
+
+- When a failed check starts a repair, Factoree posts one line to Linear with the repair number, the reason and the number of findings the implementer receives. A long repair no longer looks dead, and Linear no longer marks the agent session stale.
+
 ## [0.2.1] - 2026-11-04
 
 ### Fixed

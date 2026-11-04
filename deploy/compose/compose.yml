@@ -4,7 +4,7 @@
 #   docker compose up -d
 # PostgreSQL holds the Factoree database and the two Temporal databases. Temporal runs on it.
 # The migrate service applies the Factoree migrations once, before the API and the worker start.
-# Pin a release with FACTOREE_IMAGE, for example ghcr.io/alternayte/factoree:0.2.1.
+# Pin a release with FACTOREE_IMAGE, for example ghcr.io/alternayte/factoree:0.2.2.
 name: factoree
 
 x-factoree-env: &factoree-env
