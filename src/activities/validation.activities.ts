@@ -68,6 +68,11 @@ export interface BuildValidationContractActivityOutput {
    * cannot pass with one, so the workflow stops before implementation instead of after it.
    */
   manualAssertionIds: string[];
+  /**
+   * docs/specs/run-recovery.md. The frozen assertions a browser checks. Absent in a history
+   * recorded before the field existed.
+   */
+  browserAssertionIds?: string[];
 }
 
 /**
@@ -190,6 +195,10 @@ const manualIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>):
     .filter((assertion) => assertion.method === "manual" || assertion.method === "code_review")
     .map((assertion) => assertion.id);
 
+/** docs/specs/run-recovery.md. The assertions a browser checks, so a follow-up run sees a dropped one. */
+const browserIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>): string[] =>
+  assertions.filter((assertion) => assertion.method === "browser").map((assertion) => assertion.id);
+
 /** The reasons the plan rules reject one plan text for, or null when the plan is valid. */
 const planRejectionOf = (planText: string, contract: ValidationContract): string[] | null => {
   try {
@@ -238,6 +247,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           question: null,
           summary: summaryOf(existing.assertions.length),
           manualAssertionIds: manualIdsOf(existing.assertions),
+          browserAssertionIds: browserIdsOf(existing.assertions),
         };
       }
 
@@ -267,6 +277,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           frozenAt: null,
           question: { id: QUESTION_ID, question: QUESTION },
           manualAssertionIds: [],
+          browserAssertionIds: [],
           summary:
             "Factoree cannot define success for this Work Item. It needs one observable " +
             "assertion before it can start implementation.",
@@ -310,6 +321,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         question: null,
         summary: summaryOf(stored.assertions.length),
         manualAssertionIds: manualIdsOf(stored.assertions),
+        browserAssertionIds: browserIdsOf(stored.assertions),
       };
     } finally {
       metrics.validationContractDuration.observe(labels, (Date.now() - started) / 1000);

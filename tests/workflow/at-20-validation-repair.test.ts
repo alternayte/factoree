@@ -182,7 +182,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
         await environment.client.workflow.start(agentRunWorkflow, {
           taskQueue: "test",
           workflowId,
-          args: [{ ...input("ses-follow-up"), followUpOfRunId: "run-failed" }],
+          args: [{ ...input("ses-follow-up"), followUpOfRunId: "run-failed", followUpBrowserAssertions: ["VAL-UI-001"] }],
         })
       ).result(),
     );
@@ -191,5 +191,9 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
       temporalWorkflowId: workflowId,
       followUpOfRunId: "run-failed",
     });
+    // The reply replaced the browser check, so the proof pack says why no visual evidence exists.
+    expect(harness.proofPackCalls.find((call) => call.runId === "run-ses-follow-up")?.visualEvidenceGap).toContain(
+      "replaced the browser check VAL-UI-001",
+    );
   });
 });

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A follow-up run whose reply replaced the browser checks of the failed run says so in its proof pack, under Needs your attention, because it captures no visual evidence.
+
 ## [0.4.1] - 2026-11-04
 
 ### Fixed

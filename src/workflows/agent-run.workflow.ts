@@ -123,6 +123,11 @@ export interface AgentRunWorkflowInput {
    * work item description. Absent for a first run.
    */
   followUpOfRunId?: string;
+  /**
+   * docs/specs/run-recovery.md. The browser assertions of the failed run. When the follow-up run
+   * freezes none, its proof pack says the reply replaced them and no visual evidence exists.
+   */
+  followUpBrowserAssertions?: string[];
 }
 
 export interface AgentRunWorkflowResult {
@@ -1771,7 +1776,15 @@ export async function agentRunWorkflow(
       let publishedPreviewUrl: string | null = null;
       let publishedChangeDescription = "";
       // docs/specs/proof-pack-and-visual-evidence.md. The gap the human accepted at refinement.
-      const visualEvidenceGap = proposal.visualEvidenceGap ?? null;
+      // docs/specs/run-recovery.md. A follow-up whose reply replaced the browser checks of the
+      // failed run captures no visual evidence, and the human must read why.
+      const droppedBrowserChecks = input.followUpBrowserAssertions ?? [];
+      const visualEvidenceGap =
+        proposal.visualEvidenceGap ??
+        (droppedBrowserChecks.length > 0 && (validation.browserAssertionIds ?? ["unknown"]).length === 0
+          ? `No visual evidence: the follow-up guidance replaced the browser ${droppedBrowserChecks.length === 1 ? "check" : "checks"} ` +
+            `${droppedBrowserChecks.join(", ")} of the failed run, and this run froze no browser check. Look at the visible change yourself.`
+          : null);
 
       for (;;) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);

@@ -132,7 +132,7 @@ export class DelegationService {
       metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
       return signalled ? { kind: "stopped", workflowId: target } : { kind: "not_running", workflowId: target };
     }
-    let followUp: { failedRunId: string; reply: string } | null = null;
+    let followUp: { failedRunId: string; reply: string; browserAssertions: string[] } | null = null;
     if (command.kind === "prompt") {
       if (latest === null || !isTerminalRunStatus(latest.status)) {
         const target = latest?.temporalWorkflowId ?? workflowId;
@@ -148,7 +148,14 @@ export class DelegationService {
         );
         return { kind: "follow_up_refused", status: latest.status };
       }
-      followUp = { failedRunId: latest.id, reply: command.body };
+      const failed = (await this.dependencies.runViews?.detail(tenantId, latest.id)) ?? null;
+      followUp = {
+        failedRunId: latest.id,
+        reply: command.body,
+        browserAssertions: [
+          ...new Set((failed?.assertions ?? []).filter((assertion) => assertion.method === "browser").map((assertion) => assertion.key)),
+        ],
+      };
       metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
     }
 
@@ -249,7 +256,9 @@ export class DelegationService {
           maxRunMinutes: product.maxRunMinutes,
           workItem,
           product: workflowProduct,
-          ...(followUp === null ? {} : { followUpOfRunId: followUp.failedRunId }),
+          ...(followUp === null
+            ? {}
+            : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
         },
       ],
     });

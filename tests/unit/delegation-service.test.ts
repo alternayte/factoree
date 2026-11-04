@@ -395,6 +395,7 @@ describe("the delegation service and the organization skills repository", () => 
       expect(started?.args[0].workItem.description).toContain("Drop VAL-UI-001.");
       expect(started?.args[0].workItem.description).toContain("- VAL-UI-001: Shows Loading configs...");
       expect(started?.args[0].workItem.description).toContain("diff --git a/x b/x");
+      expect(started?.args[0].followUpBrowserAssertions).toEqual(["VAL-UI-001"]);
     });
 
     it("answers a reply after a run that succeeded with one line, and starts nothing", async () => {
