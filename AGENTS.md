@@ -52,6 +52,9 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - visual evidence: the screenshots, video and trace that Factoree captures from a browser assertion in the check sprite. Avoid: demo, visual proof.
 - self-check: the implementer's own browser checks in the work sprite. Its output never reaches the proof pack. Avoid: implementer evidence, implementer demo.
 - warm snapshot: the Kiln snapshot of one repository, taken after the clone and the bootstrap and before any agent runs. A run and its check sprites fork from it. Avoid: golden sprite, cache sprite.
+- bootstrap key: the SHA-256 of the bootstrap command, the warm command and the effective bootstrap allow list. It keys a warm snapshot. Avoid: config SHA, snapshot key.
+- build-ahead: the workflow that builds a new warm snapshot when the bootstrap key changes, before any run needs it. Avoid: prebuild, snapshot refresh, pre-warm.
+- warm command: the optional repository command that runs only when Factoree takes a warm snapshot. Avoid: prebuild command, setup command.
 - sandbox image: the OCI image that sandbox/Dockerfile builds, with the toolchain and the root-owned runner CLIs, pinned by digest. Avoid: base image, sprite image, golden image.
 - Kiln template: the Kiln build of the sandbox image at one sandbox size, named by the image digest and the size. A warm snapshot belongs to one Kiln template. Avoid: template image, sandbox template.
 - determined proposal: a proposal backed by a rule or a cited source that a reviewer can check. Factoree takes it without asking. Avoid: recommended default, auto-accept, best guess.
