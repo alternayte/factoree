@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-05
+
+### Added
+
+- A browser step in a Validation Plan can hold the requests that match a URL glob until a release step, or fail them with an HTTP error status or a network error. A held request releases itself after 30 seconds. A screenshot of a loading state is then the same on every run, and a plan can prove an error state with the real page code. No step invents a response body. The proof pack marks an assertion whose plan injected a failed request.
+
 ### Changed
 
 - A follow-up run whose reply replaced the browser checks of the failed run says so in its proof pack, under Needs your attention, because it captures no visual evidence.
