@@ -55,6 +55,9 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - bootstrap key: the SHA-256 of the bootstrap command, the warm command and the effective bootstrap allow list. It keys a warm snapshot. Avoid: config SHA, snapshot key.
 - build-ahead: the workflow that builds a new warm snapshot when the bootstrap key changes, before any run needs it. Avoid: prebuild, snapshot refresh, pre-warm.
 - warm command: the optional repository command that runs only when Factoree takes a warm snapshot. Avoid: prebuild command, setup command.
+- skill registry: an external service that holds reviewed, versioned skills and resolves a set to pinned versions. Skael is one. Avoid: skill store, skill catalog.
+- skill resolution: the pinned list of skill names, versions and digests that one run uses, named by its resolution id. Avoid: skill snapshot, skill lock.
+- skill proposal: a draft skill the implementer writes in a run, sent to a person for review and never applied by Factoree. Avoid: skill submission, learned skill.
 - sandbox image: the OCI image that sandbox/Dockerfile builds, with the toolchain and the root-owned runner CLIs, pinned by digest. Avoid: base image, sprite image, golden image.
 - Kiln template: the Kiln build of the sandbox image at one sandbox size, named by the image digest and the size. A warm snapshot belongs to one Kiln template. Avoid: template image, sandbox template.
 - determined proposal: a proposal backed by a rule or a cited source that a reviewer can check. Factoree takes it without asking. Avoid: recommended default, auto-accept, best guess.
