@@ -21,6 +21,9 @@ const session = (tenantId: string, runId: string, overrides: Partial<RecordAgent
     costUsd: 0.4213,
     turns: 12,
     longestTurnMs: 95_000,
+    // docs/specs/run-speed.md. The model time and the tool time of the session.
+    modelMs: 70_000,
+    toolMs: 25_000,
   },
   durationMs: 600_000,
   outcome: "finished",

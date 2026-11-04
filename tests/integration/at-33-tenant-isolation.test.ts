@@ -113,6 +113,8 @@ describe("AT-33 tenant isolation", () => {
         "ReviewFinding",
         "Run",
         "RunTarget",
+        // docs/specs/run-speed.md. One row per stage of a run of one tenant.
+        "run_stage",
         // SDD section 24 and SDD section 52. Phase 6 added the Validation Contract tables, and
         // each one is tenant-owned.
         "ValidationAssertion",

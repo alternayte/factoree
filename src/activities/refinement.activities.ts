@@ -32,6 +32,7 @@ import type {
   RefinementQuestion,
 } from "~/domain/refinement/refinement-engine.js";
 import type { WorkItemSource } from "~/domain/refinement/work-item.js";
+import type { RunStageStore } from "~/domain/runs/run-stage.js";
 
 export interface RefineActivityInput {
   runId: string;
@@ -79,6 +80,8 @@ export interface RefinementActivityDependencies {
     executions: AgentExecutionRepository;
     /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
     sessions: AgentSessionStore;
+    /** docs/specs/run-speed.md. The stage rows of each run. */
+    stages?: RunStageStore | undefined;
     secrets: SecretStore;
     redactor: Redactor;
   };
@@ -323,7 +326,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       });
       // The refiner runs before the first Implementer attempt, so its row carries attempt 1.
       await recordAgentSession(
-        { sessions: agent.sessions, logger: dependencies.logger },
+        { sessions: agent.sessions, logger: dependencies.logger, stages: agent.stages },
         {
           tenantId: input.tenantId,
           productId: input.productId,
@@ -332,6 +335,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           attempt: 1,
           runner: runner.name,
           idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang),
+          sandboxId: input.spriteId,
         },
         invocations,
       );

@@ -106,7 +106,10 @@ describe("AT-27 — Factoree publishes the exact verified patch", () => {
     ).toBe(true);
 
     // SDD section 47. The Proof Pack follows the publication, so it closes the ordered tail.
-    expect(activityOrder.slice(orderBefore).slice(-3)).toEqual(["review", "publish", "publishProofPack"]);
+    // docs/specs/run-speed.md. The review and user validation run beside each other before it.
+    const tail = activityOrder.slice(orderBefore).slice(-4);
+    expect(tail.slice(-2)).toEqual(["publish", "publishProofPack"]);
+    expect(tail.slice(0, 2).sort()).toEqual(["review", "userValidate"]);
   });
 
   it("does not claim that nothing was published when a stop follows a successful publication", async () => {

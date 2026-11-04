@@ -24,6 +24,7 @@ import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
+import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
@@ -36,6 +37,8 @@ export interface SandboxActivityDependencies {
   logger: Logger;
   /** Mints the read-only clone credential of the target repository, scoped to `contents: read`. */
   tokens: GitHubTokenProvider;
+  /** docs/specs/run-speed.md. The stage rows of each run. */
+  stages?: RunStageStore | undefined;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -96,6 +99,11 @@ export interface PrepareCheckSandboxActivityInput extends PrepareSandboxActivity
   /** The check sprite of the previous attempt, destroyed before the new one starts. */
   previous: { spriteId: string; adapter: string; workspacePath: string } | null;
   attempt: number;
+  /**
+   * docs/specs/run-speed.md. The patch the first check sprite of this attempt holds. The reviewer's
+   * check sprite must capture the same patch. Absent for the first check sprite.
+   */
+  expectedPatchSha256?: string;
 }
 
 export interface PrepareCheckSandboxActivityOutput extends PrepareSandboxActivityOutput {
@@ -323,7 +331,13 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
     );
 
     try {
-      return await prepare(dependencies, input);
+      return await timeStage(
+        dependencies.stages,
+        dependencies.logger,
+        { tenantId: input.tenantId, runId: input.runId, stage: "prepare_sandbox", attempt: 1, sandboxId: null },
+        () => prepare(dependencies, input),
+        (output) => output.spriteId,
+      );
     } catch (error) {
       // SDD section 60: an activity error becomes Temporal history, which is external
       // persistence. The redaction happens here, at the one boundary the whole preparation path
@@ -357,74 +371,91 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
     const patchDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
 
     try {
-      const captured = await capturePatch(patchDependencies, {
-        ref: { id: input.work.spriteId, adapter: input.work.adapter, workspacePath: input.work.workspacePath },
-        primaryPath: input.work.primaryPath,
-        baseSha: input.work.baseSha,
-      });
+      return await timeStage(
+        dependencies.stages,
+        dependencies.logger,
+        { tenantId: input.tenantId, runId: input.runId, stage: "prepare_check_sprite", attempt: input.attempt, sandboxId: null },
+        async () => {
+          const captured = await capturePatch(patchDependencies, {
+            ref: { id: input.work.spriteId, adapter: input.work.adapter, workspacePath: input.work.workspacePath },
+            primaryPath: input.work.primaryPath,
+            baseSha: input.work.baseSha,
+          });
+          // docs/specs/run-speed.md. The reviewer's check sprite must hold the patch the first
+          // check sprite of this attempt verified.
+          const expected = input.expectedPatchSha256;
+          if (expected !== undefined && captured.patchSha256 !== expected) {
+            throw new PatchError(
+              `the work sprite now holds patch ${captured.patchSha256}, and this attempt verified patch ${expected}.`,
+            );
+          }
 
-      // The check sprite of the previous attempt checked a patch the repair replaced. It goes
-      // before the new one starts, so one Run holds at most two live sandboxes and a Run at the
-      // provider limit never waits on a slot its own old sprite holds (DI-15.14).
-      if (input.previous !== null) {
-        const previous = input.previous;
-        const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
-          dependencies.sandbox.destroy({
-            id: previous.spriteId,
-            adapter: previous.adapter,
-            workspacePath: previous.workspacePath,
-          }),
-        );
-        if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
-      }
+          // The check sprite of the previous attempt checked a patch the repair replaced. It goes
+          // before the new one starts, so one Run holds at most three live sandboxes (the work
+          // sprite and the two check sprites of docs/specs/run-speed.md), and a Run at the
+          // provider limit never waits on a slot its own old sprite holds (DI-15.14).
+          if (input.previous !== null) {
+            const previous = input.previous;
+            const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
+              dependencies.sandbox.destroy({
+                id: previous.spriteId,
+                adapter: previous.adapter,
+                workspacePath: previous.workspacePath,
+              }),
+            );
+            if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
+          }
 
-      let applied: VerifiedPatch | null = null;
-      const prepared = await build(dependencies, input, async (ref, primaryPath) => {
-        await applyPatch(patchDependencies, {
-          ref,
-          primaryPath,
-          baseSha: input.work.baseSha,
-          patchBase64: captured.patchBase64,
-        });
-        applied = await capturePatch(patchDependencies, { ref, primaryPath, baseSha: input.work.baseSha });
-        if (applied.patchSha256 !== captured.patchSha256) {
-          throw new PatchError(
-            `the check sprite holds patch ${applied.patchSha256}, and the work sprite holds patch ` +
-              `${captured.patchSha256}. Factoree checks only the patch it captured.`,
-          );
-        }
-      });
-      const recaptured = applied as VerifiedPatch | null;
-      if (recaptured === null || prepared.checkout.primary.baseSha !== input.work.baseSha) {
-        await release(dependencies, prepared.ref.id, prepared.ref.adapter, () =>
-          dependencies.sandboxManager.release(prepared),
-        );
-        throw new PatchError("the check sprite did not check out the base SHA of the work sprite");
-      }
+          let applied: VerifiedPatch | null = null;
+          const prepared = await build(dependencies, input, async (ref, primaryPath) => {
+            await applyPatch(patchDependencies, {
+              ref,
+              primaryPath,
+              baseSha: input.work.baseSha,
+              patchBase64: captured.patchBase64,
+            });
+            applied = await capturePatch(patchDependencies, { ref, primaryPath, baseSha: input.work.baseSha });
+            if (applied.patchSha256 !== captured.patchSha256) {
+              throw new PatchError(
+                `the check sprite holds patch ${applied.patchSha256}, and the work sprite holds patch ` +
+                  `${captured.patchSha256}. Factoree checks only the patch it captured.`,
+              );
+            }
+          });
+          const recaptured = applied as VerifiedPatch | null;
+          if (recaptured === null || prepared.checkout.primary.baseSha !== input.work.baseSha) {
+            await release(dependencies, prepared.ref.id, prepared.ref.adapter, () =>
+              dependencies.sandboxManager.release(prepared),
+            );
+            throw new PatchError("the check sprite did not check out the base SHA of the work sprite");
+          }
 
-      metrics.sandboxesCreated.inc({
-        tenant_id: input.tenantId,
-        product_id: input.productId,
-        adapter: prepared.ref.adapter,
-      });
-      dependencies.logger.info("check sandbox prepared", {
-        tenant_id: input.tenantId,
-        product_id: input.productId,
-        run_id: input.runId,
-        sprite_id: prepared.ref.id,
-        work_sprite_id: input.work.spriteId,
-        attempt: input.attempt,
-        patch_sha256: captured.patchSha256,
-        step: "prepare_check",
-      });
+          metrics.sandboxesCreated.inc({
+            tenant_id: input.tenantId,
+            product_id: input.productId,
+            adapter: prepared.ref.adapter,
+          });
+          dependencies.logger.info("check sandbox prepared", {
+            tenant_id: input.tenantId,
+            product_id: input.productId,
+            run_id: input.runId,
+            sprite_id: prepared.ref.id,
+            work_sprite_id: input.work.spriteId,
+            attempt: input.attempt,
+            patch_sha256: captured.patchSha256,
+            step: "prepare_check",
+          });
 
-      return {
-        ...toOutput(prepared),
-        patchSha256: captured.patchSha256,
-        treeSha: recaptured.treeSha,
-        changedFiles: captured.changedFiles,
-        checkDefiningFiles: checkDefiningFilesOf(captured.changedFiles),
-      };
+          return {
+            ...toOutput(prepared),
+            patchSha256: captured.patchSha256,
+            treeSha: recaptured.treeSha,
+            changedFiles: captured.changedFiles,
+            checkDefiningFiles: checkDefiningFilesOf(captured.changedFiles),
+          };
+        },
+        (output) => output.spriteId,
+      );
     } catch (error) {
       if (error instanceof Error) {
         error.message = dependencies.redactor.redactText(error.message);

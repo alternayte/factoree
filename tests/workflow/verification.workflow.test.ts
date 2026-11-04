@@ -110,6 +110,9 @@ describe("deterministic verification in the workflow", () => {
         "the user validation of ses-v3",
       );
       await waitFor(() => reviewsOf("run-ses-v3").length === 1, "the review of ses-v3");
+      // docs/specs/run-speed.md. The review runs beside user validation, and the Run waits in
+      // REVIEWING for it once validation passed.
+      await waitFor(() => statusesOf("run-ses-v3").includes("REVIEWING"), "REVIEWING of ses-v3");
       await handle.signal(stopSignal);
       await waitFor(
         () => cancelledLiveReviews.includes("run-ses-v3"),

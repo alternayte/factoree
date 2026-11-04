@@ -52,7 +52,9 @@ describe("a hung agent session in the Run workflow", () => {
     const calls = harness.userValidateCalls.filter((entry) => entry.runId === "run-hang-validator");
     expect(calls.map((entry) => entry.afterHang ?? false)).toEqual([false, true]);
     expect(calls.map((entry) => entry.attempt)).toEqual([1, 1]);
-    expect(harness.reviewCalls.filter((entry) => entry.runId === "run-hang-validator")).toEqual([]);
+    // docs/specs/run-speed.md. The reviewer starts beside the validator, once, and the second
+    // validator hang ends the Run without a second review.
+    expect(harness.reviewCalls.filter((entry) => entry.runId === "run-hang-validator")).toHaveLength(1);
     expect(harness.postedErrors.at(-1)).toContain("The User Validator session wrote no output for 1 minute");
   });
 

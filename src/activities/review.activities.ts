@@ -28,6 +28,7 @@ import {
 import { decideReview, failureLine } from "~/domain/review/blocking.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import type { RunStageStore } from "~/domain/runs/run-stage.js";
 
 /**
  * SDD section 40. The Reviewer runs in a fresh session, against the goal, the frozen Validation
@@ -50,7 +51,11 @@ export interface ReviewActivityInput {
   contextContract: string | null;
   constraints: string[];
   verificationSummary: string;
-  validationEvidence: string[];
+  /**
+   * docs/specs/run-speed.md. The reviewer no longer reads it. A Run that began before that change
+   * still sends it on its serial path, and the prompt ignores it.
+   */
+  validationEvidence?: string[];
   repositoryInstructions: string;
   timeoutMs: number;
   /** The review pass this attempt belongs to. The first pass is 1. SDD section 42. */
@@ -100,6 +105,8 @@ export interface ReviewActivityDependencies {
   executions: AgentExecutionRepository;
   /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
   sessions: AgentSessionStore;
+  /** docs/specs/run-speed.md. The stage rows of each run. */
+  stages?: RunStageStore | undefined;
   secrets: SecretStore;
   redactor: Redactor;
   contracts: ValidationContractStore;
@@ -254,7 +261,6 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         diffTruncated: diff.truncated,
         changedFiles: diff.changedFiles,
         verificationSummary: input.verificationSummary,
-        validationEvidence: input.validationEvidence,
         repositoryInstructions: input.repositoryInstructions,
         reportPath,
         actionPolicy,
@@ -367,7 +373,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
       });
       await recordAgentSession(
-        { sessions: dependencies.sessions, logger: dependencies.logger },
+        { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages },
         {
           tenantId: input.tenantId,
           productId: input.productId,
@@ -376,6 +382,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           attempt: input.attempt,
           runner: runner.name,
           idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
+          sandboxId: input.spriteId,
         },
         [sessionResult],
       );

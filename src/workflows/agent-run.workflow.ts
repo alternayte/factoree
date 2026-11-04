@@ -6,6 +6,7 @@ import {
   defineSignal,
   ApplicationFailure,
   isCancellation,
+  patched,
   TemporalFailure,
   proxyActivities,
   setHandler,
@@ -137,6 +138,19 @@ export interface RunSnapshot {
   /** SDD section 23. The one question Factoree waits on, or null. */
   openQuestion: string | null;
 }
+
+/**
+ * docs/specs/run-speed.md. The reviewer runs in its own check sprite beside user validation. A Run
+ * whose history began before this change replays the serial order.
+ */
+const PARALLEL_REVIEW_PATCH = "run-speed-parallel-review";
+
+/** docs/specs/run-speed.md. How the reviewer that runs beside user validation ended. */
+type ReviewBranchOutcome =
+  | { kind: "review"; review: ReviewActivityOutput }
+  /** The sandbox slot wait or the session ended without a result: a stop or the Run deadline. */
+  | { kind: "unavailable" }
+  | { kind: "error"; error: unknown };
 
 export const stopSignal = defineSignal("stop");
 export const humanInputSignal = defineSignal<[string]>("humanInput");
@@ -434,6 +448,10 @@ export async function agentRunWorkflow(
   // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
   // validation, review and publication run there, never in the sprite the Implementer used.
   let checkSandbox: PrepareCheckSandboxActivityOutput | null = null;
+  // docs/specs/run-speed.md. The check sprite of the reviewer of the current attempt, and the
+  // reviewer that runs beside user validation.
+  let reviewSandbox: PrepareCheckSandboxActivityOutput | null = null;
+  let liveReview: { scope: CancellationScope; branch: Promise<ReviewBranchOutcome> } | null = null;
   let implementerSession: AgentSessionRef | null = null;
   /** True once the implement activity itself has cancelled the live session. */
   let implementerCancelled = false;
@@ -509,9 +527,17 @@ export async function agentRunWorkflow(
   // a working state while the workflow has already ended.
   const completeRun = (args: Parameters<Activities["completeRun"]>[0]): Promise<void> =>
     CancellationScope.nonCancellable(async () => {
-      const check = checkSandbox;
-      if (check !== null) {
-        // The last check sprite goes with the Run. A failed delete is logged by the activity.
+      // docs/specs/run-speed.md. A reviewer that still runs has no use once the Run ends. Its
+      // activity cancels its own session, and the workflow waits, so its sprite is known.
+      const review = liveReview;
+      liveReview = null;
+      if (review !== null) {
+        review.scope.cancel();
+        await review.branch;
+      }
+      for (const check of [checkSandbox, reviewSandbox]) {
+        if (check === null) continue;
+        // The last check sprites go with the Run. A failed delete is logged by the activity.
         await notify(() =>
           cancelActivities.releaseCheckSandbox({
             runId: id,
@@ -878,7 +904,8 @@ export async function agentRunWorkflow(
     contextContract: string | null;
     constraints: string[];
     verificationSummary: string;
-    validationEvidence: string[];
+    /** Absent beside user validation (docs/specs/run-speed.md), present on the serial path. */
+    validationEvidence?: string[];
     /** docs/specs/agent-session-usage-and-hangs.md. The one fresh session after a hang. */
     afterHang?: boolean;
   }): Promise<ReviewActivityOutput | null> => {
@@ -899,7 +926,7 @@ export async function agentRunWorkflow(
         contextContract: attemptInput.contextContract,
         constraints: attemptInput.constraints,
         verificationSummary: attemptInput.verificationSummary,
-        validationEvidence: attemptInput.validationEvidence,
+        ...(attemptInput.validationEvidence === undefined ? {} : { validationEvidence: attemptInput.validationEvidence }),
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
@@ -1799,6 +1826,78 @@ export async function agentRunWorkflow(
         // Contract, inside the same bounded loop, with the current implementation attempt.
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
+        // docs/specs/run-speed.md, amending SDD section 40. Verification passed, so the reviewer
+        // starts now in its own check sprite, beside user validation. A preview build in the same
+        // sprite can rewrite tracked files, which the reviewer guard would read as a reviewer
+        // write. The reviewer reads the verification summary and no validation evidence.
+        let reviewBranch: Promise<ReviewBranchOutcome> | null = null;
+        if (patched(PARALLEL_REVIEW_PATCH)) {
+          reviewPasses += 1;
+          // The branch of the previous attempt set it, which the type narrowing cannot see.
+          const previousReview = reviewSandbox as PrepareCheckSandboxActivityOutput | null;
+          const reviewAttempt = attempt;
+          const verified = checked;
+          const verificationSummary = verification.summary;
+          const scope = new CancellationScope({ cancellable: true });
+          const branch = scope.run(async (): Promise<ReviewBranchOutcome> => {
+            try {
+              const sprite = await withSandboxSlot((budgetMs) =>
+                buildSandboxActivities(budgetMs).prepareCheckSandbox({
+                  ...prepareInput,
+                  work: {
+                    spriteId: preparedSandbox.spriteId,
+                    adapter: preparedSandbox.adapter,
+                    workspacePath: preparedSandbox.workspacePath,
+                    primaryPath: preparedSandbox.primaryPath,
+                    baseSha: preparedSandbox.baseSha,
+                  },
+                  previous:
+                    previousReview === null
+                      ? null
+                      : {
+                          spriteId: previousReview.spriteId,
+                          adapter: previousReview.adapter,
+                          workspacePath: previousReview.workspacePath,
+                        },
+                  attempt: reviewAttempt,
+                  expectedPatchSha256: verified.patchSha256,
+                }),
+              );
+              if (sprite === null) return { kind: "unavailable" };
+              reviewSandbox = sprite;
+              const reviewInput = {
+                prepared: sprite,
+                goal: sandbox.goal,
+                attempt: reviewAttempt,
+                contextContract: resolvedContext.document,
+                constraints: refined.constraints,
+                verificationSummary,
+              };
+              let result = await runReview(reviewInput);
+              // docs/specs/agent-session-usage-and-hangs.md. A hung Reviewer gets one fresh session
+              // in the same review pass.
+              const hang = hangOf(result);
+              if (hang !== null && !stopRequested && remainingMs() > 0) {
+                await reportHang("reviewer", hang, "starts one fresh session");
+                result = await runReview({ ...reviewInput, afterHang: true });
+              }
+              return result === null ? { kind: "unavailable" } : { kind: "review", review: result };
+            } catch (error) {
+              return { kind: "error", error };
+            }
+          });
+          liveReview = { scope, branch };
+          reviewBranch = branch;
+        }
+
+        /** The reviewer beside user validation, once it ended, or null on the serial path. */
+        const awaitReview = async (): Promise<ReviewBranchOutcome | null> => {
+          if (reviewBranch === null) return null;
+          const outcome = await reviewBranch;
+          liveReview = null;
+          return outcome;
+        };
+
         status = "USER_VALIDATING";
         await activities.setRunStatus({ runId: id, status });
 
@@ -1860,6 +1959,17 @@ export async function agentRunWorkflow(
           // SDD section 36. Only a failing assertion can be repaired. A blocked check, or a check
           // that needs a human, cannot be fixed by another Implementer attempt.
           if (userValidation.hasFailure) {
+            // docs/specs/run-speed.md. The reviewer of the same attempt usually ended first. Its
+            // blockers join the validation failures, so one repair fixes both.
+            const parallel = await awaitReview();
+            if (stopRequested) return await cancelRun();
+            const reviewFindings =
+              parallel?.kind === "review" &&
+              hangOf(parallel.review) === null &&
+              parallel.review.reportUsable &&
+              !parallel.review.passed
+                ? parallel.review.failures
+                : [];
             // SDD section 42 bounds repairs per Run, and the repair shares the budget
             // deterministic verification already counts.
             if (repairCount >= maxRepairs) {
@@ -1873,7 +1983,7 @@ export async function agentRunWorkflow(
 
             repairCount += 1;
             attempt += 1;
-            repairFindings = userValidation.failures;
+            repairFindings = [...userValidation.failures, ...reviewFindings];
             status = "REPAIRING";
             await activities.setRunStatus({
               runId: id,
@@ -1916,10 +2026,33 @@ export async function agentRunWorkflow(
 
         status = "REVIEWING";
         await activities.setRunStatus({ runId: id, status });
-        reviewPasses += 1;
 
         let review: ReviewActivityOutput;
-        try {
+        const parallel = await awaitReview();
+        if (parallel !== null) {
+          if (stopRequested) return await cancelRun();
+          if (parallel.kind === "error") {
+            const error = parallel.error;
+            if (isCancellation(error)) throw error;
+            // A reviewer runner the Project names but no worker registers is a configuration
+            // fault, exactly as on the serial path below.
+            if (isConfigurationFault(error)) {
+              return await failRun(
+                "CONFIGURATION_INVALID",
+                "Factoree could not start the Reviewer, because the Run configuration is " +
+                  "invalid. Repair `reviewer_runner` in `.factoree/config.yaml`.",
+              );
+            }
+            if (remainingMs() > 0) throw error;
+            return await failRun("RUN_TIMEOUT", timeoutMessage);
+          }
+          if (parallel.kind === "unavailable") {
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            throw ApplicationFailure.nonRetryable("the review activity returned no result");
+          }
+          review = parallel.review;
+        } else try {
+          reviewPasses += 1;
           const reviewInput = {
             prepared: checked,
             goal: sandbox.goal,

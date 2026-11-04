@@ -185,6 +185,8 @@ describe("AT-21 — the Reviewer session is fresh", () => {
     // The controller-required input list: the SDD section 40 input the Reviewer must receive.
     const constraints = ["Do not remove the retry of the delivery worker."];
     const verificationSummary = "Every verification check passed. unit: exit 0.";
+    // docs/specs/run-speed.md. A Run that began before the reviewer moved beside user validation
+    // still sends the evidence on its serial path. The prompt must not carry it.
     const validationEvidence = ["VAL-API-001: PASS. GET /health answered 200."];
 
     const input: ReviewActivityInput = {
@@ -237,12 +239,13 @@ describe("AT-21 — the Reviewer session is fresh", () => {
       expect(prompt).not.toContain(IMPLEMENTER_SUMMARY);
       expect(prompt).not.toContain("ses_implementer_at21");
 
-      // The controller's extra assertion: the constraints, the verification summary, and the
-      // user-validation evidence of SDD section 40 really reach the Reviewer's own prompt, not
-      // merely the activity input.
+      // The controller's extra assertion: the constraints and the verification summary of SDD
+      // section 40 really reach the Reviewer's own prompt, not merely the activity input. The
+      // reviewer runs beside user validation, so no validation evidence reaches it
+      // (docs/specs/run-speed.md).
       expect(prompt).toContain(constraints[0]);
       expect(prompt).toContain(verificationSummary);
-      expect(prompt).toContain(validationEvidence[0]);
+      expect(prompt).not.toContain(validationEvidence[0]);
     } finally {
       await sandbox.destroy(ref);
     }

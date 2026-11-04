@@ -13,6 +13,7 @@ import {
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
+import { PrismaRunStageStore } from "~/persistence/prisma/run-stage.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
@@ -55,11 +56,12 @@ import { PrismaContextContractStore } from "~/persistence/prisma/context-contrac
 import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
-import { createWorkerConnection } from "~/temporal/connection.js";
+import { createBuildAheadRequester, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
+import { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
-import { githubApiBaseUrl, githubAppCredentials, linearOAuthFromSettings } from "./install-wiring.js";
+import { githubApiBaseUrl, githubAppCredentials, githubBaseUrl, linearOAuthFromSettings } from "./install-wiring.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
@@ -115,10 +117,13 @@ try {
 }
 
 const warmSnapshots = new PrismaWarmSnapshotStore(prisma);
+// docs/specs/run-speed.md. One row per stage of each run.
+const stages = new PrismaRunStageStore(prisma);
 const sandboxManager = new SandboxManager({
   sandbox,
   logger,
   warmSnapshots,
+  stages,
   // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
   installBrowserTools: (sandboxName) => sandboxName === "fly-sprites",
   ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
@@ -338,6 +343,7 @@ const worker = await Worker.create({
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),
     sessions: new PrismaAgentSessionStore(prisma),
+    stages,
     secrets,
     evidence: new PrismaEvidenceStore(prisma),
     redactor,
@@ -367,6 +373,7 @@ const worker = await Worker.create({
     tokens: githubTokens,
     discoveryClient,
     discoveryService,
+    repositoryBaseUrl: githubBaseUrl(settings),
   }),
 });
 
@@ -393,6 +400,33 @@ const reapTimer = setInterval(() => {
     });
 }, REAP_INTERVAL_MS);
 reapTimer.unref();
+
+// docs/specs/run-speed.md. A release can change the default sandbox image, and the install settings
+// can change while no worker runs. A warm snapshot of another template then serves no run, so the
+// worker requests a build-ahead for every repository. The build-ahead workflow of a repository
+// joins the request of a second worker.
+try {
+  const template = sandbox.warmSnapshots?.template;
+  if (template !== undefined) {
+    const stale = (await warmSnapshots.templatesOf(sandbox.name)).some((stored) => stored !== template);
+    if (stale) {
+      const temporal = await createTemporalClient(env);
+      await new BuildAheadTrigger({
+        request: createBuildAheadRequester(temporal, env.FACTOREE_TEMPORAL_TASK_QUEUE),
+        products,
+        repositories,
+        snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
+        readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
+        repositoryBaseUrl: githubBaseUrl(settings),
+        logger,
+      }).afterTemplateChange();
+      await temporal.connection.close();
+    }
+  }
+} catch (error) {
+  // The sandbox provider is not configured yet, or the request failed. The next run still works.
+  logger.warn("the worker did not check the warm snapshot templates", { step: "boot", error: String(error) });
+}
 
 logger.info("worker started", {
   step: "boot",

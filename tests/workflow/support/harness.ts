@@ -255,7 +255,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * default field by field.
    */
   const reviewOutcomes = new Map<string, (attempt: number) => Partial<ReviewActivityOutput>>();
-  /** A run id in this map holds the review pass open until the test resolves the promise. */
+  /**
+   * A run id in this map holds the review pass open until the test resolves the promise. A
+   * `runId#attempt` key holds the review of that attempt only.
+   */
   const heldReviews = new Map<string, Promise<void>>();
   /** The run ids whose `review` double raises a configuration fault. */
   const reviewerConfigurationFaults = new Set<string>();
@@ -551,7 +554,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       activityOrder.push("prepareCheckSandbox");
       checkPrepared.push(activityInput);
       return {
-        spriteId: `check-${activityInput.runId}-${activityInput.attempt}`,
+        // docs/specs/run-speed.md. The reviewer's check sprite carries the verified patch hash.
+        spriteId: `check-${activityInput.runId}-${activityInput.attempt}${activityInput.expectedPatchSha256 === undefined ? "" : "-review"}`,
         adapter: "fake",
         workspacePath: "/workspace",
         primaryPath: "/workspace/primary",
@@ -705,7 +709,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           `The Project configures the reviewer runner "${activityInput.runnerName}", which is not registered.`,
         );
       }
-      const held = heldReviews.get(activityInput.runId);
+      // A `runId#attempt` key holds only that attempt's review (docs/specs/run-speed.md).
+      const held = heldReviews.get(`${activityInput.runId}#${activityInput.attempt}`) ?? heldReviews.get(activityInput.runId);
       if (held !== undefined) {
         // The real activity heartbeats while the live Reviewer session runs, and it observes the
         // cancellation signal. This double copies both, the same way the `userValidate` double

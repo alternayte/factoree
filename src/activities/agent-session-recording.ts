@@ -1,4 +1,5 @@
 import type { Logger } from "~/telemetry/logger.js";
+import { recordStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 import type { AgentRunResult } from "~/domain/runs/agent-runner.js";
 import {
   combineUsage,
@@ -11,6 +12,8 @@ import {
 export interface AgentSessionRecordingDependencies {
   sessions: AgentSessionStore;
   logger: Logger;
+  /** docs/specs/run-speed.md. Each agent session is one stage of the run. */
+  stages?: RunStageStore | undefined;
 }
 
 export interface AgentSessionContext {
@@ -21,6 +24,8 @@ export interface AgentSessionContext {
   attempt: number;
   runner: string;
   idempotencyKey: string;
+  /** The sandbox the session ran in, for its run stage row. */
+  sandboxId?: string;
 }
 
 /** The hang an activity reports to the workflow, or null. */
@@ -92,6 +97,18 @@ export const recordAgentSession = async (
     dependencies.logger.error("the agent session row was not written", { ...fields, error: String(error) });
   }
 
+  // The session ended now, and its invocations ran one after another.
+  const endedAt = new Date();
+  await recordStage(dependencies.stages, dependencies.logger, {
+    tenantId: context.tenantId,
+    runId: context.runId,
+    stage: context.role,
+    attempt: context.attempt,
+    sandboxId: context.sandboxId ?? null,
+    startedAt: new Date(endedAt.getTime() - durationMs),
+    endedAt,
+  });
+
   dependencies.logger.info("agent session finished", {
     ...fields,
     outcome,
@@ -107,5 +124,7 @@ export const recordAgentSession = async (
     cost_usd: usage?.costUsd ?? null,
     turns: usage?.turns ?? null,
     longest_turn_ms: usage?.longestTurnMs ?? null,
+    model_ms: usage?.modelMs ?? null,
+    tool_ms: usage?.toolMs ?? null,
   });
 };

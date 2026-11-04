@@ -39,6 +39,7 @@ import { runUserValidation } from "~/domain/validation/user-validator.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import { recordStage, timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 
 export interface BuildValidationContractActivityInput {
   runId: string;
@@ -80,6 +81,8 @@ export interface UserValidationActivityDependencies {
   executions: AgentExecutionRepository;
   /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
   sessions: AgentSessionStore;
+  /** docs/specs/run-speed.md. The stage rows of each run. */
+  stages?: RunStageStore | undefined;
   secrets: SecretStore;
   redactor: Redactor;
   browser: BrowserDriver;
@@ -324,6 +327,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
     let heartbeat: NodeJS.Timeout | undefined;
     // DI-14.41. The preview build that runs beside the validator session, until the pass owns it.
     let earlyPreview: Promise<PreviewHandle> | undefined;
+    // docs/specs/run-speed.md. The write of the preview build stage row, which ends with the build.
+    let previewStage: Promise<void> | undefined;
     const uv = dependencies.userValidation;
 
     try {
@@ -518,6 +523,18 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         });
         building.catch(() => undefined);
         earlyPreview = building;
+        const previewStarted = new Date();
+        const recordPreview = (): Promise<void> =>
+          recordStage(uv.stages, dependencies.logger, {
+            tenantId: input.tenantId,
+            runId: input.runId,
+            stage: "preview_build",
+            attempt: input.attempt,
+            sandboxId: input.spriteId,
+            startedAt: previewStarted,
+            endedAt: new Date(),
+          });
+        previewStage = building.then(recordPreview, recordPreview);
       }
 
       // The duration of each part reaches the log, so a slow validation names its slow part.
@@ -586,7 +603,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       }
 
       await recordAgentSession(
-        { sessions: uv.sessions, logger: dependencies.logger },
+        { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
         {
           tenantId: input.tenantId,
           productId: input.productId,
@@ -595,6 +612,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           attempt: input.attempt,
           runner: runner.name,
           idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+          sandboxId: input.spriteId,
         },
         invocations,
       );
@@ -734,7 +752,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         });
 
         await recordAgentSession(
-          { sessions: uv.sessions, logger: dependencies.logger },
+          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
           {
             tenantId: input.tenantId,
             productId: input.productId,
@@ -743,6 +761,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             attempt: input.attempt,
             runner: runner.name,
             idempotencyKey: correctionKey,
+            sandboxId: input.spriteId,
           },
           correctionInvocations,
         );
@@ -784,28 +803,34 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // From here the pass owns the early preview, and it stops the preview on every path.
       const handedOver = earlyPreview;
       earlyPreview = undefined;
-      const outcome = await runUserValidation(
-        {
-          sandbox: uv.sandbox,
-          browser: uv.browser,
-          fetchImpl: uv.fetchImpl,
-          probe: uv.probe,
-          redactor: uv.redactor,
-          logger: dependencies.logger,
-        },
-        {
-          runId: input.runId,
-          tenantId: input.tenantId,
-          ref,
-          primaryPath: input.primaryPath,
-          contract: frozenContract,
-          preview: input.preview,
-          planText,
-          environment: projectTestSecrets,
-          timeoutMs: input.timeoutMs,
-          ...(handedOver === undefined ? {} : { earlyPreview: handedOver }),
-          ...(rejectedPlanReason === undefined ? {} : { rejectedPlanReason }),
-        },
+      const outcome = await timeStage(
+        uv.stages,
+        dependencies.logger,
+        { tenantId: input.tenantId, runId: input.runId, stage: "browser_assertions", attempt: input.attempt, sandboxId: input.spriteId },
+        () =>
+          runUserValidation(
+            {
+              sandbox: uv.sandbox,
+              browser: uv.browser,
+              fetchImpl: uv.fetchImpl,
+              probe: uv.probe,
+              redactor: uv.redactor,
+              logger: dependencies.logger,
+            },
+            {
+              runId: input.runId,
+              tenantId: input.tenantId,
+              ref,
+              primaryPath: input.primaryPath,
+              contract: frozenContract,
+              preview: input.preview,
+              planText,
+              environment: projectTestSecrets,
+              timeoutMs: input.timeoutMs,
+              ...(handedOver === undefined ? {} : { earlyPreview: handedOver }),
+              ...(rejectedPlanReason === undefined ? {} : { rejectedPlanReason }),
+            },
+          ),
       );
 
       // Step 10. Persists every outcome, keyed on the row identifier of the matching stored
@@ -861,6 +886,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       };
     } finally {
       clearInterval(heartbeat);
+      await previewStage;
       // A failure before the pass leaves the early preview with nobody to stop it.
       const orphan = earlyPreview;
       if (orphan !== undefined && uv !== undefined) {

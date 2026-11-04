@@ -5,6 +5,11 @@
  */
 export interface ProjectRuntimeConfig {
   bootstrapCommand: string | null;
+  /**
+   * docs/specs/run-speed.md. The warm command, which runs only when Factoree takes a warm
+   * snapshot. Absent in a history recorded before it existed.
+   */
+  warmCommand?: string | null;
   /** SDD section 29. An empty list denies all egress. */
   allowedDomains: string[];
   implementerRunner: string;
@@ -18,6 +23,7 @@ export interface ProjectRuntimeConfig {
 
 export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   bootstrapCommand: null,
+  warmCommand: null,
   allowedDomains: [],
   implementerRunner: "opencode",
   validatorRunner: "claude",
@@ -83,6 +89,7 @@ export const toProjectRuntimeConfig = (
 ): ResolvedProjectConfig => ({
   runtime: {
     bootstrapCommand: config.bootstrap?.command ?? null,
+    warmCommand: config.warm?.command ?? null,
     // The same normalisation the sandbox applies, so the value carried on the Run and the value
     // sent to the adapter can never differ.
     allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),

@@ -38,6 +38,8 @@ export class PrismaAgentSessionStore implements AgentSessionStore, ProductAgentS
         turns: usage?.turns ?? null,
         durationMs: Math.round(input.durationMs),
         longestTurnMs: usage?.longestTurnMs ?? null,
+        modelMs: usage?.modelMs ?? null,
+        toolMs: usage?.toolMs ?? null,
         outcome: input.outcome,
         idempotencyKey: input.idempotencyKey,
       },
@@ -84,6 +86,8 @@ interface Row {
   turns: number | null;
   durationMs: number;
   longestTurnMs: number | null;
+  modelMs: number | null;
+  toolMs: number | null;
   outcome: string;
   idempotencyKey: string;
   createdAt: Date;
@@ -101,6 +105,8 @@ const toRecord = (row: Row): AgentSessionRecord => {
     row.costUsd,
     row.turns,
     row.longestTurnMs,
+    row.modelMs,
+    row.toolMs,
   ];
   return {
     id: row.id,
@@ -124,6 +130,8 @@ const toRecord = (row: Row): AgentSessionRecord => {
           costUsd: row.costUsd,
           turns: row.turns,
           longestTurnMs: row.longestTurnMs,
+          modelMs: row.modelMs,
+          toolMs: row.toolMs,
         },
     durationMs: row.durationMs,
     outcome: row.outcome as AgentSessionOutcome,

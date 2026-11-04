@@ -185,6 +185,7 @@ beforeAll(async () => {
         { resolveTeamKey: () => Promise.reject(new Error("this test never syncs")), resolveTeamId: () => Promise.reject(new Error("this test never syncs")) },
         logger,
       ),
+      repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),
   });
   workerRun = worker.run();

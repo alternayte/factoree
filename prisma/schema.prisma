@@ -117,6 +117,7 @@ model Run {
   slotGrantedAt            DateTime?
   executions               AgentExecution[]
   agentSessions            AgentSession[]
+  stages                   RunStage[]
   evidence                 Evidence[]
   contextContract          ContextContract?
   validationContract       ValidationContract?
@@ -176,6 +177,9 @@ model AgentSession {
   turns            Int?
   durationMs       Int      @map("duration_ms")
   longestTurnMs    Int?     @map("longest_turn_ms")
+  // docs/specs/run-speed.md. The time the session spent in model calls and in tool calls.
+  modelMs          Int?     @map("model_ms")
+  toolMs           Int?     @map("tool_ms")
   // finished, hung or failed.
   outcome          String
   // One key per session. A Temporal retry of the activity upserts the same row.
@@ -185,6 +189,24 @@ model AgentSession {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([runId])
+}
+
+// docs/specs/run-speed.md. One row per stage of a run: when it started and when it ended. The
+// columns are snake_case, so an operator finds the slow stage in plain SQL.
+model RunStage {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  runId     String   @map("run_id")
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stage     String
+  attempt   Int
+  // The sandbox the stage ran in, or null for a stage outside a sandbox.
+  sandboxId String?  @map("sandbox_id")
+  startedAt DateTime @map("started_at")
+  endedAt   DateTime @map("ended_at")
+
+  @@index([runId])
+  @@map("run_stage")
 }
 
 model Evidence {
@@ -379,7 +401,11 @@ model WarmSnapshot {
   repositoryUrl String
   // docs/specs/kiln-sandbox-size.md. The Kiln template: the image digest and the size.
   template      String
-  configSha     String
+  // docs/specs/run-speed.md. The SHA-256 of the bootstrap command, the warm command and the
+  // effective bootstrap allow list: the inputs that decide what the snapshot holds.
+  bootstrapKey  String
+  // The exit code of a failed warm command, or null when it passed or none ran.
+  warmCommandExitCode Int?
   snapshotId    String
   createdAt     DateTime @default(now())
 

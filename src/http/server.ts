@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import type { Env } from "~/config/env.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
@@ -58,6 +59,8 @@ export interface ServerDependencies {
    * `installation` event joins the run already in flight rather than start a second one.
    */
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
+  /** docs/specs/run-speed.md. Requests a build-ahead when a bootstrap key changes. */
+  buildAhead?: BuildAheadTrigger;
   /** docs/specs/proof-pack-and-visual-evidence.md. Records a pull request preview. */
   recordPullRequestPreview: GitHubWebhookDependencies["recordPullRequestPreview"];
   /** The GitHub and Linear calls of setup. */
@@ -107,6 +110,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       startInstallationSync: dependencies.startInstallationSync,
       recordPullRequestPreview: dependencies.recordPullRequestPreview,
       logger: dependencies.logger,
+      ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
     });
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });
@@ -139,6 +143,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         secrets: dependencies.secrets,
         linearTeams: dependencies.linearTeams,
         runs: dependencies.runs,
+        ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
       registerRunRoutes(admin, {
@@ -168,6 +173,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         masterKey,
         localSandboxAllowed,
         listLinearTeams: dependencies.setup.linear.listTeams,
+        ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       });
       registerMetricsRoute(admin);
     });

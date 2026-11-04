@@ -90,6 +90,8 @@ const schema = z
     version: z.literal(1),
     identity: identitySchema,
     bootstrap: z.object({ command: z.string().min(1) }).strict().nullable().default(null),
+    // docs/specs/run-speed.md. Runs only when Factoree takes a warm snapshot, to fill build caches.
+    warm: z.object({ command: z.string().min(1) }).strict().nullable().default(null),
     verify: z
       .object({ commands: z.array(commandSchema).min(1, "verify.commands must hold at least one command") })
       .strict(),

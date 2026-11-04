@@ -24,6 +24,11 @@ bootstrap:
     && ln -sf "$HOME/.local/go/bin/go" "$HOME/.local/go/bin/gofmt" "$HOME/.local/bin/"
     && go mod download
 
+# Runs only when Factoree takes the warm snapshot, after the bootstrap. It fills GOCACHE, so the
+# builds and tests in each sandbox that forks the snapshot are incremental.
+warm:
+  command: go build ./... && go test -run '^$' ./...
+
 # Factoree runs each command in the check sprite. Every command must exit 0.
 verify:
   commands:

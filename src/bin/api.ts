@@ -12,7 +12,14 @@ import {
   PrismaTenantRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
-import { createSyncInstallationStarter, createTemporalClient, createTemporalWorkflowStarter } from "~/temporal/connection.js";
+import {
+  createBuildAheadRequester,
+  createSyncInstallationStarter,
+  createTemporalClient,
+  createTemporalWorkflowStarter,
+} from "~/temporal/connection.js";
+import { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
+import { PrismaWarmSnapshotStore } from "~/persistence/prisma/warm-snapshot.prisma.js";
 import { buildServer } from "~/http/server.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
@@ -105,6 +112,17 @@ const discoveryClient = new GitHubRepositoryDiscoveryClient({
 const discovery = new DiscoveryService(discoveryClient, products, repositories, linearTeams, logger);
 
 const startInstallationSync = createSyncInstallationStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
+// docs/specs/run-speed.md. A changed bootstrap key requests a build-ahead of the warm snapshot.
+const warmSnapshots = new PrismaWarmSnapshotStore(prisma);
+const buildAhead = new BuildAheadTrigger({
+  request: createBuildAheadRequester(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
+  products,
+  repositories,
+  snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
+  readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
+  repositoryBaseUrl: githubBaseUrl(settings),
+  logger,
+});
 
 // docs/specs/proof-pack-and-visual-evidence.md. The Run is over when CI publishes the preview, so
 // the link reaches the Linear session from here. The tenant row carries the workspace id.
@@ -149,6 +167,7 @@ const app = buildServer({
   delegation,
   discovery,
   startInstallationSync,
+  buildAhead,
   recordPullRequestPreview,
   setup: {
     github: {

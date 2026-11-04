@@ -17,6 +17,11 @@ identity:
 bootstrap:
   command: npm ci
 
+# Runs only when Factoree takes the warm snapshot, after the bootstrap. It fills the cache of the
+# build tool, so the builds in each sandbox that forks the snapshot are incremental.
+warm:
+  command: npm run build
+
 # Factoree runs each command in the check sprite. Every command must exit 0.
 verify:
   commands:

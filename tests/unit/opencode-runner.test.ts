@@ -521,6 +521,8 @@ describe("OpenCodeRunner, the usage of a session", () => {
       costUsd: 1,
       turns: 2,
       longestTurnMs: 2_000,
+      modelMs: 4_000,
+      toolMs: 0,
     });
     expect(result.model).toBe("deepseek/deepseek-flash");
     expect(result.effort).toBe("max");

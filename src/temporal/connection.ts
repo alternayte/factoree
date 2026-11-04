@@ -9,6 +9,8 @@ import type { Env } from "~/config/env.js";
 import { agentRunWorkflow, humanInputSignal, stopSignal } from "~/workflows/agent-run.workflow.js";
 import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/workflows/sync-installation.workflow.js";
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
+import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
+import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
 
 const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
 
@@ -70,4 +72,20 @@ export const createSyncInstallationStarter =
       // A repeated delivery must join the running sync, not fail the webhook.
       if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
     }
+  };
+
+/**
+ * docs/specs/run-speed.md. Requests one build-ahead of a repository. Signal-with-start starts the
+ * workflow of the repository, or reaches the one that runs, which then builds once more.
+ */
+export const createBuildAheadRequester =
+  (client: Client, taskQueue: string): RequestBuildAhead =>
+  async (request) => {
+    await client.workflow.signalWithStart(buildAheadWorkflow, {
+      taskQueue,
+      workflowId: buildAheadWorkflowId(request.tenantId, request.repositoryFullName),
+      args: [request],
+      signal: buildAheadSignal,
+      signalArgs: [],
+    });
   };

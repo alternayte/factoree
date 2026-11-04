@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import {
   deploymentStatusEventSchema,
   FACTOREE_CONFIG_PATH,
@@ -32,6 +33,8 @@ export interface GitHubWebhookDependencies {
     previewUrl: string;
   }) => Promise<boolean>;
   logger: Logger;
+  /** docs/specs/run-speed.md. A config push with a new bootstrap key requests a build-ahead. */
+  buildAhead?: Pick<BuildAheadTrigger, "afterConfigPush">;
 }
 
 /**
@@ -143,6 +146,9 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
               String(installation.id),
             );
             logDiscoveryOutcome(dependencies, repository.full_name, outcome);
+            if (outcome.kind === "registered") {
+              await dependencies.buildAhead?.afterConfigPush(tenantId, repository.full_name);
+            }
           }
         }
       }

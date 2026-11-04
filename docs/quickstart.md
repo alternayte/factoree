@@ -228,6 +228,27 @@ tracked file, because a rewritten lockfile enters the verified patch.
 - Do not build the app in the bootstrap. Each sandbox pays for the build, and
   the preview builds again.
 
+`warm.command` runs once, after the bootstrap, only when Factoree takes the
+warm snapshot. It does not run in a fork. Use it to fill the build caches of
+the stack, so that the builds in each sandbox are incremental
+(docs/specs/run-speed.md):
+
+    warm:
+      command: go build ./... && go test -run '^$' ./...
+
+- Go: `go build ./...` fills `GOCACHE`.
+- .NET: `dotnet build` fills `obj/`.
+- Node: `npm run build` fills the cache of the build tool, for example
+  `.next/cache`.
+
+A failed warm command does not stop the run. Factoree records the exit code on
+the warm snapshot and takes the snapshot.
+
+Factoree builds a new warm snapshot ahead of the next run when the bootstrap
+key changes. The bootstrap key covers the bootstrap command, the warm command
+and the effective allow list. A change to `verify`, `agents`, `preview` or
+`identity` keeps the snapshot.
+
 ## 6. The settings screens
 
 After sign-in, the UI holds four screens.

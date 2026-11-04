@@ -11,7 +11,6 @@ const base = {
   diffTruncated: false,
   changedFiles: ["src/auth.ts"],
   verificationSummary: "Every configured check passed.",
-  validationEvidence: ["VAL-API-001: PASS. The response status was 401."],
   repositoryInstructions: "Use the shared logger.",
   reportPath: "/workspace/review/report.json",
   actionPolicy: buildActionPolicy({ role: "reviewer" }),
@@ -28,7 +27,9 @@ describe("buildReviewerInput", () => {
     expect(built.prompt).toContain("diff --git a/src/auth.ts");
     expect(built.prompt).toContain("src/auth.ts");
     expect(built.prompt).toContain("Every configured check passed.");
-    expect(built.prompt).toContain("The response status was 401.");
+    // docs/specs/run-speed.md amends SDD section 40: the reviewer runs beside user validation.
+    expect(built.prompt).toContain("## Deterministic verification");
+    expect(built.prompt).not.toContain("User validation evidence");
     expect(built.prompt).toContain("Use the shared logger.");
     expect(built.prompt).toContain("/workspace/review/report.json");
   });
@@ -47,7 +48,7 @@ describe("buildReviewerInput", () => {
   });
 
   it("carries the prompt version", () => {
-    expect(buildReviewerInput(base).promptVersion).toBe("reviewer@3");
+    expect(buildReviewerInput(base).promptVersion).toBe("reviewer@4");
   });
 
   it("refuses a forbidden credential in the environment", () => {

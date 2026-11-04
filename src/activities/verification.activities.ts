@@ -11,6 +11,7 @@ import type { VerificationCheckResult } from "~/domain/runs/verification.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
+import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 
 export interface VerificationActivityDependencies {
   sandbox: Sandbox;
@@ -18,6 +19,8 @@ export interface VerificationActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   logger: Logger;
+  /** docs/specs/run-speed.md. The stage rows of each run. */
+  stages?: RunStageStore | undefined;
 }
 
 export interface VerifyActivityInput {
@@ -102,15 +105,21 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
     guardAgainstForbiddenMaterial(environment);
 
     const startedAt = Date.now();
-    const outcome = await runVerification({
-      sandbox: dependencies.sandbox,
-      ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
-      workingDirectory: input.primaryPath,
-      commands: input.commands,
-      environment,
-      timeoutMs: input.timeoutMs,
-      redactor: dependencies.redactor,
-    });
+    const outcome = await timeStage(
+      dependencies.stages,
+      dependencies.logger,
+      { tenantId: input.tenantId, runId: input.runId, stage: "verify", attempt: input.attempt, sandboxId: input.spriteId },
+      () =>
+        runVerification({
+          sandbox: dependencies.sandbox,
+          ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
+          workingDirectory: input.primaryPath,
+          commands: input.commands,
+          environment,
+          timeoutMs: input.timeoutMs,
+          redactor: dependencies.redactor,
+        }),
+    );
 
     // SDD section 39. One immutable row per check. The idempotency key carries the attempt, so
     // a Temporal retry of this activity writes nothing new and a repair pass writes its own row.

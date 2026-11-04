@@ -84,7 +84,13 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
 
     await runWorker(async () => {
       const handle = await startRun("ses-at20");
-      await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-at20");
+      // docs/specs/run-speed.md. Each attempt that passes verification gets its review beside user
+      // validation, so the repair attempt holds the second review.
+      await waitFor(() => reviewsOf(runId).length === 2, "the second review of ses-at20");
+      await waitFor(
+        () => statusCalls.some((entry) => entry.runId === runId && entry.status === "REVIEWING"),
+        "REVIEWING of ses-at20",
+      );
       await handle.signal(stopSignal);
       await handle.result();
     });
@@ -96,20 +102,15 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
     expect(repairs[0]?.repairCount).toBe(1);
     expect(repairs[0]?.repairReason).toBe("VALIDATION");
 
-    // The reverification clause: the repair attempt runs implement, then verify, then
-    // userValidate, in that order, before the review. This is the workflow's own ordering, not
-    // the test's: the first three activities of the sequence are attempt 1, and the second
-    // three are the "fully reverified" repair attempt.
+    // The reverification clause: each attempt runs implement, then verify, and then user
+    // validation and the review beside each other (docs/specs/run-speed.md). This is the
+    // workflow's own ordering, not the test's: the repair attempt is "fully reverified".
     const order = activityOrder.filter((name) => ["implement", "verify", "userValidate", "review"].includes(name));
-    expect(order).toEqual([
-      "implement",
-      "verify",
-      "userValidate",
-      "implement",
-      "verify",
-      "userValidate",
-      "review",
-    ]);
+    const second = order.lastIndexOf("implement");
+    for (const attempt of [order.slice(0, second), order.slice(second)]) {
+      expect(attempt.slice(0, 2)).toEqual(["implement", "verify"]);
+      expect(attempt.slice(2).sort()).toEqual(["review", "userValidate"]);
+    }
 
     // The failing assertion carries into the repair's implement call.
     expect(implementsOf(runId)).toHaveLength(2);

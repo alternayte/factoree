@@ -16,6 +16,7 @@ import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { Redactor } from "~/telemetry/redaction.js";
+import type { RunStageStore } from "~/domain/runs/run-stage.js";
 
 export interface AgentActivityDependencies {
   runners: AgentRunnerRegistry;
@@ -23,6 +24,8 @@ export interface AgentActivityDependencies {
   executions: AgentExecutionRepository;
   /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session. */
   sessions: AgentSessionStore;
+  /** docs/specs/run-speed.md. The stage rows of each run. */
+  stages?: RunStageStore | undefined;
   secrets: SecretStore;
   redactor: Redactor;
   logger: Logger;
@@ -357,7 +360,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     }
 
     await recordAgentSession(
-      { sessions: dependencies.sessions, logger: dependencies.logger },
+      { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages },
       {
         tenantId: input.tenantId,
         productId: input.productId,
@@ -366,6 +369,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         attempt: input.attempt,
         runner: runner.name,
         idempotencyKey: agentSessionKey(input.runId, "implementer", input.attempt, false),
+        sandboxId: input.spriteId,
       },
       [result],
     );

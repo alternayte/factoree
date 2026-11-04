@@ -18,7 +18,8 @@ import type { CheckpointRef, ProcessRef, Sandbox, SandboxRef } from "./sandbox.j
 import { BROWSER_TOOL_HOSTS, BROWSER_TOOLS_INSTALL_SCRIPT, BROWSER_TOOLS_POLL_MS, BROWSER_TOOLS_WAIT_MS } from "./browser-tools.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
 import { SandboxSlotUnavailableError } from "./sandbox-slot-error.js";
-import type { WarmSnapshot, WarmSnapshotStore } from "./warm-snapshot.js";
+import { bootstrapKeyOf, type WarmSnapshot, type WarmSnapshotStore } from "./warm-snapshot.js";
+import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
 
 export interface PrepareSandboxInput {
@@ -43,7 +44,17 @@ export interface PrepareSandboxInput {
    * no agent that browses, so it gets nothing.
    */
   browserTools?: boolean;
+  /**
+   * docs/specs/run-speed.md. True for a build-ahead: the sandbox serves no run. It starts cold,
+   * saves the warm snapshot, and is deleted. `runId` then names the build-ahead, not a run.
+   */
+  buildAhead?: boolean;
 }
+
+/** docs/specs/run-speed.md. What one build-ahead did. */
+export type BuildAheadOutcome =
+  | { kind: "built"; snapshotId: string; bootstrapKey: string }
+  | { kind: "skipped"; reason: string };
 
 export interface PreparedSandbox {
   ref: SandboxRef;
@@ -86,6 +97,8 @@ export interface SandboxManagerOptions {
    * Without it, or on an adapter with no `warmSnapshots`, every sandbox starts cold.
    */
   warmSnapshots?: WarmSnapshotStore;
+  /** docs/specs/run-speed.md. The stage rows of each run. The warm snapshot is one stage. */
+  stages?: RunStageStore | undefined;
   /**
    * Permits an adapter that cannot enforce an egress policy. Only the test suite and local
    * development set this value to true. Production must leave it false. SDD section 29 denies
@@ -198,6 +211,41 @@ export class SandboxManager {
     return prepared;
   }
 
+  /**
+   * docs/specs/run-speed.md. True when the stored warm snapshot of the repository belongs to the
+   * current template and to `bootstrapKey`, so a build-ahead has nothing to do.
+   */
+  async hasCurrentWarmSnapshot(input: { tenantId: string; repositoryUrl: string; bootstrapKey: string }): Promise<boolean> {
+    const sandbox = this.options.sandbox;
+    await sandbox.refresh?.();
+    const store = this.options.warmSnapshots;
+    if (store === undefined || sandbox.warmSnapshots === undefined) return false;
+    const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.repositoryUrl });
+    return warm !== null && warm.template === sandbox.warmSnapshots.template && warm.bootstrapKey === input.bootstrapKey;
+  }
+
+  /**
+   * docs/specs/run-speed.md. Builds the warm snapshot of one repository before a run needs it: a
+   * cold sandbox, the clone, the bootstrap and the warm command, the snapshot, then the delete.
+   */
+  async buildAhead(input: PrepareSandboxInput): Promise<BuildAheadOutcome> {
+    const sandbox = this.options.sandbox;
+    await sandbox.refresh?.();
+    if (this.options.warmSnapshots === undefined || sandbox.warmSnapshots === undefined) {
+      return { kind: "skipped", reason: `the ${sandbox.name} adapter takes no warm snapshot` };
+    }
+    if (!sandbox.capabilities.enforcesNetworkPolicy && this.options.allowUnenforcedNetwork !== true) {
+      throw new NetworkPolicyNotEnforcedError(sandbox.name);
+    }
+    let built: { snapshotId: string; bootstrapKey: string } | null = null;
+    await this.prepareIn({ ...input, buildAhead: true, browserTools: false }, undefined, null, (snapshot) => {
+      built = snapshot;
+    });
+    const result = built as { snapshotId: string; bootstrapKey: string } | null;
+    if (result === null) return { kind: "skipped", reason: "the warm snapshot was not saved" };
+    return { kind: "built", ...result };
+  }
+
   /** The warm snapshot this Run can start from, or null when it starts cold. */
   private async warmSnapshotFor(input: PrepareSandboxInput): Promise<WarmSnapshot | null> {
     const sandbox = this.options.sandbox;
@@ -217,6 +265,7 @@ export class SandboxManager {
     input: PrepareSandboxInput,
     beforeBootstrap: ((ref: SandboxRef, primaryPath: string) => Promise<void>) | undefined,
     warm: WarmSnapshot | null,
+    onSaved?: (snapshot: { snapshotId: string; bootstrapKey: string }) => void,
   ): Promise<PreparedSandbox | null> {
     const sandbox = this.options.sandbox;
     const createInput = {
@@ -287,11 +336,16 @@ export class SandboxManager {
       const file = await readRepositoryConfig(sandbox, ref, primary.path);
       const { runtime, verifyCommands, preview } = toProjectRuntimeConfig(file, input.defaults);
 
-      // A warm snapshot ran the bootstrap of one configuration. Another configuration can name
-      // another bootstrap, so the snapshot no longer fits, and the cold run takes a new one.
-      const configSha = await this.configBlobSha(ref, primary.path);
-      if (warm !== null && configSha !== warm.configSha) {
-        this.options.logger?.info("the configuration changed since the warm snapshot, so the sandbox starts cold", {
+      // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
+      // allow list. A change of any of them means the snapshot no longer fits, and the cold run
+      // takes a new one. A change to any other field keeps the snapshot.
+      const bootstrapKey = bootstrapKeyOf({
+        bootstrapCommand: runtime.bootstrapCommand,
+        warmCommand: runtime.warmCommand ?? null,
+        allowedDomains: runtime.allowedDomains,
+      });
+      if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
+        this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
           run_id: input.runId,
           snapshot_id: warm.snapshotId,
         });
@@ -349,7 +403,17 @@ export class SandboxManager {
       // docs/specs/kiln-sandbox-provider.md. A cold work sprite saves itself here, after the clone
       // and the bootstrap and before any agent runs. A check sprite holds the patch, so it never
       // saves itself.
-      if (warm === null && beforeBootstrap === undefined) await this.saveWarmSnapshot(input, ref, configSha);
+      if (warm === null && beforeBootstrap === undefined) {
+        const saved = await this.saveWarmSnapshot(input, ref, primary.path, runtime.warmCommand ?? null, bootstrapKey);
+        if (saved !== null) onSaved?.({ snapshotId: saved, bootstrapKey });
+      }
+
+      // docs/specs/run-speed.md. A build-ahead serves no run, so its sandbox goes once the
+      // snapshot exists.
+      if (input.buildAhead === true) {
+        await sandbox.destroy(ref);
+        return null;
+      }
 
       const repositoryInstructions = await readRepositoryInstructions(sandbox, ref, primary.path);
 
@@ -430,31 +494,57 @@ export class SandboxManager {
     }
   }
 
-  /** The git blob SHA of `.factoree/config.yaml` at HEAD of the primary checkout. */
-  private async configBlobSha(ref: SandboxRef, primaryPath: string): Promise<string> {
+  /**
+   * docs/specs/run-speed.md. Runs the warm command of the repository, which fills its build
+   * caches. A failure is logged and recorded on the snapshot, and the snapshot is still taken: a
+   * base commit that does not build must not stop every run, and a partial build cache is still
+   * valid input to an incremental build. Answers the exit code of a failed command, or null.
+   */
+  private async runWarmCommand(input: PrepareSandboxInput, ref: SandboxRef, primaryPath: string, command: string): Promise<number | null> {
     const result = await this.options.sandbox.exec(ref, {
-      file: "git",
-      args: ["-C", primaryPath, "rev-parse", "HEAD:.factoree/config.yaml"],
+      file: "sh",
+      args: ["-c", bootstrapScript(command)],
+      cwd: primaryPath,
     });
-    return result.exitCode === 0 ? result.stdout.trim() : "none";
+    this.options.logger?.info("the warm command ran before the warm snapshot", {
+      run_id: input.runId,
+      exit_code: result.exitCode,
+    });
+    if (result.exitCode === 0) return null;
+    this.options.logger?.warn("the warm command failed, so the warm snapshot holds a partial build cache", {
+      run_id: input.runId,
+      exit_code: result.exitCode,
+      detail: withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)).slice(-500),
+    });
+    return result.exitCode;
   }
 
   /**
-   * Takes the warm snapshot of the repository and records it. The old snapshot goes once the new
-   * one is recorded. A failure here costs the next run its warm start and nothing else.
+   * Runs the warm command, then takes the warm snapshot of the repository and records it. The old
+   * snapshot goes once the new one is recorded. A failure here costs the next run its warm start
+   * and nothing else. Answers the snapshot id, or null when none was saved.
    */
-  private async saveWarmSnapshot(input: PrepareSandboxInput, ref: SandboxRef, configSha: string): Promise<void> {
+  private async saveWarmSnapshot(
+    input: PrepareSandboxInput,
+    ref: SandboxRef,
+    primaryPath: string,
+    warmCommand: string | null,
+    bootstrapKey: string,
+  ): Promise<string | null> {
     const sandbox = this.options.sandbox;
     const store = this.options.warmSnapshots;
-    if (store === undefined || sandbox.warmSnapshots === undefined) return;
+    if (store === undefined || sandbox.warmSnapshots === undefined) return null;
+    const startedAt = new Date();
     try {
+      const warmCommandExitCode = warmCommand === null ? null : await this.runWarmCommand(input, ref, primaryPath, warmCommand);
       const snapshotId = await sandbox.warmSnapshots.take(ref);
       const replaced = await store.save({
         tenantId: input.tenantId,
         adapter: sandbox.name,
         repositoryUrl: input.primary.url,
         template: sandbox.warmSnapshots.template,
-        configSha,
+        bootstrapKey,
+        warmCommandExitCode,
         snapshotId,
       });
       if (replaced !== null) {
@@ -468,11 +558,26 @@ export class SandboxManager {
         run_id: input.runId,
         snapshot_id: snapshotId,
       });
+      return snapshotId;
     } catch (error) {
       this.options.logger?.warn("the warm snapshot was not saved", {
         run_id: input.runId,
         detail: String(error).slice(0, 500),
       });
+      return null;
+    } finally {
+      // A build-ahead serves no run, so it has no run stage row.
+      if (input.buildAhead !== true && this.options.logger !== undefined) {
+        await recordStage(this.options.stages, this.options.logger, {
+          tenantId: input.tenantId,
+          runId: input.runId,
+          stage: "warm_snapshot",
+          attempt: 1,
+          sandboxId: ref.id,
+          startedAt,
+          endedAt: new Date(),
+        });
+      }
     }
   }
 

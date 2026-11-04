@@ -35,9 +35,20 @@ describe("readOpenCodeExport", () => {
       costUsd: 0.03,
       turns: 2,
       longestTurnMs: 60_000,
+      modelMs: 63_000,
+      toolMs: 0,
     });
     expect(reading?.model).toBe("deepseek/deepseek-flash");
     expect(reading?.messageIds).toEqual(["a1", "a2"]);
+  });
+
+  it("splits the message time into model time and tool time, and counts parallel tools once (docs/specs/run-speed.md)", () => {
+    // The message time holds its tool calls. Two tools overlap from 3 000 to 4 000.
+    const tool = (start: number, end: number) => ({ type: "tool", tool: "bash", state: { status: "completed", time: { start, end } } });
+    const message = { ...assistant("a1", 0, 1_000, 11_000), parts: [{ type: "text" }, tool(2_000, 4_000), tool(3_000, 6_000)] };
+    const reading = readOpenCodeExport(exportOf([message]), new Set());
+    expect(reading?.usage.toolMs).toBe(4_000);
+    expect(reading?.usage.modelMs).toBe(6_000);
   });
 
   it("counts only the calls an earlier invocation of the session did not report", () => {

@@ -9,9 +9,26 @@ export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
     return row === null ? null : toSnapshot(row);
   }
 
+  /** docs/specs/run-speed.md. The bootstrap keys of the stored snapshots of one repository. */
+  async keysFor(tenantId: string, repositoryUrl: string): Promise<string[]> {
+    const rows = await this.prisma.warmSnapshot.findMany({ where: { tenantId, repositoryUrl }, select: { bootstrapKey: true } });
+    return rows.map((row) => row.bootstrapKey);
+  }
+
+  /** docs/specs/run-speed.md. The templates the stored snapshots of one adapter belong to. */
+  async templatesOf(adapter: string): Promise<string[]> {
+    const rows = await this.prisma.warmSnapshot.findMany({ where: { adapter }, select: { template: true }, distinct: ["template"] });
+    return rows.map((row) => row.template);
+  }
+
   async save(snapshot: WarmSnapshot): Promise<WarmSnapshot | null> {
     const key = { tenantId: snapshot.tenantId, adapter: snapshot.adapter, repositoryUrl: snapshot.repositoryUrl };
-    const fields = { template: snapshot.template, configSha: snapshot.configSha, snapshotId: snapshot.snapshotId };
+    const fields = {
+      template: snapshot.template,
+      bootstrapKey: snapshot.bootstrapKey,
+      warmCommandExitCode: snapshot.warmCommandExitCode,
+      snapshotId: snapshot.snapshotId,
+    };
     return this.prisma.$transaction(async (tx) => {
       const previous = await tx.warmSnapshot.findUnique({ where: { tenantId_adapter_repositoryUrl: key } });
       await tx.warmSnapshot.upsert({
@@ -63,13 +80,15 @@ const toSnapshot = (row: {
   adapter: string;
   repositoryUrl: string;
   template: string;
-  configSha: string;
+  bootstrapKey: string;
+  warmCommandExitCode: number | null;
   snapshotId: string;
 }): WarmSnapshot => ({
   tenantId: row.tenantId,
   adapter: row.adapter,
   repositoryUrl: row.repositoryUrl,
   template: row.template,
-  configSha: row.configSha,
+  bootstrapKey: row.bootstrapKey,
+  warmCommandExitCode: row.warmCommandExitCode,
   snapshotId: row.snapshotId,
 });

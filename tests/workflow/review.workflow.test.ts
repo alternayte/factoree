@@ -67,6 +67,9 @@ describe("REVIEWING", () => {
     await runWorker(async () => {
       const handle = await startRun("ses-rv1");
       await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-rv1");
+      // docs/specs/run-speed.md. The review runs beside user validation, and the Run waits in
+      // REVIEWING for it once validation passed.
+      await waitFor(() => statusesOf(runId).includes("REVIEWING"), "REVIEWING of ses-rv1");
       await handle.signal(stopSignal);
       await handle.result();
     });
@@ -110,6 +113,11 @@ describe("REVIEWING", () => {
     await runWorker(async () => {
       const handle = await startRun("ses-rv3");
       await waitFor(() => reviewsOf(runId).length === 2, "the second review of ses-rv3");
+      // The second user validation runs beside the second review.
+      await waitFor(
+        () => harness.userValidateCalls.filter((entry) => entry.runId === runId).length === 2,
+        "the second user validation of ses-rv3",
+      );
       await handle.signal(stopSignal);
       await handle.result();
     });
@@ -119,16 +127,61 @@ describe("REVIEWING", () => {
     const order = activityOrder
       .slice(before)
       .filter((name) => ["implement", "verify", "userValidate", "review"].includes(name));
-    expect(order).toEqual([
-      "implement",
-      "verify",
-      "userValidate",
-      "review",
-      "implement",
-      "verify",
-      "userValidate",
-      "review",
+    // docs/specs/run-speed.md. User validation and the review run beside each other, after
+    // verification, in each attempt.
+    const second = order.lastIndexOf("implement");
+    expect([order.slice(0, second), order.slice(second)].map((attempt) => [...attempt.slice(0, 2), ...attempt.slice(2).sort()])).toEqual([
+      ["implement", "verify", "review", "userValidate"],
+      ["implement", "verify", "review", "userValidate"],
     ]);
+  });
+
+  it("gives one repair both the validation failures and the reviewer blockers (docs/specs/run-speed.md)", async () => {
+    const runId = "run-ses-rv-merged";
+    runtimeOverrides.set(runId, { repairMaxAttempts: 2 });
+    reviewOutcomes.set(runId, (attempt) => (attempt === 1 ? blocking : {}));
+    harness.userValidationOutcomes.set(runId, (attempt) =>
+      attempt === 1
+        ? {
+            passed: false,
+            results: [{ assertionId: "VAL-UI-001", result: "FAIL", reason: "The button is missing." }],
+            hasFailure: true,
+            hasManual: false,
+            hasBlocked: false,
+            summary: "One user validation assertion failed.",
+            failures: ["VAL-UI-001: the button is missing."],
+            sessionId: "ses_fake_validator",
+            previewUrl: null,
+            hang: null,
+          }
+        : {
+            passed: true,
+            results: [],
+            hasFailure: false,
+            hasManual: false,
+            hasBlocked: false,
+            summary: "Every user validation assertion passed.",
+            failures: [],
+            sessionId: "ses_fake_validator",
+            previewUrl: null,
+            hang: null,
+          },
+    );
+
+    await runWorker(async () => {
+      const handle = await startRun("ses-rv-merged");
+      await waitFor(() => implementsOf(runId).length === 2, "the repair of ses-rv-merged");
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+
+    const repairs = harness.statusCalls.filter((entry) => entry.runId === runId && entry.status === "REPAIRING");
+    expect(repairs).toHaveLength(1);
+    expect(repairs[0]?.repairReason).toBe("VALIDATION");
+    expect(implementsOf(runId)[1]?.repairFindings).toEqual(["VAL-UI-001: the button is missing.", REVIEW_FAILURE_TEXT]);
+    // The reviewer read the verification summary and no validation evidence.
+    expect(reviewsOf(runId)[0]?.validationEvidence).toBeUndefined();
+    expect(reviewsOf(runId)[0]?.verificationSummary).toBeDefined();
   });
 
   it("ends in FAILED_REVIEW when the budget is spent", async () => {

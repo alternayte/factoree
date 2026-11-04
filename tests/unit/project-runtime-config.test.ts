@@ -20,6 +20,7 @@ describe("toProjectRuntimeConfig", () => {
     const resolved = toProjectRuntimeConfig(config, { stagingRead: true, spriteRetentionHours: 48, allowedDomains: ["registry.npmjs.org"] });
     expect(resolved.runtime).toEqual({
       bootstrapCommand: "npm ci",
+      warmCommand: null,
       allowedDomains: ["registry.npmjs.org"],
       implementerRunner: "claude",
       validatorRunner: "opencode",

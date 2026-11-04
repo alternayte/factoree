@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
+
 /**
  * docs/specs/kiln-sandbox-provider.md. The warm snapshot of one repository: the sandbox right after
- * the clone and the bootstrap, before any agent runs. It is valid for one Kiln template and one
- * `.factoree/config.yaml` blob. A change of either makes a new snapshot on the next run.
+ * the clone, the bootstrap and the warm command, before any agent runs. It is valid for one Kiln
+ * template and one bootstrap key. A change of either makes a new snapshot (docs/specs/run-speed.md).
  */
 export interface WarmSnapshot {
   tenantId: string;
@@ -10,10 +12,36 @@ export interface WarmSnapshot {
   repositoryUrl: string;
   /** docs/specs/kiln-sandbox-size.md. The template the snapshot holds: the image digest and the size. */
   template: string;
-  /** The git blob SHA of `.factoree/config.yaml` at the commit the snapshot holds. */
-  configSha: string;
+  /** docs/specs/run-speed.md. The bootstrap key of the configuration the snapshot ran. */
+  bootstrapKey: string;
+  /** The exit code of a failed warm command, or null when it passed or none ran. */
+  warmCommandExitCode: number | null;
   snapshotId: string;
 }
+
+/** The inputs that decide what a warm snapshot holds. */
+export interface BootstrapInputs {
+  bootstrapCommand: string | null;
+  warmCommand: string | null;
+  /** The effective allow list of the repository: the Product list narrowed by the repository. */
+  allowedDomains: readonly string[];
+}
+
+/**
+ * docs/specs/run-speed.md. The SHA-256 of the bootstrap command, the warm command and the
+ * effective bootstrap allow list. Only these change what a warm snapshot holds, so a change to
+ * `verify`, `agents`, `preview` or `identity` keeps the snapshot.
+ */
+export const bootstrapKeyOf = (inputs: BootstrapInputs): string =>
+  createHash("sha256")
+    .update(
+      JSON.stringify({
+        bootstrap: inputs.bootstrapCommand,
+        warm: inputs.warmCommand,
+        allowedDomains: [...new Set(inputs.allowedDomains)].sort(),
+      }),
+    )
+    .digest("hex");
 
 /**
  * A snapshot that no row names any more and that the provider still holds: one that a new

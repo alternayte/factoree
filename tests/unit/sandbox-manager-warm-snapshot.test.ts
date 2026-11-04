@@ -2,18 +2,20 @@ import { describe, expect, it } from "vitest";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import type { SandboxCreateInput, SandboxRef, WarmSnapshots } from "~/domain/runs/sandbox.js";
-import type { RetiredWarmSnapshot, WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
+import { bootstrapKeyOf, type RetiredWarmSnapshot, type WarmSnapshot, type WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"a".repeat(64)}`;
 const TEMPLATE = `factoree-${"a".repeat(16)}-2c-4096m`;
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333";
-const CONFIG_SHA = "1111111111111111111111111111111111111111";
 
 const CONFIG_YAML =
   "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: npm ci\n" +
   "verify:\n  commands:\n    - name: test\n      run: npm test\nsandbox:\n  allowedDomains:\n    - registry.npmjs.org\n" +
   "preview:\n  enabled: true\n  command: npm start\n  readyUrl: http://localhost:3000/\n  timeoutSeconds: 120\n";
+
+/** docs/specs/run-speed.md. The bootstrap key of CONFIG_YAML under the Product allow list below. */
+const KEY = bootstrapKeyOf({ bootstrapCommand: "npm ci", warmCommand: null, allowedDomains: ["registry.npmjs.org"] });
 
 /** A fake on the sandbox image, with warm snapshots. It records what it saved and restored. */
 class WarmFakeSandbox extends FakeSandbox {
@@ -45,13 +47,12 @@ class WarmFakeSandbox extends FakeSandbox {
     },
   };
 
-  constructor(configSha: string) {
+  constructor(private readonly configYaml = CONFIG_YAML) {
     super({ enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: true, supportsCustomImage: true });
     this.onExec = (command) => {
       const last = command.args[command.args.length - 1] ?? "";
-      if (command.file === "cat" && last.endsWith(".factoree/config.yaml")) return { exitCode: 0, stdout: CONFIG_YAML, stderr: "" };
+      if (command.file === "cat" && last.endsWith(".factoree/config.yaml")) return { exitCode: 0, stdout: this.configYaml, stderr: "" };
       if (command.file === "cat") return { exitCode: 1, stdout: "", stderr: "no such file" };
-      if (command.file === "git" && last === "HEAD:.factoree/config.yaml") return { exitCode: 0, stdout: `${configSha}\n`, stderr: "" };
       if (command.file === "git" && command.args.includes("rev-parse")) return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     };
@@ -99,12 +100,13 @@ const input = {
   browserTools: true,
 };
 
-const stored = (configSha: string, template = TEMPLATE): WarmSnapshot => ({
+const stored = (bootstrapKey: string, template = TEMPLATE): WarmSnapshot => ({
   tenantId: "tenant-1",
   adapter: "fake",
   repositoryUrl: "https://github.com/acme/app.git",
   template,
-  configSha,
+  bootstrapKey,
+  warmCommandExitCode: null,
   snapshotId: "snap-old",
 });
 
@@ -113,21 +115,21 @@ const gitLines = (sandbox: FakeSandbox): string[] =>
 
 describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", () => {
   it("saves a warm snapshot of a cold work sprite after the bootstrap and before the agent policy", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     const store = new MemoryWarmSnapshotStore();
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
     const order = sandbox.calls.filter((call) => call === "snapshot" || call === "applyNetworkPolicy" || call === "exec:sh");
     // Policy one, policy two, the bootstrap, the snapshot, then the agent policy.
     expect(order).toEqual(["applyNetworkPolicy", "applyNetworkPolicy", "exec:sh", "snapshot", "applyNetworkPolicy"]);
-    expect([...store.rows.values()]).toEqual([{ ...stored(CONFIG_SHA), snapshotId: "snap-1" }]);
+    expect([...store.rows.values()]).toEqual([{ ...stored(KEY), snapshotId: "snap-1" }]);
   });
 
   it("removes the snapshot a new one replaces", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     const store = new MemoryWarmSnapshotStore();
     // A snapshot of another size (docs/specs/kiln-sandbox-size.md).
-    await store.save(stored(CONFIG_SHA, `factoree-${"a".repeat(16)}-4c-4096m`));
+    await store.save(stored(KEY, `factoree-${"a".repeat(16)}-4c-4096m`));
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
     // Another template: the run starts cold, and its snapshot replaces the old one.
@@ -137,10 +139,10 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
   });
 
   it("keeps a replaced snapshot that a live sandbox still reads, so the reaper removes it later", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     sandbox.removeRefused = true;
     const store = new MemoryWarmSnapshotStore();
-    await store.save(stored(CONFIG_SHA, `factoree-${"a".repeat(16)}-4c-4096m`));
+    await store.save(stored(KEY, `factoree-${"a".repeat(16)}-4c-4096m`));
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
     // No row names snap-old any more, so without the record it would stay on the provider for ever.
@@ -148,19 +150,19 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
   });
 
   it("records a snapshot that did not restore, so the reaper removes it", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     sandbox.restoreFails = true;
     const store = new MemoryWarmSnapshotStore();
-    await store.save(stored(CONFIG_SHA));
+    await store.save(stored(KEY));
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
     expect(store.retired.has("fake|snap-old")).toBe(true);
   });
 
   it("starts from the warm snapshot, moves the checkout to the run ref and runs the bootstrap again", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     const store = new MemoryWarmSnapshotStore();
-    await store.save(stored(CONFIG_SHA));
+    await store.save(stored(KEY));
     const prepared = await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
     expect(sandbox.restored).toEqual(["snap-old"]);
@@ -177,8 +179,8 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
     expect(prepared.selfCheckReady).toBe(true);
   });
 
-  it("starts cold and takes a new snapshot when .factoree/config.yaml changed", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+  it("starts cold and takes a new snapshot when the bootstrap key changed", async () => {
+    const sandbox = new WarmFakeSandbox();
     const store = new MemoryWarmSnapshotStore();
     await store.save(stored("2222222222222222222222222222222222222222"));
     const prepared = await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
@@ -186,23 +188,81 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
     expect(sandbox.destroyed).toEqual(["warm-run-1"]);
     expect(sandbox.calls.filter((call) => call === "create")).toHaveLength(1);
     expect(prepared.ref.id).not.toBe("warm-run-1");
-    expect(store.rows.get("tenant-1|fake|https://github.com/acme/app.git")?.configSha).toBe(CONFIG_SHA);
+    expect(store.rows.get("tenant-1|fake|https://github.com/acme/app.git")?.bootstrapKey).toBe(KEY);
     expect(sandbox.removed).toEqual(["snap-old"]);
   });
 
   it("starts cold and forgets the snapshot when the restore fails", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     sandbox.restoreFails = true;
     const store = new MemoryWarmSnapshotStore();
-    await store.save(stored(CONFIG_SHA));
+    await store.save(stored(KEY));
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
 
     expect(sandbox.calls.filter((call) => call === "create")).toHaveLength(1);
     expect(store.rows.get("tenant-1|fake|https://github.com/acme/app.git")?.snapshotId).toBe("snap-1");
   });
 
+  it("keeps the snapshot when only a field outside the bootstrap key changed (docs/specs/run-speed.md)", async () => {
+    const sandbox = new WarmFakeSandbox(CONFIG_YAML.replace("run: npm test", "run: npm run test:ci"));
+    const store = new MemoryWarmSnapshotStore();
+    await store.save(stored(KEY));
+    await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
+
+    expect(sandbox.restored).toEqual(["snap-old"]);
+    expect(sandbox.calls).not.toContain("create");
+    expect(sandbox.destroyed).toEqual([]);
+  });
+
+  it("runs the warm command before the snapshot of a cold work sprite, and not in a fork", async () => {
+    const yaml = CONFIG_YAML.replace("verify:", "warm:\n  command: go build ./...\nverify:");
+    const key = bootstrapKeyOf({ bootstrapCommand: "npm ci", warmCommand: "go build ./...", allowedDomains: ["registry.npmjs.org"] });
+    const cold = new WarmFakeSandbox(yaml);
+    const store = new MemoryWarmSnapshotStore();
+    await new SandboxManager({ sandbox: cold, warmSnapshots: store }).prepare(input);
+
+    const warmCommand = cold.commands.findIndex((command) => command.file === "sh" && command.args[1]?.includes("go build ./..."));
+    expect(warmCommand).toBeGreaterThan(-1);
+    expect(cold.calls.filter((call) => call === "exec:sh" || call === "snapshot").slice(-2)).toEqual(["exec:sh", "snapshot"]);
+    expect([...store.rows.values()][0]).toMatchObject({ bootstrapKey: key, warmCommandExitCode: null });
+
+    const fork = new WarmFakeSandbox(yaml);
+    await new SandboxManager({ sandbox: fork, warmSnapshots: store }).prepare({ ...input, runId: "run-2" });
+    expect(fork.restored).toEqual(["snap-1"]);
+    expect(fork.commands.some((command) => command.file === "sh" && command.args[1]?.includes("go build ./..."))).toBe(false);
+  });
+
+  it("records a failed warm command on the snapshot and still takes it", async () => {
+    const yaml = CONFIG_YAML.replace("verify:", "warm:\n  command: dotnet build\nverify:");
+    const sandbox = new WarmFakeSandbox(yaml);
+    const base = sandbox.onExec!;
+    sandbox.onExec = (command) =>
+      command.file === "sh" && command.args[1]?.includes("dotnet build") ? { exitCode: 1, stdout: "", stderr: "error CS1002" } : base(command);
+    const store = new MemoryWarmSnapshotStore();
+    const prepared = await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
+
+    expect(prepared.ref.id).toBeDefined();
+    expect([...store.rows.values()][0]).toMatchObject({ snapshotId: "snap-1", warmCommandExitCode: 1 });
+  });
+
+  it("builds ahead: a cold sandbox, the snapshot, then the delete", async () => {
+    const sandbox = new WarmFakeSandbox();
+    const store = new MemoryWarmSnapshotStore();
+    await store.save(stored("2222222222222222222222222222222222222222"));
+    const manager = new SandboxManager({ sandbox, warmSnapshots: store });
+
+    expect(await manager.hasCurrentWarmSnapshot({ tenantId: "tenant-1", repositoryUrl: input.primary.url, bootstrapKey: KEY })).toBe(false);
+    const outcome = await manager.buildAhead({ ...input, runId: "build-ahead:repo-1" });
+
+    expect(outcome).toEqual({ kind: "built", snapshotId: "snap-1", bootstrapKey: KEY });
+    expect(sandbox.calls).not.toContain("restore");
+    expect(sandbox.destroyed).toHaveLength(1);
+    expect(sandbox.removed).toEqual(["snap-old"]);
+    expect(await manager.hasCurrentWarmSnapshot({ tenantId: "tenant-1", repositoryUrl: input.primary.url, bootstrapKey: KEY })).toBe(true);
+  });
+
   it("never saves a check sprite, which holds the patch", async () => {
-    const sandbox = new WarmFakeSandbox(CONFIG_SHA);
+    const sandbox = new WarmFakeSandbox();
     const store = new MemoryWarmSnapshotStore();
     await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input, () => Promise.resolve());
 

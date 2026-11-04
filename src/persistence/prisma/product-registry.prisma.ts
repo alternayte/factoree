@@ -312,6 +312,15 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry {
     return rows.map(toRepository);
   }
 
+  /** docs/specs/run-speed.md. Every repository of the install that discovery still sees. */
+  async listPresent(): Promise<RepositoryRecord[]> {
+    const rows = await this.prisma.repository.findMany({
+      where: { absentSince: null },
+      orderBy: { discoveredAt: "asc" },
+    });
+    return rows.map(toRepository);
+  }
+
   async findByFullName(tenantId: string, fullName: string): Promise<RepositoryRecord | null> {
     const row = await this.prisma.repository.findUnique({
       where: { tenantId_fullName: { tenantId, fullName } },

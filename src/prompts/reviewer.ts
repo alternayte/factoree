@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REVIEWER_PROMPT_VERSION = "reviewer@3";
+export const REVIEWER_PROMPT_VERSION = "reviewer@4";
 
 export interface ReviewerPromptFields {
   goal: string;
@@ -10,7 +10,6 @@ export interface ReviewerPromptFields {
   diffTruncated: boolean;
   changedFiles: string[];
   verificationSummary: string;
-  validationEvidence: string[];
   repositoryInstructions: string;
   reportPath: string;
   actionPolicy: string[];
@@ -23,11 +22,12 @@ const list = (items: string[], empty: string): string =>
   items.length === 0 ? empty : items.map((item) => `- ${item}`).join("\n");
 
 /**
- * SDD section 40 fixes the Reviewer input list. This function receives the goal, the frozen
- * Validation Contract, the Context Contract, the constraints, the source diff, the changed
- * files, the deterministic verification result, the user-validation evidence, and the
- * repository rules. It receives no Implementer transcript and no Implementer summary, and it
- * renders no such field.
+ * SDD section 40 fixes the Reviewer input list, and docs/specs/run-speed.md amends it. This
+ * function receives the goal, the frozen Validation Contract, the Context Contract, the
+ * constraints, the source diff, the changed files, the deterministic verification result, and the
+ * repository rules. The reviewer runs beside user validation, so it receives no validation
+ * evidence, and it does not anchor on a pass. It receives no Implementer transcript and no
+ * Implementer summary, and it renders no such field.
  */
 export const renderReviewerPrompt = (fields: ReviewerPromptFields): string =>
   [
@@ -49,7 +49,6 @@ export const renderReviewerPrompt = (fields: ReviewerPromptFields): string =>
         : fields.sourceDiff,
     ),
     section("Deterministic verification", fields.verificationSummary),
-    section("User validation evidence", list(fields.validationEvidence, "None recorded.")),
     section(
       "Your report",
       `Write your report as one JSON document to ${fields.reportPath}.\n\n${fields.reportSchema}`,

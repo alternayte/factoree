@@ -110,6 +110,9 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
         "the user validation of ses-at16a",
       );
       await waitFor(() => reviewsOf("run-ses-at16a").length === 1, "the review of ses-at16a");
+      // docs/specs/run-speed.md. The review runs beside user validation, so the Run waits in
+      // REVIEWING for it once validation passed.
+      await waitFor(() => statusesOf("run-ses-at16a").includes("REVIEWING"), "REVIEWING of ses-at16a");
       await handle.signal(stopSignal);
       // The stop must reach the live Reviewer session before the test releases the pass.
       await waitFor(
@@ -139,14 +142,22 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "check-run-ses-at16a-2",
     ]);
     expect(attempts.every((entry) => entry.spriteId === "sprite-run-ses-at16a")).toBe(true);
-    const checks = harness.checkPrepared.filter((entry) => entry.runId === "run-ses-at16a");
+    const prepared = harness.checkPrepared.filter((entry) => entry.runId === "run-ses-at16a");
+    const checks = prepared.filter((entry) => entry.expectedPatchSha256 === undefined);
     expect(checks.map((entry) => entry.previous?.spriteId ?? null)).toEqual([null, "check-run-ses-at16a-1"]);
-    expect(checks.every((entry) => entry.work.spriteId === "sprite-run-ses-at16a")).toBe(true);
+    expect(prepared.every((entry) => entry.work.spriteId === "sprite-run-ses-at16a")).toBe(true);
     expect(harness.releasedChecks).toContain("check-run-ses-at16a-2");
+    // docs/specs/run-speed.md. Only the attempt that passed verification got a reviewer's check
+    // sprite, with the patch that attempt verified, and the end of the Run deleted it.
+    const reviewers = prepared.filter((entry) => entry.expectedPatchSha256 !== undefined);
+    expect(reviewers.map((entry) => [entry.attempt, entry.expectedPatchSha256])).toEqual([[2, "d".repeat(64)]]);
+    expect(harness.releasedChecks).toContain("check-run-ses-at16a-2-review");
 
     // Nothing was published. The Run invoked exactly these activities, in this order. A new
     // activity on this path changes the list, so the reader must judge it again.
-    expect(namesFor("run-ses-at16a")).toEqual([
+    const names = namesFor("run-ses-at16a");
+    const secondVerify = names.lastIndexOf("verify");
+    expect(names.slice(0, secondVerify + 1)).toEqual([
       "setRunStatus",
       "setRunStatus",
       "refine",
@@ -174,13 +185,13 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "prepareCheckSandbox",
       "setRunStatus",
       "verify",
-      "setRunStatus",
-      "userValidate",
-      "setRunStatus",
-      "review",
-      "releaseCheckSandbox",
-      "completeRun",
     ]);
+    // docs/specs/run-speed.md. The reviewer's check sprite and the review run beside user
+    // validation, so their order against it is not fixed.
+    expect(names.slice(secondVerify + 1, -3).sort()).toEqual(
+      ["prepareCheckSandbox", "review", "setRunStatus", "setRunStatus", "userValidate"].sort(),
+    );
+    expect(names.slice(-3)).toEqual(["releaseCheckSandbox", "releaseCheckSandbox", "completeRun"]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);
     expect(result.status).toBe("CANCELLED");
   });

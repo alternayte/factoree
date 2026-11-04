@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import { z } from "zod";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
-import { applyPatch, type InstallSettingsStore } from "~/domain/settings/install-settings.js";
+import { applyPatch, type InstallSettingsStore, type SandboxSettings } from "~/domain/settings/install-settings.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import { linearInstallUrl } from "~/adapters/linear/linear-app-flows.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
@@ -31,7 +32,13 @@ export interface SettingsRouteDependencies {
   localSandboxAllowed: boolean;
   /** The teams of a set-up workspace, read with the Linear app token of that workspace. */
   listLinearTeams: (linearWorkspaceId: string) => Promise<Array<{ id: string; key: string; name: string }>>;
+  /** docs/specs/run-speed.md. A new provider, image or size makes every warm snapshot stale. */
+  buildAhead?: Pick<BuildAheadTrigger, "afterTemplateChange">;
 }
+
+/** docs/specs/run-speed.md. The sandbox settings that decide the template a warm snapshot belongs to. */
+const templateOf = (sandbox: SandboxSettings): string =>
+  JSON.stringify([sandbox.provider, sandbox.url, sandbox.image, sandbox.vcpus, sandbox.memoryMb]);
 
 const createKeySchema = z
   .object({
@@ -103,6 +110,7 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       const problem = sandboxSettingsProblem(sandbox, dependencies.localSandboxAllowed);
       if (problem !== null) return reply.code(422).send({ error: problem });
       const updated = await dependencies.settings.update(body.data);
+      if (templateOf(current.sandbox) !== templateOf(updated.sandbox)) await dependencies.buildAhead?.afterTemplateChange();
       return viewInstallSettings(updated, dependencies.publicUrl, dependencies.localSandboxAllowed);
     },
   );

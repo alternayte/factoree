@@ -39,6 +39,35 @@ const exportDocument = (text: string): Record<string, unknown> | null => {
 };
 
 /**
+ * docs/specs/run-speed.md. The length of the union of the tool part intervals of one message,
+ * clipped to the message. A message can run tool calls in parallel, and an overlap counts once.
+ */
+const toolTimeOf = (parts: unknown, created: number, completed: number): number => {
+  if (!Array.isArray(parts)) return 0;
+  const intervals: Array<[number, number]> = [];
+  for (const part of parts as unknown[]) {
+    if (!isRecord(part) || part["type"] !== "tool") continue;
+    const state = isRecord(part["state"]) ? part["state"] : {};
+    const time = isRecord(state["time"]) ? state["time"] : {};
+    const start = numberOf(time["start"]);
+    const end = numberOf(time["end"]);
+    if (start === null || end === null) continue;
+    const from = Math.max(start, created);
+    const to = Math.min(end, completed);
+    if (to > from) intervals.push([from, to]);
+  }
+  intervals.sort((left, right) => left[0] - right[0]);
+  let total = 0;
+  let reach = Number.NEGATIVE_INFINITY;
+  for (const [from, to] of intervals) {
+    const start = Math.max(from, reach);
+    if (to > start) total += to - start;
+    reach = Math.max(reach, to);
+  }
+  return total;
+};
+
+/**
  * Sums the assistant messages that `counted` does not hold. A resume continues the same session,
  * so the export of a resume also lists the calls of the first invocation, and `counted` keeps
  * them out. Returns null when the text is not an export document.
@@ -58,6 +87,8 @@ export const readOpenCodeExport = (text: string, counted: ReadonlySet<string>): 
     costUsd: null,
     turns: 0,
     longestTurnMs: null,
+    modelMs: null,
+    toolMs: null,
   };
   let model: string | null = null;
   const messageIds: string[] = [];
@@ -85,6 +116,10 @@ export const readOpenCodeExport = (text: string, counted: ReadonlySet<string>): 
     // A call the hang interrupted has no completion time, so it has no length to compare.
     if (created !== null && completed !== null && completed >= created) {
       usage.longestTurnMs = Math.max(usage.longestTurnMs ?? 0, completed - created);
+      // The message time holds its tool calls, so the model time is what the tools leave.
+      const toolMs = toolTimeOf(message["parts"], created, completed);
+      usage.toolMs = (usage.toolMs ?? 0) + toolMs;
+      usage.modelMs = (usage.modelMs ?? 0) + (completed - created - toolMs);
     }
     const provider = info["providerID"];
     const modelId = info["modelID"];

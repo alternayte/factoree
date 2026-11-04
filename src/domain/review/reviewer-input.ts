@@ -17,7 +17,6 @@ export interface BuildReviewerInput {
   diffTruncated: boolean;
   changedFiles: string[];
   verificationSummary: string;
-  validationEvidence: string[];
   repositoryInstructions: string;
   reportPath: string;
   actionPolicy: ActionPolicy;
@@ -44,7 +43,6 @@ export const buildReviewerInput = (input: BuildReviewerInput): ReviewerInput => 
       diffTruncated: input.diffTruncated,
       changedFiles: input.changedFiles,
       verificationSummary: input.verificationSummary,
-      validationEvidence: input.validationEvidence,
       repositoryInstructions: input.repositoryInstructions,
       reportPath: input.reportPath,
       actionPolicy: input.actionPolicy.describe(),

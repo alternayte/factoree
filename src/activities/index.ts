@@ -8,6 +8,7 @@ import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { AgentSessionStore } from "~/domain/runs/agent-session.js";
+import type { RunStageStore } from "~/domain/runs/run-stage.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -41,6 +42,7 @@ import { createEvidencePersistence, createProofPackActivities } from "./evidence
 import { createReviewActivities } from "./review.activities.js";
 import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
+import { createBuildAheadActivities } from "./build-ahead.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -56,6 +58,8 @@ export interface ActivityDependencies {
   executions: AgentExecutionRepository;
   /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session, with its usage. */
   sessions: AgentSessionStore;
+  /** docs/specs/run-speed.md. One row per stage of a run. */
+  stages?: RunStageStore | undefined;
   secrets: SecretStore;
   evidence: EvidenceStore;
   redactor: Redactor;
@@ -85,6 +89,8 @@ export interface ActivityDependencies {
   discoveryClient: RepositoryDiscoveryClient;
   /** Turns one repository's `.factoree/config.yaml` declaration into rows. */
   discoveryService: DiscoveryService;
+  /** docs/specs/run-speed.md. The clone URL base of the install, for a build-ahead. */
+  repositoryBaseUrl: () => Promise<string>;
 }
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
@@ -106,12 +112,14 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     runners: dependencies.runners,
     logger: dependencies.logger,
     tokens: dependencies.tokens,
+    stages: dependencies.stages,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,
     sandbox: dependencies.sandbox,
     executions: dependencies.executions,
     sessions: dependencies.sessions,
+    stages: dependencies.stages,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
@@ -125,6 +133,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
       runners: dependencies.runners,
       executions: dependencies.executions,
       sessions: dependencies.sessions,
+      stages: dependencies.stages,
       secrets: dependencies.secrets,
       redactor: dependencies.redactor,
     },
@@ -149,6 +158,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
       runners: dependencies.runners,
       executions: dependencies.executions,
       sessions: dependencies.sessions,
+      stages: dependencies.stages,
       secrets: dependencies.secrets,
       redactor: dependencies.redactor,
       browser: dependencies.browser,
@@ -167,6 +177,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     runners: dependencies.runners,
     executions: dependencies.executions,
     sessions: dependencies.sessions,
+    stages: dependencies.stages,
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     contracts: dependencies.validationContracts,
@@ -182,6 +193,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     gitAuthor: dependencies.gitAuthor,
     logger: dependencies.logger,
     tokens: dependencies.tokens,
+    stages: dependencies.stages,
   }),
   ...createProofPackActivities({
     runs: dependencies.runs,
@@ -205,10 +217,22 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
+    stages: dependencies.stages,
   }),
   ...createDiscoveryActivities({
     discoveryClient: dependencies.discoveryClient,
     discoveryService: dependencies.discoveryService,
+    logger: dependencies.logger,
+  }),
+  ...createBuildAheadActivities({
+    sandboxManager: dependencies.sandboxManager,
+    products: dependencies.products,
+    repositories: dependencies.repositories,
+    discoveryClient: dependencies.discoveryClient,
+    secrets: dependencies.secrets,
+    tokens: dependencies.tokens,
+    redactor: dependencies.redactor,
+    repositoryBaseUrl: dependencies.repositoryBaseUrl,
     logger: dependencies.logger,
   }),
 });

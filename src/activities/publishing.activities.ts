@@ -27,6 +27,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
+import { recordStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
 /**
@@ -105,6 +106,8 @@ export interface PublishingActivityDependencies {
   pullRequests: (token: string) => PullRequestPort;
   gitAuthor: () => Promise<{ name: string; email: string }>;
   logger: Logger;
+  /** docs/specs/run-speed.md. The stage rows of each run. */
+  stages?: RunStageStore | undefined;
   /**
    * The trusted checkout. The default is the real function. A unit test injects a double, so it
    * needs no network. The integration test keeps the real path.
@@ -181,6 +184,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
    */
   async publish(input: PublishActivityInput): Promise<PublishActivityOutput> {
     const started = Date.now();
+    const startedAt = new Date(started);
     const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
@@ -392,6 +396,16 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       throw asNonRetryable(dependencies.redactor, error);
     } finally {
       metrics.publishDuration.observe(labels, (Date.now() - started) / 1000);
+      // Each repair adds one attempt, so the attempt that passed is the repair count plus one.
+      await recordStage(dependencies.stages, dependencies.logger, {
+        tenantId: input.tenantId,
+        runId: input.runId,
+        stage: "publish",
+        attempt: input.repairCount + 1,
+        sandboxId: input.spriteId,
+        startedAt,
+        endedAt: new Date(),
+      });
     }
   },
 });

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import { Prisma } from "@prisma/client";
 import { normalizeNetworkPolicy } from "~/domain/runs/sandbox.js";
 import { z } from "zod";
@@ -91,6 +92,8 @@ export interface ProductRouteDependencies {
   secrets: SecretStore;
   linearTeams: LinearTeamLookup;
   runs: RunRepository;
+  /** docs/specs/run-speed.md. The allow list is part of the bootstrap key of each repository. */
+  buildAhead?: Pick<BuildAheadTrigger, "afterAllowListChange">;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -227,12 +230,16 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.riskCaps !== undefined ||
       body.data.allowedDomains !== undefined
     ) {
+      const before = await dependencies.products.findById(tenant.id, request.params.id);
       product = await dependencies.products.updatePolicy(tenant.id, request.params.id, {
         ...(body.data.defaultAutonomy === undefined ? {} : { defaultAutonomy: body.data.defaultAutonomy }),
         ...(body.data.riskCaps === undefined ? {} : { riskCaps: body.data.riskCaps }),
         ...(body.data.allowedDomains === undefined ? {} : { allowedDomains: body.data.allowedDomains }),
       });
       if (!product) return reply.code(404).send({ error: "product not found" });
+      if (before !== null && before.allowedDomains.join(",") !== product.allowedDomains.join(",")) {
+        await dependencies.buildAhead?.afterAllowListChange(tenant.id, product.id);
+      }
     }
     if (
       body.data.model !== undefined ||

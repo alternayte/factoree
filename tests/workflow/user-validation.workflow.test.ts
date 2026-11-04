@@ -125,13 +125,15 @@ describe("USER_VALIDATING", () => {
 
     // The second pass passes, so the Run enters REVIEWING and then the publication path. The
     // held review keeps the Run inside the review until the stop reaches the live session, so
-    // this Run never enters PUBLISHING and this test does not flake.
-    const releaseReview = hold(heldReviews, runId);
+    // this Run never enters PUBLISHING and this test does not flake. Only the second review is
+    // held: the first runs beside the failed validation, which waits for it (docs/specs/run-speed.md).
+    const releaseReview = hold(heldReviews, `${runId}#2`);
 
     await runWorker(async () => {
       const handle = await startRun("ses-uv2");
       await waitFor(() => userValidatesOf(runId).length === 2, "the second user validation of ses-uv2");
-      await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-uv2");
+      await waitFor(() => reviewsOf(runId).length === 2, "the second review of ses-uv2");
+      await waitFor(() => statusesOf(runId).includes("REVIEWING"), "REVIEWING of ses-uv2");
       await handle.signal(stopSignal);
       await waitFor(
         () => cancelledLiveReviews.includes(runId),
@@ -140,7 +142,7 @@ describe("USER_VALIDATING", () => {
       releaseReview();
       await handle.result();
     });
-    heldReviews.delete(runId);
+    heldReviews.delete(`${runId}#2`);
 
     expect(statusesOf(runId)).toEqual([
       "RECEIVED",
@@ -327,6 +329,9 @@ describe("USER_VALIDATING, a rejected Validation Plan (DI-15.23)", () => {
     await runWorker(async () => {
       const handle = await startRun("ses-uv10");
       await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-uv10");
+      // docs/specs/run-speed.md. The review runs beside user validation, and the Run waits in
+      // REVIEWING for it once validation passed.
+      await waitFor(() => statusesOf(runId).includes("REVIEWING"), "REVIEWING of ses-uv10");
       await handle.signal(stopSignal);
       await waitFor(() => cancelledLiveReviews.includes(runId), "the live cancellation of ses-uv10");
       releaseReview();

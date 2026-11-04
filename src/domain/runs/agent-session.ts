@@ -30,6 +30,12 @@ export interface AgentSessionUsage {
   turns: number | null;
   /** The longest single model call. It shows whether one slow call made the session slow. */
   longestTurnMs: number | null;
+  /**
+   * docs/specs/run-speed.md. The time the session spent waiting on the model, and the time it
+   * spent in tool calls. Absent in a record made before they existed.
+   */
+  modelMs?: number | null;
+  toolMs?: number | null;
 }
 
 export interface RecordAgentSessionInput {
@@ -79,6 +85,8 @@ const USAGE_FIELDS = [
   "cacheWriteTokens",
   "costUsd",
   "turns",
+  "modelMs",
+  "toolMs",
 ] as const satisfies ReadonlyArray<keyof AgentSessionUsage>;
 
 /** Adds two known values. An unknown value on both sides stays unknown. */
@@ -105,9 +113,11 @@ export const combineUsage = (parts: ReadonlyArray<AgentSessionUsage | null>): Ag
     costUsd: null,
     turns: null,
     longestTurnMs: null,
+    modelMs: null,
+    toolMs: null,
   };
   for (const part of known) {
-    for (const field of USAGE_FIELDS) total[field] = plus(total[field], part[field]);
+    for (const field of USAGE_FIELDS) total[field] = plus(total[field] ?? null, part[field] ?? null);
     total.longestTurnMs = larger(total.longestTurnMs, part.longestTurnMs);
   }
   return total;
