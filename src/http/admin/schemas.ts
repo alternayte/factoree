@@ -29,6 +29,10 @@ export const productSchema = z.object({
   allowedDomains: z.array(z.string()),
   maxRunMinutes: z.number(),
   organizationSkillsRepository: z.string().nullable(),
+  /** docs/specs/skill-registry.md. A null set means every released skill. */
+  skillRegistry: z.object({ kind: z.enum(["skael"]), url: z.string(), set: z.string().nullable() }).nullable(),
+  /** docs/specs/skill-registry.md. Set by a save that changed the registry, when a run would drop skills. */
+  skillRegistryWarning: z.string().nullable().optional(),
   model: z.string().nullable(),
   effort: effortSchema,
   silenceMinutes: z.number(),

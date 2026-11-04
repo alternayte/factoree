@@ -34,6 +34,7 @@ class FakeProductRegistry implements ProductRegistry {
       allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
+      skillRegistry: null,
       model: null,
       effort: { implementer: null, refiner: null, validator: null, reviewer: null },
       silenceMinutes: 10,
@@ -88,6 +89,10 @@ class FakeProductRegistry implements ProductRegistry {
     if (row === undefined) return Promise.resolve(null);
     row.organizationSkillsRepository = organizationSkillsRepository;
     return Promise.resolve(row);
+  }
+
+  updateSkillRegistry(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
   }
 
   updatePolicy(): Promise<ProductRecord | null> {

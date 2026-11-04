@@ -1,3 +1,4 @@
+import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "~/config/env.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -168,6 +169,8 @@ const app = buildServer({
   discovery,
   startInstallationSync,
   buildAhead,
+  // docs/specs/skill-registry.md. Skael is the one registry kind.
+  checkSkillRegistry: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }).check(),
   recordPullRequestPreview,
   setup: {
     github: {

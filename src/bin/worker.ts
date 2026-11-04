@@ -1,3 +1,7 @@
+import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
+import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
+import { OrganizationSkillsRegistry } from "~/adapters/github/organization-skills-registry.js";
+import { GitHubSkillProposals } from "~/adapters/github/github-skill-proposals.js";
 import { Worker } from "@temporalio/worker";
 import { loadEnv } from "~/config/env.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -374,6 +378,17 @@ const worker = await Worker.create({
     discoveryClient,
     discoveryService,
     repositoryBaseUrl: githubBaseUrl(settings),
+    // docs/specs/skill-registry.md. Skael is the one registry kind. The organization skills
+    // repository takes a skill proposal as a pull request.
+    skills: new PrismaRunSkillStore(prisma),
+    skillRegistries: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }),
+    organizationSkills: ({ slug, repository, githubInstallationId }) =>
+      new OrganizationSkillsRegistry({
+        slug,
+        repository,
+        githubInstallationId,
+        proposals: new GitHubSkillProposals({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+      }),
   }),
 });
 

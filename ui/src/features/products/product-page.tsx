@@ -8,7 +8,7 @@ import {
   listProductSecretsOptions,
   listProductsQueryKey,
 } from "@/api/@tanstack/react-query.gen";
-import { activateProduct, deleteProduct, updateProduct } from "@/api/sdk.gen";
+import { activateProduct, deleteProduct, putProductSecret, updateProduct } from "@/api/sdk.gen";
 import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
 import { Field, Input, SavedNote, Select, Textarea } from "@/components/form";
@@ -33,6 +33,9 @@ import { ContextSourcesSection } from "./context-sources-section";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, ModelWarning, RecentSessionsSection } from "./model-defaults";
 import { bodyOf, formOf, LIMITS, type Product, type ProductForm } from "./product-form";
 import { SecretsSection } from "./secrets-section";
+
+/** docs/specs/skill-registry.md. The Product secret that holds the registry service key. */
+const SKILL_REGISTRY_KEY = "SKILL_REGISTRY_KEY";
 
 export function ProductPage({ productId, ws }: { productId: string; ws?: string }) {
   const me = useMe();
@@ -103,17 +106,30 @@ function ProductEditor({
   const [form, setForm] = useState<ProductForm>(() => formOf(product));
   const [attempted, setAttempted] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [registryWarning, setRegistryWarning] = useState<string | null>(null);
   const dirty = JSON.stringify(form) !== JSON.stringify(formOf(product));
   // The same query as the secrets section, so the cache answers both.
   const secrets = useQuery(
     listProductSecretsOptions({ path: { id: product.id }, query: { linearWorkspaceId } }),
   );
   const hasRunnerCredential = secrets.data?.some((secret) => secret.kind === "runner_credential");
+  const hasRegistryKey = secrets.data?.some((secret) => secret.name === SKILL_REGISTRY_KEY);
 
   const save = useMutation({
     mutationFn: async () => {
       const result = bodyOf(form);
       if ("problems" in result) throw new Error(result.problems.join(" "));
+      // docs/specs/skill-registry.md. The key is stored first, because the save resolves the
+      // registry with it.
+      const registryKey = form.skillRegistryKey.trim();
+      if (registryKey) {
+        await putProductSecret({
+          path: { id: product.id, name: SKILL_REGISTRY_KEY },
+          query: { linearWorkspaceId },
+          body: { value: registryKey, kind: "test", injectIntoImplementer: false },
+          throwOnError: true,
+        });
+      }
       return (
         await updateProduct({
           path: { id: product.id },
@@ -126,6 +142,10 @@ function ProductEditor({
     onSuccess: (next) => {
       qc.setQueryData(key, next);
       setForm(formOf(next));
+      setRegistryWarning(next.skillRegistryWarning ?? null);
+      void qc.invalidateQueries({
+        queryKey: listProductSecretsOptions({ path: { id: product.id }, query: { linearWorkspaceId } }).queryKey,
+      });
       setAttempted(false);
       void qc.invalidateQueries({ queryKey: listProductsQueryKey({ query: { linearWorkspaceId } }) });
     },
@@ -260,6 +280,59 @@ function ProductEditor({
         </Section>
 
         <EffortSection form={form} setForm={setForm} disabled={disabled} />
+
+        <Section
+          title="Skill registry"
+          description="Factoree resolves the registry on the worker for each run, checks every digest, and gives the skills to the implementer. A Skael server is the one registry kind."
+        >
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
+            <Field label="Registry URL" hint="Empty for no registry.">
+              {(props) => (
+                <Input
+                  {...props}
+                  mono
+                  disabled={disabled}
+                  placeholder="https://skael.example.com"
+                  value={form.skillRegistryUrl}
+                  onChange={(e) => set("skillRegistryUrl", e.target.value)}
+                />
+              )}
+            </Field>
+            <Field label="Set" hint="Empty gives every released skill.">
+              {(props) => (
+                <Input
+                  {...props}
+                  mono
+                  disabled={disabled}
+                  placeholder="all released skills"
+                  value={form.skillRegistrySet}
+                  onChange={(e) => set("skillRegistrySet", e.target.value)}
+                />
+              )}
+            </Field>
+            <Field
+              label="Service key"
+              hint={hasRegistryKey ? "Stored. Enter a new key to replace it." : "Stored as the secret SKILL_REGISTRY_KEY. It never reaches a sandbox."}
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  type="password"
+                  autoComplete="off"
+                  mono
+                  disabled={disabled}
+                  value={form.skillRegistryKey}
+                  onChange={(e) => set("skillRegistryKey", e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+          {registryWarning ? (
+            <Alert tone="warning" className="mt-4">
+              {registryWarning}
+            </Alert>
+          ) : null}
+        </Section>
 
         <Section
           title="Policy"

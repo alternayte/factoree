@@ -26,6 +26,7 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   allowedDomains: [],
   maxRunMinutes: 90,
   organizationSkillsRepository,
+  skillRegistry: null,
   model: null,
   effort: { implementer: null, refiner: null, validator: null, reviewer: null },
   silenceMinutes: 10,
@@ -280,6 +281,7 @@ describe("DelegationService", () => {
       riskCaps: null,
       allowedDomains: [],
       organizationSkillsRepository: null,
+      skillRegistry: null,
     });
     expect(started.args[0]?.workItem).toMatchObject({
       title: "Fix the header",

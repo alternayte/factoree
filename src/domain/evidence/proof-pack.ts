@@ -122,6 +122,26 @@ export interface ProofPackPlanCorrection {
   outcome: AgentSessionOutcome;
 }
 
+/** docs/specs/skill-registry.md. One skill the implementer loaded. */
+export interface ProofPackSkill {
+  name: string;
+  source: "repository" | "registry" | "organization";
+  /** The registry version, or null for a skill from a checkout. */
+  version: number | null;
+  /** The page of the skill in its registry, or null. */
+  url: string | null;
+}
+
+/** docs/specs/skill-registry.md. One skill proposal of the run. */
+export interface ProofPackSkillProposal {
+  name: string;
+  source: "registry" | "organization";
+  state: "submitted" | "refused" | "failed";
+  /** Where a person reviews it, or null. */
+  url: string | null;
+  reason: string | null;
+}
+
 export interface ProofPackInput {
   runId: string;
   workItem: { title: string; url: string | null };
@@ -167,6 +187,9 @@ export interface ProofPackInput {
   modelWarning?: string | null;
   /** DI-15.23. The passes whose first Validation Plan Factoree rejected, in attempt order. */
   planCorrections?: ProofPackPlanCorrection[];
+  /** docs/specs/skill-registry.md. The skills the implementer loaded, and its skill proposals. */
+  skills?: ProofPackSkill[];
+  skillProposals?: ProofPackSkillProposal[];
 }
 
 /**
@@ -230,6 +253,8 @@ export interface ProofPackDocument {
   baseMove: ProofPackBaseMove | null;
   /** docs/specs/agent-session-usage-and-hangs.md. The totals per role, or null when none was recorded. */
   agentUsage: AgentUsageTotals | null;
+  /** docs/specs/skill-registry.md. The skills the implementer loaded, and its skill proposals. */
+  skills: { loaded: ProofPackSkill[]; proposals: ProofPackSkillProposal[] };
   run: {
     baseSha: string;
     patchSha256: string;
@@ -327,6 +352,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   },
   routing: input.routing ?? null,
   agentUsage: input.agentUsage ?? null,
+  skills: { loaded: input.skills ?? [], proposals: input.skillProposals ?? [] },
   run: {
     baseSha: input.baseSha,
     patchSha256: input.patchSha256,
@@ -416,6 +442,34 @@ export const agentUsageLine = (usage: AgentUsageTotals): string => {
   ].join(" · ");
 };
 
+/** docs/specs/skill-registry.md. Each loaded skill with its source and version, and each proposal. */
+export const skillLines = (input: ProofPackInput): string[] => {
+  const lines: string[] = [];
+  const loaded = input.skills ?? [];
+  if (loaded.length > 0) {
+    const named = loaded.map((skill) => {
+      const label = `${skill.name}${skill.version === null ? "" : ` v${skill.version}`} (${skill.source})`;
+      return openable(skill.url) ? `[${label}](${skill.url})` : label;
+    });
+    lines.push(`**Skills loaded:** ${named.join(", ")}`);
+  }
+  for (const proposal of input.skillProposals ?? []) {
+    const target = proposal.source === "registry" ? "the skill registry" : "the organization skills repository";
+    if (proposal.state === "submitted") {
+      lines.push(
+        `**Skill proposal:** ${proposal.name}, sent to ${target} for review` +
+          (openable(proposal.url) ? `: ${proposal.url}` : "."),
+      );
+    } else {
+      lines.push(
+        `**Skill proposal:** ${proposal.name}, ${proposal.state === "refused" ? "refused by" : "not sent to"} ${target}: ` +
+          line(proposal.reason ?? "no reason given"),
+      );
+    }
+  }
+  return lines;
+};
+
 const footer = (input: ProofPackInput, documentUrl: string | null): string =>
   [
     `Run ${input.runId}`,
@@ -456,6 +510,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     ...checkLines(input),
     "",
     ...(input.agentUsage === undefined || input.agentUsage.roles.length === 0 ? [] : [agentUsageLine(input.agentUsage), ""]),
+    ...(skillLines(input).length === 0 ? [] : [...skillLines(input), ""]),
     "---",
     "",
     footer(input, documentUrl),

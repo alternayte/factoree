@@ -168,6 +168,8 @@ export class DelegationService {
       // docs/specs/release-0-1-0.md. Retention is a Product setting.
       spriteRetentionHours: product.sandboxRetentionHours,
       organizationSkillsRepository: product.organizationSkillsRepository,
+      // docs/specs/skill-registry.md. The key stays in the secret store. Only the settings travel.
+      skillRegistry: product.skillRegistry,
     };
 
     // An unusable slug must stop the Run here, and not inside the workflow, where the operator

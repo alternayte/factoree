@@ -113,6 +113,9 @@ describe("AT-33 tenant isolation", () => {
         "ReviewFinding",
         "Run",
         "RunTarget",
+        // docs/specs/skill-registry.md. One row per skill and per skill proposal of a run.
+        "run_skill",
+        "run_skill_proposal",
         // docs/specs/run-speed.md. One row per stage of a run of one tenant.
         "run_stage",
         // SDD section 24 and SDD section 52. Phase 6 added the Validation Contract tables, and

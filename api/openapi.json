@@ -2288,6 +2288,44 @@
                         "null"
                       ]
                     },
+                    "skillRegistry": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "skael"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "set": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "set"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "skillRegistryWarning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
@@ -2358,6 +2396,7 @@
                     "allowedDomains",
                     "maxRunMinutes",
                     "organizationSkillsRepository",
+                    "skillRegistry",
                     "model",
                     "effort",
                     "silenceMinutes",
@@ -2837,6 +2876,44 @@
                         "null"
                       ]
                     },
+                    "skillRegistry": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "skael"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "set": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "set"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "skillRegistryWarning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
@@ -2907,6 +2984,7 @@
                     "allowedDomains",
                     "maxRunMinutes",
                     "organizationSkillsRepository",
+                    "skillRegistry",
                     "model",
                     "effort",
                     "silenceMinutes",
@@ -3062,6 +3140,44 @@
                           "null"
                         ]
                       },
+                      "skillRegistry": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "skael"
+                                ]
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "set": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "url",
+                              "set"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "skillRegistryWarning": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "model": {
                         "type": [
                           "string",
@@ -3132,6 +3248,7 @@
                       "allowedDomains",
                       "maxRunMinutes",
                       "organizationSkillsRepository",
+                      "skillRegistry",
                       "model",
                       "effort",
                       "silenceMinutes",
@@ -3280,6 +3397,44 @@
                         "null"
                       ]
                     },
+                    "skillRegistry": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "skael"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "set": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "set"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "skillRegistryWarning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
@@ -3350,6 +3505,7 @@
                     "allowedDomains",
                     "maxRunMinutes",
                     "organizationSkillsRepository",
+                    "skillRegistry",
                     "model",
                     "effort",
                     "silenceMinutes",
@@ -3438,6 +3594,40 @@
                       {
                         "type": "string",
                         "pattern": "^[^/]+\\/[^/]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "skillRegistry": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "skael"
+                            ]
+                          },
+                          "url": {
+                            "type": "string",
+                            "pattern": "^https?:\\/\\/\\S+$"
+                          },
+                          "set": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "set"
+                        ],
+                        "additionalProperties": false
                       },
                       {
                         "type": "null"
@@ -3652,6 +3842,44 @@
                         "null"
                       ]
                     },
+                    "skillRegistry": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "skael"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "set": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "set"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "skillRegistryWarning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
@@ -3722,6 +3950,7 @@
                     "allowedDomains",
                     "maxRunMinutes",
                     "organizationSkillsRepository",
+                    "skillRegistry",
                     "model",
                     "effort",
                     "silenceMinutes",
@@ -3996,6 +4225,44 @@
                         "null"
                       ]
                     },
+                    "skillRegistry": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "skael"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "set": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "set"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "skillRegistryWarning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
@@ -4066,6 +4333,7 @@
                     "allowedDomains",
                     "maxRunMinutes",
                     "organizationSkillsRepository",
+                    "skillRegistry",
                     "model",
                     "effort",
                     "silenceMinutes",

@@ -10,6 +10,8 @@ export interface ClaudeOutput {
   usage: AgentSessionUsage | null;
   /** The model the init event names, or null. */
   model: string | null;
+  /** docs/specs/skill-registry.md. The input of every tool use block, as JSON. */
+  toolInputs: string[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -54,6 +56,16 @@ const assistantText = (message: unknown): string | null => {
   return parts.length === 0 ? null : parts.join("\n");
 };
 
+/** The input of every tool use block of one assistant message, as JSON. */
+const toolUseInputs = (message: unknown): string[] => {
+  if (!isRecord(message) || !Array.isArray(message["content"])) return [];
+  const inputs: string[] = [];
+  for (const block of message["content"] as unknown[]) {
+    if (isRecord(block) && block["type"] === "tool_use") inputs.push(JSON.stringify({ name: block["name"], input: block["input"] }));
+  }
+  return inputs;
+};
+
 /**
  * Reads the newline-delimited JSON event stream of `claude -p --output-format stream-json`. The
  * CLI also writes plain progress lines. The parser skips a line that is not a JSON object, and
@@ -73,6 +85,7 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   let lastPlainLine = "";
   let usage: AgentSessionUsage | null = null;
   let model: string | null = null;
+  const toolInputs: string[] = [];
 
   for (const rawLine of text.split(/\r\n|\r|\n/)) {
     const trimmed = rawLine.trim();
@@ -109,9 +122,10 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
     if (parsed["type"] === "assistant") {
       const value = assistantText(parsed["message"]);
       if (value !== null) lastAssistant = value;
+      toolInputs.push(...toolUseInputs(parsed["message"]));
     }
   }
 
   const summary = resultSummary ?? lastAssistant ?? lastPlainLine;
-  return { sessionId, summary, usage, model };
+  return { sessionId, summary, usage, model, toolInputs };
 };

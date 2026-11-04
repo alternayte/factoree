@@ -11,6 +11,12 @@ import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS, ProjectSecretKindError } from "~/domain/products/secret-store.js";
 import { assertRunnerCredential, RunnerCredentialError } from "~/domain/products/runner-credentials.js";
+import {
+  SKILL_REGISTRY_KEY_SECRET,
+  SKILL_REGISTRY_KINDS,
+  type SkillRegistrySettings,
+} from "~/domain/runs/skill-registry.js";
+import { MAX_SKILLS } from "~/domain/runs/skill-discovery.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 import {
   autonomyLevel,
@@ -48,6 +54,19 @@ const updateSchema = z
     name: z.string().min(1),
     maxRunMinutes: z.number().int().positive().max(600),
     organizationSkillsRepository: z.string().regex(/^[^/]+\/[^/]+$/).nullable(),
+    // docs/specs/skill-registry.md. An empty set name means every released skill.
+    skillRegistry: z
+      .object({
+        kind: z.enum(SKILL_REGISTRY_KINDS),
+        url: z.string().trim().regex(/^https?:\/\/\S+$/, "must be an http or https URL"),
+        set: z
+          .string()
+          .trim()
+          .nullable()
+          .transform((value) => (value === null || value === "" ? null : value)),
+      })
+      .strict()
+      .nullable(),
     defaultAutonomy: autonomyLevel,
     // The highest level each Linear label allows. A label that is absent has no cap.
     riskCaps: z.record(z.string().min(1).transform((label) => label.trim().toLowerCase()), autonomyLevel),
@@ -94,6 +113,11 @@ export interface ProductRouteDependencies {
   runs: RunRepository;
   /** docs/specs/run-speed.md. The allow list is part of the bootstrap key of each repository. */
   buildAhead?: Pick<BuildAheadTrigger, "afterAllowListChange">;
+  /**
+   * docs/specs/skill-registry.md. Resolves a registry once and counts its skills. A registry that
+   * does not resolve throws, and the save is refused.
+   */
+  checkSkillRegistry?: (settings: SkillRegistrySettings, key: string) => Promise<{ skills: number }>;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -259,6 +283,37 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       });
       if (!product) return reply.code(404).send({ error: "product not found" });
     }
+    let skillRegistryWarning: string | null = null;
+    if (body.data.skillRegistry !== undefined) {
+      const settings = body.data.skillRegistry;
+      const stored = (await dependencies.products.findById(tenant.id, request.params.id))?.skillRegistry ?? null;
+      const changed = JSON.stringify(stored) !== JSON.stringify(settings);
+      if (settings !== null && changed) {
+        // docs/specs/skill-registry.md. A wrong setting fails here, where the operator reads the
+        // message, not in a run.
+        const key = await dependencies.secrets.get(tenant.id, request.params.id, SKILL_REGISTRY_KEY_SECRET);
+        if (key === null) {
+          return reply
+            .code(422)
+            .send({ error: `Store the service key of the registry as the secret ${SKILL_REGISTRY_KEY_SECRET} first.` });
+        }
+        if (dependencies.checkSkillRegistry !== undefined) {
+          let count: number;
+          try {
+            count = (await dependencies.checkSkillRegistry(settings, key)).skills;
+          } catch (error) {
+            return reply.code(422).send({ error: `The skill registry did not resolve: ${(error as Error).message}` });
+          }
+          if (settings.set === null && count > MAX_SKILLS) {
+            skillRegistryWarning =
+              `The registry holds ${count} released skills. A run lists the first ${MAX_SKILLS} in the prompt, ` +
+              "and the agent must find the rest on disk. Name a set to choose the skills of a run.";
+          }
+        }
+      }
+      product = await dependencies.products.updateSkillRegistry(tenant.id, request.params.id, settings);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+    }
     if (body.data.organizationSkillsRepository !== undefined) {
       product = await dependencies.products.updateOrganizationSkillsRepository(
         tenant.id,
@@ -269,7 +324,7 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     }
     if (product === null) product = await dependencies.products.findById(tenant.id, request.params.id);
     if (!product) return reply.code(404).send({ error: "product not found" });
-    return product;
+    return { ...product, skillRegistryWarning };
   },
   );
 
@@ -405,6 +460,13 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     // middle of a Run. Both rules come from specification section 30.
     try {
       assertSecretKindAndMark(body.data.kind, body.data.injectIntoImplementer);
+      // docs/specs/skill-registry.md. The registry key stays on the worker. A mark or the runner
+      // credential kind would carry it into the sandbox.
+      if (request.params.name === SKILL_REGISTRY_KEY_SECRET && (body.data.injectIntoImplementer || body.data.kind !== "test")) {
+        return reply.code(400).send({
+          error: `${SKILL_REGISTRY_KEY_SECRET} must be stored as a "test" secret without the injection mark, so it never reaches a sandbox.`,
+        });
+      }
       if (body.data.kind === "runner_credential") {
         assertRunnerCredential(request.params.name, body.data.value);
       }

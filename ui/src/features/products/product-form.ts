@@ -8,6 +8,11 @@ export type ProductForm = {
   name: string;
   model: string;
   organizationSkillsRepository: string;
+  /** docs/specs/skill-registry.md. An empty URL means no registry. An empty set means every released skill. */
+  skillRegistryUrl: string;
+  skillRegistrySet: string;
+  /** A new service key. Empty keeps the stored one. */
+  skillRegistryKey: string;
   maxRunMinutes: string;
   silenceMinutes: string;
   sandboxRetentionHours: string;
@@ -26,6 +31,9 @@ export function formOf(p: Product): ProductForm {
     name: p.name,
     model: p.model ?? "",
     organizationSkillsRepository: p.organizationSkillsRepository ?? "",
+    skillRegistryUrl: p.skillRegistry?.url ?? "",
+    skillRegistrySet: p.skillRegistry?.set ?? "",
+    skillRegistryKey: "",
     maxRunMinutes: String(p.maxRunMinutes),
     silenceMinutes: String(p.silenceMinutes),
     sandboxRetentionHours: String(p.sandboxRetentionHours),
@@ -82,6 +90,9 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
   if (model && !/^[^\s/]+\/\S+$/.test(model)) problems.push("The model must have the form provider/model.");
   const skills = form.organizationSkillsRepository.trim();
   if (skills && !/^[^/]+\/[^/]+$/.test(skills)) problems.push("The skills repository must have the form owner/repository.");
+  const registryUrl = form.skillRegistryUrl.trim();
+  if (registryUrl && !/^https?:\/\/\S+$/.test(registryUrl)) problems.push("The skill registry URL must start with http:// or https://.");
+  if (!registryUrl && form.skillRegistrySet.trim()) problems.push("A skill set needs a skill registry URL.");
   if (!form.name.trim()) problems.push("The product needs a name.");
   if (problems.length > 0) return { problems };
   const effort = (role: Role) => form.effort[role].trim() || null;
@@ -90,6 +101,7 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       name: form.name.trim(),
       model: model || null,
       organizationSkillsRepository: skills || null,
+      skillRegistry: registryUrl ? { kind: "skael", url: registryUrl, set: form.skillRegistrySet.trim() || null } : null,
       maxRunMinutes,
       silenceMinutes,
       sandboxRetentionHours,

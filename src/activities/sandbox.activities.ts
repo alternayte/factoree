@@ -25,6 +25,9 @@ import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
 import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
+import type { RunSkillStore } from "~/domain/runs/run-skill.js";
+import type { SkillRegistrySettings, SkillResolution } from "~/domain/runs/skill-registry.js";
+import { asRunFault, registryOf, type SkillRegistryFactory } from "./skill-registry.activities.js";
 
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
@@ -39,6 +42,9 @@ export interface SandboxActivityDependencies {
   tokens: GitHubTokenProvider;
   /** docs/specs/run-speed.md. The stage rows of each run. */
   stages?: RunStageStore | undefined;
+  /** docs/specs/skill-registry.md. The skills of each run, and the adapter of each registry kind. */
+  skills?: RunSkillStore | undefined;
+  registries?: SkillRegistryFactory | undefined;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -53,6 +59,11 @@ export interface PrepareSandboxActivityInput {
   organizationSkills: RepositorySpec | null;
   /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
   githubInstallationId: string;
+  /**
+   * docs/specs/skill-registry.md. The skill registry of the Product, or null. Absent in a history
+   * recorded before the registry existed.
+   */
+  skillRegistry?: SkillRegistrySettings | null;
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -191,6 +202,36 @@ const build = async (
   }
   if (repositoryCredential !== null) dependencies.redactor.addSecret(repositoryCredential);
 
+  // docs/specs/skill-registry.md. The worker resolves the registry and checks every archive before
+  // the sandbox exists. Only the work sprite gets the skills, because only the implementer reads
+  // them. A fault that repeats on a retry is a configuration fault.
+  let registrySkills: SkillResolution | null = null;
+  if (beforeBootstrap === undefined) {
+    try {
+      const registry = await registryOf(
+        { secrets: dependencies.secrets, redactor: dependencies.redactor, logger: dependencies.logger, registries: dependencies.registries },
+        {
+          tenantId: input.tenantId,
+          productId: input.productId,
+          skillRegistry: input.skillRegistry ?? null,
+          githubInstallationId: input.githubInstallationId,
+        },
+      );
+      const delivery = registry === null ? null : await registry.resolve();
+      if (delivery?.kind === "archives") registrySkills = delivery.resolution;
+    } catch (error) {
+      throw asRunFault(error);
+    }
+    if (registrySkills !== null && !registrySkills.complete) {
+      dependencies.logger.warn("the skill registry left entries of the set out of the resolution", {
+        run_id: input.runId,
+        set: registrySkills.set,
+        resolution_id: registrySkills.id,
+        step: "prepare",
+      });
+    }
+  }
+
   const prepared = await dependencies.sandboxManager.prepare(
     {
     runId: input.runId,
@@ -202,6 +243,7 @@ const build = async (
     environment: { ...input.environment, ...runnerEnvironment },
     ...(repositoryCredential === null ? {} : { repositoryCredential }),
     ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
+    ...(registrySkills === null ? {} : { registrySkills }),
     // A check sprite applies a patch before its bootstrap. Only the work sprite hosts an agent
     // that checks its own work in a browser.
     browserTools: beforeBootstrap === undefined,
@@ -283,6 +325,10 @@ const prepare = async (
     );
     throw error;
   }
+
+  // docs/specs/skill-registry.md and SDD section 55. The run records each skill it received and
+  // the resolution that pins the registry versions. A retried preparation replaces the record.
+  await dependencies.skills?.replace(input.tenantId, input.runId, prepared.skillRecords, prepared.skillResolution);
 
   if (superseded.spriteId !== null && superseded.spriteId !== prepared.ref.id) {
     const staleId = superseded.spriteId;

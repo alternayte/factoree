@@ -43,6 +43,12 @@ import { createReviewActivities } from "./review.activities.js";
 import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
 import { createBuildAheadActivities } from "./build-ahead.activities.js";
+import type { RunSkillStore } from "~/domain/runs/run-skill.js";
+import {
+  createSkillRegistryActivities,
+  type OrganizationSkillsFactory,
+  type SkillRegistryFactory,
+} from "./skill-registry.activities.js";
 
 export interface ActivityDependencies {
   runs: RunRepository;
@@ -91,6 +97,10 @@ export interface ActivityDependencies {
   discoveryService: DiscoveryService;
   /** docs/specs/run-speed.md. The clone URL base of the install, for a build-ahead. */
   repositoryBaseUrl: () => Promise<string>;
+  /** docs/specs/skill-registry.md. The skills of each run, and the adapter of each skill source. */
+  skills?: RunSkillStore | undefined;
+  skillRegistries?: SkillRegistryFactory | undefined;
+  organizationSkills?: OrganizationSkillsFactory | undefined;
 }
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
@@ -113,6 +123,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     tokens: dependencies.tokens,
     stages: dependencies.stages,
+    skills: dependencies.skills,
+    registries: dependencies.skillRegistries,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,
@@ -124,6 +136,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     logger: dependencies.logger,
     evidence: dependencies.evidence,
+    skills: dependencies.skills,
+    registries: dependencies.skillRegistries,
   }),
   ...createRefinementActivities({
     refinement: dependencies.refinement,
@@ -210,6 +224,16 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     secrets: dependencies.secrets,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
+    skills: dependencies.skills,
+  }),
+  ...createSkillRegistryActivities({
+    sandbox: dependencies.sandbox,
+    secrets: dependencies.secrets,
+    redactor: dependencies.redactor,
+    logger: dependencies.logger,
+    skills: dependencies.skills,
+    registries: dependencies.skillRegistries,
+    organizationSkills: dependencies.organizationSkills,
   }),
   ...createVerificationActivities({
     sandbox: dependencies.sandbox,

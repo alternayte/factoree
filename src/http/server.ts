@@ -14,7 +14,7 @@ import type { DelegationService } from "~/domain/runs/delegation-service.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
-import { registerProductRoutes } from "./admin/products.routes.js";
+import { registerProductRoutes, type ProductRouteDependencies } from "./admin/products.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerProductSessionRoutes } from "./admin/product-sessions.routes.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
@@ -61,6 +61,8 @@ export interface ServerDependencies {
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
   /** docs/specs/run-speed.md. Requests a build-ahead when a bootstrap key changes. */
   buildAhead?: BuildAheadTrigger;
+  /** docs/specs/skill-registry.md. The save-time check of a Product skill registry. */
+  checkSkillRegistry?: ProductRouteDependencies["checkSkillRegistry"];
   /** docs/specs/proof-pack-and-visual-evidence.md. Records a pull request preview. */
   recordPullRequestPreview: GitHubWebhookDependencies["recordPullRequestPreview"];
   /** The GitHub and Linear calls of setup. */
@@ -144,6 +146,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         linearTeams: dependencies.linearTeams,
         runs: dependencies.runs,
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
+        ...(dependencies.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: dependencies.checkSkillRegistry }),
       });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
       registerRunRoutes(admin, {

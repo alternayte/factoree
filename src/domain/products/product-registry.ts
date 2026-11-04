@@ -1,3 +1,5 @@
+import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
+
 export interface ProductRecord {
   id: string;
   tenantId: string;
@@ -14,6 +16,8 @@ export interface ProductRecord {
   maxRunMinutes: number;
   /** Specification section 16. The organization-wide skills repository slug, or null. */
   organizationSkillsRepository: string | null;
+  /** docs/specs/skill-registry.md. The skill registry of the Product, or null. */
+  skillRegistry: SkillRegistrySettings | null;
   /** docs/specs/release-0-1-0.md. The opencode model as `provider/model`, or null for its default. */
   model: string | null;
   /** The reasoning effort of each role, or null for the CLI default. */
@@ -84,6 +88,8 @@ export interface ProductRegistry {
     id: string,
     organizationSkillsRepository: string | null,
   ): Promise<ProductRecord | null>;
+  /** docs/specs/skill-registry.md. Sets the skill registry of the Product, or clears it with null. */
+  updateSkillRegistry(tenantId: string, id: string, skillRegistry: SkillRegistrySettings | null): Promise<ProductRecord | null>;
   /**
    * F8. The replaced `PUT /admin/projects/:id` route let an operator change the name and the
    * maximum Run minutes. `PUT /admin/products/:id` must allow the same, because discovery owns

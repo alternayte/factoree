@@ -64,6 +64,7 @@ class FakeProductRegistry implements ProductRegistry {
       allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 60,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
+      skillRegistry: null,
       model: null,
       effort: { implementer: null, refiner: null, validator: null, reviewer: null },
       silenceMinutes: 10,
@@ -107,6 +108,10 @@ class FakeProductRegistry implements ProductRegistry {
 
   updateOrganizationSkillsRepository(): Promise<ProductRecord | null> {
     throw new Error("not used by this test");
+  }
+
+  updateSkillRegistry(): Promise<ProductRecord | null> {
+    return Promise.resolve(null);
   }
 
   updatePolicy(): Promise<ProductRecord | null> {

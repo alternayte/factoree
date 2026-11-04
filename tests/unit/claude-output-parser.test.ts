@@ -51,7 +51,7 @@ describe("parseClaudeOutput", () => {
   });
 
   it("reports nothing for empty output", () => {
-    expect(parseClaudeOutput("")).toEqual({ sessionId: null, summary: "", usage: null, model: null });
+    expect(parseClaudeOutput("")).toEqual({ sessionId: null, summary: "", usage: null, model: null, toolInputs: [] });
   });
 
   // docs/specs/agent-session-usage-and-hangs.md. The result event carries the usage and the cost.

@@ -706,6 +706,12 @@ export type CreateSetupProductResponses = {
     allowedDomains: Array<string>;
     maxRunMinutes: number;
     organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
     model: string | null;
     effort: {
       implementer: string | null;
@@ -845,6 +851,12 @@ export type ListProductsResponses = {
     allowedDomains: Array<string>;
     maxRunMinutes: number;
     organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
     model: string | null;
     effort: {
       implementer: string | null;
@@ -919,6 +931,12 @@ export type CreateProductResponses = {
     allowedDomains: Array<string>;
     maxRunMinutes: number;
     organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
     model: string | null;
     effort: {
       implementer: string | null;
@@ -1026,6 +1044,12 @@ export type GetProductResponses = {
     allowedDomains: Array<string>;
     maxRunMinutes: number;
     organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
     model: string | null;
     effort: {
       implementer: string | null;
@@ -1048,6 +1072,11 @@ export type UpdateProductData = {
     name?: string;
     maxRunMinutes?: number;
     organizationSkillsRepository?: string | null;
+    skillRegistry?: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
     defaultAutonomy?: "L0" | "L1" | "L2" | "L3";
     riskCaps?: {
       [key: string]: "L0" | "L1" | "L2" | "L3";
@@ -1121,6 +1150,12 @@ export type UpdateProductResponses = {
     allowedDomains: Array<string>;
     maxRunMinutes: number;
     organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
     model: string | null;
     effort: {
       implementer: string | null;
@@ -1193,6 +1228,12 @@ export type ActivateProductResponses = {
     allowedDomains: Array<string>;
     maxRunMinutes: number;
     organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
     model: string | null;
     effort: {
       implementer: string | null;

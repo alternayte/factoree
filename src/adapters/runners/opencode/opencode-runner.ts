@@ -119,7 +119,7 @@ export class OpenCodeRunner extends CliAgentRunner {
     const reading = readOpenCodeExport(result.stdout, context.counted);
     if (reading === null) return { usage: null, model: fallbackModel };
     for (const id of reading.messageIds) context.counted.add(id);
-    return { usage: reading.usage, model: reading.model ?? fallbackModel };
+    return { usage: reading.usage, model: reading.model ?? fallbackModel, toolInputs: reading.toolInputs };
   }
 
   protected startCommand(

@@ -9,6 +9,9 @@ import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.j
 import type { PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { FIXTURE_CONFIG, commitAll, initRepository } from "./support/fixture-repository.js";
+import { execFileSync } from "node:child_process";
+import { writeTarGz } from "~/adapters/skael/tar.js";
+import { resolutionIdOf, sha256Hex, type SkillResolution } from "~/domain/runs/skill-registry.js";
 
 /**
  * SDD section 64, AT-37. Repository and organization skills are discovered, each origin is
@@ -118,5 +121,71 @@ describe("AT-37 — skill discovery", () => {
     expect(built.prompt).toContain('Name conflict: "routes"');
     // SDD section 57. A skill overrides no higher rule, and the prompt says so.
     expect(built.prompt).toContain("SDD section 57 ranks a skill ninth");
+  });
+});
+
+describe("AT-37 — registry skills (docs/specs/skill-registry.md)", () => {
+  let root: string;
+  let sandboxRoot: string;
+  let manager: SandboxManager;
+  let prepared: PreparedSandbox;
+  let resolution: SkillResolution;
+
+  const archiveOf = (name: string, description: string): Uint8Array =>
+    writeTarGz([
+      { path: "SKILL.md", content: `---\nname: ${name}\ndescription: ${description}\n---\n\nThe body.\n` },
+      { path: "references/notes.md", content: "Notes.\n" },
+    ]);
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "factoree-at37r-repos-"));
+    sandboxRoot = await mkdtemp(join(tmpdir(), "factoree-at37r-sandboxes-"));
+    const primary = join(root, "primary");
+    await initRepository(primary);
+    await mkdir(join(primary, ".factoree"), { recursive: true });
+    await writeFile(join(primary, ".factoree", "config.yaml"), FIXTURE_CONFIG, "utf8");
+    await writeSkill(join(primary, ".agents/skills/routes/SKILL.md"), "routes", "The repository route rules.");
+    await commitAll(primary, "initial");
+
+    const skills = [
+      { name: "lint", version: 7, archive: archiveOf("lint", "Run the linter first.") },
+      { name: "routes", version: 3, archive: archiveOf("routes", "The registry route rules.") },
+    ].map((skill) => ({ ...skill, sha256: sha256Hex(skill.archive) }));
+    resolution = { set: "go-tools", id: resolutionIdOf(skills), complete: true, skills };
+
+    manager = new SandboxManager({ sandbox: new LocalProcessSandbox({ rootDirectory: sandboxRoot }), allowUnenforcedNetwork: true });
+    prepared = await manager.prepare({
+      runId: "run-at37r",
+      tenantId: "tenant-1",
+      productId: "project-1",
+      primary: { url: primary, ref: "main" },
+      references: [],
+      defaults: DEFAULT_PROJECT_DEFAULTS,
+      registrySkills: resolution,
+    });
+  });
+
+  afterAll(async () => {
+    await manager.release(prepared);
+    await rm(root, { recursive: true, force: true });
+    await rm(sandboxRoot, { recursive: true, force: true });
+  });
+
+  it("delivers the pinned skills outside the checkout, after the repository skills", () => {
+    const lint = prepared.skills.find((line) => line.startsWith("lint —"));
+    expect(lint).toContain("registry skill");
+    expect(lint).toContain(`${prepared.ref.workspacePath}/registry-skills/.agents/skills/lint/SKILL.md`);
+    // A repository skill precedes a registry skill of the same name, and the conflict is named.
+    expect(prepared.skills.find((line) => line.startsWith("routes —"))).toContain("repository skill");
+    expect(prepared.skills.some((line) => line.startsWith('Name conflict: "routes"'))).toBe(true);
+
+    // No registry skill reaches git status, so none can reach the verified patch.
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: prepared.checkout.primary.path, encoding: "utf8" });
+    expect(status).toBe("");
+
+    // SDD section 55. The record names the version and the digest of the registry skill.
+    expect(prepared.skillResolution).toEqual({ set: "go-tools", id: resolution.id });
+    const record = prepared.skillRecords.find((skill) => skill.name === "lint");
+    expect(record).toMatchObject({ scope: "registry", version: 7, sha256: resolution.skills[0]?.sha256, listed: true });
   });
 });

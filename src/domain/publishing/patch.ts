@@ -1,3 +1,4 @@
+import { SKILL_PROPOSALS_DIRECTORY } from "~/domain/runs/skill-registry.js";
 import { createHash } from "node:crypto";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -149,6 +150,10 @@ export const capturePatch = async (
   // SDD section 44 step 1. Staging changes no source file. It records what the worktree holds,
   // so a new file reaches the patch as well as a changed file.
   await git(dependencies, input, [...at, "add", "-A"]);
+  // docs/specs/skill-registry.md. A skill proposal is never part of the change. The index of its
+  // directory goes back to the base commit, so the pull request never holds it and the patch hash
+  // stays what publication reproduces (SDD section 44).
+  await git(dependencies, input, [...at, "reset", "-q", input.baseSha, "--", SKILL_PROPOSALS_DIRECTORY]);
 
   const names = await git(dependencies, input, [
     ...at,

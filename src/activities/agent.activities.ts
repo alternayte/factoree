@@ -17,6 +17,9 @@ import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { RunStageStore } from "~/domain/runs/run-stage.js";
+import type { RunSkillStore } from "~/domain/runs/run-skill.js";
+import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
+import { recordSessionActivations, type SkillRegistryFactory } from "./skill-registry.activities.js";
 
 export interface AgentActivityDependencies {
   runners: AgentRunnerRegistry;
@@ -30,6 +33,9 @@ export interface AgentActivityDependencies {
   redactor: Redactor;
   logger: Logger;
   evidence: EvidenceStore;
+  /** docs/specs/skill-registry.md. The skills of each run, and the adapter of each registry kind. */
+  skills?: RunSkillStore | undefined;
+  registries?: SkillRegistryFactory | undefined;
 }
 
 export interface ImplementActivityInput {
@@ -56,6 +62,13 @@ export interface ImplementActivityInput {
   repositoryInstructions: string;
   /** SDD sections 16 and 34. The applicable skills, as prompt lines. */
   skills: string[];
+  /**
+   * docs/specs/skill-registry.md. The skill registry of the Product, or null. Absent in a history
+   * recorded before the registry existed.
+   */
+  skillRegistry?: SkillRegistrySettings | null;
+  /** docs/specs/skill-registry.md. True when the Product has a source that takes a skill proposal. */
+  skillProposals?: boolean;
   repairFindings: string[];
   stagingRead: boolean;
   /**
@@ -170,6 +183,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,
       skills: input.skills,
+      skillProposals: input.skillProposals === true,
       actionPolicy,
       repairFindings: input.repairFindings,
       projectTestSecrets,
@@ -372,6 +386,28 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         sandboxId: input.spriteId,
       },
       [result],
+    );
+
+    // docs/specs/skill-registry.md. Which skills the session loaded. A fault here is logged and
+    // never fails the session.
+    await recordSessionActivations(
+      {
+        secrets: dependencies.secrets,
+        redactor: dependencies.redactor,
+        logger: dependencies.logger,
+        skills: dependencies.skills,
+        registries: dependencies.registries,
+      },
+      {
+        tenantId: input.tenantId,
+        productId: input.productId,
+        runId: input.runId,
+        attempt: input.attempt,
+        runner: runner.name,
+        skillRegistry: input.skillRegistry ?? null,
+        githubInstallationId: "",
+        toolInputs: result.toolInputs ?? [],
+      },
     );
 
     metrics.implementationDuration.observe(

@@ -39,7 +39,7 @@ describe("renderImplementerPrompt version guard", () => {
   });
 
   it("stamps the prompt version as a value that changes only with the template", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/7");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/8");
   });
 });
 
@@ -54,7 +54,7 @@ describe("renderImplementerPrompt skills", () => {
   });
 
   it("reports the prompt version 4", () => {
-    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/7");
+    expect(IMPLEMENTER_PROMPT_VERSION).toBe("implementer/8");
   });
 });
 

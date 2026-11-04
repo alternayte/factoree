@@ -29,6 +29,7 @@ import type {
 } from "~/activities/publishing.activities.js";
 import type { PublishProofPackActivityOutput } from "~/activities/evidence.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
+import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
@@ -91,6 +92,11 @@ export interface AgentRunProductInput {
   spriteRetentionHours: number;
   /** SDD section 16. The organization skills repository slug of the Product, or null. */
   organizationSkillsRepository: string | null;
+  /**
+   * docs/specs/skill-registry.md. The skill registry of the Product, or null. Absent in a history
+   * recorded before the registry existed.
+   */
+  skillRegistry?: SkillRegistrySettings | null;
 }
 
 /** SDD section 7. The Work Item text, exactly as the author wrote it. */
@@ -144,6 +150,9 @@ export interface RunSnapshot {
  * whose history began before this change replays the serial order.
  */
 const PARALLEL_REVIEW_PATCH = "run-speed-parallel-review";
+
+/** docs/specs/skill-registry.md. Skill proposals and the run outcome reach the skill sources. */
+const SKILL_REGISTRY_PATCH = "skill-registry-signals";
 
 /** docs/specs/run-speed.md. How the reviewer that runs beside user validation ended. */
 type ReviewBranchOutcome =
@@ -453,6 +462,16 @@ export async function agentRunWorkflow(
   let reviewSandbox: PrepareCheckSandboxActivityOutput | null = null;
   let liveReview: { scope: CancellationScope; branch: Promise<ReviewBranchOutcome> } | null = null;
   let implementerSession: AgentSessionRef | null = null;
+  // docs/specs/skill-registry.md. The skill sources of the Run, once the work sprite exists, and
+  // the facts its outcome report needs.
+  let skillSources: {
+    skillRegistry: SkillRegistrySettings | null;
+    organizationSkills: { slug: string; repository: { url: string; ref: string } } | null;
+    githubInstallationId: string;
+  } | null = null;
+  let skillProposalsSent = false;
+  let signalRepairs = 0;
+  let signalReviewVerdict: string | null = null;
   /** True once the implement activity itself has cancelled the live session. */
   let implementerCancelled = false;
   /** SDD section 23. Every answer a human gave to a question Factoree asked in this Run. */
@@ -547,7 +566,46 @@ export async function agentRunWorkflow(
           }),
         );
       }
+      // docs/specs/skill-registry.md. The proposal leaves the work sprite before the Run ends,
+      // whatever the outcome. Neither call can fail the Run.
+      const sources = skillSources;
+      const work = sprite;
+      if (sources !== null && work !== null && patched(SKILL_REGISTRY_PATCH)) {
+        if (!skillProposalsSent) await notify(() => sendSkillProposals(sources, work));
+      }
       await activities.completeRun(args);
+      if (sources !== null && patched(SKILL_REGISTRY_PATCH)) {
+        await notify(() =>
+          activities.reportSkillOutcome({
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runId: id,
+            ...sources,
+            outcome: args.status === "READY_FOR_HUMAN" ? "succeeded" : args.status === "CANCELLED" ? "cancelled" : "failed",
+            repairs: signalRepairs,
+            reviewVerdict: signalReviewVerdict,
+            evidenceUrl: input.workItem.url,
+          }),
+        );
+      }
+    });
+
+  const sendSkillProposals = (
+    sources: NonNullable<typeof skillSources>,
+    work: PrepareSandboxActivityOutput,
+  ): Promise<void> =>
+    activities.submitSkillProposals({
+      tenantId: input.tenantId,
+      productId: input.productId,
+      runId: id,
+      ...sources,
+      runLink: input.workItem.url,
+      work: {
+        spriteId: work.spriteId,
+        adapter: work.adapter,
+        workspacePath: work.workspacePath,
+        primaryPath: work.primaryPath,
+      },
     });
 
   const failRun = async (
@@ -834,6 +892,10 @@ export async function agentRunWorkflow(
         humanDecisions: [...humanInputs, ...factoreeDecisions.map(describeDecision)],
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
         skills: attemptInput.prepared.skills,
+        // docs/specs/skill-registry.md. The registry hears which skills the session loaded, and
+        // the implementer may propose one skill when a source takes it.
+        skillRegistry: input.product.skillRegistry ?? null,
+        skillProposals: (input.product.skillRegistry ?? null) !== null || input.product.organizationSkillsRepository !== null,
         repairFindings: attemptInput.repairFindings,
         stagingRead: attemptInput.prepared.runtime.stagingRead,
         // docs/specs/implementer-self-check.md. Facts only: the checks Factoree runs, and whether
@@ -1416,6 +1478,7 @@ export async function agentRunWorkflow(
         environment: {},
         organizationSkills: sandbox.organizationSkills,
         githubInstallationId: primaryRepositoryInstallationId,
+        skillRegistry: input.product.skillRegistry ?? null,
       };
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
@@ -1446,6 +1509,17 @@ export async function agentRunWorkflow(
         return await failRun("RUN_TIMEOUT", timeoutMessage);
       }
       sprite = preparedSandbox;
+      // docs/specs/skill-registry.md. A Product with no skill source sends no signal and no proposal.
+      if ((input.product.skillRegistry ?? null) !== null || sandbox.organizationSkills !== null) {
+        skillSources = {
+          skillRegistry: input.product.skillRegistry ?? null,
+          organizationSkills:
+            input.product.organizationSkillsRepository === null || sandbox.organizationSkills === null
+              ? null
+              : { slug: input.product.organizationSkillsRepository, repository: sandbox.organizationSkills },
+          githubInstallationId: primaryRepositoryInstallationId,
+        };
+      }
 
       // A stop that arrived during preparation must prevent the Implementer from starting.
       if (stopRequested) return await cancelRun();
@@ -1688,6 +1762,7 @@ export async function agentRunWorkflow(
           }
           await reportHang("implementer", implementerHang, "resumes it once");
           repairCount += 1;
+          signalRepairs = repairCount;
           attempt += 1;
           resumedAfterHang = true;
           continueSession = {
@@ -1809,6 +1884,7 @@ export async function agentRunWorkflow(
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
           repairCount += 1;
+          signalRepairs = repairCount;
           attempt += 1;
           repairFindings = verification.failures;
           status = "REPAIRING";
@@ -1982,6 +2058,7 @@ export async function agentRunWorkflow(
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
             repairCount += 1;
+            signalRepairs = repairCount;
             attempt += 1;
             repairFindings = [...userValidation.failures, ...reviewFindings];
             status = "REPAIRING";
@@ -2124,6 +2201,7 @@ export async function agentRunWorkflow(
           publishedValidationPassed = userValidation.passed;
           publishedBlockingCount = review.blockingCount;
           publishedReviewVerdict = review.verdict;
+          signalReviewVerdict = review.verdict;
           publishedReviewPasses = reviewPasses;
           publishedReviewAttempt = attempt;
           publishedPreviewUrl = userValidation.previewUrl;
@@ -2142,6 +2220,7 @@ export async function agentRunWorkflow(
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
 
         repairCount += 1;
+        signalRepairs = repairCount;
         attempt += 1;
         repairFindings = review.failures;
         status = "REPAIRING";
@@ -2304,6 +2383,13 @@ export async function agentRunWorkflow(
 
       // SDD section 47. One Proof Pack, built from persisted state, posted as the Linear final
       // response. SDD section 68 forbids READY_FOR_HUMAN without it.
+      // docs/specs/skill-registry.md. The proof pack lists the skill proposal, so it leaves first.
+      const proposalSources = skillSources;
+      if (proposalSources !== null && patched(SKILL_REGISTRY_PATCH)) {
+        await notify(() => sendSkillProposals(proposalSources, preparedSandbox));
+        skillProposalsSent = true;
+      }
+
       let proofPack: PublishProofPackActivityOutput;
       try {
         proofPack = await proofPackActivities.publishProofPack({

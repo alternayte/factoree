@@ -16,6 +16,8 @@ import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
+import type { RunSkillStore } from "~/domain/runs/run-skill.js";
+import { registrySkillUrl } from "~/domain/runs/skill-registry.js";
 import {
   buildProofPackDocument,
   defaultModelWarning,
@@ -163,6 +165,8 @@ export interface ProofPackActivityDependencies {
   secrets: SecretStore;
   redactor: Redactor;
   logger: Logger;
+  /** docs/specs/skill-registry.md. The skills and the skill proposals of each run. */
+  skills?: RunSkillStore | undefined;
 }
 
 export interface PublishProofPackActivityInput {
@@ -383,6 +387,9 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
             selectionReason: runTargets[0]?.selectionReason ?? "sole member",
           };
 
+    const skillRows = (await dependencies.skills?.list(input.tenantId, input.runId)) ?? [];
+    const proposalRows = (await dependencies.skills?.listProposals(input.tenantId, input.runId)) ?? [];
+
     // Issue 6, DI-15.17. Read from the stored Product and sessions, so no workflow input changes.
     const modelWarning =
       product === null
@@ -449,6 +456,25 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         .map((row) => ({ attempt: row.attempt, outcome: row.outcome }))
         .sort((left, right) => left.attempt - right.attempt),
       ...(routing === undefined ? {} : { routing }),
+      // docs/specs/skill-registry.md. The skills the implementer loaded, and its proposals.
+      skills: skillRows
+        .filter((skill) => skill.activated)
+        .map((skill) => ({
+          name: skill.name,
+          source: skill.scope,
+          version: skill.version,
+          url:
+            skill.scope === "registry" && product?.skillRegistry != null
+              ? registrySkillUrl(product.skillRegistry, skill.name)
+              : null,
+        })),
+      skillProposals: proposalRows.map((proposal) => ({
+        name: proposal.name,
+        source: proposal.source,
+        state: proposal.state,
+        url: proposal.url,
+        reason: proposal.reason,
+      })),
     };
 
     // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.

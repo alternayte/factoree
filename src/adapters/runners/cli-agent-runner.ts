@@ -59,6 +59,8 @@ export interface CliUsageContext {
 export interface CliUsageReading {
   usage: AgentSessionUsage | null;
   model: string | null;
+  /** docs/specs/skill-registry.md. The input of every tool call of the invocation, as JSON. */
+  toolInputs?: string[];
 }
 
 /**
@@ -459,6 +461,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       usage: reading.usage,
       model: reading.model,
       effort: live.settings.effort,
+      toolInputs: reading.toolInputs ?? [],
     };
   }
 

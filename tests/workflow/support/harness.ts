@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
+import type { SkillOutcomeInput, SubmitSkillProposalsInput } from "~/activities/skill-registry.activities.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Context } from "@temporalio/activity";
@@ -290,6 +291,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const publishCalls: PublishActivityInput[] = [];
   /** Every recorded `publishProofPack` call, in order. */
   const proofPackCalls: PublishProofPackActivityInput[] = [];
+  /** docs/specs/skill-registry.md. Every recorded skill proposal and outcome call, in order. */
+  const skillProposalCalls: SubmitSkillProposalsInput[] = [];
+  const skillOutcomeCalls: SkillOutcomeInput[] = [];
   /** A run id in this map replaces the `publishProofPack` result. The function can also throw. */
   const proofPackOutcomes = new Map<string, () => PublishProofPackActivityOutput>();
   /** A run id in this map holds `publishProofPack` until the promise resolves. */
@@ -833,6 +837,16 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         baseMove: baseMoves.get(activityInput.runId) ?? null,
       };
     },
+    submitSkillProposals: (activityInput: SubmitSkillProposalsInput): Promise<void> => {
+      activityOrder.push("submitSkillProposals");
+      skillProposalCalls.push(activityInput);
+      return Promise.resolve();
+    },
+    reportSkillOutcome: (activityInput: SkillOutcomeInput): Promise<void> => {
+      activityOrder.push("reportSkillOutcome");
+      skillOutcomeCalls.push(activityInput);
+      return Promise.resolve();
+    },
     publishProofPack: async (
       activityInput: PublishProofPackActivityInput,
     ): Promise<PublishProofPackActivityOutput> => {
@@ -1011,6 +1025,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     publishCalls,
     heldPublishes,
     proofPackCalls,
+    skillProposalCalls,
+    skillOutcomeCalls,
     proofPackOutcomes,
     heldProofPacks,
     recordRunTargetCalls,

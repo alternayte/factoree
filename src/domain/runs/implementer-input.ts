@@ -12,6 +12,8 @@ export interface BuildImplementerInput {
   referenceRepositoryPaths: string[];
   repositoryInstructions: string;
   skills: string[];
+  /** docs/specs/skill-registry.md. True when the Product has a source that takes a skill proposal. */
+  skillProposals?: boolean;
   actionPolicy: ActionPolicy;
   repairFindings: string[];
   /** Non-production Project test secrets only. See SDD section 30. */
@@ -182,6 +184,7 @@ export const buildImplementerInput = (input: BuildImplementerInput): Implementer
       referenceRepositoryPaths: input.referenceRepositoryPaths,
       repositoryInstructions: input.repositoryInstructions,
       skills: input.skills,
+      skillProposals: input.skillProposals === true,
       verifyCommands: input.verifyCommands ?? [],
       selfCheck: input.selfCheck === true,
       actionPolicyLines: input.actionPolicy.describe(),

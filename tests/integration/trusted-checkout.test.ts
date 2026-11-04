@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -309,5 +309,31 @@ describe("the review name query and the publication name query", () => {
     // The commit sits on the verified base, not on the moved head.
     const parent = execFileSync("git", ["rev-parse", "factoree/run-moved^"], { cwd: bare, encoding: "utf8" }).trim();
     expect(parent).toBe(baseSha);
+  });
+});
+
+describe("capturePatch (docs/specs/skill-registry.md)", () => {
+  it("leaves a skill proposal out of the verified patch, even when the agent staged it", async () => {
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "factoree-proposal-"));
+    const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
+    const ref = await sandbox.create({ runId: "run-proposal", tenantId: "tenant-1", productId: "project-1" });
+    const primaryPath = `${ref.workspacePath}/primary`;
+    try {
+      execFileSync("git", ["clone", bare, primaryPath]);
+      // An earlier case moved main, so the worktree goes back to the base.
+      git(primaryPath, "checkout", "-q", baseSha);
+      writeFileSync(join(primaryPath, "README.md"), "base\nchanged\n");
+      mkdirSync(join(primaryPath, ".factoree/skill-proposals/lint"), { recursive: true });
+      writeFileSync(join(primaryPath, ".factoree/skill-proposals/lint/SKILL.md"), "---\nname: lint\n---\n");
+      git(primaryPath, "add", "-A");
+
+      const patch = await capturePatch({ sandbox, redactor: new Redactor([]) }, { ref, primaryPath, baseSha });
+
+      expect(patch.changedFiles).toEqual(["README.md"]);
+      expect(Buffer.from(patch.patchBase64, "base64").toString("utf8")).not.toContain("skill-proposals");
+    } finally {
+      await sandbox.destroy(ref);
+      rmSync(sandboxRoot, { recursive: true, force: true });
+    }
   });
 });

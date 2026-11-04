@@ -157,3 +157,46 @@ describe("AT-30 — the Proof Pack completes a successful Run", () => {
     expect(body).toContain("https://github.com/acme/fixture/pull/1");
   });
 });
+
+// docs/specs/skill-registry.md. The proposal leaves the work sprite before the Proof Pack names it,
+// and the registry hears how the Run ended.
+describe("the skill registry signals of a Run", () => {
+  it("sends the skill proposal before the Proof Pack and reports the outcome after the Run ends", async () => {
+    const runId = "run-ses-skills";
+    const orderBefore = activityOrder.length;
+    const result = await runWorker(async () =>
+      (
+        await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "ses-skills"),
+          args: [
+            {
+              ...input("ses-skills"),
+              product: { ...input("ses-skills").product, skillRegistry: { kind: "skael", url: "https://skael.test", set: "go-tools" } },
+            },
+          ],
+        })
+      ).result(),
+    );
+
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    const order = activityOrder.slice(orderBefore);
+    expect(order.indexOf("submitSkillProposals")).toBeLessThan(order.indexOf("publishProofPack"));
+    expect(order.filter((name) => name === "submitSkillProposals")).toHaveLength(1);
+    expect(order.at(-1)).toBe("reportSkillOutcome");
+    expect(harness.skillOutcomeCalls.find((call) => call.runId === runId)).toMatchObject({
+      outcome: "succeeded",
+      repairs: 0,
+      reviewVerdict: "pass",
+      skillRegistry: { kind: "skael", url: "https://skael.test", set: "go-tools" },
+    });
+  });
+
+  it("sends nothing for a Product with no skill source", async () => {
+    const orderBefore = activityOrder.length;
+    await runWorker(async () => (await startRun("ses-no-skills")).result());
+    const order = activityOrder.slice(orderBefore);
+    expect(order).not.toContain("submitSkillProposals");
+    expect(order).not.toContain("reportSkillOutcome");
+  });
+});

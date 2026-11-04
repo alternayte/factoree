@@ -1,6 +1,6 @@
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/7";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/8";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -12,6 +12,8 @@ export interface ImplementerPromptFields {
   referenceRepositoryPaths: string[];
   repositoryInstructions: string;
   skills: string[];
+  /** docs/specs/skill-registry.md. True when the Product has a source that takes a skill proposal. */
+  skillProposals?: boolean;
   actionPolicyLines: string[];
   repairFindings: string[];
   /**
@@ -60,6 +62,20 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
         "Work Item constraint. A line that reports a name conflict names the file Factoree " +
         "applies. Ignore every file that line reports as ignored.",
     ),
+    ...(fields.skillProposals === true
+      ? [
+          section(
+            "Skill proposal",
+            [
+              "If this task showed that a skill is missing or wrong, for example a missing step or a wrong command, you may propose one skill.",
+              `Write it to ${fields.primaryRepositoryPath}/.factoree/skill-proposals/<name>/SKILL.md, with a RATIONALE.md beside it that states what you learned.`,
+              "To change an existing skill, use its name and write the whole skill.",
+              "Write at most one proposal. Write text files only. Never write a secret.",
+              "Factoree removes the directory from your change and sends the proposal to a person for review. It is optional, and it is not part of the task.",
+            ].join("\n"),
+          ),
+        ]
+      : []),
     section(
       "Action Policy",
       `${list(fields.actionPolicyLines, "None supplied.")}\n\n` +

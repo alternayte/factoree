@@ -58,6 +58,7 @@ class FakeProductRegistry implements ProductRegistry {
       allowedDomains: [],
       maxRunMinutes: input.maxRunMinutes ?? 90,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
+      skillRegistry: null,
       model: null,
       effort: { implementer: null, refiner: null, validator: null, reviewer: null },
       silenceMinutes: 10,
@@ -107,6 +108,14 @@ class FakeProductRegistry implements ProductRegistry {
     const row = this.rows.get(id);
     if (!row || row.tenantId !== tenantId) return Promise.resolve(null);
     const updated = { ...row, organizationSkillsRepository };
+    this.rows.set(id, updated);
+    return Promise.resolve(updated);
+  }
+
+  updateSkillRegistry(tenantId: string, id: string, skillRegistry: ProductRecord["skillRegistry"]): Promise<ProductRecord | null> {
+    const row = this.rows.get(id);
+    if (!row || row.tenantId !== tenantId) return Promise.resolve(null);
+    const updated = { ...row, skillRegistry };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
   }
@@ -252,7 +261,12 @@ class FakeRunRepository {
   }
 }
 
-const build = (options: { teamKeyResolves?: boolean } = {}) => {
+const build = (
+  options: {
+    teamKeyResolves?: boolean;
+    checkSkillRegistry?: (settings: { set: string | null }, key: string) => Promise<{ skills: number }>;
+  } = {},
+) => {
   const products = new FakeProductRegistry();
   const repositories = new FakeRepositoryRegistry();
   const secrets = new FakeSecretStore();
@@ -268,6 +282,7 @@ const build = (options: { teamKeyResolves?: boolean } = {}) => {
     secrets,
     linearTeams,
     runs: runs as unknown as RunRepository,
+    ...(options.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: options.checkSkillRegistry }),
   });
 
   return { app, products, repositories, secrets, runs };
@@ -550,5 +565,65 @@ describe("Products administration API", () => {
     expect(response.statusCode).toBe(400);
     expect(response.body).toContain("GitHub or a Linear credential");
     expect(response.body).not.toContain("a".repeat(36));
+  });
+
+  // docs/specs/skill-registry.md. A wrong registry fails at save time, not in a run.
+  describe("the skill registry setting", () => {
+    const createProduct = async (app: FastifyInstance): Promise<string> => {
+      const created = await app.inject({
+        method: "POST",
+        url: "/admin/products",
+        payload: { linearWorkspaceId: "ws-1", slug: "shop", name: "Shop", linearTeamKey: "SHP" },
+      });
+      return created.json<{ id: string }>().id;
+    };
+    const save = (app: FastifyInstance, id: string, set: string | null) =>
+      app.inject({
+        method: "PUT",
+        url: `/admin/products/${id}?linearWorkspaceId=ws-1`,
+        payload: { skillRegistry: { kind: "skael", url: "https://skael.test", set } },
+      });
+
+    it("refuses a set that does not resolve and keeps the old setting", async () => {
+      const { app, secrets, products } = build({
+        checkSkillRegistry: (settings) =>
+          settings.set === "go-tools" ? Promise.resolve({ skills: 3 }) : Promise.reject(new Error("Skael answered 404")),
+      });
+      const id = await createProduct(app);
+      await secrets.put("tenant-1", id, "SKILL_REGISTRY_KEY", "sk-1");
+      expect((await save(app, id, "go-tools")).statusCode).toBe(200);
+
+      const refused = await save(app, id, "missing");
+
+      expect(refused.statusCode).toBe(422);
+      expect(refused.json<{ error: string }>().error).toContain("404");
+      expect((await products.findById("tenant-1", id))?.skillRegistry).toEqual({
+        kind: "skael",
+        url: "https://skael.test",
+        set: "go-tools",
+      });
+    });
+
+    it("warns when every released skill is more than a run lists", async () => {
+      const { app, secrets } = build({ checkSkillRegistry: () => Promise.resolve({ skills: 70 }) });
+      const id = await createProduct(app);
+      await secrets.put("tenant-1", id, "SKILL_REGISTRY_KEY", "sk-1");
+
+      const saved = await save(app, id, null);
+
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json<{ skillRegistryWarning: string }>().skillRegistryWarning).toContain("70 released skills");
+    });
+
+    it("refuses the registry key with the injection mark", async () => {
+      const { app } = build();
+      const id = await createProduct(app);
+      const response = await app.inject({
+        method: "PUT",
+        url: `/admin/products/${id}/secrets/SKILL_REGISTRY_KEY?linearWorkspaceId=ws-1`,
+        payload: { value: "sk-1", kind: "test", injectIntoImplementer: true },
+      });
+      expect(response.statusCode).toBe(400);
+    });
   });
 });

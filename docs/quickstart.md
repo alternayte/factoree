@@ -278,6 +278,26 @@ the level of one ticket, add the Linear label `factoree:l0`, `factoree:l1` or
 
 With no model and no key, opencode uses its own default model.
 
+### 6.1 A skill registry
+
+`docs/specs/skill-registry.md` defines it. A Product can name one Skael server
+in the Skill registry section of its page.
+
+1. In Skael, create a service account. Give its key the scopes `sets:read`,
+   `events:write`, `outcomes:write` and `submissions:write`. To give every
+   released skill, add `skills:read` and do not limit the key to a set.
+2. On the Product page, enter the registry URL, the set name and the service
+   key. Leave the set name empty to give every released skill.
+3. Select Save product. Factoree stores the key as the secret
+   `SKILL_REGISTRY_KEY`, resolves the registry once and refuses a setting
+   that does not resolve.
+
+For each Run, the worker resolves the set, checks the SHA-256 of every
+archive and unpacks the skills outside the repository checkout. The sandbox
+gets no key and no route to Skael. The Run records the set, the resolution id
+and each skill version. Skael receives the skills each session loaded, the Run
+outcome, and the one skill proposal the implementer may write.
+
 ## 7. Register the context sources
 
 `tests/live/scenario.ts` refuses to start unless the Product carries one

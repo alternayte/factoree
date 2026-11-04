@@ -94,6 +94,6 @@ export class ClaudeCodeRunner extends CliAgentRunner {
    */
   protected readUsage(context: CliUsageContext): Promise<CliUsageReading> {
     const parsed = parseClaudeOutput(context.output);
-    return Promise.resolve({ usage: parsed.usage, model: parsed.model });
+    return Promise.resolve({ usage: parsed.usage, model: parsed.model, toolInputs: parsed.toolInputs });
   }
 }

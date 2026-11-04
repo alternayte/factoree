@@ -165,7 +165,7 @@ describe("resolveSkills", () => {
 
 describe("renderSkillLines", () => {
   it("reports no skill as one plain line", () => {
-    expect(renderSkillLines({ skills: [], conflicts: [], droppedForLimit: 0 })).toEqual([]);
+    expect(renderSkillLines({ skills: [], available: [], conflicts: [], droppedForLimit: 0 })).toEqual([]);
   });
 
   it("names the skill, the description, the scope, and the path", () => {

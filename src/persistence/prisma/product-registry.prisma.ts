@@ -20,6 +20,11 @@ import type {
   SecretStore,
 } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS } from "~/domain/products/secret-store.js";
+import {
+  SKILL_REGISTRY_KINDS,
+  type SkillRegistryKind,
+  type SkillRegistrySettings,
+} from "~/domain/runs/skill-registry.js";
 import type {
   InstallationInput,
   InstallationRecord,
@@ -48,6 +53,9 @@ type ProductRow = {
   allowedDomains: string[];
   maxRunMinutes: number;
   organizationSkillsRepository: string | null;
+  skillRegistryKind: string | null;
+  skillRegistryUrl: string | null;
+  skillRegistrySet: string | null;
   model: string | null;
   effortImplementer: string | null;
   effortRefiner: string | null;
@@ -70,10 +78,26 @@ const toRiskCaps = (value: Prisma.JsonValue | null): Record<string, string> | nu
   return caps;
 };
 
+/** A row with an unknown kind or no URL has no usable registry, so it reads as none. */
+const toSkillRegistry = (kind: string | null, url: string | null, set: string | null): SkillRegistrySettings | null =>
+  url !== null && (SKILL_REGISTRY_KINDS as readonly (string | null)[]).includes(kind)
+    ? { kind: kind as SkillRegistryKind, url, set }
+    : null;
+
 const toProduct = (row: ProductRow): ProductRecord => {
-  const { effortImplementer, effortRefiner, effortValidator, effortReviewer, ...rest } = row;
+  const {
+    effortImplementer,
+    effortRefiner,
+    effortValidator,
+    effortReviewer,
+    skillRegistryKind,
+    skillRegistryUrl,
+    skillRegistrySet,
+    ...rest
+  } = row;
   return {
     ...rest,
+    skillRegistry: toSkillRegistry(skillRegistryKind, skillRegistryUrl, skillRegistrySet),
     riskCaps: toRiskCaps(row.riskCaps),
     status: row.status === "active" ? "active" : "pending",
     effort: {
@@ -182,6 +206,24 @@ export class PrismaProductRegistry implements ProductRegistry {
     const row = await this.prisma.product.update({
       where: { id },
       data: { organizationSkillsRepository },
+    });
+    return toProduct(row);
+  }
+
+  async updateSkillRegistry(
+    tenantId: string,
+    id: string,
+    skillRegistry: SkillRegistrySettings | null,
+  ): Promise<ProductRecord | null> {
+    const existing = await this.findById(tenantId, id);
+    if (!existing) return null;
+    const row = await this.prisma.product.update({
+      where: { id },
+      data: {
+        skillRegistryKind: skillRegistry?.kind ?? null,
+        skillRegistryUrl: skillRegistry?.url ?? null,
+        skillRegistrySet: skillRegistry?.set ?? null,
+      },
     });
     return toProduct(row);
   }

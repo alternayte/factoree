@@ -12,7 +12,21 @@ export interface OpenCodeExportUsage {
   model: string | null;
   /** The identifiers of the messages this reading counted. */
   messageIds: string[];
+  /** docs/specs/skill-registry.md. The tool name and input of every tool part it counted, as JSON. */
+  toolInputs: string[];
 }
+
+/** The tool name and the input of every tool part of one message, as JSON. */
+const toolInputsOf = (parts: unknown): string[] => {
+  if (!Array.isArray(parts)) return [];
+  const inputs: string[] = [];
+  for (const part of parts) {
+    if (!isRecord(part) || part["type"] !== "tool") continue;
+    const state = isRecord(part["state"]) ? part["state"] : {};
+    inputs.push(JSON.stringify({ name: part["tool"], input: state["input"] }));
+  }
+  return inputs;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -92,6 +106,7 @@ export const readOpenCodeExport = (text: string, counted: ReadonlySet<string>): 
   };
   let model: string | null = null;
   const messageIds: string[] = [];
+  const toolInputs: string[] = [];
 
   messages.forEach((message: unknown, index) => {
     if (!isRecord(message)) return;
@@ -101,6 +116,7 @@ export const readOpenCodeExport = (text: string, counted: ReadonlySet<string>): 
     const id = typeof info["id"] === "string" ? info["id"] : `#${index}`;
     if (counted.has(id)) return;
     messageIds.push(id);
+    toolInputs.push(...toolInputsOf(message["parts"]));
     usage.turns = (usage.turns ?? 0) + 1;
     usage.costUsd = add(usage.costUsd, numberOf(info["cost"]));
     const tokens = isRecord(info["tokens"]) ? info["tokens"] : {};
@@ -134,7 +150,8 @@ export const readOpenCodeExport = (text: string, counted: ReadonlySet<string>): 
       usage: { ...usage, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 },
       model,
       messageIds,
+      toolInputs,
     };
   }
-  return { usage, model, messageIds };
+  return { usage, model, messageIds, toolInputs };
 };

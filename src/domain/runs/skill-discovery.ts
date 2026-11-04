@@ -16,7 +16,8 @@ export const MAX_SKILLS = 50;
 /** The largest description that reaches one prompt line. */
 export const MAX_DESCRIPTION_CHARACTERS = 300;
 
-export type SkillScope = "repository" | "organization";
+/** docs/specs/skill-registry.md. A registry skill ranks after a repository skill and before an organization skill. */
+export type SkillScope = "repository" | "registry" | "organization";
 
 /** SDD section 16 requires that skill origin is recorded. This type is that record. */
 export interface SkillOrigin {
@@ -46,6 +47,11 @@ export interface SkillConflict {
 
 export interface SkillSet {
   skills: DiscoveredSkill[];
+  /**
+   * docs/specs/skill-registry.md. Every applied skill in precedence order, before the cap. A skill
+   * the cap left out of the prompt is still on disk, and the agent can open it.
+   */
+  available: DiscoveredSkill[];
   conflicts: SkillConflict[];
   /** The number of distinct skill names that `MAX_SKILLS` removed. */
   droppedForLimit: number;
@@ -135,13 +141,13 @@ export const resolveSkills = (candidates: DiscoveredSkill[]): SkillSet => {
 
   return {
     skills: kept,
+    available: precedenceOrdered,
     conflicts,
     droppedForLimit: precedenceOrdered.length - kept.length,
   };
 };
 
-const scopeWord = (scope: SkillScope): string =>
-  scope === "repository" ? "repository skill" : "organization skill";
+const scopeWord = (scope: SkillScope): string => `${scope} skill`;
 
 /**
  * Renders the prompt lines of one skill set. The body of a skill never appears here. A body can
@@ -167,9 +173,20 @@ export const renderSkillLines = (set: SkillSet): string[] => {
   }
 
   if (set.droppedForLimit > 0) {
+    // docs/specs/skill-registry.md. The skills the cap left out are still on disk. The agent finds
+    // them with `ls` and `grep`, and each `SKILL.md` states its description in its frontmatter.
+    const kept = new Set(set.skills.map((entry) => entry.name));
+    const directories = [
+      ...new Set(
+        set.available
+          .filter((entry) => !kept.has(entry.name))
+          .map((entry) => `${entry.origin.root.replace(/\/+$/, "")}/${entry.origin.directory}`),
+      ),
+    ];
     lines.push(
       `Factoree found ${set.droppedForLimit} further skills and did not list them. ` +
-        `The limit is ${MAX_SKILLS} skills.`,
+        `The limit is ${MAX_SKILLS} skills. They are in ${directories.join(", ")}. ` +
+        "Each one is a directory with a SKILL.md whose frontmatter states its description.",
     );
   }
 

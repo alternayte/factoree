@@ -7,7 +7,8 @@ import {
   removeReferences,
   withoutUrlCredentials,
 } from "./checkout.js";
-import { renderSkillLines } from "./skill-discovery.js";
+import { renderSkillLines, SKILL_DIRECTORIES, type SkillScope, type SkillSet } from "./skill-discovery.js";
+import type { SkillResolution } from "./skill-registry.js";
 import type { SkillRoot } from "./skill-source.js";
 import { discoverSkills } from "./skill-source.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
@@ -33,6 +34,11 @@ export interface PrepareSandboxInput {
   environment?: Record<string, string>;
   /** SDD section 16. The organization-wide skills repository of the Project, when it has one. */
   organizationSkills?: RepositorySpec;
+  /**
+   * docs/specs/skill-registry.md. The skill resolution of the registry, with archives the worker
+   * already checked. Only a work sprite gets it, because only the implementer receives skills.
+   */
+  registrySkills?: SkillResolution;
   /**
    * A read-only repository credential, for a private repository. It reaches one git command at a
    * time and never stays inside the sandbox. SDD section 30 forbids a write credential here.
@@ -81,7 +87,44 @@ export interface PreparedSandbox {
   organizationSkillsSha?: string;
   /** True when agent-browser is installed for the implementer's self-check. */
   selfCheckReady: boolean;
+  /** docs/specs/skill-registry.md. Every applied skill of the sandbox, listed in the prompt or not. */
+  skillRecords: DeliveredSkill[];
+  /** docs/specs/skill-registry.md. The registry resolution the sandbox holds, or null. */
+  skillResolution: { set: string | null; id: string } | null;
 }
+
+/** docs/specs/skill-registry.md. One skill that reached a sandbox. SDD section 55 records it. */
+export interface DeliveredSkill {
+  scope: SkillScope;
+  name: string;
+  /** The absolute path of its `SKILL.md`. An activation names this path. */
+  path: string;
+  /** The registry version and archive digest, or null for a skill from a checkout. */
+  version: number | null;
+  sha256: string | null;
+  /** True when the implementer prompt lists the skill. */
+  listed: boolean;
+}
+
+/** The directory of the registry skills, beside the organization skills checkout. */
+export const REGISTRY_SKILLS_DIRECTORY = "registry-skills";
+
+/** docs/specs/skill-registry.md. The record of each applied skill, with its registry version. */
+export const deliveredSkillsOf = (set: SkillSet, resolution: SkillResolution | null): DeliveredSkill[] => {
+  const pinned = new Map((resolution?.skills ?? []).map((skill) => [skill.name, skill]));
+  const listed = new Set(set.skills.map((entry) => entry.name));
+  return set.available.map((entry) => {
+    const registry = entry.origin.scope === "registry" ? pinned.get(entry.origin.name) : undefined;
+    return {
+      scope: entry.origin.scope,
+      name: entry.name,
+      path: entry.origin.path,
+      version: registry?.version ?? null,
+      sha256: registry?.sha256 ?? null,
+      listed: listed.has(entry.name),
+    };
+  });
+};
 
 export interface SandboxManagerOptions {
   sandbox: Sandbox;
@@ -437,9 +480,16 @@ export class SandboxManager {
       // SDD section 16. Discovery runs on the checkouts, in precedence order. A repository skill
       // always precedes an organization skill of the same name. Discovery needs no egress, so it
       // runs after the policy is narrowed.
+      // docs/specs/skill-registry.md. The registry skills rank after the repository skills and
+      // before the organization skills. They live outside the checkout, so no registry skill
+      // reaches `git status` or the verified patch.
+      const registryRoot =
+        input.registrySkills === undefined ? null : await this.deliverRegistrySkills(sandbox, ref, input.registrySkills);
       const roots: SkillRoot[] = [{ scope: "repository", path: primary.path }];
+      if (registryRoot !== null) roots.push({ scope: "registry", path: registryRoot });
       if (organizationSkills !== null) roots.push({ scope: "organization", path: organizationSkills.path });
-      const skills = renderSkillLines(await discoverSkills(sandbox, ref, roots, this.options.logger));
+      const skillSet = await discoverSkills(sandbox, ref, roots, this.options.logger);
+      const skills = renderSkillLines(skillSet);
 
       const baselineCheckpoint = sandbox.capabilities.supportsCheckpoints
         ? await sandbox.checkpoint(ref, "baseline")
@@ -456,6 +506,9 @@ export class SandboxManager {
         skills,
         ...(organizationSkills === null ? {} : { organizationSkillsSha: organizationSkills.baseSha }),
         selfCheckReady,
+        skillRecords: deliveredSkillsOf(skillSet, input.registrySkills ?? null),
+        skillResolution:
+          input.registrySkills === undefined ? null : { set: input.registrySkills.set, id: input.registrySkills.id },
       };
     } catch (error) {
       // A half-prepared sandbox must not leak. Destruction is idempotent, and a destroy failure
@@ -469,6 +522,36 @@ export class SandboxManager {
    * Waits for the browser tool install. A failed or slow install costs the implementer its
    * self-check and nothing else, because the self-check is never evidence. The log names why.
    */
+  /**
+   * docs/specs/skill-registry.md. Unpacks each checked archive into its own directory below
+   * `registry-skills/.agents/skills`, then makes the tree read-only. `Sandbox.writeFile` carries
+   * text, so each archive travels as base64 and `base64 -d` restores the bytes. The registry
+   * adapter already refused an archive with a link or an entry outside its root.
+   */
+  private async deliverRegistrySkills(sandbox: Sandbox, ref: SandboxRef, resolution: SkillResolution): Promise<string> {
+    const root = `${ref.workspacePath}/${REGISTRY_SKILLS_DIRECTORY}`;
+    const skillsDirectory = `${root}/${SKILL_DIRECTORIES[0]}`;
+    const staging = `${root}/.archives`;
+    const exec = async (args: string[], what: string): Promise<void> => {
+      const result = await sandbox.exec(ref, { file: "sh", args: ["-c", ...args], cwd: "/" });
+      if (result.exitCode !== 0) {
+        throw new Error(`${what} failed with exit code ${result.exitCode}: ${result.stderr.trim()}`);
+      }
+    };
+    await exec(['mkdir -p -- "$0" "$1"', skillsDirectory, staging], "creating the registry skills directory");
+    for (const skill of resolution.skills) {
+      const encoded = `${staging}/${skill.name}.b64`;
+      await sandbox.writeFile(ref, encoded, Buffer.from(skill.archive).toString("base64"));
+      await exec(
+        ['mkdir -p -- "$1" && base64 -d < "$0" | tar -xzf - --no-same-owner --no-same-permissions -C "$1"', encoded, `${skillsDirectory}/${skill.name}`],
+        `unpacking the registry skill "${skill.name}"`,
+      );
+    }
+    // SDD section 29 denies writing what the agent must only read. This is a file mode.
+    await exec(['rm -rf -- "$1" && chmod -R a-w "$0"', root, staging], "closing the registry skills directory");
+    return root;
+  }
+
   private async awaitBrowserTools(ref: SandboxRef, install: ProcessRef, runId: string): Promise<boolean> {
     const sandbox = this.options.sandbox;
     const deadline = Date.now() + BROWSER_TOOLS_WAIT_MS;

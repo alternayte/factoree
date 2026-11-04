@@ -94,6 +94,10 @@ model Run {
   spriteRetainUntil        DateTime?
   baseSha                  String?
   organizationSkillsSha    String?
+  // docs/specs/skill-registry.md. The registry set the run used, null for every released skill,
+  // and the resolution id that pins each version. Both stay null without a registry.
+  skillRegistrySet         String?   @map("skill_registry_set")
+  skillResolutionId        String?   @map("skill_resolution_id")
   // Specification section 8. The SHA-256 of .factoree/config.yaml, read from the target
   // repository at the Run's base commit. Null until context resolution pins that commit.
   configSha                 String?
@@ -118,6 +122,8 @@ model Run {
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   stages                   RunStage[]
+  skills                   RunSkill[]
+  skillProposals           RunSkillProposal[]
   evidence                 Evidence[]
   contextContract          ContextContract?
   validationContract       ValidationContract?
@@ -207,6 +213,47 @@ model RunStage {
 
   @@index([runId])
   @@map("run_stage")
+}
+
+// docs/specs/skill-registry.md. One row per skill a run received. SDD section 55.
+model RunSkill {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  runId     String  @map("run_id")
+  run       Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // repository, registry or organization.
+  source    String
+  name      String
+  path      String
+  // The registry version and archive digest. Null for a skill from a checkout.
+  version   Int?
+  sha256    String?
+  // True when the implementer prompt lists the skill.
+  listed    Boolean
+  activated Boolean @default(false)
+
+  @@unique([runId, path])
+  @@map("run_skill")
+}
+
+// docs/specs/skill-registry.md. One row per skill proposal of a run.
+model RunSkillProposal {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  runId     String   @map("run_id")
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  name      String
+  // registry or organization.
+  source    String
+  // submitted, refused or failed.
+  state     String
+  reference String?
+  url       String?
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([runId, name, source])
+  @@map("run_skill_proposal")
 }
 
 model Evidence {
@@ -476,6 +523,12 @@ model Product {
   // SDD section 16. A Product can define one organization-wide skills repository. The value is
   // an owner and repository slug, the same shape a Repository's `fullName` uses.
   organizationSkillsRepository String?
+  // docs/specs/skill-registry.md. The skill registry of this Product: its kind, its base URL and
+  // its set. A null set means every released skill. The service key is the Product secret
+  // SKILL_REGISTRY_KEY, never a column.
+  skillRegistryKind String? @map("skill_registry_kind")
+  skillRegistryUrl  String? @map("skill_registry_url")
+  skillRegistrySet  String? @map("skill_registry_set")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   repositories   Repository[]

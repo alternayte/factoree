@@ -82,6 +82,11 @@ export interface AgentRunResult {
   model: string | null;
   /** The reasoning effort the runner asked for, or null for the CLI default. */
   effort: string | null;
+  /**
+   * docs/specs/skill-registry.md. The input of every tool call, as JSON, read from the CLI record.
+   * It never leaves the worker: the activity reads it to find which skills the session loaded.
+   */
+  toolInputs?: string[];
 }
 
 /**
