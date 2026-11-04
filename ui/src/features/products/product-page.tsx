@@ -50,7 +50,7 @@ export function ProductPage({ productId, ws }: { productId: string; ws?: string 
     </Link>
   );
   return (
-    <div className="max-w-[640px]">
+    <div>
       {!workspace ? (
         <>
           <PageHeader crumb={back} title="Product" />
@@ -201,8 +201,9 @@ function ProductEditor({
       {product.status === "pending" ? (
         <ActivateProduct product={product} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
       ) : null}
+      {/* docs/specs/run-visibility.md. On a desktop the sections sit in two columns. */}
       <form
-        className="stagger flex flex-col gap-4"
+        className="stagger grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start"
         onSubmit={(event) => {
           event.preventDefault();
           setAttempted(true);
@@ -210,175 +211,178 @@ function ProductEditor({
           save.mutate();
         }}
       >
-        <Section title="General">
-          <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
-            <Field label="Name">
-              {(props) => (
-                <Input
-                  {...props}
-                  required
-                  disabled={disabled}
-                  value={form.name}
-                  onChange={(e) => set("name", e.target.value)}
-                />
-              )}
-            </Field>
-            <Field label="Model" hint={form.model.trim() ? "provider/model." : `Default: ${DEFAULT_MODEL}.`}>
-              {(props) => (
-                <Input
-                  {...props}
-                  mono
-                  disabled={disabled}
-                  placeholder="provider/model"
-                  value={form.model}
-                  onChange={(e) => set("model", e.target.value)}
-                />
-              )}
-            </Field>
-            <Field label="Organization skills repository" hint="owner/repository. Empty for none.">
-              {(props) => (
-                <Input
-                  {...props}
-                  mono
-                  disabled={disabled}
-                  placeholder="acme/skills"
-                  value={form.organizationSkillsRepository}
-                  onChange={(e) => set("organizationSkillsRepository", e.target.value)}
-                />
-              )}
-            </Field>
-          </div>
-          {/* The warning follows the saved model, so it never flickers while the operator types. */}
-          {product.model === null && hasRunnerCredential !== undefined ? (
-            <ModelWarning hasRunnerCredential={hasRunnerCredential} className="mt-4" />
-          ) : null}
-        </Section>
-
-        <Section
-          title="Limits"
-          description="Runs over the parallel limit wait in a queue and start in delegation order."
-        >
-          <div className="grid grid-cols-2 items-end gap-x-4 gap-y-3.5 sm:grid-cols-4">
-            {LIMITS.map((limit) => (
-              <Field key={limit.key} label={limit.label} hint={`${limit.min} to ${limit.max}`}>
+        <div className="flex min-w-0 flex-col gap-4">
+          <Section title="General">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
+              <Field label="Name">
                 {(props) => (
                   <Input
                     {...props}
-                    type="number"
                     required
-                    min={limit.min}
-                    max={limit.max}
-                    step={1}
                     disabled={disabled}
-                    value={String(form[limit.key])}
-                    onChange={(e) => set(limit.key, e.target.value as never)}
+                    value={form.name}
+                    onChange={(e) => set("name", e.target.value)}
                   />
                 )}
               </Field>
-            ))}
-          </div>
-        </Section>
-
-        <EffortSection form={form} setForm={setForm} disabled={disabled} />
-
-        <Section
-          title="Skill registry"
-          description="Factoree resolves the registry on the worker for each run, checks every digest, and gives the skills to the implementer. A Skael server is the one registry kind."
-        >
-          <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
-            <Field label="Registry URL" hint="Empty for no registry.">
-              {(props) => (
-                <Input
-                  {...props}
-                  mono
-                  disabled={disabled}
-                  placeholder="https://skael.example.com"
-                  value={form.skillRegistryUrl}
-                  onChange={(e) => set("skillRegistryUrl", e.target.value)}
-                />
-              )}
-            </Field>
-            <Field label="Set" hint="Empty gives every released skill.">
-              {(props) => (
-                <Input
-                  {...props}
-                  mono
-                  disabled={disabled}
-                  placeholder="all released skills"
-                  value={form.skillRegistrySet}
-                  onChange={(e) => set("skillRegistrySet", e.target.value)}
-                />
-              )}
-            </Field>
-            <Field
-              label="Service key"
-              hint={hasRegistryKey ? "Stored. Enter a new key to replace it." : "Stored as the secret SKILL_REGISTRY_KEY. It never reaches a sandbox."}
-            >
-              {(props) => (
-                <Input
-                  {...props}
-                  type="password"
-                  autoComplete="off"
-                  mono
-                  disabled={disabled}
-                  value={form.skillRegistryKey}
-                  onChange={(e) => set("skillRegistryKey", e.target.value)}
-                />
-              )}
-            </Field>
-          </div>
-          {registryWarning ? (
-            <Alert tone="warning" className="mt-4">
-              {registryWarning}
-            </Alert>
-          ) : null}
-        </Section>
-
-        <Section
-          title="Policy"
-          description="The default autonomy, the risk caps per Linear label, and the domains agents may reach."
-        >
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-4">
-              <Field
-                label="Default autonomy"
-                help={<AutonomyHelp />}
-                hint={levelHelp(form.defaultAutonomy).detail}
-              >
+              <Field label="Model" hint={form.model.trim() ? "provider/model." : `Default: ${DEFAULT_MODEL}.`}>
                 {(props) => (
-                  <Select
+                  <Input
                     {...props}
+                    mono
                     disabled={disabled}
-                    value={form.defaultAutonomy}
-                    onChange={(e) => set("defaultAutonomy", e.target.value as AutonomyLevel)}
-                  >
-                    <AutonomyOptions />
-                  </Select>
+                    placeholder="provider/model"
+                    value={form.model}
+                    onChange={(e) => set("model", e.target.value)}
+                  />
                 )}
               </Field>
-              <RiskCaps value={form.riskCaps} onChange={(caps) => set("riskCaps", caps)} disabled={disabled} />
+              <Field label="Organization skills repository" hint="owner/repository. Empty for none.">
+                {(props) => (
+                  <Input
+                    {...props}
+                    mono
+                    disabled={disabled}
+                    placeholder="acme/skills"
+                    value={form.organizationSkillsRepository}
+                    onChange={(e) => set("organizationSkillsRepository", e.target.value)}
+                  />
+                )}
+              </Field>
             </div>
-            <Field
-              label="Allowed domains"
-              help={<AllowedDomainsHelp />}
-              hint="One domain per line. Agents reach only these hosts."
-            >
-              {(props) => (
-                <Textarea
-                  {...props}
-                  rows={7}
-                  mono
-                  disabled={disabled}
-                  value={form.allowedDomains}
-                  onChange={(e) => set("allowedDomains", e.target.value)}
-                />
-              )}
-            </Field>
-          </div>
-        </Section>
+            {/* The warning follows the saved model, so it never flickers while the operator types. */}
+            {product.model === null && hasRunnerCredential !== undefined ? (
+              <ModelWarning hasRunnerCredential={hasRunnerCredential} className="mt-4" />
+            ) : null}
+          </Section>
+
+          <EffortSection form={form} setForm={setForm} disabled={disabled} />
+
+          <Section
+            title="Policy"
+            description="The default autonomy, the risk caps per Linear label, and the domains agents may reach."
+          >
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-4">
+                <Field
+                  label="Default autonomy"
+                  help={<AutonomyHelp />}
+                  hint={levelHelp(form.defaultAutonomy).detail}
+                >
+                  {(props) => (
+                    <Select
+                      {...props}
+                      disabled={disabled}
+                      value={form.defaultAutonomy}
+                      onChange={(e) => set("defaultAutonomy", e.target.value as AutonomyLevel)}
+                    >
+                      <AutonomyOptions />
+                    </Select>
+                  )}
+                </Field>
+                <RiskCaps value={form.riskCaps} onChange={(caps) => set("riskCaps", caps)} disabled={disabled} />
+              </div>
+              <Field
+                label="Allowed domains"
+                help={<AllowedDomainsHelp />}
+                hint="One domain per line. Agents reach only these hosts."
+              >
+                {(props) => (
+                  <Textarea
+                    {...props}
+                    rows={7}
+                    mono
+                    disabled={disabled}
+                    value={form.allowedDomains}
+                    onChange={(e) => set("allowedDomains", e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
+          </Section>
+        </div>
+        <div className="flex min-w-0 flex-col gap-4">
+          <Section
+            title="Limits"
+            description="Runs over the parallel limit wait in a queue and start in delegation order."
+          >
+            <div className="grid grid-cols-2 items-end gap-x-4 gap-y-3.5 sm:grid-cols-4">
+              {LIMITS.map((limit) => (
+                <Field key={limit.key} label={limit.label} hint={`${limit.min} to ${limit.max}`}>
+                  {(props) => (
+                    <Input
+                      {...props}
+                      type="number"
+                      required
+                      min={limit.min}
+                      max={limit.max}
+                      step={1}
+                      disabled={disabled}
+                      value={String(form[limit.key])}
+                      onChange={(e) => set(limit.key, e.target.value as never)}
+                    />
+                  )}
+                </Field>
+              ))}
+            </div>
+          </Section>
+
+          <Section
+            title="Skill registry"
+            description="Factoree resolves the registry on the worker for each run, checks every digest, and gives the skills to the implementer. A Skael server is the one registry kind."
+          >
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
+              <Field label="Registry URL" hint="Empty for no registry.">
+                {(props) => (
+                  <Input
+                    {...props}
+                    mono
+                    disabled={disabled}
+                    placeholder="https://skael.example.com"
+                    value={form.skillRegistryUrl}
+                    onChange={(e) => set("skillRegistryUrl", e.target.value)}
+                  />
+                )}
+              </Field>
+              <Field label="Set" hint="Empty gives every released skill.">
+                {(props) => (
+                  <Input
+                    {...props}
+                    mono
+                    disabled={disabled}
+                    placeholder="all released skills"
+                    value={form.skillRegistrySet}
+                    onChange={(e) => set("skillRegistrySet", e.target.value)}
+                  />
+                )}
+              </Field>
+              <Field
+                label="Service key"
+                hint={hasRegistryKey ? "Stored. Enter a new key to replace it." : "Stored as the secret SKILL_REGISTRY_KEY. It never reaches a sandbox."}
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    type="password"
+                    autoComplete="off"
+                    mono
+                    disabled={disabled}
+                    value={form.skillRegistryKey}
+                    onChange={(e) => set("skillRegistryKey", e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
+            {registryWarning ? (
+              <Alert tone="warning" className="mt-4">
+                {registryWarning}
+              </Alert>
+            ) : null}
+          </Section>
+        </div>
 
         {problems.length > 0 ? (
-          <Alert tone="danger" title="Fix these before you save">
+          <Alert tone="danger" title="Fix these before you save" className="lg:col-span-2">
             <ul className="list-disc pl-4">
               {problems.map((p) => (
                 <li key={p}>{p}</li>
@@ -386,9 +390,9 @@ function ProductEditor({
             </ul>
           </Alert>
         ) : null}
-        <ErrorAlert error={save.error} />
+        <ErrorAlert error={save.error} className="lg:col-span-2" />
         {canEdit ? (
-          <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-3 border-t border-hairline bg-canvas px-1 py-3">
+          <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-3 border-t border-hairline bg-canvas px-1 py-3 lg:col-span-2">
             {/* One primary action per view: a pending product's primary action is Activate. */}
             <Button
               type="submit"
@@ -407,10 +411,12 @@ function ProductEditor({
         ) : null}
       </form>
 
-      <div className="mt-4 flex flex-col gap-4">
-        <SecretsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <div className="flex min-w-0 flex-col gap-4">
+          <SecretsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+          <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
+        </div>
         <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
-        <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
       </div>
 
       <Section title="Details" className="mt-4">

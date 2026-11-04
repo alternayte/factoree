@@ -31,6 +31,14 @@ temporal:
     existingSecret: ""
     key: api-key
 
+# docs/specs/run-visibility.md. The Temporal UI, read-only, behind the API at /temporal for a
+# signed-in Linear workspace admin. It has a ClusterIP Service and no Ingress. Turn it off for a
+# Temporal service that needs an API key, which this UI does not send.
+temporalUi:
+  enabled: true
+  image: temporalio/ui:2.56.0
+  resources: {}
+
 # FACTOREE_PUBLIC_URL: the external base URL for setup, sign-in and the Linear and GitHub webhooks.
 publicURL: http://localhost:3000
 

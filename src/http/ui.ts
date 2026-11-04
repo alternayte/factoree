@@ -7,14 +7,18 @@ import fastifyStatic from "@fastify/static";
 export const CONTENT_SECURITY_POLICY = "default-src 'self'";
 
 /** Paths the API owns. A miss under one of them is a 404, never the UI shell. */
-const API_PREFIXES = ["/api/", "/admin/", "/webhooks/", "/documentation"];
+const API_PREFIXES = ["/api/", "/admin/", "/webhooks/", "/documentation", "/temporal"];
+
+/** docs/specs/run-visibility.md. The proxied Temporal UI sends its own headers and inline scripts. */
+const isTemporalUi = (url: string): boolean => url === "/temporal" || url.startsWith("/temporal/") || url.startsWith("/temporal?");
 
 /**
  * Serves the Vite build of `ui/` from the API origin, so one image and one port carry both. A
  * browser path the API does not own gets `index.html`, and the client router takes it from there.
  */
 export const registerUi = (app: FastifyInstance, root: string): boolean => {
-  app.addHook("onSend", async (_request, reply, payload) => {
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (isTemporalUi(request.url)) return payload;
     reply.header("Content-Security-Policy", CONTENT_SECURITY_POLICY);
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "same-origin");

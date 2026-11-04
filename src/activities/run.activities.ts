@@ -95,6 +95,8 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     runId: string;
     status: RunStatus;
     failureReason?: RunFailureReason;
+    /** docs/specs/run-visibility.md. The sentence the human read. Absent in an older history. */
+    failureMessage?: string;
     completedAt: string;
   }): Promise<void> {
     const before = await dependencies.runs.findById(input.tenantId, input.runId);
@@ -105,6 +107,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
       ...(failureCategory === undefined ? {} : { failureCategory }),
+      ...(input.failureMessage === undefined ? {} : { failureMessage: input.failureMessage }),
       completedAt: new Date(input.completedAt),
     });
     const labels = { tenant_id: run.tenantId, product_id: run.productId };

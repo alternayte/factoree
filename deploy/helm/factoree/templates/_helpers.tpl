@@ -61,6 +61,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
   value: {{ .Values.service.port | quote }}
 - name: FACTOREE_LOG_LEVEL
   value: {{ .Values.logLevel | quote }}
+{{- if .Values.temporalUi.enabled }}
+- name: FACTOREE_TEMPORAL_UI_URL
+  value: {{ printf "http://%s-temporal-ui:8080" (include "factoree.fullname" .) | quote }}
+{{- end }}
 {{- with .Values.extraEnv }}
 {{ toYaml . }}
 {{- end }}

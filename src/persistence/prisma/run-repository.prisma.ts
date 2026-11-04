@@ -67,6 +67,8 @@ export class PrismaRunRepository implements RunRepository {
           linearAgentSessionId: input.linearAgentSessionId,
           temporalWorkflowId: input.temporalWorkflowId,
           autonomyLevel: input.autonomyLevel,
+          workItemTitle: input.workItemTitle ?? null,
+          workItemUrl: input.workItemUrl ?? null,
           status: "RECEIVED",
         },
       });
@@ -104,6 +106,7 @@ export class PrismaRunRepository implements RunRepository {
         ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
         ...(patch.completedAt === undefined ? {} : { completedAt: patch.completedAt }),
         ...(patch.repairCount === undefined ? {} : { repairCount: patch.repairCount }),
+        ...(patch.failureMessage === undefined ? {} : { failureMessage: patch.failureMessage }),
       },
     });
     return toRecord(row);

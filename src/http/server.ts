@@ -16,6 +16,8 @@ import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProductRoutes, type ProductRouteDependencies } from "./admin/products.routes.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
+import { registerTemporalUi } from "./admin/temporal-ui.routes.js";
+import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { registerProductSessionRoutes } from "./admin/product-sessions.routes.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
@@ -61,6 +63,8 @@ export interface ServerDependencies {
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
   /** docs/specs/run-speed.md. Requests a build-ahead when a bootstrap key changes. */
   buildAhead?: BuildAheadTrigger;
+  /** docs/specs/run-visibility.md. The Temporal UI inside the stack, or absent for none. */
+  temporalUiUrl?: string | undefined;
   /** docs/specs/skill-registry.md. The save-time check of a Product skill registry. */
   checkSkillRegistry?: ProductRouteDependencies["checkSkillRegistry"];
   /** docs/specs/proof-pack-and-visual-evidence.md. Records a pull request preview. */
@@ -131,6 +135,14 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       ...dependencies.setup,
     });
 
+    registerTemporalUi(root, {
+      auth: dependencies.auth,
+      prisma: dependencies.prisma,
+      settings: dependencies.settings,
+      logger: dependencies.logger,
+      upstream: dependencies.temporalUiUrl ?? null,
+    });
+
     void root.register((admin) => {
       registerAdminGuard(admin, {
         auth: dependencies.auth,
@@ -150,9 +162,8 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
       registerRunRoutes(admin, {
-        runs: dependencies.runs,
         tenants: dependencies.tenants,
-        sessions,
+        runViews: new PrismaRunViewReader(dependencies.prisma),
       });
       registerProductSessionRoutes(admin, {
         products: dependencies.products,

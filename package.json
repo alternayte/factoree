@@ -29,6 +29,7 @@
   "dependencies": {
     "@better-auth/api-key": "^1.7.14",
     "@better-auth/prisma-adapter": "^1.7.14",
+    "@fastify/http-proxy": "11.6.5",
     "@fastify/static": "^10.1.8",
     "@fastify/swagger": "^9.9.2",
     "@fly/sprites": "^0.2.0",

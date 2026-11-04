@@ -281,6 +281,12 @@ the level of one ticket, add the Linear label `factoree:l0`, `factoree:l1` or
 
 With no model and no key, opencode uses its own default model.
 
+The **Runs** page lists every run of a workspace. A run page shows why the
+run ended, where its time went and what it cost. An admin also opens the
+workflow of a run in the Temporal UI at `<FACTOREE_PUBLIC_URL>/temporal`,
+read-only, with the same sign-in. The compose file runs the Temporal UI with
+no published port.
+
 ### 6.1 A skill registry
 
 `docs/specs/skill-registry.md` defines it. A Product can name one Skael server

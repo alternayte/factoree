@@ -169,6 +169,7 @@ const app = buildServer({
   discovery,
   startInstallationSync,
   buildAhead,
+  temporalUiUrl: env.FACTOREE_TEMPORAL_UI_URL,
   // docs/specs/skill-registry.md. Skael is the one registry kind.
   checkSkillRegistry: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }).check(),
   recordPullRequestPreview,

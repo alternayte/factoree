@@ -1360,6 +1360,185 @@ export type PutProductSecretResponses = {
 
 export type PutProductSecretResponse = PutProductSecretResponses[keyof PutProductSecretResponses];
 
+export type ListRunsData = {
+  body?: never;
+  path?: never;
+  query: {
+    linearWorkspaceId: string;
+    productId?: string;
+    status?: string;
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/admin/runs";
+};
+
+export type ListRunsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRunsError = ListRunsErrors[keyof ListRunsErrors];
+
+export type ListRunsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    items: Array<{
+      id: string;
+      productId: string;
+      productSlug: string;
+      productName: string;
+      status: string;
+      failureReason: string | null;
+      failureMessage: string | null;
+      workItemTitle: string | null;
+      workItemUrl: string | null;
+      pullRequestUrl: string | null;
+      repairCount: number;
+      repairLimit: number | null;
+      costUsd: number | null;
+      createdAt: string;
+      completedAt: string | null;
+      durationMs: number | null;
+    }>;
+    nextCursor: string | null;
+  };
+};
+
+export type ListRunsResponse = ListRunsResponses[keyof ListRunsResponses];
+
+export type GetRunData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/runs/{id}";
+};
+
+export type GetRunErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetRunError = GetRunErrors[keyof GetRunErrors];
+
+export type GetRunResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    productId: string;
+    productSlug: string;
+    productName: string;
+    status: string;
+    failureReason: string | null;
+    failureMessage: string | null;
+    workItemTitle: string | null;
+    workItemUrl: string | null;
+    pullRequestUrl: string | null;
+    repairCount: number;
+    repairLimit: number | null;
+    costUsd: number | null;
+    createdAt: string;
+    completedAt: string | null;
+    durationMs: number | null;
+    temporalWorkflowId: string;
+    autonomyLevel: string;
+    baseSha: string | null;
+    commitSha: string | null;
+    patchSha256: string | null;
+    skillRegistrySet: string | null;
+    skillResolutionId: string | null;
+    proofPackPostedAt: string | null;
+    proofPackDocument: unknown;
+    stages: Array<{
+      stage: string;
+      attempt: number;
+      sandboxId: string | null;
+      startedAt: string;
+      endedAt: string;
+    }>;
+    sessions: Array<{
+      role: string;
+      attempt: number;
+      runner: string;
+      model: string | null;
+      effort: string | null;
+      outcome: string;
+      durationMs: number;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      reasoningTokens: number | null;
+      cacheReadTokens: number | null;
+      costUsd: number | null;
+      turns: number | null;
+      modelMs: number | null;
+      toolMs: number | null;
+      createdAt: string;
+    }>;
+    assertions: Array<{
+      key: string;
+      attempt: number;
+      method: string;
+      statement: string;
+      result: string;
+      reason: string;
+    }>;
+    findings: Array<{
+      attempt: number;
+      key: string;
+      severity: string;
+      category: string;
+      evidence: string;
+      description: string;
+      blocking: boolean;
+      decisionReason: string;
+    }>;
+    skills: Array<{
+      source: string;
+      name: string;
+      version: number | null;
+      listed: boolean;
+      activated: boolean;
+    }>;
+    skillProposals: Array<{
+      name: string;
+      source: string;
+      state: string;
+      url: string | null;
+      reason: string | null;
+    }>;
+  };
+};
+
+export type GetRunResponse = GetRunResponses[keyof GetRunResponses];
+
 export type ListProductAgentSessionsData = {
   body?: never;
   path: {

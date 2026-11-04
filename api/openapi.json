@@ -4662,6 +4662,742 @@
         }
       }
     },
+    "/admin/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "productId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "productSlug": {
+                            "type": "string"
+                          },
+                          "productName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "failureReason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "failureMessage": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "workItemTitle": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "workItemUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "pullRequestUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "repairCount": {
+                            "type": "number"
+                          },
+                          "repairLimit": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "costUsd": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "completedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "durationMs": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "productSlug",
+                          "productName",
+                          "status",
+                          "failureReason",
+                          "failureMessage",
+                          "workItemTitle",
+                          "workItemUrl",
+                          "pullRequestUrl",
+                          "repairCount",
+                          "repairLimit",
+                          "costUsd",
+                          "createdAt",
+                          "completedAt",
+                          "durationMs"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/runs/{id}": {
+      "get": {
+        "operationId": "getRun",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "productSlug": {
+                      "type": "string"
+                    },
+                    "productName": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "failureReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "failureMessage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "workItemTitle": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "workItemUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "pullRequestUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "repairCount": {
+                      "type": "number"
+                    },
+                    "repairLimit": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "costUsd": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "completedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "durationMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "temporalWorkflowId": {
+                      "type": "string"
+                    },
+                    "autonomyLevel": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "commitSha": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "patchSha256": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "skillRegistrySet": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "skillResolutionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "proofPackPostedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "proofPackDocument": {},
+                    "stages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "stage": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "sandboxId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "endedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "stage",
+                          "attempt",
+                          "sandboxId",
+                          "startedAt",
+                          "endedAt"
+                        ]
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "runner": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "effort": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "inputTokens": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "outputTokens": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "reasoningTokens": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "cacheReadTokens": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "costUsd": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "turns": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "modelMs": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "toolMs": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "attempt",
+                          "runner",
+                          "model",
+                          "effort",
+                          "outcome",
+                          "durationMs",
+                          "inputTokens",
+                          "outputTokens",
+                          "reasoningTokens",
+                          "cacheReadTokens",
+                          "costUsd",
+                          "turns",
+                          "modelMs",
+                          "toolMs",
+                          "createdAt"
+                        ]
+                      }
+                    },
+                    "assertions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "method": {
+                            "type": "string"
+                          },
+                          "statement": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "attempt",
+                          "method",
+                          "statement",
+                          "result",
+                          "reason"
+                        ]
+                      }
+                    },
+                    "findings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "severity": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "evidence": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "blocking": {
+                            "type": "boolean"
+                          },
+                          "decisionReason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "attempt",
+                          "key",
+                          "severity",
+                          "category",
+                          "evidence",
+                          "description",
+                          "blocking",
+                          "decisionReason"
+                        ]
+                      }
+                    },
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "listed": {
+                            "type": "boolean"
+                          },
+                          "activated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "name",
+                          "version",
+                          "listed",
+                          "activated"
+                        ]
+                      }
+                    },
+                    "skillProposals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "source",
+                          "state",
+                          "url",
+                          "reason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "productId",
+                    "productSlug",
+                    "productName",
+                    "status",
+                    "failureReason",
+                    "failureMessage",
+                    "workItemTitle",
+                    "workItemUrl",
+                    "pullRequestUrl",
+                    "repairCount",
+                    "repairLimit",
+                    "costUsd",
+                    "createdAt",
+                    "completedAt",
+                    "durationMs",
+                    "temporalWorkflowId",
+                    "autonomyLevel",
+                    "baseSha",
+                    "commitSha",
+                    "patchSha256",
+                    "skillRegistrySet",
+                    "skillResolutionId",
+                    "proofPackPostedAt",
+                    "proofPackDocument",
+                    "stages",
+                    "sessions",
+                    "assertions",
+                    "findings",
+                    "skills",
+                    "skillProposals"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/products/{id}/agent-sessions": {
       "get": {
         "operationId": "listProductAgentSessions",

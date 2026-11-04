@@ -46,6 +46,9 @@ import type {
   GetProductData,
   GetProductErrors,
   GetProductResponses,
+  GetRunData,
+  GetRunErrors,
+  GetRunResponses,
   GetSetupStateData,
   GetSetupStateResponses,
   GetSetupStatusData,
@@ -68,6 +71,9 @@ import type {
   ListProductSecretsResponses,
   ListProductsErrors,
   ListProductsResponses,
+  ListRunsData,
+  ListRunsErrors,
+  ListRunsResponses,
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsErrors,
   ListSetupLinearTeamsResponses,
@@ -518,6 +524,46 @@ export const putProductSecret = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+export const listRuns = <ThrowOnError extends boolean = false>(
+  options: Options<ListRunsData, ThrowOnError>,
+): RequestResult<ListRunsResponses, ListRunsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRunsResponses, ListRunsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/runs",
+    ...options,
+  });
+
+export const getRun = <ThrowOnError extends boolean = false>(
+  options: Options<GetRunData, ThrowOnError>,
+): RequestResult<GetRunResponses, GetRunErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetRunResponses, GetRunErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/runs/{id}",
+    ...options,
   });
 
 export const listProductAgentSessions = <ThrowOnError extends boolean = false>(

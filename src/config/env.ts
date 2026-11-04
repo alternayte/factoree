@@ -28,6 +28,9 @@ const schema = z
       .url()
       .transform((value) => value.replace(/\/+$/, "")),
     FACTOREE_PORT: z.coerce.number().int().positive().default(3000),
+    // docs/specs/run-visibility.md. The Temporal UI inside the stack, for example
+    // http://temporal-ui:8080. Unset means /temporal answers 404.
+    FACTOREE_TEMPORAL_UI_URL: z.string().url().optional(),
     FACTOREE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
     // Test only. The local sandbox runs the agent as the worker user, and that user can read the
     // worker environment, which holds the master key. Only a developer machine may accept that,

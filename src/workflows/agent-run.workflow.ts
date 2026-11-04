@@ -531,6 +531,9 @@ export async function agentRunWorkflow(
     linearAgentSessionId: input.agentSessionId,
     temporalWorkflowId: buildWorkflowId(input.workspaceId, input.agentSessionId),
     autonomyLevel: input.autonomyLevel,
+    // docs/specs/run-visibility.md. The run list names the issue.
+    workItemTitle: input.workItem.title,
+    workItemUrl: input.workItem.url,
   });
   runId = created.runId;
   // A const holds the identifier, because narrowing of a let does not survive into a closure.
@@ -658,6 +661,7 @@ export async function agentRunWorkflow(
       runId: id,
       status,
       failureReason,
+      failureMessage: message,
       completedAt: new Date(Date.now()).toISOString(),
     });
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message }));

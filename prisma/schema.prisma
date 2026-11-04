@@ -85,6 +85,11 @@ model Run {
   status                   String
   failureReason            String?
   failureCategory          String?
+  // docs/specs/run-visibility.md. The sentence that told the human why the run ended, and the
+  // work item title and URL, so a run list names the issue. Null on a run from before them.
+  failureMessage           String?   @map("failure_message")
+  workItemTitle            String?   @map("work_item_title")
+  workItemUrl              String?   @map("work_item_url")
   autonomyLevel            String
   implementerRunner        String?
   validatorRunner          String?

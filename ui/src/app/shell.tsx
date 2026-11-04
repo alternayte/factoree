@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Boxes, Building2, KeyRound, LogOut, Settings2 } from "lucide-react";
+import { Activity, Boxes, Building2, KeyRound, LogOut, Settings2 } from "lucide-react";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Brand } from "@/app/brand";
 import { Button } from "@/components/button";
@@ -10,6 +10,7 @@ import { signOut } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 const nav = [
+  { to: "/runs", label: "Runs", Icon: Activity },
   { to: "/products", label: "Products", Icon: Boxes },
   { to: "/workspaces", label: "Workspaces", Icon: Building2 },
   { to: "/settings/install", label: "Install settings", Icon: Settings2 },
@@ -65,7 +66,8 @@ export function Frame({
         {footer ? <div className="col-span-2 mt-2 px-1 sm:mt-auto sm:pt-4">{footer}</div> : null}
       </aside>
       <main className="vt-main min-w-0 px-5 py-5 sm:px-8 sm:py-7">
-        <div className={cn("min-w-0", narrow ? "max-w-[640px]" : "max-w-[960px]")}>{children}</div>
+        {/* docs/specs/run-visibility.md. The content grows to 1440px and stays centered, as in Sluice. */}
+        <div className={cn("mx-auto w-full min-w-0", narrow ? "max-w-[640px]" : "max-w-[1440px]")}>{children}</div>
       </main>
     </div>
   );

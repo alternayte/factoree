@@ -31,14 +31,14 @@ export function InstallSettingsPage() {
         </Alert>
       ) : null}
       {settings.isPending ? (
-        <Stack className="max-w-[640px]">
+        <Stack className="lg:grid lg:grid-cols-2 lg:items-start">
           <SkeletonCard label="Loading the install settings" fields={4} />
           <SkeletonCard fields={2} />
         </Stack>
       ) : null}
       <ErrorAlert error={settings.error} title="The install settings did not load" />
       {settings.data ? (
-        <Stack className="max-w-[640px]">
+        <Stack className="lg:grid lg:grid-cols-2 lg:items-start">
           <GitHubSection settings={settings.data} canEdit={canEdit} />
           <LinearSection settings={settings.data} canEdit={canEdit} />
           <SandboxSection settings={settings.data} canEdit={canEdit} />

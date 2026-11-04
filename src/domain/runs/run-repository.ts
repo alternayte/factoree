@@ -52,6 +52,9 @@ export interface CreateRunInput {
   linearAgentSessionId: string;
   temporalWorkflowId: string;
   autonomyLevel: string;
+  /** docs/specs/run-visibility.md. The work item title and URL, so a run list can name the issue. */
+  workItemTitle?: string;
+  workItemUrl?: string | null;
 }
 
 export interface RunStatusPatch {
@@ -64,6 +67,8 @@ export interface RunStatusPatch {
   startedAt?: Date;
   completedAt?: Date;
   repairCount?: number;
+  /** docs/specs/run-visibility.md. The sentence that told the human why the run ended. */
+  failureMessage?: string;
 }
 
 export interface RunSandboxPatch {

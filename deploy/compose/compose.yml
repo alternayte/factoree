@@ -16,6 +16,8 @@ x-factoree-env: &factoree-env
   FACTOREE_TEMPORAL_TASK_QUEUE: factoree
   FACTOREE_PORT: "3000"
   FACTOREE_LOG_LEVEL: ${FACTOREE_LOG_LEVEL:-info}
+  # docs/specs/run-visibility.md. The API proxies /temporal to the Temporal UI for a workspace admin.
+  FACTOREE_TEMPORAL_UI_URL: http://temporal-ui:8080
 
 services:
   postgres:
@@ -55,6 +57,19 @@ services:
       timeout: 5s
       retries: 60
       start_period: 10s
+    restart: unless-stopped
+
+  # docs/specs/run-visibility.md. The Temporal UI has no published port. The API proxies /temporal
+  # to it for a signed-in Linear workspace admin, and it changes no workflow.
+  temporal-ui:
+    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.56.0}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_UI_PUBLIC_PATH: /temporal
+      TEMPORAL_DISABLE_WRITE_ACTIONS: "true"
     restart: unless-stopped
 
   migrate:

@@ -17,6 +17,8 @@ import { Route as AppWorkspacesRouteImport } from './routes/_app/workspaces'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as AppProductsIndexRouteImport } from './routes/_app/products/index'
 import { Route as AppProductsProductIdRouteImport } from './routes/_app/products/$productId'
+import { Route as AppRunsIndexRouteImport } from './routes/_app/runs/index'
+import { Route as AppRunsRunIdRouteImport } from './routes/_app/runs/$runId'
 import { Route as AppSettingsInstallRouteImport } from './routes/_app/settings/install'
 import { Route as SetupGithubCreatedRouteImport } from './routes/setup/github/created'
 import { Route as SetupGithubInstalledRouteImport } from './routes/setup/github/installed'
@@ -60,6 +62,16 @@ const AppProductsProductIdRoute = AppProductsProductIdRouteImport.update({
   path: '/products/$productId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppRunsIndexRoute = AppRunsIndexRouteImport.update({
+  id: '/runs/',
+  path: '/runs/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRunsRunIdRoute = AppRunsRunIdRouteImport.update({
+  id: '/runs/$runId',
+  path: '/runs/$runId',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsInstallRoute = AppSettingsInstallRouteImport.update({
   id: '/settings/install',
   path: '/settings/install',
@@ -83,10 +95,12 @@ export interface FileRoutesByFullPath {
   '/workspaces': typeof AppWorkspacesRoute
   '/setup/': typeof SetupIndexRoute
   '/products/$productId': typeof AppProductsProductIdRoute
+  '/runs/$runId': typeof AppRunsRunIdRoute
   '/settings/install': typeof AppSettingsInstallRoute
   '/setup/github/created': typeof SetupGithubCreatedRoute
   '/setup/github/installed': typeof SetupGithubInstalledRoute
   '/products/': typeof AppProductsIndexRoute
+  '/runs/': typeof AppRunsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -95,10 +109,12 @@ export interface FileRoutesByTo {
   '/workspaces': typeof AppWorkspacesRoute
   '/setup': typeof SetupIndexRoute
   '/products/$productId': typeof AppProductsProductIdRoute
+  '/runs/$runId': typeof AppRunsRunIdRoute
   '/settings/install': typeof AppSettingsInstallRoute
   '/setup/github/created': typeof SetupGithubCreatedRoute
   '/setup/github/installed': typeof SetupGithubInstalledRoute
   '/products': typeof AppProductsIndexRoute
+  '/runs': typeof AppRunsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -109,10 +125,12 @@ export interface FileRoutesById {
   '/_app/workspaces': typeof AppWorkspacesRoute
   '/setup/': typeof SetupIndexRoute
   '/_app/products/$productId': typeof AppProductsProductIdRoute
+  '/_app/runs/$runId': typeof AppRunsRunIdRoute
   '/_app/settings/install': typeof AppSettingsInstallRoute
   '/setup/github/created': typeof SetupGithubCreatedRoute
   '/setup/github/installed': typeof SetupGithubInstalledRoute
   '/_app/products/': typeof AppProductsIndexRoute
+  '/_app/runs/': typeof AppRunsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -123,10 +141,12 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/setup/'
     | '/products/$productId'
+    | '/runs/$runId'
     | '/settings/install'
     | '/setup/github/created'
     | '/setup/github/installed'
     | '/products/'
+    | '/runs/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -135,10 +155,12 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/setup'
     | '/products/$productId'
+    | '/runs/$runId'
     | '/settings/install'
     | '/setup/github/created'
     | '/setup/github/installed'
     | '/products'
+    | '/runs'
   id:
     | '__root__'
     | '/'
@@ -148,10 +170,12 @@ export interface FileRouteTypes {
     | '/_app/workspaces'
     | '/setup/'
     | '/_app/products/$productId'
+    | '/_app/runs/$runId'
     | '/_app/settings/install'
     | '/setup/github/created'
     | '/setup/github/installed'
     | '/_app/products/'
+    | '/_app/runs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -221,6 +245,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProductsProductIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/runs/': {
+      id: '/_app/runs/'
+      path: '/runs'
+      fullPath: '/runs/'
+      preLoaderRoute: typeof AppRunsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/runs/$runId': {
+      id: '/_app/runs/$runId'
+      path: '/runs/$runId'
+      fullPath: '/runs/$runId'
+      preLoaderRoute: typeof AppRunsRunIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/install': {
       id: '/_app/settings/install'
       path: '/settings/install'
@@ -249,16 +287,20 @@ interface AppRouteChildren {
   AppApiKeysRoute: typeof AppApiKeysRoute
   AppWorkspacesRoute: typeof AppWorkspacesRoute
   AppProductsProductIdRoute: typeof AppProductsProductIdRoute
+  AppRunsRunIdRoute: typeof AppRunsRunIdRoute
   AppSettingsInstallRoute: typeof AppSettingsInstallRoute
   AppProductsIndexRoute: typeof AppProductsIndexRoute
+  AppRunsIndexRoute: typeof AppRunsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppApiKeysRoute: AppApiKeysRoute,
   AppWorkspacesRoute: AppWorkspacesRoute,
   AppProductsProductIdRoute: AppProductsProductIdRoute,
+  AppRunsRunIdRoute: AppRunsRunIdRoute,
   AppSettingsInstallRoute: AppSettingsInstallRoute,
   AppProductsIndexRoute: AppProductsIndexRoute,
+  AppRunsIndexRoute: AppRunsIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

@@ -13,7 +13,7 @@ import {
   PrismaTenantRegistry,
 } from "~/persistence/prisma/product-registry.prisma.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
-import { buildServer } from "~/http/server.js";
+import { buildServer, type ServerDependencies } from "~/http/server.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { seedAdminKey, testAuth, testServerEnv, TEST_MASTER_KEY, unusedSetupCalls } from "./support/admin-access.js";
@@ -24,6 +24,7 @@ import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-dis
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let app: ReturnType<typeof buildServer>;
+let serverOptions: ServerDependencies;
 let tenants: PrismaTenantRegistry;
 let token: string;
 let auth: { authorization: string };
@@ -48,7 +49,7 @@ beforeAll(async () => {
   const access = testAuth(prisma, logger);
   token = (await seedAdminKey(prisma, access.auth, { workspaces: WORKSPACES })).key;
   auth = { authorization: `Bearer ${token}` };
-  app = buildServer({
+  serverOptions = {
     env: testServerEnv,
     version: "test",
     logger,
@@ -83,7 +84,8 @@ beforeAll(async () => {
     ),
     startInstallationSync: () => Promise.reject(new Error("unused")),
     recordPullRequestPreview: () => Promise.reject(new Error("unused")),
-  });
+  };
+  app = buildServer(serverOptions);
   await app.ready();
 });
 
@@ -383,9 +385,61 @@ describe("administration API", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json<{ id: string; agentSessions: Array<{ role: string; outcome: string; usage: unknown }> }>();
+    const body = response.json<{ id: string; costUsd: number | null; sessions: Array<Record<string, unknown>> }>();
     expect(body.id).toBe(run.id);
-    expect(body.agentSessions).toEqual([expect.objectContaining({ role: "reviewer", outcome: "hung", usage: null })]);
+    expect(body.costUsd).toBeNull();
+    expect(body.sessions).toEqual([
+      expect.objectContaining({ role: "reviewer", outcome: "hung", costUsd: null, durationMs: 42_000 }),
+    ]);
+
+    // docs/specs/run-visibility.md. The run list names the run, and a member reads it.
+    const list = await app.inject({ method: "GET", url: "/admin/runs?linearWorkspaceId=ws-run-sessions", headers: auth });
+    expect(list.statusCode).toBe(200);
+    expect(list.json<{ items: Array<{ id: string; productSlug: string }>; nextCursor: string | null }>()).toEqual({
+      items: [expect.objectContaining({ id: run.id, productSlug: "run-sessions" })],
+      nextCursor: null,
+    });
+  });
+
+  // docs/specs/run-visibility.md. A cursor page never repeats or skips a run.
+  it("pages the run list newest first with a cursor", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-run-sessions", slug: "run-pages", name: "Run pages", linearTeamKey: "RPG" },
+    });
+    expect(created.json()).toMatchObject({ slug: "run-pages" });
+    const product = created.json<{ id: string; tenantId: string }>();
+    const ids: string[] = [];
+    for (const index of [1, 2, 3]) {
+      const row = await prisma.run.create({
+        data: {
+          tenantId: product.tenantId,
+          productId: product.id,
+          linearAgentSessionId: `session-run-pages-${index}`,
+          temporalWorkflowId: `workflow-run-pages-${index}`,
+          status: "FAILED",
+          autonomyLevel: "L2",
+          createdAt: new Date(Date.UTC(2026, 10, 4, 12, 0, index)),
+        },
+      });
+      ids.push(row.id);
+    }
+    const page = async (cursor?: string) =>
+      (
+        await app.inject({
+          method: "GET",
+          url: `/admin/runs?linearWorkspaceId=ws-run-sessions&productId=${product.id}&limit=2${cursor === undefined ? "" : `&cursor=${cursor}`}`,
+          headers: auth,
+        })
+      ).json<{ items: Array<{ id: string }>; nextCursor: string | null }>();
+
+    const first = await page();
+    expect(first.items.map((item) => item.id)).toEqual([ids[2], ids[1]]);
+    const second = await page(first.nextCursor ?? "");
+    expect(second.items.map((item) => item.id)).toEqual([ids[0]]);
+    expect(second.nextCursor).toBeNull();
   });
 
   it("F6: answers 404 for a Product of another tenant", async () => {
@@ -1064,5 +1118,45 @@ describe("the context source test and the last read", () => {
       expect.objectContaining({ sourceId: "docs", lastReadAt: readAt.toISOString() }),
     ]);
   });
-});
 
+  // docs/specs/run-visibility.md. The Temporal UI is for a Linear workspace admin, and the path
+  // tells nobody else that it exists.
+  it("proxies /temporal for a workspace admin and answers 404 to everyone else", async () => {
+    const upstream = createServer((request, response) => {
+      response.setHeader("content-type", "text/html");
+      response.end(`temporal ui ${request.method ?? ""} ${request.url ?? ""}`);
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const proxied = buildServer({
+      ...serverOptions,
+      temporalUiUrl: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
+    });
+    try {
+      await proxied.ready();
+      const member = await seedAdminKey(prisma, testAuth(prisma, createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined })).auth, {
+        workspaces: ["ws-temporal-member"],
+        admin: false,
+      });
+
+      const asAdmin = await proxied.inject({ method: "GET", url: "/temporal/namespaces/default/workflows", headers: auth });
+      expect(asAdmin.statusCode).toBe(200);
+      expect(asAdmin.body).toBe("temporal ui GET /temporal/namespaces/default/workflows");
+      expect(asAdmin.headers["content-security-policy"]).toBeUndefined();
+
+      const asMember = await proxied.inject({
+        method: "GET",
+        url: "/temporal/namespaces/default/workflows",
+        headers: { authorization: `Bearer ${member.key}` },
+      });
+      expect(asMember.statusCode).toBe(404);
+      expect((await proxied.inject({ method: "GET", url: "/temporal" })).statusCode).toBe(404);
+      expect((await proxied.inject({ method: "POST", url: "/temporal/api/v1/namespaces", headers: auth })).statusCode).toBe(404);
+
+      // An install with no Temporal UI answers 404 to an admin too.
+      expect((await app.inject({ method: "GET", url: "/temporal", headers: auth })).statusCode).toBe(404);
+    } finally {
+      await proxied.close();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+});

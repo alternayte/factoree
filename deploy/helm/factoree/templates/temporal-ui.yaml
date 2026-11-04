@@ -1,0 +1,60 @@
+{{- if .Values.temporalUi.enabled }}
+# docs/specs/run-visibility.md. The Temporal UI, read-only. Only the API reaches it, through the
+# ClusterIP Service, and the API forwards /temporal to it for a Linear workspace admin.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "factoree.fullname" . }}-temporal-ui
+  labels:
+    {{- include "factoree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "factoree.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: temporal-ui
+  template:
+    metadata:
+      labels:
+        {{- include "factoree.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: temporal-ui
+    spec:
+      securityContext:
+        {{- include "factoree.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: temporal-ui
+          image: {{ .Values.temporalUi.image | quote }}
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: {{ .Values.temporal.address | quote }}
+            - name: TEMPORAL_UI_PUBLIC_PATH
+              value: /temporal
+            - name: TEMPORAL_DISABLE_WRITE_ACTIONS
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            {{- include "factoree.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.temporalUi.resources | nindent 12 }}
+      {{- include "factoree.scheduling" . | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "factoree.fullname" . }}-temporal-ui
+  labels:
+    {{- include "factoree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-ui
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "factoree.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: temporal-ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}
