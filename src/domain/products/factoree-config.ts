@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
 import { signedInCheckSchema, signInStepSchema } from "~/domain/validation/validation-plan.js";
 import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 
@@ -107,7 +108,8 @@ const schema = z
         keyFiles: z.array(REPOSITORY_PATH).max(50).default([]),
         // docs/specs/repository-setup-and-services.md. Ecosystem hosts only the bootstrap reaches.
         // Factoree keeps only the hosts of its ecosystem host list, and no agent ever reaches them.
-        allowedDomains: z.array(z.string().min(1).regex(HOST_NAME, "must be a host name")).max(100).default([]),
+        // A setup on a provider with no egress log writes the whole list, so the list sets the cap.
+        allowedDomains: z.array(z.string().min(1).regex(HOST_NAME, "must be a host name")).max(ECOSYSTEM_HOSTS.length).default([]),
       })
       .strict()
       .nullable()
