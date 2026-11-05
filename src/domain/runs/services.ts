@@ -25,6 +25,10 @@ export const DOCKER_ENVIRONMENT: Readonly<Record<string, string>> = {
   // on port 80, and no allow list of a run holds those hosts, so each online check fails with a
   // warning per package. Offline mode still verifies every signature and skips only the lookup.
   NUGET_CERT_REVOCATION_MODE: "offline",
+  // DI-21.12. The .NET CLI sends telemetry to a host no allow list holds, and prints a first-run
+  // banner into every captured output.
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+  DOTNET_NOLOGO: "1",
 };
 
 /** The root-owned script in the sandbox image that starts rootless Docker, or does nothing when it runs. */
