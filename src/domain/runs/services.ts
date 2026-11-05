@@ -21,6 +21,10 @@ export const DOCKER_ENVIRONMENT: Readonly<Record<string, string>> = {
   // mise reads a repository mise.toml only from a trusted path, and must never prompt.
   MISE_TRUSTED_CONFIG_PATHS: "/home/agent/workspace",
   MISE_YES: "1",
+  // DI-21.10. NuGet checks the revocation of each package signature over plain HTTP on port 80,
+  // which the Kiln egress filter drops, so each check waits for the TCP timeout. Offline mode
+  // still verifies every signature and skips only the online revocation lookup.
+  NUGET_CERT_REVOCATION_MODE: "offline",
 };
 
 /** The root-owned script in the sandbox image that starts rootless Docker, or does nothing when it runs. */
