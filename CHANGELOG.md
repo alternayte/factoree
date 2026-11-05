@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-05
+
+### Fixed
+
+- A setup sandbox reaches the download hosts of common stacks: `dot.net` and the NuGet signature revocation hosts for .NET, Bun, Deno, JSR, Prisma, Playwright and Cypress downloads for TypeScript, Poetry and conda for Python, the Gradle wrapper, Google Maven and the JDK vendors for Java and Kotlin, rustup, Composer, GCR, ECR Public and raw GitHub files. The first anthology setup was denied `dot.net`.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added
