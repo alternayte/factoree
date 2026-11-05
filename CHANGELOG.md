@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-05
+
+### Changed
+
+- The sandbox image needs Kiln v0.16.2 or later for Docker. An older Kiln left `/dev/net/tun` closed to the sandbox user, so rootless Docker could not set up its network. This release has a new sandbox image digest, so Kiln builds a new template and each repository starts cold once.
+- The sandbox environment turns off .NET CLI telemetry and its first-run banner.
+
 ## [0.6.3] - 2026-11-05
 
 ### Changed
