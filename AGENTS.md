@@ -70,3 +70,9 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - install: one Factoree deployment, with its database, API and worker. It holds one or more tenants. Avoid: instance, deployment.
 - install settings: the settings for the whole install, stored in the database, such as the GitHub App, the sandbox provider and the git author. Avoid: global settings, system config.
 - setup token: the one-time token the API logs on first start. Only it opens /setup. Avoid: bootstrap token, admin token.
+- setup run: the background workflow that writes, proves and proposes the .factoree/config.yaml of one repository as a pull request. Avoid: onboarding, repository init, auto-config.
+- setup agent: the fresh agent role in a setup run. It writes .factoree/** only. Avoid: onboarding agent, config agent.
+- setup report: the result of a setup run per part, proven or failed with its reason, and each denied or observed host. Avoid: setup log, setup summary.
+- fake: a compose service in .factoree/compose.yaml, labelled factoree.fake, that answers for an external API. Avoid: mock, stub.
+- account: a named sign-in identity in the config that the seed creates and Factoree signs in once per check sprite. Avoid: test user, login.
+- ecosystem host list: the fixed list of package and toolchain hosts in Factoree's code that a setup sandbox can reach. Avoid: install hosts, default allow list.
