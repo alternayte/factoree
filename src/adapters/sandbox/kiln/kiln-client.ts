@@ -137,6 +137,11 @@ export class KilnClient {
     return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(id)}/egress`, { egress_allow: allow });
   }
 
+  /** docs/specs/repository-setup-and-services.md. The hosts the sandbox reached or was denied. */
+  egressLog(id: string): Promise<{ records?: Array<{ host?: unknown; decision?: unknown }> }> {
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(id)}/egress/log`);
+  }
+
   async startProcess(id: string, request: KilnProcessRequest): Promise<string> {
     const created = await this.json<{ id: string }>("POST", `/v1/sandboxes/${encodeURIComponent(id)}/processes`, request);
     return created.id;

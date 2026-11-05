@@ -11,6 +11,7 @@ import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/wor
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
+import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
 
 const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
 
@@ -88,4 +89,20 @@ export const createBuildAheadRequester =
       signal: buildAheadSignal,
       signalArgs: [],
     });
+  };
+
+/**
+ * docs/specs/repository-setup-and-services.md. Starts one setup run. One repository runs one setup
+ * at a time, so a start while one runs answers false.
+ */
+export const createRepositorySetupStarter =
+  (client: Client, taskQueue: string) =>
+  async (input: { setupId: string; workflowId: string }): Promise<boolean> => {
+    try {
+      await client.workflow.start(repositorySetupWorkflow, { taskQueue, workflowId: input.workflowId, args: [{ setupId: input.setupId }] });
+      return true;
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError) return false;
+      throw error;
+    }
   };

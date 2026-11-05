@@ -66,7 +66,7 @@ class FakeProductRegistry implements ProductRegistry {
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       skillRegistry: null,
       model: null,
-      effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+      effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
       silenceMinutes: 10,
       sandboxRetentionHours: 24,
       maxConcurrentRuns: 2,

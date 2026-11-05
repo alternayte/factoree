@@ -71,6 +71,9 @@ import type {
   ListProductSecretsResponses,
   ListProductsErrors,
   ListProductsResponses,
+  ListRepositorySetupsData,
+  ListRepositorySetupsErrors,
+  ListRepositorySetupsResponses,
   ListRunsData,
   ListRunsErrors,
   ListRunsResponses,
@@ -97,6 +100,9 @@ import type {
   StartLinearInstallData,
   StartLinearInstallErrors,
   StartLinearInstallResponses,
+  StartRepositorySetupsData,
+  StartRepositorySetupsErrors,
+  StartRepositorySetupsResponses,
   StartSetupLinearInstallData,
   StartSetupLinearInstallErrors,
   StartSetupLinearInstallResponses,
@@ -584,6 +590,50 @@ export const listProductAgentSessions = <ThrowOnError extends boolean = false>(
     ],
     url: "/admin/products/{id}/agent-sessions",
     ...options,
+  });
+
+export const listRepositorySetups = <ThrowOnError extends boolean = false>(
+  options: Options<ListRepositorySetupsData, ThrowOnError>,
+): RequestResult<ListRepositorySetupsResponses, ListRepositorySetupsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRepositorySetupsResponses, ListRepositorySetupsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/repository-setups",
+    ...options,
+  });
+
+export const startRepositorySetups = <ThrowOnError extends boolean = false>(
+  options: Options<StartRepositorySetupsData, ThrowOnError>,
+): RequestResult<StartRepositorySetupsResponses, StartRepositorySetupsErrors, ThrowOnError> =>
+  (options.client ?? client).post<StartRepositorySetupsResponses, StartRepositorySetupsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/repository-setups",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 export const listContextSources = <ThrowOnError extends boolean = false>(

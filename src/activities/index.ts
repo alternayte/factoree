@@ -43,6 +43,8 @@ import { createReviewActivities } from "./review.activities.js";
 import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
 import { createBuildAheadActivities } from "./build-ahead.activities.js";
+import { createSetupActivities } from "./setup.activities.js";
+import type { RepositorySetupMarks, RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
 import { createRecoveryActivities } from "./recovery.activities.js";
@@ -105,7 +107,18 @@ export interface ActivityDependencies {
   organizationSkills?: OrganizationSkillsFactory | undefined;
   /** docs/specs/run-recovery.md. The facts of a failed run, for its failure post. */
   runViews?: RunViewReader | undefined;
+  /** docs/specs/repository-setup-and-services.md. The setup rows. */
+  setups?: RepositorySetupStore | undefined;
+  setupMarks?: RepositorySetupMarks | undefined;
 }
+
+/** A worker built without the setup store refuses a setup activity, and runs every other one. */
+const NO_SETUP_STORE: RepositorySetupStore = {
+  create: () => Promise.reject(new Error("this worker holds no setup store")),
+  findById: () => Promise.reject(new Error("this worker holds no setup store")),
+  latestByProduct: () => Promise.reject(new Error("this worker holds no setup store")),
+  update: () => Promise.reject(new Error("this worker holds no setup store")),
+};
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
   ...createRunActivities({
@@ -257,6 +270,22 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     discoveryService: dependencies.discoveryService,
     logger: dependencies.logger,
   }),
+  ...createSetupActivities({
+    setups: dependencies.setups ?? NO_SETUP_STORE,
+    products: dependencies.products,
+    sandbox: dependencies.sandbox,
+    runners: dependencies.runners,
+    secrets: dependencies.secrets,
+    tokens: dependencies.tokens,
+    discoveryClient: dependencies.discoveryClient,
+    browser: dependencies.browser,
+    previewProbe: dependencies.previewProbe,
+    pullRequests: dependencies.pullRequests,
+    gitAuthor: dependencies.gitAuthor,
+    repositoryBaseUrl: dependencies.repositoryBaseUrl,
+    redactor: dependencies.redactor,
+    logger: dependencies.logger,
+  }),
   ...createBuildAheadActivities({
     sandboxManager: dependencies.sandboxManager,
     products: dependencies.products,
@@ -267,6 +296,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     repositoryBaseUrl: dependencies.repositoryBaseUrl,
     logger: dependencies.logger,
+    setupMarks: dependencies.setupMarks,
   }),
 });
 

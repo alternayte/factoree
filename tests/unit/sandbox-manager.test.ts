@@ -135,6 +135,20 @@ describe("SandboxManager.prepare", () => {
     expect(sandbox.policies.at(-1)).toEqual({ allowedDomains: ["registry.npmjs.org"] });
   });
 
+  it("gives the ecosystem bootstrap hosts to the bootstrap phase only (repository-setup-and-services.md)", async () => {
+    const yaml = BOOTSTRAP_CONFIG_YAML.replace(
+      "bootstrap:\n  command: npm ci\n",
+      "bootstrap:\n  command: npm ci\n  allowedDomains:\n    - api.nuget.org\n    - evil.example\n",
+    );
+    const sandbox = sandboxWithConfig(yaml);
+    await new SandboxManager({ sandbox }).prepare(input);
+    // Policy two holds the ecosystem host and refuses the host outside the ecosystem list.
+    expect(sandbox.policies[1]!.allowedDomains).toContain("api.nuget.org");
+    expect(sandbox.policies[1]!.allowedDomains).not.toContain("evil.example");
+    // The agent policy is the repository allow list alone.
+    expect(sandbox.policies.at(-1)).toEqual({ allowedDomains: ["registry.npmjs.org"] });
+  });
+
   it("runs the bootstrap command in the primary worktree after the checkout", async () => {
     const sandbox = sandboxWithConfig(BOOTSTRAP_CONFIG_YAML);
     const manager = new SandboxManager({ sandbox });

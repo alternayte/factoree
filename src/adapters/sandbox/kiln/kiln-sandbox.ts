@@ -14,7 +14,7 @@ import type {
   ServiceRef,
   WarmSnapshots,
 } from "~/domain/runs/sandbox.js";
-import { normalizeNetworkPolicy, SandboxError } from "~/domain/runs/sandbox.js";
+import { normalizeNetworkPolicy, SandboxError, type EgressRecord } from "~/domain/runs/sandbox.js";
 import { DEFAULT_KILN_SANDBOX_SIZE, type KilnSandboxSize } from "~/domain/settings/install-settings.js";
 import type { KilnClient, KilnTemplateRequest } from "./kiln-client.js";
 import { isKilnConflict, isKilnNotFound } from "./kiln-client.js";
@@ -147,6 +147,18 @@ export class KilnSandbox implements Sandbox {
 
   async applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
     await this.options.client.setEgress(ref.id, normalizeNetworkPolicy(policy).allowedDomains);
+  }
+
+  async egressLog(ref: SandboxRef): Promise<EgressRecord[]> {
+    const log = await this.options.client.egressLog(ref.id);
+    const records: EgressRecord[] = [];
+    for (const record of log.records ?? []) {
+      if (typeof record.host !== "string" || typeof record.decision !== "string") continue;
+      // An IP address names no host a config can allow.
+      if (/^[0-9.:]+$/.test(record.host)) continue;
+      records.push({ host: record.host, decision: record.decision === "denied" ? "denied" : "allowed" });
+    }
+    return records;
   }
 
   /**

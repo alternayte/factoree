@@ -7,7 +7,8 @@
  */
 
 /** The roles of SDD section 33 and docs/specs/refiner-agent.md. */
-export type AgentSessionRole = "implementer" | "validator" | "reviewer" | "refiner";
+/** docs/specs/repository-setup-and-services.md adds `setup`, the agent of a setup run. */
+export type AgentSessionRole = "implementer" | "validator" | "reviewer" | "refiner" | "setup";
 
 /**
  * How one session ended. `hung` means it wrote no output for the silence limit, and Factoree
@@ -156,7 +157,7 @@ export interface AgentUsageTotals {
   sessionsWithoutUsage: number;
 }
 
-const ROLE_ORDER: AgentSessionRole[] = ["refiner", "implementer", "validator", "reviewer"];
+const ROLE_ORDER: AgentSessionRole[] = ["setup", "refiner", "implementer", "validator", "reviewer"];
 
 /** The totals per role and for the whole Run, from the stored rows. */
 export const summarizeAgentSessions = (rows: ReadonlyArray<RecordAgentSessionInput>): AgentUsageTotals => {
@@ -216,7 +217,15 @@ export const describeSilenceLimit = (silenceLimitMs: number): string => {
 
 /** The role as the failure message names it. */
 export const describeAgentRole = (role: AgentSessionRole): string =>
-  role === "validator" ? "User Validator" : role === "implementer" ? "Implementer" : role === "reviewer" ? "Reviewer" : "refiner";
+  role === "validator"
+    ? "User Validator"
+    : role === "implementer"
+      ? "Implementer"
+      : role === "reviewer"
+        ? "Reviewer"
+        : role === "setup"
+          ? "setup agent"
+          : "refiner";
 
 /**
  * The idempotency key of one session. The first session of a step keeps the key the

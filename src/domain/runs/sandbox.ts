@@ -124,6 +124,12 @@ export interface WarmSnapshots {
   remove(snapshotId: string): Promise<boolean>;
 }
 
+/** docs/specs/repository-setup-and-services.md. One host a sandbox reached or was denied. */
+export interface EgressRecord {
+  host: string;
+  decision: "allowed" | "denied";
+}
+
 /** SDD section 31. */
 export interface Sandbox {
   /** The adapter name. It appears in `SandboxRef.adapter` and in logs. */
@@ -141,6 +147,11 @@ export interface Sandbox {
    */
   refresh?(): Promise<void>;
   create(input: SandboxCreateInput): Promise<SandboxRef>;
+  /**
+   * docs/specs/repository-setup-and-services.md. The hosts the sandbox reached and the hosts its
+   * allow list denied. Present only when the provider records egress.
+   */
+  egressLog?(ref: SandboxRef): Promise<EgressRecord[] | null>;
   /**
    * Holds an environment that every later `exec` and `startProcess` on this sandbox receives.
    *

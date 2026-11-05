@@ -15,6 +15,7 @@ export type RunStageName =
   | "implementer"
   | "validator"
   | "reviewer"
+  | "setup"
   | "warm_snapshot"
   | "publish";
 

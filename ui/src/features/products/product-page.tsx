@@ -1,3 +1,4 @@
+import { RepositorySetupSection } from "./repository-setup-section";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
@@ -410,6 +411,13 @@ function ProductEditor({
           </div>
         ) : null}
       </form>
+
+      <RepositorySetupSection
+        productId={product.id}
+        linearWorkspaceId={linearWorkspaceId}
+        allowedDomains={product.allowedDomains}
+        canEdit={canEdit}
+      />
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <div className="flex min-w-0 flex-col gap-4">

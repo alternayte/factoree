@@ -4,7 +4,7 @@ import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import type { Logger } from "~/telemetry/logger.js";
-import { DEFAULT_PROJECT_DEFAULTS, toProjectRuntimeConfig, type ProjectDefaults } from "./project-runtime-config.js";
+import { bootstrapAllowListOf, DEFAULT_PROJECT_DEFAULTS, toProjectRuntimeConfig, type ProjectDefaults } from "./project-runtime-config.js";
 import { bootstrapKeyOf, keyFilePatternsOf, selectKeyFiles, type RepositoryFileEntry } from "./warm-snapshot.js";
 
 /**
@@ -51,7 +51,7 @@ export const bootstrapKeyOfConfig = (
   return bootstrapKeyOf({
     bootstrapCommand: runtime.bootstrapCommand,
     warmCommand: runtime.warmCommand ?? null,
-    allowedDomains: runtime.allowedDomains,
+    allowedDomains: bootstrapAllowListOf(runtime),
     services: runtime.services ?? null,
     docker: runtime.docker === true,
     files: selectKeyFiles(files, keyFilePatternsOf(runtime)),

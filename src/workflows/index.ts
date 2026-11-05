@@ -3,3 +3,4 @@
 export * from "./agent-run.workflow.js";
 export * from "./sync-installation.workflow.js";
 export * from "./build-ahead.workflow.js";
+export * from "./repository-setup.workflow.js";

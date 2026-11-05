@@ -183,8 +183,9 @@ export const buildActionPolicy = (overrides: ActionPolicyOverrides = {}): Action
     ...DEFAULTS,
     stagingRead: overrides.stagingRead === true ? "allow" : "deny",
     // SDD section 36. Only the Implementer writes the primary worktree. A validator or a
-    // reviewer session must not change a production source file.
-    writePrimaryWorktree: role === "implementer" ? "allow" : "deny",
+    // reviewer session must not change a production source file. The setup agent writes
+    // `.factoree/` only, and the setup run refuses any other change it makes.
+    writePrimaryWorktree: role === "implementer" || role === "setup" ? "allow" : "deny",
   };
   const mcpAllowedTools = overrides.mcpAllowedTools ?? [];
 

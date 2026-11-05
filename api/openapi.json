@@ -2359,13 +2359,20 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         }
                       },
                       "required": [
                         "implementer",
                         "refiner",
                         "validator",
-                        "reviewer"
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "silenceMinutes": {
@@ -2947,13 +2954,20 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         }
                       },
                       "required": [
                         "implementer",
                         "refiner",
                         "validator",
-                        "reviewer"
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "silenceMinutes": {
@@ -3211,13 +3225,20 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "setup": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
                           }
                         },
                         "required": [
                           "implementer",
                           "refiner",
                           "validator",
-                          "reviewer"
+                          "reviewer",
+                          "setup"
                         ]
                       },
                       "silenceMinutes": {
@@ -3468,13 +3489,20 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         }
                       },
                       "required": [
                         "implementer",
                         "refiner",
                         "validator",
-                        "reviewer"
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "silenceMinutes": {
@@ -3724,6 +3752,17 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "setup": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "additionalProperties": false
@@ -3913,13 +3952,20 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         }
                       },
                       "required": [
                         "implementer",
                         "refiner",
                         "validator",
-                        "reviewer"
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "silenceMinutes": {
@@ -4296,13 +4342,20 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         }
                       },
                       "required": [
                         "implementer",
                         "refiner",
                         "validator",
-                        "reviewer"
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "silenceMinutes": {
@@ -5471,7 +5524,8 @@
                           "implementer",
                           "validator",
                           "reviewer",
-                          "refiner"
+                          "refiner",
+                          "setup"
                         ]
                       },
                       "attempt": {
@@ -5541,6 +5595,309 @@
             }
           },
           "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/repository-setups": {
+      "get": {
+        "operationId": "listRepositorySetups",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "fullName": {
+                        "type": "string"
+                      },
+                      "githubInstallationId": {
+                        "type": "string"
+                      },
+                      "registered": {
+                        "type": "boolean"
+                      },
+                      "needsSetupReason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "setup": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "queued",
+                                  "running",
+                                  "proposed",
+                                  "partial",
+                                  "failed"
+                                ]
+                              },
+                              "pullRequestUrl": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "failureMessage": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "report": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "deniedHosts": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              },
+                              "endedAt": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "status",
+                              "pullRequestUrl",
+                              "failureMessage",
+                              "report",
+                              "deniedHosts",
+                              "createdAt",
+                              "endedAt"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "fullName",
+                      "githubInstallationId",
+                      "registered",
+                      "needsSetupReason",
+                      "setup"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "startRepositorySetups",
+        "tags": [
+          "products"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "repositories": {
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^/\\s]+\\/[^/\\s]+$"
+                    }
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId",
+                  "repositories"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "fullName": {
+                        "type": "string"
+                      },
+                      "setupId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "fullName",
+                      "setupId"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
             "description": "Default Response",
             "content": {
               "application/json": {

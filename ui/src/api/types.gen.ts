@@ -718,6 +718,7 @@ export type CreateSetupProductResponses = {
       refiner: string | null;
       validator: string | null;
       reviewer: string | null;
+      setup: string | null;
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
@@ -863,6 +864,7 @@ export type ListProductsResponses = {
       refiner: string | null;
       validator: string | null;
       reviewer: string | null;
+      setup: string | null;
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
@@ -943,6 +945,7 @@ export type CreateProductResponses = {
       refiner: string | null;
       validator: string | null;
       reviewer: string | null;
+      setup: string | null;
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
@@ -1056,6 +1059,7 @@ export type GetProductResponses = {
       refiner: string | null;
       validator: string | null;
       reviewer: string | null;
+      setup: string | null;
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
@@ -1088,6 +1092,7 @@ export type UpdateProductData = {
       refiner?: string | null;
       validator?: string | null;
       reviewer?: string | null;
+      setup?: string | null;
     };
     silenceMinutes?: number;
     sandboxRetentionHours?: number;
@@ -1162,6 +1167,7 @@ export type UpdateProductResponses = {
       refiner: string | null;
       validator: string | null;
       reviewer: string | null;
+      setup: string | null;
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
@@ -1240,6 +1246,7 @@ export type ActivateProductResponses = {
       refiner: string | null;
       validator: string | null;
       reviewer: string | null;
+      setup: string | null;
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
@@ -1576,7 +1583,7 @@ export type ListProductAgentSessionsResponses = {
   200: Array<{
     id: string;
     runId: string;
-    role: "implementer" | "validator" | "reviewer" | "refiner";
+    role: "implementer" | "validator" | "reviewer" | "refiner" | "setup";
     attempt: number;
     runner: string;
     model: string | null;
@@ -1589,6 +1596,105 @@ export type ListProductAgentSessionsResponses = {
 
 export type ListProductAgentSessionsResponse =
   ListProductAgentSessionsResponses[keyof ListProductAgentSessionsResponses];
+
+export type ListRepositorySetupsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/repository-setups";
+};
+
+export type ListRepositorySetupsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRepositorySetupsError = ListRepositorySetupsErrors[keyof ListRepositorySetupsErrors];
+
+export type ListRepositorySetupsResponses = {
+  /**
+   * Default Response
+   */
+  200: Array<{
+    fullName: string;
+    githubInstallationId: string;
+    registered: boolean;
+    needsSetupReason: string | null;
+    setup: {
+      id: string;
+      status: "queued" | "running" | "proposed" | "partial" | "failed";
+      pullRequestUrl: string | null;
+      failureMessage: string | null;
+      report: string | null;
+      deniedHosts: Array<string>;
+      createdAt: string;
+      endedAt: string | null;
+    } | null;
+  }>;
+};
+
+export type ListRepositorySetupsResponse = ListRepositorySetupsResponses[keyof ListRepositorySetupsResponses];
+
+export type StartRepositorySetupsData = {
+  body: {
+    linearWorkspaceId: string;
+    repositories: Array<string>;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/products/{id}/repository-setups";
+};
+
+export type StartRepositorySetupsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type StartRepositorySetupsError = StartRepositorySetupsErrors[keyof StartRepositorySetupsErrors];
+
+export type StartRepositorySetupsResponses = {
+  /**
+   * Default Response
+   */
+  202: Array<{
+    fullName: string;
+    setupId: string;
+  }>;
+};
+
+export type StartRepositorySetupsResponse = StartRepositorySetupsResponses[keyof StartRepositorySetupsResponses];
 
 export type ListContextSourcesData = {
   body?: never;

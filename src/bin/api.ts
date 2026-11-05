@@ -16,6 +16,7 @@ import {
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import {
   createBuildAheadRequester,
+  createRepositorySetupStarter,
   createSyncInstallationStarter,
   createTemporalClient,
   createTemporalWorkflowStarter,
@@ -100,6 +101,7 @@ const delegation = new DelegationService({
   runViews: new PrismaRunViewReader(prisma),
   logger,
   repositoryBaseUrl: githubBaseUrl(settings),
+  productPageUrl: (productId) => `${env.FACTOREE_PUBLIC_URL.replace(/\/+$/, "")}/products/${productId}`,
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`
@@ -162,7 +164,12 @@ const recordPullRequestPreview = async (input: {
 
 const auth = new AuthHandle({ prisma, settings, publicUrl: env.FACTOREE_PUBLIC_URL, masterKey: env.FACTOREE_MASTER_KEY, logger });
 
+const startRepositorySetup = createRepositorySetupStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
 const app = buildServer({
+  repositorySetup: {
+    listInstallationRepositories: (installationId) => discoveryClient.listInstallationRepositories(installationId),
+    startSetup: startRepositorySetup,
+  },
   env,
   version: releaseVersion(),
   logger,

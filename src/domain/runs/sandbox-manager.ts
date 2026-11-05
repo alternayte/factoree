@@ -26,6 +26,7 @@ import {
   type WarmSnapshot,
   type WarmSnapshotStore,
 } from "./warm-snapshot.js";
+import { bootstrapAllowListOf } from "./project-runtime-config.js";
 import { ensureDocker, listRepositoryFiles, seedServices, startServices } from "./services.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -393,7 +394,7 @@ export class SandboxManager {
       const bootstrapKey = bootstrapKeyOf({
         bootstrapCommand: runtime.bootstrapCommand,
         warmCommand: runtime.warmCommand ?? null,
-        allowedDomains: runtime.allowedDomains,
+        allowedDomains: bootstrapAllowListOf(runtime),
         services: runtime.services ?? null,
         docker: runtime.docker === true,
         files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, primary.path), keyFilePatternsOf(runtime)),
@@ -421,7 +422,7 @@ export class SandboxManager {
       // checkouts and the bootstrap command both work.
       await sandbox.applyNetworkPolicy(ref, {
         allowedDomains: [
-          ...new Set([...repositoryHosts, ...runtime.allowedDomains, ...(browserTools ? BROWSER_TOOL_HOSTS : [])]),
+          ...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime), ...(browserTools ? BROWSER_TOOL_HOSTS : [])]),
         ].sort(),
       });
       const install = browserTools

@@ -1,3 +1,4 @@
+import type { RepositorySetupMarks } from "~/domain/setup/repository-setup.js";
 import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
@@ -61,6 +62,7 @@ type ProductRow = {
   effortRefiner: string | null;
   effortValidator: string | null;
   effortReviewer: string | null;
+  effortSetup: string | null;
   silenceMinutes: number;
   sandboxRetentionHours: number;
   maxConcurrentRuns: number;
@@ -90,6 +92,7 @@ const toProduct = (row: ProductRow): ProductRecord => {
     effortRefiner,
     effortValidator,
     effortReviewer,
+    effortSetup,
     skillRegistryKind,
     skillRegistryUrl,
     skillRegistrySet,
@@ -105,6 +108,7 @@ const toProduct = (row: ProductRow): ProductRecord => {
       refiner: effortRefiner,
       validator: effortValidator,
       reviewer: effortReviewer,
+      setup: effortSetup,
     },
   };
 };
@@ -298,6 +302,7 @@ export class PrismaProductRegistry implements ProductRegistry {
         effortRefiner: settings.effort?.refiner,
         effortValidator: settings.effort?.validator,
         effortReviewer: settings.effort?.reviewer,
+        effortSetup: settings.effort?.setup,
         silenceMinutes: settings.silenceMinutes,
         sandboxRetentionHours: settings.sandboxRetentionHours,
         maxConcurrentRuns: settings.maxConcurrentRuns,
@@ -317,7 +322,7 @@ export class PrismaProductRegistry implements ProductRegistry {
   }
 }
 
-export class PrismaRepositoryRegistry implements RepositoryRegistry {
+export class PrismaRepositoryRegistry implements RepositoryRegistry, RepositorySetupMarks {
   constructor(private readonly prisma: FactoreePrismaClient) {}
 
   async upsert(input: UpsertRepositoryInput): Promise<RepositoryRecord> {
@@ -368,6 +373,14 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry {
       where: { tenantId_fullName: { tenantId, fullName } },
     });
     return row ? toRepository(row) : null;
+  }
+
+  async markNeedsSetup(tenantId: string, fullName: string, reason: string, at: Date): Promise<void> {
+    await this.prisma.repository.updateMany({ where: { tenantId, fullName }, data: { needsSetupReason: reason.slice(0, 2000), needsSetupAt: at } });
+  }
+
+  async clearNeedsSetup(tenantId: string, fullName: string): Promise<void> {
+    await this.prisma.repository.updateMany({ where: { tenantId, fullName, NOT: { needsSetupReason: null } }, data: { needsSetupReason: null, needsSetupAt: null } });
   }
 
   async markAbsent(tenantId: string, fullName: string, at: Date): Promise<void> {

@@ -28,7 +28,7 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   organizationSkillsRepository,
   skillRegistry: null,
   model: null,
-  effort: { implementer: null, refiner: null, validator: null, reviewer: null },
+  effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   silenceMinutes: 10,
   sandboxRetentionHours: 24,
   maxConcurrentRuns: 2,
@@ -127,6 +127,7 @@ const build = (
     },
     logger,
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
+    productPageUrl: (productId: string) => `https://factoree.example/products/${productId}`,
     sessionRuns: {
       findByAgentSession: () => Promise.resolve(overrides.latest ?? null),
       lastPatch: () => Promise.resolve(Buffer.from("diff --git a/x b/x\n").toString("base64")),
@@ -230,6 +231,14 @@ describe("DelegationService", () => {
     // F4. The routing refusal reaches the human, as a comment on the agent session.
     expect(postedFailures).toHaveLength(1);
     if (outcome.kind === "blocked_routing") expect(postedFailures[0]?.message).toBe(outcome.reason);
+  });
+
+  it("links the product page instead of asking an empty target question (repository-setup-and-services.md)", async () => {
+    const { service, starter, postedFailures } = build({ repositories: [] });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-9");
+    expect(outcome).toMatchObject({ kind: "blocked_routing" });
+    expect(starter.start).not.toHaveBeenCalled();
+    expect(postedFailures[0]?.message).toContain(`https://factoree.example/products/${defaultProduct.id}`);
   });
 
   it("blocks routing when two Products claim the team", async () => {

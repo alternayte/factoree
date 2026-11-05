@@ -525,6 +525,8 @@ model Product {
   effortRefiner     String?
   effortValidator   String?
   effortReviewer    String?
+  // docs/specs/repository-setup-and-services.md. Null means the implementer's effort.
+  effortSetup       String?  @map("effort_setup")
   // The silence limit: an agent session that writes no output for this many minutes is hung.
   silenceMinutes Int      @default(10)
   // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
@@ -543,6 +545,7 @@ model Product {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   repositories   Repository[]
+  setups         RepositorySetup[]
   secrets        ProductSecret[]
   contextSources ContextSourceConfiguration[]
   runs           Run[]
@@ -574,6 +577,10 @@ model Repository {
   // The installation that granted access to this repository. Discovery knows it at sync time.
   // A clone or a push mints its token against this installation.
   githubInstallationId String
+  // docs/specs/repository-setup-and-services.md. Set when a build-ahead fails, so the product page
+  // offers "Run setup again". A build-ahead that succeeds clears it.
+  needsSetupReason     String?   @map("needs_setup_reason")
+  needsSetupAt         DateTime? @map("needs_setup_at")
   runTargets           RunTarget[]
 
   @@unique([tenantId, fullName])
@@ -793,4 +800,29 @@ model Apikey {
   @@index([referenceId])
   @@index([key])
   @@map("auth_apikey")
+}
+
+// docs/specs/repository-setup-and-services.md. One setup run: the setup agent writes the
+// configuration of one repository, Factoree proves each part, and opens a pull request.
+model RepositorySetup {
+  id                   String    @id @default(uuid())
+  tenantId             String    @map("tenant_id")
+  productId            String    @map("product_id")
+  product              Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  repositoryFullName   String    @map("repository_full_name")
+  githubInstallationId String    @map("github_installation_id")
+  workflowId           String    @map("workflow_id")
+  // queued, running, proposed, partial, failed.
+  status               String
+  pullRequestUrl       String?   @map("pull_request_url")
+  // The setup report: each part proven or failed, and the hosts the sandbox reached.
+  report               Json?
+  failureMessage       String?   @map("failure_message")
+  // The usage of the setup agent session: runner, model, effort, outcome, tokens, cost, time.
+  sessionUsage         Json?     @map("session_usage")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  endedAt              DateTime? @map("ended_at")
+
+  @@index([productId, repositoryFullName, createdAt])
+  @@map("repository_setup")
 }

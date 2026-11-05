@@ -17,6 +17,11 @@ export interface ProjectRuntimeConfig {
    * warm snapshot. Absent in a history recorded before it existed.
    */
   keyFiles?: string[];
+  /**
+   * docs/specs/repository-setup-and-services.md. The ecosystem hosts the bootstrap phase adds to
+   * the allow list. The agent phase never gets them. Absent in an old history.
+   */
+  bootstrapAllowedDomains?: string[];
   /** docs/specs/repository-setup-and-services.md. The compose stack, or null. Absent in an old history. */
   services?: ServicesConfig | null;
   /** docs/specs/repository-setup-and-services.md. True when the sandbox runs Docker. Absent in an old history. */
@@ -31,6 +36,18 @@ export interface ProjectRuntimeConfig {
   /** SDD section 51. */
   spriteRetentionHours: number;
 }
+
+/** The requested bootstrap hosts that the ecosystem host list covers. An empty request adds none. */
+const ecosystemHostsOf = (requested: string[]): string[] =>
+  requested.length === 0 ? [] : narrowAllowList(requested, [...ECOSYSTEM_HOSTS]);
+
+/**
+ * The allow list of the bootstrap phase: the repository allow list and its ecosystem bootstrap
+ * hosts. It is part of the bootstrap key, because it decides what the bootstrap can install.
+ */
+export const bootstrapAllowListOf = (runtime: Pick<ProjectRuntimeConfig, "allowedDomains" | "bootstrapAllowedDomains">): string[] => [
+  ...new Set([...runtime.allowedDomains, ...(runtime.bootstrapAllowedDomains ?? [])]),
+];
 
 /** docs/specs/repository-setup-and-services.md. The compose stack of a repository. */
 export interface ServicesConfig {
@@ -70,6 +87,7 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
 import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { BrowserStep } from "~/domain/validation/validation-plan.js";
 import { narrowAllowList } from "./sandbox.js";
+import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
 
 /** SDD section 35. One configured deterministic verification command. */
 export interface VerificationCommand {
@@ -129,6 +147,7 @@ export const toProjectRuntimeConfig = (
     // sent to the adapter can never differ.
     allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),
     keyFiles: config.bootstrap?.keyFiles ?? [],
+    bootstrapAllowedDomains: ecosystemHostsOf(config.bootstrap?.allowedDomains ?? []),
     services:
       config.services === null
         ? null

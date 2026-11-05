@@ -16,7 +16,7 @@ const querySchema = z.object({
 export const productAgentSessionSchema = z.object({
   id: z.string(),
   runId: z.string(),
-  role: z.enum(["implementer", "validator", "reviewer", "refiner"]),
+  role: z.enum(["implementer", "validator", "reviewer", "refiner", "setup"]),
   attempt: z.number(),
   runner: z.string(),
   /** The model the CLI reported for the session, else the model Factoree asked for, else null. */

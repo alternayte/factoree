@@ -71,6 +71,11 @@ export interface DelegationDependencies {
   /** docs/specs/run-recovery.md. The earlier runs of a session, for a reply after a failed run. */
   sessionRuns?: SessionRuns | undefined;
   runViews?: RunViewReader | undefined;
+  /**
+   * docs/specs/repository-setup-and-services.md. The product page of the Factoree UI, where an
+   * operator sets up a repository.
+   */
+  productPageUrl?: ((productId: string) => string) | undefined;
 }
 
 export class DelegationService {
@@ -175,6 +180,17 @@ export class DelegationService {
     }
     const product = outcome.product;
     const repositories = await this.dependencies.repositories.listByProduct(product.id);
+
+    // docs/specs/repository-setup-and-services.md. A product with no repository can change none,
+    // so the reply links the page where an operator sets one up, instead of an empty question.
+    if (!repositories.some((repository) => repository.absentSince === null) && this.dependencies.productPageUrl !== undefined) {
+      await this.dependencies.webhookLog.remove(deliveryId);
+      const reason =
+        `The product ${product.slug} has no repository yet, so Factoree can change nothing. ` +
+        `Set one up on ${this.dependencies.productPageUrl(product.id)}, under Repositories, then delegate the issue again.`;
+      await this.dependencies.refusalNotifier.postFailure(event.organizationId, event.agentSession.id, reason);
+      return { kind: "blocked_routing", reason };
+    }
 
     // SDD section 7 and SDD section 8. The Work Item text travels as the author wrote it. The
     // workflow refines it, resolves the context, and derives the sandbox from the pinned SHAs.

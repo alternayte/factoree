@@ -34,6 +34,7 @@ import {
   listProductAgentSessions,
   listProducts,
   listProductSecrets,
+  listRepositorySetups,
   listRuns,
   listSetupLinearTeams,
   listWorkspaces,
@@ -44,6 +45,7 @@ import {
   putSandbox,
   revokeApiKey,
   startLinearInstall,
+  startRepositorySetups,
   startSetupLinearInstall,
   testContextSource,
   updateInstallSettings,
@@ -118,6 +120,9 @@ import type {
   ListProductSecretsResponse,
   ListProductsError,
   ListProductsResponse,
+  ListRepositorySetupsData,
+  ListRepositorySetupsError,
+  ListRepositorySetupsResponse,
   ListRunsData,
   ListRunsError,
   ListRunsResponse,
@@ -144,6 +149,9 @@ import type {
   StartLinearInstallData,
   StartLinearInstallError,
   StartLinearInstallResponse,
+  StartRepositorySetupsData,
+  StartRepositorySetupsError,
+  StartRepositorySetupsResponse,
   StartSetupLinearInstallData,
   StartSetupLinearInstallError,
   StartSetupLinearInstallResponse,
@@ -730,6 +738,52 @@ export const listProductAgentSessionsOptions = (options: Options<ListProductAgen
     },
     queryKey: listProductAgentSessionsQueryKey(options),
   });
+
+export const listRepositorySetupsQueryKey = (options: Options<ListRepositorySetupsData>) =>
+  createQueryKey("listRepositorySetups", options);
+
+export const listRepositorySetupsOptions = (options: Options<ListRepositorySetupsData>) =>
+  queryOptions<
+    ListRepositorySetupsResponse,
+    ListRepositorySetupsError,
+    ListRepositorySetupsResponse,
+    ReturnType<typeof listRepositorySetupsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listRepositorySetups({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listRepositorySetupsQueryKey(options),
+  });
+
+export const startRepositorySetupsMutation = (
+  options?: Partial<Options<StartRepositorySetupsData>>,
+): UseMutationOptions<
+  StartRepositorySetupsResponse,
+  StartRepositorySetupsError,
+  Options<StartRepositorySetupsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    StartRepositorySetupsResponse,
+    StartRepositorySetupsError,
+    Options<StartRepositorySetupsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await startRepositorySetups({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
 
 export const listContextSourcesQueryKey = (options: Options<ListContextSourcesData>) =>
   createQueryKey("listContextSources", options);

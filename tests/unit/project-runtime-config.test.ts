@@ -23,6 +23,7 @@ describe("toProjectRuntimeConfig", () => {
       warmCommand: null,
       allowedDomains: ["registry.npmjs.org"],
       keyFiles: [],
+      bootstrapAllowedDomains: [],
       services: null,
       docker: false,
       accounts: [],

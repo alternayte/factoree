@@ -25,8 +25,8 @@ An operator picks a repository and a product on the product page and starts a se
 - A delegated issue in a team whose product has no repository replies with a link to the product page — it replaces an empty target question.
 - `setup` is a new agent role with its own runner, model and effort on the product, defaulting to the implementer's — usage and tuning stay per role.
 - The setup action policy writes `.factoree/**` only, and Factoree refuses a setup patch that touches another path — the review stays small and plainly Factoree's.
-- The setup sandbox uses a fixed ecosystem host list in Factoree's code, plus egress observe mode on Kiln — nobody writes an allow list by hand.
-- The proposed bootstrap allow list is the observed hosts on Kiln and the whole ecosystem list on E2B — E2B records no egress.
+- The setup sandbox uses a fixed ecosystem host list in Factoree's code, and reads the Kiln egress log for the hosts it reached and was denied — nobody writes an allow list by hand, and Kiln observe mode would open every host.
+- `bootstrap.allowedDomains` holds the ecosystem hosts the bootstrap reached on Kiln, or the whole ecosystem list on E2B. Factoree accepts only ecosystem hosts there, and they join the bootstrap phase and never the agent phase — the product ceiling stays the agents' limit, and a registry accepts uploads (alternayte/kiln#24).
 - Factoree proves each part in a fresh sandbox with only the proposed allow list: bootstrap, each verify command, services and seed, preview readiness, and each account sign-in — the config is tested data, not an agent claim.
 - The pull request holds only the parts that passed, and the report names each failed part with its reason. A failed bootstrap opens no pull request — a partial config still gives runs what works.
 - A part that needs an app change fails, and the report names the change — a normal issue then implements it.

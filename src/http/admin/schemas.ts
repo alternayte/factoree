@@ -14,6 +14,7 @@ export const effortSchema = z.object({
   refiner: z.string().nullable(),
   validator: z.string().nullable(),
   reviewer: z.string().nullable(),
+  setup: z.string().nullable(),
 });
 
 export const productSchema = z.object({
@@ -64,6 +65,7 @@ export const productSettingsFields = {
       refiner: z.string().min(1).nullable(),
       validator: z.string().min(1).nullable(),
       reviewer: z.string().min(1).nullable(),
+      setup: z.string().min(1).nullable(),
     })
     .partial()
     .strict(),

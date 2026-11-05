@@ -14,6 +14,8 @@ export interface RepositoryRecord {
   absentSince: Date | null;
   /** The installation that granted access to this repository. A clone or a push mints its token against it. */
   githubInstallationId: string;
+  /** docs/specs/repository-setup-and-services.md. Why a build-ahead marked it for setup, or null. */
+  needsSetupReason?: string | null;
 }
 
 export interface UpsertRepositoryInput {

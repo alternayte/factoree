@@ -105,6 +105,9 @@ const schema = z
         // docs/specs/repository-setup-and-services.md. The files whose content keys the warm snapshot,
         // so a lockfile or toolchain change starts a build-ahead.
         keyFiles: z.array(REPOSITORY_PATH).max(50).default([]),
+        // docs/specs/repository-setup-and-services.md. Ecosystem hosts only the bootstrap reaches.
+        // Factoree keeps only the hosts of its ecosystem host list, and no agent ever reaches them.
+        allowedDomains: z.array(z.string().min(1).regex(HOST_NAME, "must be a host name")).max(100).default([]),
       })
       .strict()
       .nullable()

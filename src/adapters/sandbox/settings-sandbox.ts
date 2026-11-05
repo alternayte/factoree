@@ -3,6 +3,7 @@ import type {
   CheckpointRef,
   Command,
   CommandResult,
+  EgressRecord,
   NetworkPolicy,
   ProcessRef,
   ProcessSnapshot,
@@ -201,7 +202,11 @@ export class SettingsSandbox implements Sandbox {
   private async withSlot(runId: string, create: () => Promise<SandboxRef>): Promise<SandboxRef> {
     const slots = this.slots;
     if (slots === null) return create();
-    const leaseId = await slots.acquire(this.active().name, runId, this.maxLive);
+    // docs/specs/repository-setup-and-services.md. A setup waits behind runs: it never takes the
+    // last free slot of a provider that has more than one, so a Linear run always finds one.
+    const maxLive =
+      runId.startsWith("setup:") && this.maxLive !== null && this.maxLive > 1 ? this.maxLive - 1 : this.maxLive;
+    const leaseId = await slots.acquire(this.active().name, runId, maxLive);
     let ref: SandboxRef;
     try {
       ref = await create();
@@ -224,6 +229,11 @@ export class SettingsSandbox implements Sandbox {
     const sandbox = this.byAdapter.get(ref.adapter);
     if (sandbox === undefined) this.pendingEnvironment.set(`${ref.adapter}:${ref.id}`, environment);
     else sandbox.attachEnvironment(ref, environment);
+  }
+
+  async egressLog(ref: SandboxRef): Promise<EgressRecord[] | null> {
+    const sandbox = await this.forRef(ref);
+    return sandbox.egressLog === undefined ? null : sandbox.egressLog(ref);
   }
 
   async applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {

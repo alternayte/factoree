@@ -1,3 +1,4 @@
+import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
@@ -139,13 +140,16 @@ const sandboxManager = new SandboxManager({
 // next session with no restart. The Product settings name opencode models, so a Claude Code
 // session runs at its CLI defaults.
 const sessionSettings = async (input: AgentRunInput, runner: string): Promise<AgentSessionSettings> => {
-  const run = await prisma.run.findUniqueOrThrow({ where: { id: input.runId }, include: { product: true } });
-  const { product } = run;
+  // docs/specs/repository-setup-and-services.md. A setup session belongs to a setup row, not a run.
+  const product = input.runId.startsWith("setup:")
+    ? (await prisma.repositorySetup.findUniqueOrThrow({ where: { id: input.runId.slice("setup:".length) }, include: { product: true } })).product
+    : (await prisma.run.findUniqueOrThrow({ where: { id: input.runId }, include: { product: true } })).product;
   const effort = {
     implementer: product.effortImplementer,
     refiner: product.effortRefiner,
     validator: product.effortValidator,
     reviewer: product.effortReviewer,
+    setup: product.effortSetup ?? product.effortImplementer,
   }[input.role];
   const opencode = runner === "opencode";
   // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
@@ -385,6 +389,8 @@ const worker = await Worker.create({
     // repository takes a skill proposal as a pull request.
     skills: new PrismaRunSkillStore(prisma),
     runViews: new PrismaRunViewReader(prisma),
+    setups: new PrismaRepositorySetupStore(prisma),
+    setupMarks: repositories,
     skillRegistries: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }),
     organizationSkills: ({ slug, repository, githubInstallationId }) =>
       new OrganizationSkillsRegistry({

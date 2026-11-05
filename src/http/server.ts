@@ -1,3 +1,5 @@
+import { registerRepositorySetupRoutes, type RepositorySetupRouteDependencies } from "./admin/repository-setup.routes.js";
+import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import type { Env } from "~/config/env.js";
@@ -63,6 +65,12 @@ export interface ServerDependencies {
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
   /** docs/specs/run-speed.md. Requests a build-ahead when a bootstrap key changes. */
   buildAhead?: BuildAheadTrigger;
+  /**
+   * docs/specs/repository-setup-and-services.md. Lists the repositories one installation grants,
+   * and starts one setup workflow. Absent in a server that starts no workflow, such as the
+   * OpenAPI build, which still documents the routes.
+   */
+  repositorySetup?: Pick<RepositorySetupRouteDependencies, "listInstallationRepositories" | "startSetup">;
   /** docs/specs/run-visibility.md. The Temporal UI inside the stack, or absent for none. */
   temporalUiUrl?: string | undefined;
   /** docs/specs/skill-registry.md. The save-time check of a Product skill registry. */
@@ -171,6 +179,23 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         sessions,
       });
       registerInstallationRoutes(admin, { tenants: dependencies.tenants });
+      const prisma = dependencies.prisma;
+      registerRepositorySetupRoutes(admin, {
+        products: dependencies.products,
+        tenants: dependencies.tenants,
+        setups: new PrismaRepositorySetupStore(prisma),
+        registeredRepositories: async (tenantId) =>
+          (await prisma.repository.findMany({ where: { tenantId } })).map((row) => ({
+            ...row,
+            linearProjects: row.linearProjects,
+            requestedSecretNames: row.requestedSecretNames,
+          })),
+        installations: async (tenantId) =>
+          (await prisma.gitHubInstallation.findMany({ where: { tenantId } })).map((row) => row.githubInstallationId),
+        listInstallationRepositories:
+          dependencies.repositorySetup?.listInstallationRepositories ?? (() => Promise.reject(new Error("this server lists no repository"))),
+        startSetup: dependencies.repositorySetup?.startSetup ?? (() => Promise.reject(new Error("this server starts no workflow"))),
+      });
       registerContextSourceRoutes(admin, {
         products: dependencies.products,
         tenants: dependencies.tenants,

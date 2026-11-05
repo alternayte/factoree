@@ -37,6 +37,8 @@ export interface ProductEffort {
   refiner: string | null;
   validator: string | null;
   reviewer: string | null;
+  /** docs/specs/repository-setup-and-services.md. Null means the implementer's effort. */
+  setup: string | null;
 }
 
 /** docs/specs/release-0-1-0.md. The Product settings an operator changes in the UI. */

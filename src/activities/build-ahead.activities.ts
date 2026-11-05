@@ -1,3 +1,5 @@
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import type { RepositorySetupMarks } from "~/domain/setup/repository-setup.js";
 import { repositoryNamesOf } from "~/activities/repository-credential.js";
 import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
@@ -27,6 +29,8 @@ export interface BuildAheadActivityDependencies {
   redactor: Redactor;
   repositoryBaseUrl: () => Promise<string>;
   logger: Logger;
+  /** docs/specs/repository-setup-and-services.md. A failed build-ahead marks the repository for setup. */
+  setupMarks?: RepositorySetupMarks | undefined;
 }
 
 export const createBuildAheadActivities = (dependencies: BuildAheadActivityDependencies) => ({
@@ -92,12 +96,20 @@ export const createBuildAheadActivities = (dependencies: BuildAheadActivityDepen
         ...(credential === null ? {} : { repositoryCredential: credential }),
       });
       dependencies.logger.info("the build-ahead ended", { ...fields, outcome: outcome.kind });
+      await dependencies.setupMarks?.clearNeedsSetup(request.tenantId, request.repositoryFullName);
       return outcome;
     } catch (error) {
       // SDD section 60. An activity error becomes Temporal history.
       if (error instanceof Error) {
         error.message = dependencies.redactor.redactText(error.message);
         if (error.stack !== undefined) error.stack = dependencies.redactor.redactText(error.stack);
+      }
+      // docs/specs/repository-setup-and-services.md. A configuration fault is drift a setup can
+      // repair, so the product page offers "Run setup again". An infrastructure fault is not.
+      if (error instanceof RunConfigurationError) {
+        await dependencies.setupMarks
+          ?.markNeedsSetup(request.tenantId, request.repositoryFullName, error.message, new Date())
+          .catch(() => undefined);
       }
       throw error;
     }
