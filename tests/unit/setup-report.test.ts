@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
-import { provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult } from "~/domain/setup/setup-report.js";
+import { failureExcerpt, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult } from "~/domain/setup/setup-report.js";
 
 const PROPOSAL = `version: 1
 identity:
@@ -76,5 +76,27 @@ describe("renderSetupReport", () => {
     expect(body).toContain("- account `member`: it failed");
     expect(body).toContain("TMDB API, answered by the compose service `tmdb`");
     expect(body).toContain("Denied, because they are outside the ecosystem host list: `npm.company.internal`.");
+  });
+});
+
+describe("failureExcerpt", () => {
+  it("keeps the reason of the first failure, not only the list of failed tests (anthology setup, 2026-11-05)", () => {
+    const log = [
+      ...Array.from({ length: 40 }, (_, index) => `  Restored project ${String(index)}`),
+      "[xUnit.net 00:00:21.10]     Anthology.Tests.ListIntegrationTests.Create_list_returns_ok_and_persists [FAIL]",
+      "  Failed Anthology.Tests.ListIntegrationTests.Create_list_returns_ok_and_persists [3 s]",
+      "  Error Message:",
+      "   System.InvalidOperationException: Docker is either not running or misconfigured.",
+      ...Array.from({ length: 60 }, (_, index) => `[xUnit.net 00:00:23.${String(index)}]     Anthology.Tests.Other.Test_${String(index)} [FAIL]`),
+    ].join("\n");
+    const excerpt = failureExcerpt(log);
+    expect(excerpt).toContain("System.InvalidOperationException: Docker is either not running or misconfigured.");
+    expect(excerpt).toContain("Anthology.Tests.Other.Test_59 [FAIL]");
+    expect(excerpt).not.toContain("Restored project 0");
+    expect(excerpt).toMatch(/… \d+ lines …/);
+  });
+
+  it("keeps a short log whole", () => {
+    expect(failureExcerpt("error: one\ntwo")).toBe("error: one\ntwo");
   });
 });

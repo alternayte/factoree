@@ -103,6 +103,21 @@ describe("startPreview", () => {
     ).rejects.toMatchObject({ name: "PreviewStartError", reason: "not_ready" });
   });
 
+  it("names a preview that listens on loopback only (anthology setup, 2026-11-05)", async () => {
+    // ASP.NET listened on 127.0.0.1:3000 and [::1]:3000. It answered inside the sandbox and
+    // never through the exposed port, and the setup report said only that it did not answer.
+    const sandbox = new FakeSandbox();
+    sandbox.onExec = () => ({
+      exitCode: 0,
+      stdout: "LISTEN 0      512        127.0.0.1:8080      0.0.0.0:*\nLISTEN 0      512            [::1]:8080         [::]:*\n",
+      stderr: "",
+    });
+    let clock = 0;
+    await expect(
+      startPreview({ ...buildBase(sandbox), probe: async () => null, now: () => (clock += 1_000) }),
+    ).rejects.toThrow("The preview listens on 127.0.0.1:8080 and [::1]:8080 only. Factoree reaches it through the exposed port, so it must listen on 0.0.0.0 or [::].");
+  });
+
   it("cancels the process it started when the deadline passes", async () => {
     const sandbox = new FakeSandbox();
     const base = buildBase(sandbox);

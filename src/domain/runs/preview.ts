@@ -61,6 +61,29 @@ const buildLog = (redactor: Redactor, stdout: string, stderr: string): string =>
 const isReady = (result: { status: number } | null): boolean =>
   result !== null && result.status >= 200 && result.status < 400;
 
+/**
+ * DI-21.14. A server that listens on loopback alone answers inside the sandbox, and never through
+ * the exposed port that the readiness poll and the browser use. The anthology setup of
+ * 2026-11-05 lost its preview so: ASP.NET listened on 127.0.0.1:3000 and [::1]:3000 only. The
+ * failure names the cause, so the next attempt binds every interface.
+ */
+const loopbackOnlyHint = async (input: StartPreviewInput, port: number): Promise<string> => {
+  try {
+    const result = await input.sandbox.exec(input.ref, { file: "sh", args: ["-c", `ss -ltnH "sport = :${port}"`], cwd: "/" });
+    const addresses = result.stdout
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/)[3])
+      .filter((address): address is string => address !== undefined && address.length > 0);
+    if (addresses.length === 0) return ` Nothing listens on port ${String(port)} in the sandbox.`;
+    const loopback = (address: string) => address.startsWith("127.") || address.startsWith("[::1]") || address.startsWith("[::ffff:127.");
+    return addresses.every(loopback)
+      ? ` The preview listens on ${addresses.join(" and ")} only. Factoree reaches it through the exposed port, so it must listen on 0.0.0.0 or [::].`
+      : "";
+  } catch {
+    return "";
+  }
+};
+
 export const startPreview = async (input: StartPreviewInput): Promise<PreviewHandle> => {
   const sleep = input.sleep ?? defaultSleep;
   const now = input.now ?? (() => Date.now());
@@ -149,7 +172,7 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
       if (now() >= deadline) {
         throw new PreviewStartError(
           `The preview command "${input.preview.command}" did not answer within ` +
-            `${input.preview.timeoutSeconds} seconds.`,
+            `${input.preview.timeoutSeconds} seconds.${await loopbackOnlyHint(input, port)}`,
           "not_ready",
           buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
         );

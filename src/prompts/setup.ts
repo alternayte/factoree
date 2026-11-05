@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@1";
+export const SETUP_PROMPT_VERSION = "setup@2";
 
 export interface SetupPromptFields {
   repository: string;
@@ -95,6 +95,8 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "Use the repository's own compose file in services.compose. Put every extra service, and every fake, in `.factoree/compose.yaml`. Factoree passes it after the repository file, so it can add a service and change the environment of an existing one.",
         "A seed creates the data and the accounts the app needs, through the app's own path: its CLI, its migrations, or its registration endpoint. Put a seed script in `.factoree/`.",
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",
+        "The preview must listen on every interface, 0.0.0.0 or [::], and not on localhost alone: Factoree and its browser reach it through the sandbox's exposed port, from outside the sandbox. Write readyUrl with localhost and the explicit port.",
+        "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",
       ].join("\n"),
     ),
     section(
@@ -130,6 +132,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "You must not change a file outside .factoree/.",
         "You must not put a real credential in the configuration. An account password is a local test value.",
         "Run the bootstrap, the verify commands, the stack and the preview yourself before you stop, so the configuration works. Factoree checks each part again in a fresh sandbox, and your own run is not evidence.",
+        "The session stops after 60 minutes. Write the configuration as soon as one part works, and improve it after. Factoree proves what the files hold when the session stops.",
       ].join("\n"),
     ),
   ].join("\n");

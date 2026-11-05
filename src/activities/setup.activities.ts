@@ -14,7 +14,7 @@ import { publishToBranch } from "~/domain/publishing/trusted-checkout.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { projectDefaultsOf } from "~/domain/runs/build-ahead.js";
 import { checkoutPrimary, withoutUrlCredentials } from "~/domain/runs/checkout.js";
-import { startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
+import { PreviewStartError, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import { bootstrapAllowListOf, DEFAULT_PROJECT_RUNTIME_CONFIG, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 import { narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
@@ -27,7 +27,7 @@ import {
   type RepositorySetupStatus,
   type SetupSessionUsage,
 } from "~/domain/setup/repository-setup.js";
-import { provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult, type SetupReport } from "~/domain/setup/setup-report.js";
+import { failureExcerpt, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult, type SetupReport } from "~/domain/setup/setup-report.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import { signInStepsOf } from "~/domain/validation/user-validator.js";
 import { renderSetupPrompt, SETUP_PROMPT_VERSION } from "~/prompts/setup.js";
@@ -75,6 +75,7 @@ export interface SetupProofOutput {
 }
 
 /** The longest a setup agent session may run. */
+// setup@2 names this limit to the agent. Change both together.
 const SETUP_SESSION_TIMEOUT_MS = 60 * 60_000;
 /** The longest one proof command may run. */
 const PROOF_COMMAND_TIMEOUT_MS = 30 * 60_000;
@@ -203,6 +204,10 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
               ? null
               : (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0),
           costUsd: result.usage?.costUsd ?? null,
+          turns: result.usage?.turns ?? null,
+          longestTurnMs: result.usage?.longestTurnMs ?? null,
+          modelMs: result.usage?.modelMs ?? null,
+          toolMs: result.usage?.toolMs ?? null,
         };
         await dependencies.setups.update(setup.id, { sessionUsage: usage });
 
@@ -301,7 +306,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           record(
             bootstrap.exitCode === 0
               ? { kind: "bootstrap", name: "bootstrap", passed: true, reason: null }
-              : { kind: "bootstrap", name: "bootstrap", passed: false, reason: `the bootstrap exited with code ${bootstrap.exitCode}`, logTail: tail(bootstrap.stdout, bootstrap.stderr) },
+              : { kind: "bootstrap", name: "bootstrap", passed: false, reason: `the bootstrap exited with code ${bootstrap.exitCode}`, logTail: failureExcerpt(`${bootstrap.stdout}\n${bootstrap.stderr}`) },
           );
         } else {
           record({ kind: "bootstrap", name: "bootstrap", passed: true, reason: null });
@@ -342,7 +347,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             record(
               check.passed
                 ? { kind: "verify", name: check.name, passed: true, reason: null }
-                : { kind: "verify", name: check.name, passed: false, reason: `it exited with code ${check.exitCode}`, logTail: (check.log ?? "").split("\n").slice(-30).join("\n") },
+                : { kind: "verify", name: check.name, passed: false, reason: `it exited with code ${check.exitCode}`, logTail: failureExcerpt(check.log ?? "") },
             );
           }
           if (preview !== null && preview.enabled) {
@@ -358,7 +363,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
               });
               record({ kind: "preview", name: "preview", passed: true, reason: null });
             } catch (error) {
-              record({ kind: "preview", name: "preview", passed: false, reason: "the preview did not become ready", logTail: String(error) });
+              record({ kind: "preview", name: "preview", passed: false, reason: "the preview did not become ready", logTail: error instanceof PreviewStartError && error.log.length > 0 ? `${String(error)}\n\n${failureExcerpt(error.log)}` : String(error) });
             }
           }
           for (const account of runtime.accounts ?? []) {

@@ -123,3 +123,23 @@ export const renderSetupReport = (report: SetupReport): string => {
   }
   return `${lines.join("\n").trimEnd()}\n`;
 };
+
+const FIRST_ERROR = /\b(error|exception|fatal|failed)\b|\[FAIL\]/i;
+
+/**
+ * DI-21.14. The excerpt of a failed command in the setup report. A test runner prints the reason
+ * of the first failure and then a list of every failed test, so the tail alone holds only names:
+ * the anthology setup of 2026-11-05 reported 28 failed tests and no reason. The excerpt keeps the
+ * lines from the first error on, and the tail.
+ */
+export const failureExcerpt = (log: string, headLines = 25, tailLines = 15, maxChars = 4000): string => {
+  const lines = log.trim().split("\n");
+  if (lines.length <= headLines + tailLines) return lines.join("\n").slice(-maxChars);
+  const first = lines.findIndex((line) => FIRST_ERROR.test(line));
+  const tail = lines.slice(-tailLines);
+  if (first === -1 || first >= lines.length - tailLines) return lines.slice(-(headLines + tailLines)).join("\n").slice(-maxChars);
+  const head = lines.slice(first, Math.min(first + headLines, lines.length - tailLines));
+  const gap = lines.length - tailLines - (first + head.length);
+  const excerpt = [...head, ...(gap > 0 ? [`… ${String(gap)} lines …`] : []), ...tail].join("\n");
+  return excerpt.length <= maxChars ? excerpt : `${excerpt.slice(0, maxChars / 2)}\n…\n${excerpt.slice(-maxChars / 2)}`;
+};

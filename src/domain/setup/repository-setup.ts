@@ -12,6 +12,15 @@ export interface SetupSessionUsage {
   durationMs: number;
   tokens: number | null;
   costUsd: number | null;
+  /**
+   * The model calls of the session, its longest call, and the time it spent waiting on the model
+   * and in tool calls, as AgentSessionUsage records them for a run. Absent in a record made
+   * before they existed. DI-21.14.
+   */
+  turns?: number | null;
+  longestTurnMs?: number | null;
+  modelMs?: number | null;
+  toolMs?: number | null;
 }
 
 export interface RepositorySetupRecord {
