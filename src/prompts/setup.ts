@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@2";
+export const SETUP_PROMPT_VERSION = "setup@3";
 
 export interface SetupPromptFields {
   repository: string;
@@ -90,7 +90,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "```",
         "",
         `Set identity.product to "${fields.productSlug}" and identity.linear.teamKey to "${fields.linearTeamKey}".`,
-        "Install each toolchain the image lacks with mise: write `.factoree/mise.toml` when the repository has no mise.toml or .tool-versions, and start the bootstrap with `mise install`. A global.json names the .NET SDK version.",
+        "Install each toolchain the image lacks with mise: write `.factoree/mise.toml` when the repository has no mise.toml or .tool-versions, and start the bootstrap with `mise install`. Every command already reads `.factoree/mise.toml` through MISE_CONFIG_FILE, so a command needs no mise prefix. A global.json names the .NET SDK version.",
         "List in bootstrap.keyFiles every lockfile and toolchain file the bootstrap reads.",
         "Use the repository's own compose file in services.compose. Put every extra service, and every fake, in `.factoree/compose.yaml`. Factoree passes it after the repository file, so it can add a service and change the environment of an existing one.",
         "A seed creates the data and the accounts the app needs, through the app's own path: its CLI, its migrations, or its registration endpoint. Put a seed script in `.factoree/`.",
@@ -132,6 +132,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "You must not change a file outside .factoree/.",
         "You must not put a real credential in the configuration. An account password is a local test value.",
         "Run the bootstrap, the verify commands, the stack and the preview yourself before you stop, so the configuration works. Factoree checks each part again in a fresh sandbox, and your own run is not evidence.",
+        "Factoree proves the configuration in a fresh sandbox that holds only the repository and your `.factoree/` files. Nothing else you do in this session carries over: no `mise use --global`, no `npm install -g`, no file outside the repository. The bootstrap must install everything the verify commands, the seed and the preview need.",
         "The session stops after 60 minutes. Write the configuration as soon as one part works, and improve it after. Factoree proves what the files hold when the session stops.",
       ].join("\n"),
     ),
