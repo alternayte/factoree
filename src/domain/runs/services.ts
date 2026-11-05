@@ -21,9 +21,9 @@ export const DOCKER_ENVIRONMENT: Readonly<Record<string, string>> = {
   // mise reads a repository mise.toml only from a trusted path, and must never prompt.
   MISE_TRUSTED_CONFIG_PATHS: "/home/agent/workspace",
   MISE_YES: "1",
-  // DI-21.10. NuGet checks the revocation of each package signature over plain HTTP on port 80,
-  // which the Kiln egress filter drops, so each check waits for the TCP timeout. Offline mode
-  // still verifies every signature and skips only the online revocation lookup.
+  // DI-21.10, DI-21.11. NuGet checks the revocation of each package signature over plain HTTP
+  // on port 80, and no allow list of a run holds those hosts, so each online check fails with a
+  // warning per package. Offline mode still verifies every signature and skips only the lookup.
   NUGET_CERT_REVOCATION_MODE: "offline",
 };
 
