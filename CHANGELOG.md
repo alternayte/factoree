@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-11-05
+
+### Fixed
+
+- An account sign-in gives each step what is left of its 60-second budget, not an equal share. A setup proof failed the first `fill` on a cold app after 12 s, on a correct selector (DI-21.16).
+
 ## [0.6.7] - 2026-11-05
 
 ### Fixed
