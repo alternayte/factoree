@@ -436,6 +436,7 @@ try {
         repositories,
         snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
         readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
+        listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
         repositoryBaseUrl: githubBaseUrl(settings),
         logger,
       }).afterTemplateChange();

@@ -51,8 +51,16 @@ export const createBuildAheadActivities = (dependencies: BuildAheadActivityDepen
     if (file === null) return { kind: "skipped", reason: "the repository carries no .factoree/config.yaml" };
     const defaults = projectDefaultsOf(product);
     const url = buildRepositoryUrl(await dependencies.repositoryBaseUrl(), repository.fullName);
-    const bootstrapKey = bootstrapKeyOfConfig(file, defaults);
-    if (await dependencies.sandboxManager.hasCurrentWarmSnapshot({ tenantId: request.tenantId, repositoryUrl: url, bootstrapKey })) {
+    const files = await dependencies.discoveryClient.listFiles(
+      repository.fullName,
+      repository.defaultBranch,
+      repository.githubInstallationId,
+    );
+    const bootstrapKey = bootstrapKeyOfConfig(file, defaults, files);
+    if (
+      bootstrapKey !== null &&
+      (await dependencies.sandboxManager.hasCurrentWarmSnapshot({ tenantId: request.tenantId, repositoryUrl: url, bootstrapKey }))
+    ) {
       dependencies.logger.info("the warm snapshot is current, so the build-ahead builds nothing", fields);
       return { kind: "skipped", reason: "the warm snapshot is current" };
     }

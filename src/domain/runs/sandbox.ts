@@ -95,6 +95,12 @@ export interface SandboxCapabilities {
    * installs the browser tools itself, and B-2 stays open on that adapter.
    */
   supportsCustomImage: boolean;
+  /**
+   * docs/specs/repository-setup-and-services.md. True when the sandbox image runs rootless Docker
+   * as the sandbox user, so a compose stack and Testcontainers work. A checkpoint that keeps no
+   * process, or a sandbox without the image, has it false.
+   */
+  supportsDocker: boolean;
 }
 
 /**

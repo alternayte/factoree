@@ -83,7 +83,7 @@ beforeAll(async () => {
       repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     }),
     discovery: new DiscoveryService(
-      { listInstallationRepositories: () => Promise.reject(new Error("unused")), readConfig: () => Promise.reject(new Error("unused")) },
+      { listInstallationRepositories: () => Promise.reject(new Error("unused")), readConfig: () => Promise.reject(new Error("unused")), listFiles: () => Promise.reject(new Error("unused")) },
       products,
       repositories,
       linearTeams,

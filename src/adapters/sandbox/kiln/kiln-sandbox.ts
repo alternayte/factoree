@@ -1,3 +1,4 @@
+import { DOCKER_ENVIRONMENT } from "~/domain/runs/services.js";
 import { posix } from "node:path";
 import type {
   CheckpointRef,
@@ -45,7 +46,10 @@ export const KILN_RUNNER_BIN = "/opt/factoree/bin";
  * shadow it. The runners also call it by absolute path.
  */
 const KILN_BASE_ENVIRONMENT: Record<string, string> = {
-  PATH: `${KILN_RUNNER_BIN}:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+  // docs/specs/repository-setup-and-services.md. Every command, an isolated verify command too,
+  // reaches the rootless Docker socket.
+  ...DOCKER_ENVIRONMENT,
+  PATH: `${KILN_RUNNER_BIN}:/home/agent/.local/share/mise/shims:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
 };
 
 // A template build pulls the image and boots it once, so the first run of a new digest waits.
@@ -83,6 +87,7 @@ export class KilnSandbox implements Sandbox {
     supportsCheckpoints: false,
     supportsExposedServices: true,
     supportsCustomImage: true,
+    supportsDocker: true,
   };
   readonly image: string;
   readonly warmSnapshots: WarmSnapshots;

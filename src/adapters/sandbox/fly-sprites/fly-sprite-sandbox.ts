@@ -100,6 +100,7 @@ export class FlySpriteSandbox implements Sandbox {
     // See docs/build/decisions.md, DI-2.9.
     supportsExposedServices: true,
     supportsCustomImage: false,
+    supportsDocker: false,
   };
 
   private readonly workspacePath: string;

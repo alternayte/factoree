@@ -59,7 +59,7 @@ describe("parseFactoreeConfig", () => {
     expect(config.version).toBe(1);
     expect(config.identity).toEqual({ product: "checkout-platform", linear: { teamKey: "PAY", projects: [] } });
     expect(config.secrets).toEqual({ require: ["STRIPE_TEST_KEY"] });
-    expect(config.bootstrap).toEqual({ command: "npm ci" });
+    expect(config.bootstrap).toEqual({ command: "npm ci", keyFiles: [] });
     expect(config.verify.commands).toEqual([
       { name: "typecheck", run: "npm run typecheck" },
       { name: "test", run: "npm test" },

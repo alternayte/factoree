@@ -12,6 +12,15 @@ export interface ProjectRuntimeConfig {
   warmCommand?: string | null;
   /** SDD section 29. An empty list denies all egress. */
   allowedDomains: string[];
+  /**
+   * docs/specs/repository-setup-and-services.md. The globs of the files whose content keys the
+   * warm snapshot. Absent in a history recorded before it existed.
+   */
+  keyFiles?: string[];
+  /** docs/specs/repository-setup-and-services.md. The compose stack, or null. Absent in an old history. */
+  services?: ServicesConfig | null;
+  /** docs/specs/repository-setup-and-services.md. True when the sandbox runs Docker. Absent in an old history. */
+  docker?: boolean;
   implementerRunner: string;
   validatorRunner: string;
   reviewerRunner: string;
@@ -19,6 +28,16 @@ export interface ProjectRuntimeConfig {
   stagingRead: boolean;
   /** SDD section 51. */
   spriteRetentionHours: number;
+}
+
+/** docs/specs/repository-setup-and-services.md. The compose stack of a repository. */
+export interface ServicesConfig {
+  /** The compose file of the repository, relative to its root. */
+  compose: string;
+  profiles: string[];
+  /** The command that fills the stack once, after the bootstrap, or null. */
+  seed: string | null;
+  waitTimeoutSeconds: number;
 }
 
 export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
@@ -93,6 +112,17 @@ export const toProjectRuntimeConfig = (
     // The same normalisation the sandbox applies, so the value carried on the Run and the value
     // sent to the adapter can never differ.
     allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),
+    keyFiles: config.bootstrap?.keyFiles ?? [],
+    services:
+      config.services === null
+        ? null
+        : {
+            compose: config.services.compose,
+            profiles: config.services.profiles,
+            seed: config.services.seed,
+            waitTimeoutSeconds: config.services.waitTimeoutSeconds,
+          },
+    docker: config.docker || config.services !== null,
     implementerRunner: config.agents.implementer,
     validatorRunner: config.agents.validator,
     reviewerRunner: config.agents.reviewer,

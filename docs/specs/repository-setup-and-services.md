@@ -8,7 +8,8 @@ An operator picks a repository and a product on the product page and starts a se
 ## Decisions
 - Kiln and E2B run Docker. Fly Sprites and the local adapter declare `supportsDocker: false`, and a repository with `services` fails at preparation on them — a Fly checkpoint keeps no process.
 - Docker is rootless, as `agent`, with no rootful fallback — a root socket lets patched test code replace the root-owned runner CLIs and forge a verdict (B-2).
-- The sandbox image adds rootless Docker, Docker Compose, `uidmap`, `fuse-overlayfs`, `slirp4netns` and mise, all root-owned — one image serves the Kiln and E2B templates.
+- The sandbox image adds rootless Docker, Docker Compose, `uidmap`, `slirp4netns` and mise, all root-owned — one image serves the Kiln and E2B templates.
+- Docker stores its data with overlay2 on the ext4 path when Kiln offers one, else with vfs — fuse-overlayfs started no container in a nested test, and vfs runs everywhere.
 - Kiln mounts cgroup2 at `/sys/fs/cgroup` in kilninit and offers an ext4 path for the Docker data directory, through alternayte/kiln#22 and alternayte/kiln#23 — the kernel holds every other feature, and `agent` cannot mount cgroup2.
 - A repository installs a toolchain with `mise install` in its bootstrap — mise covers most stacks, and a per-repository image would break B-2.
 - `bootstrap.keyFiles` lists files whose content hash joins the bootstrap key, with the compose files and `.factoree/**` always in it — a lockfile or toolchain change starts a build-ahead, so the bootstrap in each fork stays a no-op.

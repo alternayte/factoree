@@ -76,7 +76,7 @@ beforeAll(async () => {
     // This test drives the Products administration route, which never exercises the GitHub
     // webhook route. These doubles only satisfy the shape `buildServer` now requires.
     discovery: new DiscoveryService(
-      { listInstallationRepositories: () => Promise.reject(new Error("unused")), readConfig: () => Promise.reject(new Error("unused")) } satisfies RepositoryDiscoveryClient,
+      { listInstallationRepositories: () => Promise.reject(new Error("unused")), readConfig: () => Promise.reject(new Error("unused")), listFiles: () => Promise.reject(new Error("unused")) } satisfies RepositoryDiscoveryClient,
       new PrismaProductRegistry(prisma),
       new PrismaRepositoryRegistry(prisma),
       fakeLinearTeams(["NOPE"]),

@@ -34,7 +34,29 @@ RUN npm install -g --prefix /opt/factoree --ignore-scripts --no-audit --no-fund 
  && chmod -R go-w /opt/factoree \
  && rm -rf /root/.npm
 
-# Kiln runs every command as this user. Its home holds the workspace and the agent state.
-RUN useradd --create-home --uid 1001 --shell /bin/bash agent
+# docs/specs/repository-setup-and-services.md. Rootless Docker, Docker Compose and mise. Docker
+# runs only as the sandbox user, never as root, so no socket can replace a root-owned file (B-2).
+# uidmap gives the setuid newuidmap and newgidmap, and slirp4netns the container network.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gnupg \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+ && curl -fsSL https://mise.jdx.dev/gpg-key.pub | gpg --dearmor -o /etc/apt/keyrings/mise.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/mise.gpg] https://mise.jdx.dev/deb stable main" > /etc/apt/sources.list.d/mise.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras docker-compose-plugin \
+      uidmap slirp4netns iptables mise \
+ && rm -rf /var/lib/apt/lists/*
 
-ENV PATH=/opt/factoree/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COPY factoree-docker-start /opt/factoree/bin/factoree-docker-start
+RUN chown root:root /opt/factoree/bin/factoree-docker-start && chmod 755 /opt/factoree/bin/factoree-docker-start
+
+# Kiln runs every command as this user. Its home holds the workspace and the agent state. Rootless
+# Docker maps the container users onto its subordinate ids.
+RUN useradd --create-home --uid 1001 --shell /bin/bash agent \
+ && (grep -q '^agent:' /etc/subuid || echo 'agent:165536:65536' >> /etc/subuid) \
+ && (grep -q '^agent:' /etc/subgid || echo 'agent:165536:65536' >> /etc/subgid)
+
+ENV PATH=/opt/factoree/bin:/home/agent/.local/share/mise/shims:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

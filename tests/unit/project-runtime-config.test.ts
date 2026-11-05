@@ -22,6 +22,9 @@ describe("toProjectRuntimeConfig", () => {
       bootstrapCommand: "npm ci",
       warmCommand: null,
       allowedDomains: ["registry.npmjs.org"],
+      keyFiles: [],
+      services: null,
+      docker: false,
       implementerRunner: "claude",
       validatorRunner: "opencode",
       reviewerRunner: "opencode",
@@ -30,6 +33,22 @@ describe("toProjectRuntimeConfig", () => {
       spriteRetentionHours: 48,
     });
     expect(resolved.verifyCommands).toEqual([{ name: "lint", run: "npm run lint" }]);
+  });
+
+  it("maps the services block and turns Docker on for it (repository-setup-and-services.md)", () => {
+    const config = parseFactoreeConfig(
+      minimum + "services:\n  compose: docker-compose.yml\n  profiles: [dev]\n  seed: just seed-catalog\n",
+    );
+    const { runtime } = toProjectRuntimeConfig(config, DEFAULT_PROJECT_DEFAULTS);
+    expect(runtime.services).toEqual({ compose: "docker-compose.yml", profiles: ["dev"], seed: "just seed-catalog", waitTimeoutSeconds: 180 });
+    expect(runtime.docker).toBe(true);
+  });
+
+  it("refuses a key file or a compose path that leaves the repository", () => {
+    expect(() => parseFactoreeConfig(minimum.replace("version: 1", "version: 1\nbootstrap:\n  command: x\n  keyFiles: [../secrets]"))).toThrow(
+      /keyFiles/,
+    );
+    expect(() => parseFactoreeConfig(minimum + "services:\n  compose: /etc/compose.yml\n")).toThrow(/services.compose/);
   });
 
   it("keeps the Project defaults out of the repository file", () => {

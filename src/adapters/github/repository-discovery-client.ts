@@ -1,6 +1,7 @@
 import { resolveGitHubApiBaseUrl, type GitHubApiBaseUrl } from "./api-base-url.js";
 import { GitHubApiError } from "~/adapters/github/github-pull-requests.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { RepositoryFileEntry } from "~/domain/runs/warm-snapshot.js";
 
 /** One GitHub call must not hang the discovery service. */
 const GITHUB_API_TIMEOUT_MS = 30_000;
@@ -30,6 +31,11 @@ export interface RepositoryConfigFile {
 export interface RepositoryDiscoveryClient {
   listInstallationRepositories(installationId: string): Promise<DiscoveredRepository[]>;
   readConfig(fullName: string, ref: string, githubInstallationId: string): Promise<RepositoryConfigFile | null>;
+  /**
+   * docs/specs/repository-setup-and-services.md. Every file of the repository at the ref, with its
+   * git blob SHA. Null when GitHub truncated the tree, so the caller cannot know the key files.
+   */
+  listFiles(fullName: string, ref: string, githubInstallationId: string): Promise<RepositoryFileEntry[] | null>;
 }
 
 export interface GitHubRepositoryDiscoveryClientOptions {
@@ -124,6 +130,28 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
       throw new Error(`the GitHub API answered a configuration file of ${fullName} without a SHA or content`);
     }
     return { content: Buffer.from(content, "base64").toString("utf8"), sha };
+  }
+
+  async listFiles(fullName: string, ref: string, githubInstallationId: string): Promise<RepositoryFileEntry[] | null> {
+    const url = `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${fullName}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
+    const response = await this.request(url, githubInstallationId);
+    const text = await response.text();
+    if (!response.ok) {
+      throw new GitHubApiError(
+        `the GitHub API answered ${String(response.status)} while it listed the files of ${fullName} at ${ref}`,
+        response.status,
+        this.rateLimitHeaders(response.headers),
+      );
+    }
+    const body = (text === "" ? {} : JSON.parse(text)) as { truncated?: unknown; tree?: unknown };
+    if (body.truncated === true || !Array.isArray(body.tree)) return null;
+    const files: RepositoryFileEntry[] = [];
+    for (const entry of body.tree as Array<{ type?: unknown; path?: unknown; sha?: unknown }>) {
+      if (entry.type === "blob" && typeof entry.path === "string" && typeof entry.sha === "string") {
+        files.push({ path: entry.path, sha: entry.sha });
+      }
+    }
+    return files;
   }
 
   /**

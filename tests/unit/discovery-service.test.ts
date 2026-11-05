@@ -165,6 +165,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
 
 /** A GitHub discovery client fake. Serves a fixed configuration per repository full name. */
 class FakeDiscoveryClient implements RepositoryDiscoveryClient {
+  listFiles = (): Promise<[]> => Promise.resolve([]);
   constructor(private readonly configByRepository: Record<string, string | null>) {}
 
   listInstallationRepositories() {

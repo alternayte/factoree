@@ -85,11 +85,42 @@ const commandSchema = z
   })
   .strict();
 
+// docs/specs/repository-setup-and-services.md. A path or a glob relative to the repository root. It
+// must not leave the checkout.
+const REPOSITORY_PATH = z
+  .string()
+  .min(1)
+  .max(300)
+  .refine((value) => !value.startsWith("/") && !value.split("/").includes(".."), "must be relative to the repository root");
+
 const schema = z
   .object({
     version: z.literal(1),
     identity: identitySchema,
-    bootstrap: z.object({ command: z.string().min(1) }).strict().nullable().default(null),
+    bootstrap: z
+      .object({
+        command: z.string().min(1),
+        // docs/specs/repository-setup-and-services.md. The files whose content keys the warm snapshot,
+        // so a lockfile or toolchain change starts a build-ahead.
+        keyFiles: z.array(REPOSITORY_PATH).max(50).default([]),
+      })
+      .strict()
+      .nullable()
+      .default(null),
+    // docs/specs/repository-setup-and-services.md. The compose stack Factoree starts in each sandbox.
+    services: z
+      .object({
+        compose: REPOSITORY_PATH,
+        profiles: z.array(z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/)).max(20).default([]),
+        seed: z.string().min(1).nullable().default(null),
+        waitTimeoutSeconds: z.number().int().positive().max(600).default(180),
+      })
+      .strict()
+      .nullable()
+      .default(null),
+    // docs/specs/repository-setup-and-services.md. A Docker socket with no compose stack, for
+    // Testcontainers. A `services` block implies it.
+    docker: z.boolean().default(false),
     // docs/specs/run-speed.md. Runs only when Factoree takes a warm snapshot, to fill build caches.
     warm: z.object({ command: z.string().min(1) }).strict().nullable().default(null),
     verify: z

@@ -228,6 +228,7 @@ const buildDiscoveryService = (discoveryClient: RepositoryDiscoveryClient) => {
 // ---------------------------------------------------------------------------------------------
 
 class FakeRepositoryDiscoveryClient implements RepositoryDiscoveryClient {
+  listFiles = (): Promise<[]> => Promise.resolve([]);
   readConfigCalls: string[] = [];
 
   constructor(
@@ -254,6 +255,7 @@ const RATE_LIMIT_RETRY_AFTER_SECONDS = 6;
 
 /** A `RepositoryDiscoveryClient` that answers a rate limit once, then succeeds, for AT-54. */
 class RateLimitedOnceDiscoveryClient implements RepositoryDiscoveryClient {
+  listFiles = (): Promise<[]> => Promise.resolve([]);
   listCalls = 0;
 
   constructor(private readonly repositories: DiscoveredRepository[]) {}

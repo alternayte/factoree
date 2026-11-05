@@ -5,7 +5,7 @@ import type { RepositoryRecord } from "~/domain/products/repository-registry.js"
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { DEFAULT_PROJECT_DEFAULTS, toProjectRuntimeConfig, type ProjectDefaults } from "./project-runtime-config.js";
-import { bootstrapKeyOf } from "./warm-snapshot.js";
+import { bootstrapKeyOf, keyFilePatternsOf, selectKeyFiles, type RepositoryFileEntry } from "./warm-snapshot.js";
 
 /**
  * docs/specs/run-speed.md. A build-ahead builds the warm snapshot of one repository when its
@@ -36,13 +36,25 @@ export const projectDefaultsOf = (product: Pick<ProductRecord, "allowedDomains" 
   allowedDomains: product.allowedDomains,
 });
 
-/** The bootstrap key of one `.factoree/config.yaml` under the allow list of its Product. */
-export const bootstrapKeyOfConfig = (file: RepositoryConfigFile, defaults: ProjectDefaults): string => {
+/**
+ * The bootstrap key of one `.factoree/config.yaml` under the allow list of its Product, with the
+ * key files of the same ref. It equals the key a run computes in its checkout, because both read
+ * git blob SHAs. Null when the file list is unknown: GitHub truncated the tree.
+ */
+export const bootstrapKeyOfConfig = (
+  file: RepositoryConfigFile,
+  defaults: ProjectDefaults,
+  files: readonly RepositoryFileEntry[] | null,
+): string | null => {
+  if (files === null) return null;
   const { runtime } = toProjectRuntimeConfig(parseFactoreeConfig(file.content), defaults);
   return bootstrapKeyOf({
     bootstrapCommand: runtime.bootstrapCommand,
     warmCommand: runtime.warmCommand ?? null,
     allowedDomains: runtime.allowedDomains,
+    services: runtime.services ?? null,
+    docker: runtime.docker === true,
+    files: selectKeyFiles(files, keyFilePatternsOf(runtime)),
   });
 };
 
@@ -58,6 +70,7 @@ export interface BuildAheadTriggerDependencies {
   /** The bootstrap keys of the stored warm snapshots of one repository, on every adapter. */
   snapshotKeys: (tenantId: string, repositoryUrl: string) => Promise<string[]>;
   readConfig: (fullName: string, ref: string, githubInstallationId: string) => Promise<RepositoryConfigFile | null>;
+  listFiles: (fullName: string, ref: string, githubInstallationId: string) => Promise<RepositoryFileEntry[] | null>;
   repositoryBaseUrl: () => Promise<string>;
   logger: Logger;
 }
@@ -70,21 +83,25 @@ export class BuildAheadTrigger {
   constructor(private readonly dependencies: BuildAheadTriggerDependencies) {}
 
   /**
-   * A default-branch push changed `.factoree/config.yaml`. Only a changed bootstrap key requests a
-   * build, so a change to `verify`, `agents`, `preview` or `identity` requests nothing.
+   * A default-branch push of a registered repository. Only a changed bootstrap key requests a
+   * build, so a change to `verify`, `agents`, `preview` or `identity` requests nothing, and a
+   * change to a key file requests one (docs/specs/repository-setup-and-services.md).
    */
-  async afterConfigPush(tenantId: string, repositoryFullName: string): Promise<void> {
-    await this.guarded("config_push", async () => {
+  async afterPush(tenantId: string, repositoryFullName: string): Promise<void> {
+    await this.guarded("push", async () => {
       const repository = await this.dependencies.repositories.findByFullName(tenantId, repositoryFullName);
       if (repository === null || repository.absentSince !== null) return;
       const product = await this.dependencies.products.findById(tenantId, repository.productId);
       if (product === null) return;
       const file = await this.dependencies.readConfig(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
       if (file === null) return;
-      const key = bootstrapKeyOfConfig(file, projectDefaultsOf(product));
+      const files = await this.dependencies.listFiles(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
+      const key = bootstrapKeyOfConfig(file, projectDefaultsOf(product), files);
       const url = buildRepositoryUrl(await this.dependencies.repositoryBaseUrl(), repository.fullName);
       const stored = await this.dependencies.snapshotKeys(tenantId, url);
-      if (stored.includes(key)) {
+      // An unknown key cannot match, so a truncated tree requests a build. The build compares the
+      // key in its own checkout and builds nothing when the snapshot is current.
+      if (key !== null && stored.includes(key)) {
         this.dependencies.logger.info("the bootstrap key did not change, so no build-ahead starts", {
           tenant_id: tenantId,
           repository: repository.fullName,

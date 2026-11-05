@@ -1,3 +1,4 @@
+import { DOCKER_ENVIRONMENT } from "~/domain/runs/services.js";
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type {
@@ -45,7 +46,7 @@ const PROCESS_ROOT = "/home/agent/.factoree/proc";
  * sets this `PATH` again before it starts the command. The runner directory comes first, so a CLI
  * the bootstrap installs in a user directory cannot shadow it.
  */
-const E2B_PATH = `${KILN_RUNNER_BIN}:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
+const E2B_PATH = `${KILN_RUNNER_BIN}:/home/agent/.local/share/mise/shims:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
 
 /**
  * docs/specs/e2b-sandbox-provider.md. E2B pauses a sandbox when its timeout ends. Each call moves
@@ -69,6 +70,7 @@ export class E2BSandbox implements Sandbox {
     supportsCheckpoints: false,
     supportsExposedServices: true,
     supportsCustomImage: true,
+    supportsDocker: true,
   };
   readonly image: string;
   readonly warmSnapshots: WarmSnapshots;
@@ -187,7 +189,7 @@ export class E2BSandbox implements Sandbox {
       }
       if (!/^[0-9]+$/.test(pid)) return;
       const kill = `kill -TERM -${pid} 2>/dev/null || kill -TERM ${pid} 2>/dev/null; true`;
-      const envs = { PATH: E2B_PATH };
+      const envs = { PATH: E2B_PATH, ...DOCKER_ENVIRONMENT };
       await gateway.run(ref.id, commandLine(["sh", "-c", kill], envs), {
         cwd: "/",
         envs,
@@ -274,7 +276,7 @@ export class E2BSandbox implements Sandbox {
     isolated = false,
   ): Record<string, string> {
     const attached = isolated ? {} : (this.attached.get(ref.id) ?? {});
-    return { PATH: E2B_PATH, ...attached, ...(env ?? {}) };
+    return { PATH: E2B_PATH, ...DOCKER_ENVIRONMENT, ...attached, ...(env ?? {}) };
   }
 
   private resolveCwd(ref: SandboxRef, cwd: string | undefined): string {

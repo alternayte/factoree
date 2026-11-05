@@ -14,6 +14,13 @@ const CHECK_DEFINING = [
   /(^|\/)(pyproject\.toml|setup\.cfg|pytest\.ini|tox\.ini|conftest\.py)$/,
   /(^|\/)(justfile|Justfile|Makefile|makefile)$/,
   /^\.github\//,
+  // docs/specs/repository-setup-and-services.md. The compose stack and the images it builds decide
+  // what the checks run against.
+  /(^|\/)(docker-)?compose(\.[\w-]+)?\.ya?ml$/,
+  /(^|\/)(Dockerfile|Containerfile)[^/]*$/,
+  /(^|\/)\.dockerignore$/,
+  // A toolchain pin decides which compiler the checks use.
+  /(^|\/)(mise\.toml|\.mise\.toml|\.tool-versions|global\.json)$/,
 ];
 
 export const checkDefiningFilesOf = (changedFiles: readonly string[]): string[] =>

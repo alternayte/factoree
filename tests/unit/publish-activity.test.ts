@@ -52,6 +52,7 @@ const stubSandbox = (options: { changedFiles: string[]; patchText: string }): Sa
       supportsCheckpoints: false,
       supportsExposedServices: false,
       supportsCustomImage: false,
+      supportsDocker: false,
     },
     exec,
   } as unknown as Sandbox;

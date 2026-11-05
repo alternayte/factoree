@@ -127,6 +127,7 @@ beforeAll(async () => {
   const discoveryClient: RepositoryDiscoveryClient = {
     listInstallationRepositories: () => Promise.reject(new Error("this test never syncs")),
     readConfig: () => Promise.reject(new Error("this test never syncs")),
+    listFiles: () => Promise.reject(new Error("this test never syncs")),
   };
 
   worker = await Worker.create({

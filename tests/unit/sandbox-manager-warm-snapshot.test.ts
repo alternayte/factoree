@@ -47,8 +47,8 @@ class WarmFakeSandbox extends FakeSandbox {
     },
   };
 
-  constructor(private readonly configYaml = CONFIG_YAML) {
-    super({ enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: true, supportsCustomImage: true });
+  constructor(private readonly configYaml = CONFIG_YAML, supportsDocker = false) {
+    super({ enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: true, supportsCustomImage: true, supportsDocker });
     this.onExec = (command) => {
       const last = command.args[command.args.length - 1] ?? "";
       if (command.file === "cat" && last.endsWith(".factoree/config.yaml")) return { exitCode: 0, stdout: this.configYaml, stderr: "" };
@@ -268,5 +268,58 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
 
     expect(sandbox.calls).not.toContain("snapshot");
     expect(store.rows.size).toBe(0);
+  });
+
+  describe("a compose stack (docs/specs/repository-setup-and-services.md)", () => {
+    const SERVICES_YAML =
+      CONFIG_YAML + "services:\n  compose: docker-compose.yml\n  seed: ./seed.sh\n  waitTimeoutSeconds: 120\n";
+    const SERVICES = { compose: "docker-compose.yml", profiles: [], seed: "./seed.sh", waitTimeoutSeconds: 120 };
+    const SERVICES_KEY = bootstrapKeyOf({
+      bootstrapCommand: "npm ci",
+      warmCommand: null,
+      allowedDomains: ["registry.npmjs.org"],
+      services: SERVICES,
+      docker: true,
+    });
+    const lines = (sandbox: FakeSandbox): string[] =>
+      sandbox.commands
+        .filter((command) => command.file === "docker" || command.file === "sh")
+        .map((command) => [command.file, ...command.args].join(" "));
+
+    it("starts Docker and the stack before the bootstrap, seeds after it, then saves the snapshot", async () => {
+      const sandbox = new WarmFakeSandbox(SERVICES_YAML, true);
+      const store = new MemoryWarmSnapshotStore();
+      await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
+
+      const run = lines(sandbox);
+      const docker = run.indexOf("sh /opt/factoree/bin/factoree-docker-start");
+      const up = run.findIndex((line) => line.startsWith("docker compose -f docker-compose.yml") && line.includes("up -d --wait --wait-timeout 120"));
+      const bootstrap = run.findIndex((line) => line.startsWith("sh -c") && line.includes("npm ci"));
+      const seed = run.indexOf("sh -c ./seed.sh");
+      expect([docker, up, bootstrap, seed].every((index) => index >= 0)).toBe(true);
+      expect(docker).toBeLessThan(up);
+      expect(up).toBeLessThan(bootstrap);
+      expect(bootstrap).toBeLessThan(seed);
+      expect(sandbox.calls.indexOf("snapshot")).toBeGreaterThan(sandbox.calls.lastIndexOf("exec:sh"));
+      expect([...store.rows.values()][0]?.bootstrapKey).toBe(SERVICES_KEY);
+    });
+
+    it("starts the stack again from a warm snapshot, and does not seed it twice", async () => {
+      const sandbox = new WarmFakeSandbox(SERVICES_YAML, true);
+      const store = new MemoryWarmSnapshotStore();
+      await store.save(stored(SERVICES_KEY));
+      await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(input);
+
+      expect(sandbox.calls).toContain("restore");
+      const run = lines(sandbox);
+      expect(run).toContain("sh /opt/factoree/bin/factoree-docker-start");
+      expect(run.some((line) => line.includes("up -d --wait"))).toBe(true);
+      expect(run).not.toContain("sh -c ./seed.sh");
+    });
+
+    it("refuses a stack on a provider without Docker, and names the provider", async () => {
+      const sandbox = new WarmFakeSandbox(SERVICES_YAML, false);
+      await expect(new SandboxManager({ sandbox }).prepare(input)).rejects.toThrow(/sandbox provider "fake" runs no Docker/);
+    });
   });
 });

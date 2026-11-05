@@ -1,0 +1,36 @@
+#!/bin/sh
+# docs/specs/repository-setup-and-services.md. Starts rootless Docker as the sandbox user, or does
+# nothing when it already answers. The data directory is the ext4 path Kiln offers outside the
+# overlay root when it exists (overlay2), else a home directory with vfs, because overlay2 cannot
+# stack on the overlay root. vfs copies each layer, so it is slow, but it runs everywhere.
+# fuse-overlayfs started no container in a nested test (exec: invalid argument), so it is not used.
+set -eu
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$HOME/.docker/run}"
+export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+if docker info >/dev/null 2>&1; then exit 0; fi
+
+# A restore that kept no process leaves the files of the old daemon behind.
+rm -rf "$XDG_RUNTIME_DIR/docker.pid" "$XDG_RUNTIME_DIR/docker.sock" "$XDG_RUNTIME_DIR/dockerd-rootless" \
+  "$XDG_RUNTIME_DIR/containerd" 2>/dev/null || true
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+if [ -d /var/lib/kiln-data ] && [ -w /var/lib/kiln-data ]; then
+  root=/var/lib/kiln-data/docker
+  driver=overlay2
+else
+  root="$HOME/.local/share/docker"
+  driver=vfs
+fi
+mkdir -p "$root"
+
+nohup dockerd-rootless.sh --data-root "$root" --storage-driver "$driver" >"$XDG_RUNTIME_DIR/dockerd.log" 2>&1 &
+i=0
+while [ "$i" -lt 60 ]; do
+  if docker info >/dev/null 2>&1; then exit 0; fi
+  i=$((i + 1))
+  sleep 1
+done
+echo "rootless Docker did not answer within 60 seconds" >&2
+tail -n 40 "$XDG_RUNTIME_DIR/dockerd.log" >&2 || true
+exit 1

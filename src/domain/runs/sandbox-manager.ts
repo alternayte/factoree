@@ -19,7 +19,14 @@ import type { CheckpointRef, ProcessRef, Sandbox, SandboxRef } from "./sandbox.j
 import { BROWSER_TOOL_HOSTS, BROWSER_TOOLS_INSTALL_SCRIPT, BROWSER_TOOLS_POLL_MS, BROWSER_TOOLS_WAIT_MS } from "./browser-tools.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
 import { SandboxSlotUnavailableError } from "./sandbox-slot-error.js";
-import { bootstrapKeyOf, type WarmSnapshot, type WarmSnapshotStore } from "./warm-snapshot.js";
+import {
+  bootstrapKeyOf,
+  keyFilePatternsOf,
+  selectKeyFiles,
+  type WarmSnapshot,
+  type WarmSnapshotStore,
+} from "./warm-snapshot.js";
+import { ensureDocker, listRepositoryFiles, seedServices, startServices } from "./services.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
 
@@ -382,10 +389,14 @@ export class SandboxManager {
       // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
       // allow list. A change of any of them means the snapshot no longer fits, and the cold run
       // takes a new one. A change to any other field keeps the snapshot.
+      // docs/specs/repository-setup-and-services.md. The compose stack and the key files join the key.
       const bootstrapKey = bootstrapKeyOf({
         bootstrapCommand: runtime.bootstrapCommand,
         warmCommand: runtime.warmCommand ?? null,
         allowedDomains: runtime.allowedDomains,
+        services: runtime.services ?? null,
+        docker: runtime.docker === true,
+        files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, primary.path), keyFilePatternsOf(runtime)),
       });
       if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
         this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
@@ -421,6 +432,22 @@ export class SandboxManager {
       const references = await checkoutReferences(sandbox, ref, input.references, input.repositoryCredential);
       const checkout: CheckoutResult = { primary, references };
 
+      // docs/specs/repository-setup-and-services.md. Rootless Docker and the compose stack start
+      // under policy two, before the bootstrap, so a bootstrap can migrate the database. A warm
+      // sandbox already holds them, and both calls change nothing on a healthy stack.
+      const services = runtime.services ?? null;
+      if (runtime.docker === true) {
+        const servicesStarted = Date.now();
+        await ensureDocker(sandbox, ref);
+        if (services !== null) await startServices(sandbox, ref, primary.path, services);
+        this.options.logger?.info("the services are ready", {
+          run_id: input.runId,
+          step: "prepare_services",
+          warm: warm !== null,
+          duration_ms: Date.now() - servicesStarted,
+        });
+      }
+
       if (runtime.bootstrapCommand !== null) {
         const result = await sandbox.exec(ref, {
           file: "sh",
@@ -436,6 +463,9 @@ export class SandboxManager {
           );
         }
       }
+
+      // The seed fills the stack once. A warm sandbox holds the seeded data of its snapshot.
+      if (services !== null && warm === null) await seedServices(sandbox, ref, primary.path, services);
 
       const selfCheckReady = sandbox.capabilities.supportsCustomImage
         ? wantsBrowserTools

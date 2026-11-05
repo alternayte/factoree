@@ -485,6 +485,7 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
 }
 
 class FakeDiscoveryClient implements RepositoryDiscoveryClient {
+  listFiles = (): Promise<[]> => Promise.resolve([]);
   constructor(private readonly configByRepository: Record<string, string | null>) {}
 
   listInstallationRepositories() {
