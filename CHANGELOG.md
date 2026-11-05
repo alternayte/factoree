@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-11-05
+
+### Fixed
+
+- Every sandbox command reads `.factoree/mise.toml` through `MISE_CONFIG_FILE`, so the toolchains a setup names are on the path in the bootstrap, the verify commands, the seed, the preview and the agent sessions. A setup proof failed with `dotnet: not found` because mise reads no `.factoree/mise.toml` by itself.
+- The setup agent prompt (`setup@3`) says that the proof sandbox holds only the repository and `.factoree/`, so nothing the session installs globally carries over.
+
 ## [0.6.6] - 2026-11-05
 
 ### Changed
