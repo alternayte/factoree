@@ -331,10 +331,14 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
-      const perStepTimeoutMs = Math.max(MIN_STEP_TIMEOUT_MS, Math.floor(input.timeoutMs / Math.max(input.steps.length, 1)));
+      // DI-21.16. Each step gets what is left of the budget, not an equal share. The first fill on
+      // a cold app waits for the first page load, and an equal share of 60 s over five steps gave
+      // it 12 s: the anthology setup failed `fill #email` on a correct selector.
+      const deadline = Date.now() + input.timeoutMs;
       for (let index = 0; index < input.steps.length; index += 1) {
+        const remainingMs = Math.max(MIN_STEP_TIMEOUT_MS, deadline - Date.now());
         try {
-          await this.runStep(page, input.steps[index]!, input.baseUrl, perStepTimeoutMs, []);
+          await this.runStep(page, input.steps[index]!, input.baseUrl, remainingMs, []);
         } catch (error) {
           return { signedIn: false, failedStep: index + 1, reason: redact(error) };
         }

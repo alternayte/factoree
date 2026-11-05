@@ -81,6 +81,19 @@ const LOGIN_HTML = `<!doctype html><html><body>
   </script>
 </body></html>`;
 
+// A cold SPA: the form renders only after its first load.
+const SLOW_LOGIN_HTML = `<!doctype html><html><body>
+  <script>
+    setTimeout(function () {
+      document.body.insertAdjacentHTML("beforeend", '<input id="email" /><input id="password" type="password" /><button id="submit">Sign in</button>');
+      document.getElementById("submit").addEventListener("click", function () {
+        if (document.getElementById("password").value !== "local-pass") return;
+        document.body.insertAdjacentHTML("beforeend", '<p id="profile">profile</p>');
+      });
+    }, 3000);
+  </script>
+</body></html>`;
+
 const ACCOUNT_HTML = `<!doctype html><html><body><p id="who"></p>
   <script>
     var user = localStorage.getItem("user");
@@ -101,6 +114,12 @@ const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
         response.setHeader("Content-Type", "text/html");
         response.writeHead(200);
         response.end(request.url === "/login" ? LOGIN_HTML : ACCOUNT_HTML);
+        return;
+      }
+      if (request.url === "/slow-login") {
+        response.setHeader("Content-Type", "text/html");
+        response.writeHead(200);
+        response.end(SLOW_LOGIN_HTML);
         return;
       }
       if (request.url === "/configs") {
@@ -399,6 +418,13 @@ describe("PlaywrightBrowserDriver", () => {
         ],
       });
       expect(anonymous.failureReason).toBeNull();
+    }, 60_000);
+
+    it("gives a slow first step what is left of the budget (DI-21.16)", async () => {
+      // anthology setup: an equal share of the budget per step failed the first fill on a cold app.
+      const slow = [{ action: "goto" as const, path: "/slow-login" }, ...steps("local-pass").slice(1)];
+      const signIn = await driver.signIn({ baseUrl, steps: slow, timeoutMs: 10_000 });
+      expect(signIn.signedIn).toBe(true);
     }, 60_000);
 
     it("names the step at which a sign-in fails", async () => {
