@@ -160,7 +160,7 @@ beforeAll(async () => {
       contextSources: { sourcesFor: () => Promise.resolve(new ContextSourceRegistry([])) },
       repositoryReader: new GitRepositoryReader(),
       // This test drives the Phase 1 path, which never reaches user validation.
-      browser: { name: "unused", run: () => Promise.reject(new Error("unused")) },
+      browser: { name: "unused", run: () => Promise.reject(new Error("unused")), signIn: () => Promise.reject(new Error("unused")) },
       httpValidationFetch: () => Promise.reject(new Error("unused")),
       previewProbe: () => Promise.resolve(null),
       evidenceStorage: { name: "unused", put: () => Promise.reject(new Error("unused")) },

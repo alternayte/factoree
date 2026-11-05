@@ -15,6 +15,7 @@ import { pickPort, realHttpFetch, realProbe } from "./support/preview-fixture-he
 
 /** A BrowserDriver double that reports success but returns no artefact, screenshot included. */
 class NoArtifactBrowserDriver implements BrowserDriver {
+  signIn = (): Promise<never> => Promise.reject(new Error("this fake signs in no account"));
   readonly name = "no-artifact";
   run(): Promise<BrowserRunResult> {
     return Promise.resolve({

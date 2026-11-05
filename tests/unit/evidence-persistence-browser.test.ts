@@ -111,6 +111,7 @@ const contract: ValidationContract = {
 
 /** A run that captured one named screenshot and the final screenshot the driver always adds. */
 class TwoScreenshotBrowserDriver implements BrowserDriver {
+  signIn = (): Promise<never> => Promise.reject(new Error("this fake signs in no account"));
   readonly name = "two-screenshots";
 
   run(_scenario: BrowserScenario): Promise<BrowserRunResult> {

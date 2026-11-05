@@ -55,6 +55,16 @@ export interface ProofPackAssertion {
   injectedFailure?: boolean;
 }
 
+/** docs/specs/repository-setup-and-services.md. One compose service that answered for an external API. */
+export interface ProofPackFake {
+  service: string;
+  name: string;
+}
+
+/** One line per fake. A reviewer must know which data was not real. */
+export const fakeLine = (fake: ProofPackFake): string =>
+  `- FAKE ${fake.name}: the compose service "${fake.service}" answered for this API, so its data is not real.`;
+
 /** The mark one assertion line carries when its plan injected a failed request. */
 export const INJECTED_FAILURE_NOTE =
   "(error injected by Factoree with failRequest, not returned by the backend)";
@@ -184,6 +194,8 @@ export interface ProofPackInput {
   checkDefiningFiles?: string[];
   /** The visual evidence gap Factoree accepted at refinement, or null. */
   visualEvidenceGap: string | null;
+  /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
+  fakes?: ProofPackFake[];
   /** SDD section 18. Present only for a Run that a routed Product produced. */
   routing?: ProofPackRouting;
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
@@ -241,6 +253,7 @@ export interface ProofPackDocument {
   changeDescription: string;
   needsAttention: string[];
   visualEvidenceGap: string | null;
+  fakes: ProofPackFake[];
   assertions: ProofPackAssertion[];
   /** DI-15.23. The passes whose first Validation Plan Factoree rejected. */
   planCorrections: ProofPackPlanCorrection[];
@@ -352,6 +365,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   decisions: input.decisions ?? [],
   baseMove: input.baseMove ?? null,
   visualEvidenceGap: input.visualEvidenceGap,
+  fakes: input.fakes ?? [],
   assertions: input.assertions,
   planCorrections: input.planCorrections ?? [],
   checks: input.checks,
@@ -430,6 +444,7 @@ const checkLines = (input: ProofPackInput): string[] => {
         `${assertion.injectedFailure === true ? ` ${INJECTED_FAILURE_NOTE}` : ""}${evidenceLinks(assertion)}`,
     ),
     ...(input.planCorrections ?? []).map(planCorrectionLine),
+    ...(input.fakes ?? []).map(fakeLine),
     `- ${blocking === 0 ? "PASS" : "FAIL"} Independent review: ${input.reviewPasses} ` +
       `${input.reviewPasses === 1 ? "pass" : "passes"}, ${input.findings.length} ` +
       `${input.findings.length === 1 ? "finding" : "findings"}, ${blocking} blocking.`,

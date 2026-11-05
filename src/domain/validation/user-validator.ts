@@ -1,4 +1,4 @@
-import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
+import type { AccountConfig, PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import {
   startPreview,
   stopPreview,
@@ -10,6 +10,7 @@ import {
   parseValidationPlan,
   ValidationPlanInvalidError,
   planKindForMethod,
+  type BrowserStep,
   type ValidationPlan,
   type ValidationPlanEntry,
 } from "~/domain/validation/validation-plan.js";
@@ -21,7 +22,7 @@ import type {
 import { summarizeUserValidation } from "~/domain/validation/validation-result.js";
 import { executeHttpAssertion, type HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import { resolvePreviewUrl } from "~/domain/validation/preview-url.js";
-import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
+import type { BrowserDriver, BrowserSignInResult } from "~/domain/validation/browser-driver.js";
 import type { ValidationAssertion, ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -64,7 +65,25 @@ export interface UserValidationInput {
    * assertion with both reasons.
    */
   rejectedPlanReason?: string;
+  /**
+   * docs/specs/repository-setup-and-services.md. The accounts of the config. A browser entry with
+   * `as` starts signed in as one of them.
+   */
+  accounts?: readonly AccountConfig[];
 }
+
+/** docs/specs/repository-setup-and-services.md. The longest one sign-in may take. */
+const SIGN_IN_TIMEOUT_MS = 60_000;
+
+/** The sign-in steps of an account, with its credentials in the fill values, then its check. */
+export const signInStepsOf = (account: AccountConfig): BrowserStep[] => [
+  ...account.steps.map((step) =>
+    step.action === "fill"
+      ? { ...step, value: step.value.replaceAll("{username}", account.username).replaceAll("{password}", account.password) }
+      : step,
+  ),
+  account.check,
+];
 
 const MANUAL_REASON = "SDD section 36: this assertion needs a human. Factoree cannot prove it.";
 
@@ -174,6 +193,7 @@ export const executeBrowserAssertion = async (
   entry: Extract<ValidationPlanEntry, { kind: "browser" }>,
   handle: PreviewHandle,
   timeoutMs: number,
+  storageState?: string,
 ): Promise<AssertionOutcome> => {
   // Defence in depth. The plan parser already rejects a goto path that can leave the preview
   // origin. This control repeats the check, because it must not trust the parser. A refusal is
@@ -207,6 +227,7 @@ export const executeBrowserAssertion = async (
     captureVideo,
     captureTrace,
     timeoutMs,
+    ...(storageState === undefined ? {} : { storageState }),
   });
 
   const artifacts: EvidenceArtifact[] = [];
@@ -363,7 +384,11 @@ const validate = async (
       : "The validator wrote no Validation Plan.";
   } else {
     try {
-      plan = parseValidationPlan(input.planText, contract);
+      plan = parseValidationPlan(
+        input.planText,
+        contract,
+        (input.accounts ?? []).map((account) => account.name),
+      );
     } catch (error) {
       if (error instanceof ValidationPlanInvalidError) {
         planFailureReason = dependencies.redactor.redactText(error.message);
@@ -468,6 +493,23 @@ const validate = async (
       }
     }
 
+    // docs/specs/repository-setup-and-services.md. Each account signs in once per pass, so per
+    // check sprite, and every entry that names it reuses its browser state.
+    const signIns = new Map<string, Promise<BrowserSignInResult>>();
+    const signInAs = (name: string): Promise<BrowserSignInResult> => {
+      let pending = signIns.get(name);
+      if (pending === undefined) {
+        const account = (input.accounts ?? []).find((candidate) => candidate.name === name)!;
+        pending = dependencies.browser.signIn({
+          baseUrl: handle!.baseUrl,
+          steps: signInStepsOf(account),
+          timeoutMs: Math.min(input.timeoutMs, SIGN_IN_TIMEOUT_MS),
+        });
+        signIns.set(name, pending);
+      }
+      return pending;
+    };
+
     // Rule 6. Execute the entries in contract order.
     for (const assertion of remainingAssertions) {
       if (outcomesById.has(assertion.id)) continue;
@@ -484,18 +526,29 @@ const validate = async (
           fetchImpl: dependencies.fetchImpl,
           redactor: dependencies.redactor,
         });
+      } else if (entry.kind === "browser" && entry.as !== undefined && !(await signInAs(entry.as)).signedIn) {
+        // docs/specs/repository-setup-and-services.md. A sign-in that fails proves nothing about
+        // the criterion. BLOCKED starts no repair, and the reason names the step.
+        const failed = (await signInAs(entry.as)) as Extract<BrowserSignInResult, { signedIn: false }>;
+        outcome = blockedOutcome(
+          assertion,
+          `The sign-in of account "${entry.as}" failed at step ${failed.failedStep}: ` +
+            dependencies.redactor.redactText(failed.reason),
+        );
       } else if (entry.kind === "browser") {
         // Rule 8.
+        const signedIn = entry.as === undefined ? undefined : await signInAs(entry.as);
+        const storageState = signedIn?.signedIn === true ? signedIn.storageState : undefined;
         outcome = enforceRequiredEvidence(
           assertion,
-          await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs),
+          await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs, storageState),
         );
         // docs/specs/run-recovery.md. A failed browser assertion runs once more in the same check
         // sprite. A different result makes it unstable: not proven, and not worth a repair.
         if (outcome.result === "FAIL") {
           const rerun = enforceRequiredEvidence(
             assertion,
-            await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs),
+            await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs, storageState),
           );
           if (rerun.result === "PASS") {
             outcome = {

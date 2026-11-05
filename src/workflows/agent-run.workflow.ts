@@ -1003,6 +1003,9 @@ export async function agentRunWorkflow(
         preview: attemptInput.prepared.preview,
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
+        // docs/specs/repository-setup-and-services.md. From the config at the base SHA.
+        accounts: attemptInput.prepared.runtime.accounts ?? [],
+        services: attemptInput.prepared.runtime.services ?? null,
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
       }),
     );
@@ -1774,6 +1777,7 @@ export async function agentRunWorkflow(
       // reaching a review. The Proof Pack reports this count to a human, so it must be exact.
       let reviewPasses = 0;
       let publishedPreviewUrl: string | null = null;
+      let publishedFakes: Array<{ service: string; name: string }> = [];
       let publishedChangeDescription = "";
       // docs/specs/proof-pack-and-visual-evidence.md. The gap the human accepted at refinement.
       // docs/specs/run-recovery.md. A follow-up whose reply replaced the browser checks of the
@@ -2288,6 +2292,7 @@ export async function agentRunWorkflow(
           publishedReviewPasses = reviewPasses;
           publishedReviewAttempt = attempt;
           publishedPreviewUrl = userValidation.previewUrl;
+          publishedFakes = userValidation.fakes ?? [];
           publishedChangeDescription = review.changeDescription;
           break;
         }
@@ -2498,6 +2503,7 @@ export async function agentRunWorkflow(
           changedFiles: publishedChangedFiles,
           patchByteLength: publication.patchByteLength,
           previewUrl: publishedPreviewUrl,
+          fakes: publishedFakes,
           repairCount,
           repairLimit: maxRepairs,
           reviewVerdict: publishedReviewVerdict,

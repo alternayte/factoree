@@ -95,6 +95,7 @@ const passingBrowserResult: BrowserRunResult = {
 };
 
 class FakeBrowserDriver implements BrowserDriver {
+  signIn: BrowserDriver["signIn"] = () => Promise.reject(new Error("this fake signs in no account"));
   readonly name = "fake-browser";
   readonly calls: BrowserScenario[] = [];
   result: BrowserRunResult = passingBrowserResult;
@@ -540,3 +541,87 @@ describe("an early preview (DI-14.41)", () => {
   });
 });
 
+
+describe("runUserValidation, accounts (repository-setup-and-services.md)", () => {
+  const secondBrowser: ValidationAssertion = { ...browserAssertion, id: "VAL-UI-002" };
+  const accountContract: ValidationContract = { ...contract, assertions: [browserAssertion, secondBrowser] };
+  const account = {
+    name: "member",
+    username: "member@example.test",
+    password: "local-pass",
+    steps: [
+      { action: "goto" as const, path: "/login" },
+      { action: "fill" as const, selector: "#email", value: "{username}" },
+      { action: "fill" as const, selector: "#password", value: "{password}" },
+      { action: "click" as const, selector: "#submit" },
+    ],
+    check: { action: "expectVisible" as const, selector: "#profile" },
+  };
+  const entry = (assertionId: string, as?: string) => ({
+    assertionId,
+    kind: "browser",
+    ...(as === undefined ? {} : { as }),
+    steps: [
+      { action: "goto", path: "/" },
+      { action: "expectText", selector: "h1", text: "Welcome" },
+    ],
+  });
+  const plan = (entries: unknown[]): string => JSON.stringify({ version: 1, entries });
+
+  class SigningBrowser extends FakeBrowserDriver {
+    readonly signIns: Array<{ steps: unknown[] }> = [];
+    signInResult: Awaited<ReturnType<BrowserDriver["signIn"]>> = { signedIn: true, storageState: '{"cookies":[],"origins":[]}' };
+    override signIn = (input: Parameters<BrowserDriver["signIn"]>[0]): ReturnType<BrowserDriver["signIn"]> => {
+      this.signIns.push({ steps: input.steps });
+      return Promise.resolve(this.signInResult);
+    };
+  }
+
+  it("signs an account in once, fills its credentials, and starts each entry that names it signed in", async () => {
+    const browser = new SigningBrowser();
+    const deps = buildDeps({ browser });
+    const outcome = await runUserValidation(
+      deps,
+      buildInput({
+        contract: accountContract,
+        planText: plan([entry("VAL-UI-001", "member"), entry("VAL-UI-002")]),
+        accounts: [account],
+      }),
+    );
+    expect(outcome.outcomes.map((item) => item.result)).toEqual(["PASS", "PASS"]);
+    expect(browser.signIns).toHaveLength(1);
+    expect(browser.signIns[0]!.steps).toEqual([
+      { action: "goto", path: "/login" },
+      { action: "fill", selector: "#email", value: "member@example.test" },
+      { action: "fill", selector: "#password", value: "local-pass" },
+      { action: "click", selector: "#submit" },
+      { action: "expectVisible", selector: "#profile" },
+    ]);
+    expect(browser.calls[0]!.storageState).toBe('{"cookies":[],"origins":[]}');
+    expect(browser.calls[1]!.storageState).toBeUndefined();
+  });
+
+  it("blocks an entry whose account cannot sign in, names the step, and runs no scenario for it", async () => {
+    const browser = new SigningBrowser();
+    browser.signInResult = { signedIn: false, failedStep: 4, reason: "Timeout 1000ms exceeded." };
+    const deps = buildDeps({ browser });
+    const outcome = await runUserValidation(
+      deps,
+      buildInput({ contract: accountContract, planText: plan([entry("VAL-UI-001", "member"), entry("VAL-UI-002", "member")]), accounts: [account] }),
+    );
+    expect(outcome.outcomes.map((item) => item.result)).toEqual(["BLOCKED", "BLOCKED"]);
+    expect(outcome.outcomes[0]!.reason).toBe('The sign-in of account "member" failed at step 4: Timeout 1000ms exceeded.');
+    expect(browser.signIns).toHaveLength(1);
+    expect(browser.calls).toHaveLength(0);
+  });
+
+  it("rejects a plan that signs in as an account the config does not define", async () => {
+    const deps = buildDeps({ browser: new SigningBrowser() });
+    const outcome = await runUserValidation(
+      deps,
+      buildInput({ contract: accountContract, planText: plan([entry("VAL-UI-001", "admin"), entry("VAL-UI-002")]), accounts: [account] }),
+    );
+    expect(outcome.outcomes.every((item) => item.result === "BLOCKED")).toBe(true);
+    expect(outcome.outcomes[0]!.reason).toContain('signs in as "admin", which is not an account. The accounts are: member.');
+  });
+});

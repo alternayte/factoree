@@ -34,6 +34,7 @@ export const passingBrowserResult: BrowserRunResult = {
 };
 
 export class FakeBrowserDriver implements BrowserDriver {
+  signIn = (): Promise<never> => Promise.reject(new Error("this fake signs in no account"));
   readonly name = "fake-browser";
   readonly calls: BrowserScenario[] = [];
   result: BrowserRunResult = passingBrowserResult;

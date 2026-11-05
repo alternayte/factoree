@@ -18,6 +18,10 @@ export interface BuildUserValidatorInput {
   actionPolicy: ActionPolicy;
   /** Non-production Project test secrets only. See SDD section 30. */
   projectTestSecrets: Record<string, string>;
+  /** docs/specs/repository-setup-and-services.md. The account names of the config. */
+  accounts?: string[];
+  /** docs/specs/repository-setup-and-services.md. The fakes of the running stack. */
+  fakes?: ReadonlyArray<{ service: string; name: string }>;
 }
 
 export interface UserValidatorInput {
@@ -36,7 +40,7 @@ const PLAN_SCHEMA = [
   'The document is one JSON object: { "version": 1, "entries": [...] }.',
   "Each entry names the assertionId of one Validation Contract assertion, and one kind.",
   'An "http" entry: { "assertionId": string, "kind": "http", "request": { "method": "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD", "path": string, "headers": { string: string }, "body": string | null, "expectStatus": number, "expectBodyContains": string | null } }.',
-  'A "browser" entry: { "assertionId": string, "kind": "browser", "steps": [...] }. The first step is a goto. Only holdRequest and failRequest steps may come before it, so they match the requests the page makes on load. Each step is exactly one of:',
+  'A "browser" entry: { "assertionId": string, "kind": "browser", "steps": [...] }. The first step is a goto. Only holdRequest and failRequest steps may come before it, so they match the requests the page makes on load. An optional "as": string names the account the entry starts signed in as. Each step is exactly one of:',
   '- { "action": "goto", "path": "/" } with a path relative to the preview',
   '- { "action": "click", "selector": string }',
   '- { "action": "fill", "selector": string, "value": string }',
@@ -84,6 +88,8 @@ export const buildUserValidatorInput = (input: BuildUserValidatorInput): UserVal
       previewBaseUrl: input.previewBaseUrl,
       actionPolicy: input.actionPolicy.describe(),
       planSchema: PLAN_SCHEMA,
+      accounts: input.accounts ?? [],
+      fakes: (input.fakes ?? []).map((fake) => `${fake.name}, answered by the compose service "${fake.service}"`),
     }),
     promptVersion: USER_VALIDATOR_PROMPT_VERSION,
     environment: { ...input.projectTestSecrets },

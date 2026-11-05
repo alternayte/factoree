@@ -177,6 +177,12 @@ describe("the Proof Pack body (proof-pack-and-visual-evidence.md)", () => {
     expect(render({ assertions: [{ ...uiAssertion, evidence: [] }] })).not.toContain("injected");
   });
 
+  it("lists each fake under the checks and in proof-pack.json (repository-setup-and-services.md)", () => {
+    const fakes = [{ service: "tmdb", name: "TMDB API" }];
+    expect(render({ fakes })).toContain('- FAKE TMDB API: the compose service "tmdb" answered for this API, so its data is not real.');
+    expect(buildProofPackDocument(input({ fakes })).fakes).toEqual(fakes);
+  });
+
   it("writes one line per check, and the review result", () => {
     const body = render();
     expect(body).toContain("- PASS unit: `npm test`");

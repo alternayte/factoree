@@ -29,6 +29,7 @@ const IMPLEMENTER_SUMMARY = "The change is applied.";
 
 /** A BrowserDriver double that fails the test if this command-only contract ever calls it. */
 class UnusedBrowserDriver implements BrowserDriver {
+  signIn = (): Promise<never> => Promise.reject(new Error("this fake signs in no account"));
   readonly name = "unused";
   run(): ReturnType<BrowserDriver["run"]> {
     throw new Error("AT-17 holds no browser assertion; the driver must never run.");

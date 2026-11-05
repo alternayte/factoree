@@ -196,6 +196,8 @@ export interface PublishProofPackActivityInput {
   changeDescription?: string;
   /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap?: string | null;
+  /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
+  fakes?: Array<{ service: string; name: string }>;
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
   decisions?: FactoreeDecision[];
   /** docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved, or null. */
@@ -452,6 +454,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       autonomyReasons: input.autonomyReasons,
       checkDefiningFiles: input.checkDefiningFiles,
       visualEvidenceGap: input.visualEvidenceGap ?? null,
+      fakes: input.fakes ?? [],
       decisions: input.decisions ?? [],
       baseMove: input.baseMove ?? null,
       // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.

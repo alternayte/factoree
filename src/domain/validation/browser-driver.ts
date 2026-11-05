@@ -13,7 +13,24 @@ export interface BrowserScenario {
   captureVideo: boolean;
   captureTrace: boolean;
   timeoutMs: number;
+  /**
+   * docs/specs/repository-setup-and-services.md. The browser state of a signed-in account, as the
+   * driver's `signIn` returned it. The scenario then starts signed in. Absent starts anonymous.
+   */
+  storageState?: string | undefined;
 }
+
+/** docs/specs/repository-setup-and-services.md. One sign-in of one account. */
+export interface BrowserSignIn {
+  baseUrl: string;
+  steps: BrowserStep[];
+  timeoutMs: number;
+}
+
+export type BrowserSignInResult =
+  | { signedIn: true; storageState: string }
+  /** `failedStep` counts from 1. The check step is the step after the last sign-in step. */
+  | { signedIn: false; failedStep: number; reason: string };
 
 /**
  * docs/specs/browser-network-control.md. One request a holdRequest or a failRequest step
@@ -71,4 +88,6 @@ export interface BrowserRunResult {
 export interface BrowserDriver {
   readonly name: string;
   run(scenario: BrowserScenario): Promise<BrowserRunResult>;
+  /** Runs the sign-in steps in a fresh browser and returns its storage state. */
+  signIn(input: BrowserSignIn): Promise<BrowserSignInResult>;
 }

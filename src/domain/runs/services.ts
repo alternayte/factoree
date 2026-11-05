@@ -133,3 +133,45 @@ export const seedServices = async (
     throw new RunConfigurationError(`the seed command failed with exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
   }
 };
+
+/** docs/specs/repository-setup-and-services.md. One compose service that answers for an external API. */
+export interface FakeService {
+  /** The compose service name. */
+  service: string;
+  /** The API it answers for, from the `factoree.fake` label. */
+  name: string;
+}
+
+/** The compose label that marks a fake. */
+export const FAKE_LABEL = "factoree.fake";
+
+/**
+ * Reads the fakes of the stack from the merged compose configuration, the repository file and the
+ * Factoree overlay together, so a fake the overlay adds counts.
+ */
+export const listFakes = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  primaryPath: string,
+  services: ServicesConfig,
+): Promise<FakeService[]> => {
+  const args = [...(await composeArguments(sandbox, ref, primaryPath, services)), "config", "--format", "json"];
+  const result = await sandbox.exec(ref, { file: "docker", args, cwd: primaryPath });
+  if (result.exitCode !== 0) {
+    throw new RunConfigurationError(`docker compose config failed with exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
+  }
+  const document = JSON.parse(result.stdout) as { services?: Record<string, { labels?: unknown }> };
+  const fakes: FakeService[] = [];
+  for (const [service, definition] of Object.entries(document.services ?? {})) {
+    const labels = definition.labels;
+    let name: unknown;
+    if (Array.isArray(labels)) {
+      const entry = labels.find((label): label is string => typeof label === "string" && label.startsWith(`${FAKE_LABEL}=`));
+      name = entry?.slice(FAKE_LABEL.length + 1);
+    } else if (typeof labels === "object" && labels !== null) {
+      name = (labels as Record<string, unknown>)[FAKE_LABEL];
+    }
+    if (typeof name === "string" && name.trim() !== "") fakes.push({ service, name: name.trim() });
+  }
+  return fakes.sort((left, right) => (left.service < right.service ? -1 : 1));
+};

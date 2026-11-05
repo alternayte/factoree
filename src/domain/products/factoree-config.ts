@@ -1,6 +1,8 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { signedInCheckSchema, signInStepSchema } from "~/domain/validation/validation-plan.js";
+import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 
 /**
  * SDD section 15. The `.factoree/config.yaml` of the primary repository.
@@ -121,6 +123,23 @@ const schema = z
     // docs/specs/repository-setup-and-services.md. A Docker socket with no compose stack, for
     // Testcontainers. A `services` block implies it.
     docker: z.boolean().default(false),
+    // docs/specs/repository-setup-and-services.md. The accounts a browser assertion can start signed
+    // in as. The seed creates them in the sandbox's own database, so the passwords are no secrets.
+    // A fill value may name {username} and {password}.
+    accounts: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(40).regex(/^[a-z0-9][a-z0-9-]*$/, "must be lower case letters, digits, or hyphen"),
+            username: z.string().min(1),
+            password: z.string().min(1),
+            steps: z.array(signInStepSchema).min(1).max(20),
+            check: signedInCheckSchema,
+          })
+          .strict(),
+      )
+      .max(10)
+      .default([]),
     // docs/specs/run-speed.md. Runs only when Factoree takes a warm snapshot, to fill build caches.
     warm: z.object({ command: z.string().min(1) }).strict().nullable().default(null),
     verify: z
@@ -211,6 +230,21 @@ export const parseFactoreeConfig = (text: string): FactoreeConfig => {
   if (!parsed.success) {
     const detail = parsed.error.issues.map(describeIssue).join("; ");
     throw new RunConfigurationError(`${FACTOREE_CONFIG_PATH} is invalid: ${detail}`);
+  }
+
+  const accountNames = new Set<string>();
+  for (const account of parsed.data.accounts) {
+    if (accountNames.has(account.name)) {
+      throw new RunConfigurationError(`${FACTOREE_CONFIG_PATH} is invalid: accounts holds a duplicate name "${account.name}".`);
+    }
+    accountNames.add(account.name);
+    for (const step of account.steps) {
+      if (step.action === "goto" && !isPreviewRelativePath(step.path)) {
+        throw new RunConfigurationError(
+          `${FACTOREE_CONFIG_PATH} is invalid: the sign-in of account "${account.name}" goes to "${step.path}", which is not a relative preview path.`,
+        );
+      }
+    }
   }
 
   const names = new Set<string>();

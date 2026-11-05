@@ -1,3 +1,5 @@
+import type { AccountConfig, ServicesConfig } from "~/domain/runs/project-runtime-config.js";
+import { listFakes, type FakeService } from "~/domain/runs/services.js";
 import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
@@ -123,6 +125,10 @@ export interface UserValidateActivityInput {
    * hung one in the same pass. It writes its own plan file and its own rows.
    */
   afterHang?: boolean;
+  /** docs/specs/repository-setup-and-services.md. The accounts of the config. Absent in an old history. */
+  accounts?: AccountConfig[];
+  /** docs/specs/repository-setup-and-services.md. The compose stack. Absent in an old history. */
+  services?: ServicesConfig | null;
 }
 
 export interface UserValidateActivityOutput {
@@ -154,6 +160,8 @@ export interface UserValidateActivityOutput {
    * for the silence limit. The pass then ran no check and recorded no result.
    */
   hang: AgentHang;
+  /** docs/specs/repository-setup-and-services.md. The fakes of the stack the pass ran against. */
+  fakes?: FakeService[];
 }
 
 /** The interval between two heartbeats. See `agent.activities.ts` for the same rule. */
@@ -200,9 +208,9 @@ const browserIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>)
   assertions.filter((assertion) => assertion.method === "browser").map((assertion) => assertion.id);
 
 /** The reasons the plan rules reject one plan text for, or null when the plan is valid. */
-const planRejectionOf = (planText: string, contract: ValidationContract): string[] | null => {
+const planRejectionOf = (planText: string, contract: ValidationContract, accounts: readonly string[]): string[] | null => {
   try {
-    parseValidationPlan(planText, contract);
+    parseValidationPlan(planText, contract, accounts);
     return null;
   } catch (error) {
     if (error instanceof ValidationPlanInvalidError) return error.reasons;
@@ -436,6 +444,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         if (value !== null) projectTestSecrets[descriptor.name] = value;
       }
 
+      // docs/specs/repository-setup-and-services.md. The validator learns the accounts and the
+      // fakes, and the proof pack names the fakes.
+      const accountNames = (input.accounts ?? []).map((account) => account.name);
+      const services = input.services ?? null;
+      const fakes = services === null ? [] : await listFakes(uv.sandbox, ref, input.primaryPath, services);
+
       const afterHang = input.afterHang === true;
       // A hung session can leave a partial plan, and the fresh session must never read it.
       const planPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}.json`;
@@ -447,6 +461,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         previewBaseUrl,
         actionPolicy,
         projectTestSecrets,
+        accounts: accountNames,
+        fakes,
       });
 
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the
@@ -669,7 +685,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // change may be correct (FAC-63). Factoree asks the validator once for a corrected plan, with
       // the exact reasons, inside this pass. The frozen contract and the plan rules stay as they
       // are, and the repair budget is not touched. A stop gets no correction round.
-      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract);
+      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames);
       const stopped = context.cancellationSignal.aborted || invocations.some((result) => result.cancelled);
       if (firstRejection !== null && !stopped) {
         const reasons = firstRejection.map((reason) => uv.redactor.redactText(reason));
@@ -729,6 +745,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               previewBaseUrl,
               actionPolicy,
               projectTestSecrets,
+              accounts: accountNames,
+              fakes,
             });
             const promptVersion = `${freshInput.promptVersion}+${correction.promptVersion}`;
             const fresh = await runner.run({
@@ -800,7 +818,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         }
 
         planText = correctedResult.exitCode === 0 ? correctedResult.stdout : null;
-        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract);
+        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames);
         if (planText === null || secondRejection !== null) {
           dependencies.logger.warn("the corrected validation plan was rejected", {
             ...logFields,
@@ -846,6 +864,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               timeoutMs: input.timeoutMs,
               ...(handedOver === undefined ? {} : { earlyPreview: handedOver }),
               ...(rejectedPlanReason === undefined ? {} : { rejectedPlanReason }),
+              accounts: input.accounts ?? [],
             },
           ),
       );
@@ -901,6 +920,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         sessionId: sessionResult.session.sessionId,
         previewUrl: previewBaseUrl,
         hang: null,
+        fakes,
       };
     } finally {
       clearInterval(heartbeat);

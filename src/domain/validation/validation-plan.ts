@@ -61,7 +61,13 @@ export interface CommandPlanEntry {
 
 export type ValidationPlanEntry =
   | { assertionId: string; kind: "http"; request: HttpPlanRequest }
-  | { assertionId: string; kind: "browser"; steps: BrowserStep[] }
+  | {
+      assertionId: string;
+      kind: "browser";
+      steps: BrowserStep[];
+      /** docs/specs/repository-setup-and-services.md. The account the entry starts signed in as. */
+      as?: string | undefined;
+    }
   | { assertionId: string; kind: "command"; command: CommandPlanEntry };
 
 export interface ValidationPlan {
@@ -111,6 +117,25 @@ const httpRequestSchema = z
   })
   .strict();
 
+/**
+ * docs/specs/repository-setup-and-services.md. The steps an account signs in with: the page steps
+ * of a plan, without network control and without a screenshot.
+ */
+export const signInStepSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("goto"), path: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("click"), selector: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("fill"), selector: z.string().min(1), value: z.string() }).strict(),
+  z.object({ action: z.literal("reload") }).strict(),
+  z.object({ action: z.literal("expectText"), selector: z.string().min(1), text: z.string() }).strict(),
+  z.object({ action: z.literal("expectVisible"), selector: z.string().min(1) }).strict(),
+]);
+
+/** The step that proves an account is signed in. */
+export const signedInCheckSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("expectText"), selector: z.string().min(1), text: z.string() }).strict(),
+  z.object({ action: z.literal("expectVisible"), selector: z.string().min(1) }).strict(),
+]);
+
 const browserStepSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("goto"), path: z.string().min(1) }).strict(),
   z.object({ action: z.literal("click"), selector: z.string().min(1) }).strict(),
@@ -145,6 +170,7 @@ const planEntrySchema = z.discriminatedUnion("kind", [
       assertionId: z.string().min(1),
       kind: z.literal("browser"),
       steps: z.array(browserStepSchema),
+      as: z.string().min(1).optional(),
     })
     .strict(),
   z
@@ -177,7 +203,12 @@ const fail = (message: string): never => {
  * Parses the plan text the fresh validator session wrote and checks it against the frozen
  * contract. SDD section 25: the plan may add steps and may never change the contract.
  */
-export const parseValidationPlan = (text: string, contract: ValidationContract): ValidationPlan => {
+export const parseValidationPlan = (
+  text: string,
+  contract: ValidationContract,
+  /** docs/specs/repository-setup-and-services.md. The account names the config defines. */
+  accounts: readonly string[] = [],
+): ValidationPlan => {
   let document: unknown;
   try {
     document = JSON.parse(text);
@@ -226,6 +257,15 @@ export const parseValidationPlan = (text: string, contract: ValidationContract):
       reasons.push(
         `The Validation Plan entry for "${entry.assertionId}" is a "${entry.kind}" check, but ` +
           `the frozen method "${assertion.method}" requires a "${requiredKind}" check.`,
+      );
+    }
+
+    if (entry.kind === "browser" && entry.as !== undefined && !accounts.includes(entry.as)) {
+      reasons.push(
+        `The Validation Plan browser entry for "${entry.assertionId}" signs in as "${entry.as}", which ` +
+          (accounts.length === 0
+            ? "is not an account. The repository defines no account, so leave out as."
+            : `is not an account. The accounts are: ${accounts.join(", ")}.`),
       );
     }
 

@@ -39,6 +39,7 @@ const NEW_NAME = "Repaired Project";
 
 /** A BrowserDriver double that fails the test if the http-only contract below ever calls it. */
 class UnusedBrowserDriver implements BrowserDriver {
+  signIn = (): Promise<never> => Promise.reject(new Error("this fake signs in no account"));
   readonly name = "unused";
   run(): ReturnType<BrowserDriver["run"]> {
     throw new Error("AT-20 holds no browser assertion; the driver must never run.");

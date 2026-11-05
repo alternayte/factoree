@@ -9,6 +9,8 @@ import type {
   BrowserNetworkEntry,
   BrowserRunResult,
   BrowserScenario,
+  BrowserSignIn,
+  BrowserSignInResult,
   BrowserStepResult,
 } from "../../../domain/validation/browser-driver.js";
 import {
@@ -19,6 +21,8 @@ import {
 import { resolvePreviewUrl } from "../../../domain/validation/preview-url.js";
 
 const MIN_STEP_TIMEOUT_MS = 1000;
+
+type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
 /** Keep only the first line of a Playwright error. It drops stack noise from the assertion log. */
 const redact = (error: unknown): string => {
@@ -157,9 +161,14 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
 
     try {
       browser = await chromium.launch({ headless: true });
-      context = await browser.newContext(
-        scenario.captureVideo ? { recordVideo: { dir: tempDir } } : {},
-      );
+      context = await browser.newContext({
+        ...(scenario.captureVideo ? { recordVideo: { dir: tempDir } } : {}),
+        // docs/specs/repository-setup-and-services.md. The cookies and the local storage of the
+        // account the entry signs in as.
+        ...(scenario.storageState === undefined
+          ? {}
+          : { storageState: JSON.parse(scenario.storageState) as StorageState }),
+      });
       if (scenario.captureTrace) {
         await context.tracing.start({ screenshots: true, snapshots: true });
       }
@@ -314,6 +323,25 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         await browser.close().catch(() => undefined);
       }
       await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  async signIn(input: BrowserSignIn): Promise<BrowserSignInResult> {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      const perStepTimeoutMs = Math.max(MIN_STEP_TIMEOUT_MS, Math.floor(input.timeoutMs / Math.max(input.steps.length, 1)));
+      for (let index = 0; index < input.steps.length; index += 1) {
+        try {
+          await this.runStep(page, input.steps[index]!, input.baseUrl, perStepTimeoutMs, []);
+        } catch (error) {
+          return { signedIn: false, failedStep: index + 1, reason: redact(error) };
+        }
+      }
+      return { signedIn: true, storageState: JSON.stringify(await context.storageState()) };
+    } finally {
+      await browser.close().catch(() => undefined);
     }
   }
 

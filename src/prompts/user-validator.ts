@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@6";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@7";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -9,6 +9,10 @@ export interface UserValidatorPromptFields {
   previewBaseUrl: string | null;
   actionPolicy: string[];
   planSchema: string;
+  /** docs/specs/repository-setup-and-services.md. The account names a browser entry can sign in as. */
+  accounts?: string[];
+  /** docs/specs/repository-setup-and-services.md. One line per fake: the API and the service. */
+  fakes?: string[];
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -45,6 +49,19 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
         : `The exposed preview base URL is ${fields.previewBaseUrl}. Every browser step and ` +
             "every HTTP request resolves against this URL. The preview may still be building " +
             "while you write the plan, and it may not answer yet.",
+    ),
+    section(
+      "Accounts and fakes",
+      [
+        (fields.accounts ?? []).length === 0
+          ? "The repository defines no account. A browser entry starts signed out."
+          : `A browser entry can start signed in. Set "as" to one of these accounts: ${(fields.accounts ?? []).join(", ")}. ` +
+            'Factoree signs the account in before the entry runs. An entry without "as" starts signed out. ' +
+            "Never write sign-in steps yourself.",
+        (fields.fakes ?? []).length === 0
+          ? "No external API is faked."
+          : `These external APIs are fakes in the sandbox, so their data is not real:\n${(fields.fakes ?? []).map((line) => `- ${line}`).join("\n")}`,
+      ].join("\n\n"),
     ),
     section(
       "What Factoree does",

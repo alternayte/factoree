@@ -21,6 +21,8 @@ export interface ProjectRuntimeConfig {
   services?: ServicesConfig | null;
   /** docs/specs/repository-setup-and-services.md. True when the sandbox runs Docker. Absent in an old history. */
   docker?: boolean;
+  /** docs/specs/repository-setup-and-services.md. The sign-in accounts. Absent in an old history. */
+  accounts?: AccountConfig[];
   implementerRunner: string;
   validatorRunner: string;
   reviewerRunner: string;
@@ -40,6 +42,19 @@ export interface ServicesConfig {
   waitTimeoutSeconds: number;
 }
 
+/** docs/specs/repository-setup-and-services.md. One account a browser assertion can sign in as. */
+export interface AccountConfig {
+  name: string;
+  username: string;
+  password: string;
+  /** The sign-in steps. A fill value may name {username} and {password}. */
+  steps: SignInStep[];
+  /** The step that proves the account is signed in. */
+  check: Extract<SignInStep, { action: "expectText" | "expectVisible" }>;
+}
+
+export type SignInStep = Extract<BrowserStep, { action: "goto" | "click" | "fill" | "reload" | "expectText" | "expectVisible" }>;
+
 export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   bootstrapCommand: null,
   warmCommand: null,
@@ -53,6 +68,7 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
 };
 
 import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
+import type { BrowserStep } from "~/domain/validation/validation-plan.js";
 import { narrowAllowList } from "./sandbox.js";
 
 /** SDD section 35. One configured deterministic verification command. */
@@ -123,6 +139,13 @@ export const toProjectRuntimeConfig = (
             waitTimeoutSeconds: config.services.waitTimeoutSeconds,
           },
     docker: config.docker || config.services !== null,
+    accounts: config.accounts.map((account) => ({
+      name: account.name,
+      username: account.username,
+      password: account.password,
+      steps: account.steps,
+      check: account.check,
+    })),
     implementerRunner: config.agents.implementer,
     validatorRunner: config.agents.validator,
     reviewerRunner: config.agents.reviewer,

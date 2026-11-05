@@ -69,6 +69,25 @@ const CONFIGS_HTML = `<!doctype html>
 </body>
 </html>`;
 
+// repository-setup-and-services.md. A sign-in that keeps its session in local storage.
+const LOGIN_HTML = `<!doctype html><html><body>
+  <input id="email" /><input id="password" type="password" /><button id="submit">Sign in</button>
+  <script>
+    document.getElementById("submit").addEventListener("click", function () {
+      if (document.getElementById("password").value !== "local-pass") return;
+      localStorage.setItem("user", document.getElementById("email").value);
+      document.body.insertAdjacentHTML("beforeend", '<p id="profile">profile</p>');
+    });
+  </script>
+</body></html>`;
+
+const ACCOUNT_HTML = `<!doctype html><html><body><p id="who"></p>
+  <script>
+    var user = localStorage.getItem("user");
+    document.getElementById("who").textContent = user ? "Signed in as " + user : "Signed out";
+  </script>
+</body></html>`;
+
 const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
   new Promise((resolve) => {
     const server = createServer((request, response) => {
@@ -76,6 +95,12 @@ const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
         response.setHeader("Content-Type", "application/json");
         response.writeHead(200);
         response.end(JSON.stringify({ count: 2 }));
+        return;
+      }
+      if (request.url === "/login" || request.url === "/account") {
+        response.setHeader("Content-Type", "text/html");
+        response.writeHead(200);
+        response.end(request.url === "/login" ? LOGIN_HTML : ACCOUNT_HTML);
         return;
       }
       if (request.url === "/configs") {
@@ -339,6 +364,46 @@ describe("PlaywrightBrowserDriver", () => {
       ]);
       expect(result.passed).toBe(true);
       expect(result.steps[0]!.detail).toBe("No request matched https://api.example.com/**.");
+    }, 60_000);
+  });
+
+  describe("sign-in (repository-setup-and-services.md)", () => {
+    const steps = (password: string) => [
+      { action: "goto" as const, path: "/login" },
+      { action: "fill" as const, selector: "#email", value: "member@example.test" },
+      { action: "fill" as const, selector: "#password", value: password },
+      { action: "click" as const, selector: "#submit" },
+      { action: "expectVisible" as const, selector: "#profile" },
+    ];
+
+    it("signs in once and starts a later scenario signed in", async () => {
+      const signIn = await driver.signIn({ baseUrl, steps: steps("local-pass"), timeoutMs: 20_000 });
+      expect(signIn.signedIn).toBe(true);
+      if (!signIn.signedIn) return;
+      const signedIn = await driver.run({
+        ...scenario,
+        baseUrl,
+        storageState: signIn.storageState,
+        steps: [
+          { action: "goto", path: "/account" },
+          { action: "expectText", selector: "#who", text: "Signed in as member@example.test" },
+        ],
+      });
+      expect(signedIn.failureReason).toBeNull();
+      const anonymous = await driver.run({
+        ...scenario,
+        baseUrl,
+        steps: [
+          { action: "goto", path: "/account" },
+          { action: "expectText", selector: "#who", text: "Signed out" },
+        ],
+      });
+      expect(anonymous.failureReason).toBeNull();
+    }, 60_000);
+
+    it("names the step at which a sign-in fails", async () => {
+      const signIn = await driver.signIn({ baseUrl, steps: steps("wrong"), timeoutMs: 5_000 });
+      expect(signIn).toMatchObject({ signedIn: false, failedStep: 5 });
     }, 60_000);
   });
 });

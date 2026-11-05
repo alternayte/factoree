@@ -25,6 +25,7 @@ describe("toProjectRuntimeConfig", () => {
       keyFiles: [],
       services: null,
       docker: false,
+      accounts: [],
       implementerRunner: "claude",
       validatorRunner: "opencode",
       reviewerRunner: "opencode",
