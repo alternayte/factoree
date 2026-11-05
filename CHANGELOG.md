@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-11-05
+
+### Changed
+
+- A setup run records the turns of its agent session, the longest turn, and the time spent on the model and in tools.
+- The setup agent prompt (`setup@2`) says that the preview must listen on every interface, that agent-browser checks each account's sign-in against the running preview, and that the session stops after 60 minutes.
+- A release reuses the sandbox image of the last release when nothing under `sandbox/` changed, so its Kiln template and warm snapshots stay valid. The first release with this change still builds one.
+
+### Fixed
+
+- A preview that never answers says when it listens on loopback only, or when nothing listens on its port.
+- The setup report shows the first error of a failed command, not only the last lines, so a failed test run names its reason.
+
 ## [0.6.5] - 2026-11-05
 
 ### Fixed

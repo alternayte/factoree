@@ -18,14 +18,14 @@ docker compose up -d
 curl -s http://localhost:3000/version
 ```
 
-Set `FACTOREE_PUBLIC_URL` to the HTTPS URL where Linear and GitHub reach the API on port 3000. Keep `.env`: the master key in it decrypts the credentials that Factoree stores. To pin a release, add `FACTOREE_IMAGE=ghcr.io/alternayte/factoree:0.6.5` to `.env`.
+Set `FACTOREE_PUBLIC_URL` to the HTTPS URL where Linear and GitHub reach the API on port 3000. Keep `.env`: the master key in it decrypts the credentials that Factoree stores. To pin a release, add `FACTOREE_IMAGE=ghcr.io/alternayte/factoree:0.6.6` to `.env`.
 
 **Kubernetes** with Helm. The chart deploys the API, the worker and a migration Job. It uses your PostgreSQL and your Temporal service:
 
 ```sh
 kubectl create secret generic factoree-db --from-literal=url='postgresql://factoree:...@db:5432/factoree'
 kubectl create secret generic factoree-master-key --from-literal=key="$(openssl rand -hex 32)"
-helm install factoree oci://ghcr.io/alternayte/charts/factoree --version 0.6.5 \
+helm install factoree oci://ghcr.io/alternayte/charts/factoree --version 0.6.6 \
   --set temporal.address=temporal-frontend.temporal.svc:7233 \
   --set publicURL=https://factoree.example.com
 ```
