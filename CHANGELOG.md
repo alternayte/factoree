@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-05
+
+### Fixed
+
+- `dotnet restore` in a sandbox no longer waits minutes on certificate revocation checks. The sandbox environment sets `NUGET_CERT_REVOCATION_MODE=offline`, because the Kiln egress filter drops the plain HTTP requests these checks make. NuGet still verifies each package signature.
+
 ## [0.6.1] - 2026-11-05
 
 ### Fixed
