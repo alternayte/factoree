@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-05
+
+### Fixed
+
+- Rootless Docker starts in a Kiln sandbox. The sandbox image now holds `/etc/hosts`, which rootlesskit needs and a Kiln guest lacks. On Kiln v0.16.2 it starts in about 23 s and runs a Postgres stack on `localhost`.
+- A setup sandbox can pull images from Docker Hub, which now also serves image data from `production.cloudfront.docker.com`.
+
 ## [0.6.4] - 2026-11-05
 
 ### Changed
