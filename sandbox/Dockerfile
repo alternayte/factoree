@@ -51,6 +51,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY factoree-docker-start /opt/factoree/bin/factoree-docker-start
+# DI-21.13. A container runtime bind-mounts /etc/hosts, so an image layer holds none, and a Kiln
+# guest boots without one. rootlesskit copies /etc up and opens /etc/hosts, so Docker needs it.
+COPY hosts /etc/hosts
 RUN chown root:root /opt/factoree/bin/factoree-docker-start && chmod 755 /opt/factoree/bin/factoree-docker-start
 
 # Kiln runs every command as this user. Its home holds the workspace and the agent state. Rootless

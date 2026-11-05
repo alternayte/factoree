@@ -81,6 +81,7 @@ export const ECOSYSTEM_HOSTS: readonly string[] = [
   "registry-1.docker.io",
   "auth.docker.io",
   "production.cloudflare.docker.com",
+  "production.cloudfront.docker.com",
   "ghcr.io",
   "pkg-containers.githubusercontent.com",
   "mcr.microsoft.com",
