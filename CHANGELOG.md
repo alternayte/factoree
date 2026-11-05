@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
+### Added
+
+- A setup run writes the Factoree config of a repository. On the product page, under Repositories, an operator starts a setup for one or more repositories the GitHub App can read. A setup agent writes `.factoree/` in a sandbox, Factoree proves each part in a fresh sandbox (the bootstrap, each verify command, the services and the seed, the preview, each account) and opens a pull request with the parts that passed and a report of the parts that did not. A host the sandbox was denied can go on the product allow list with one click.
+- A repository can run its compose stack. The sandbox image runs rootless Docker and Docker Compose as the sandbox user, and `services` in the config names the compose file, the profiles and a seed command. The stack starts before the bootstrap and is part of the warm snapshot. `docker: true` gives Testcontainers a socket without a stack.
+- `bootstrap.keyFiles` names the lockfiles and toolchain files that key the warm snapshot, so a change to one starts a build-ahead. The sandbox image holds mise for toolchains the image lacks. `bootstrap.allowedDomains` gives ecosystem hosts to the bootstrap phase only.
+- `accounts` in the config names users the seed creates. A browser plan entry with `"as"` starts signed in, and Factoree signs each account in once per check sprite. A fake external API, a compose service labelled `factoree.fake`, is named to the validator and in the proof pack.
+
+### Changed
+
+- A delegation in a product with no repository answers with the link to the product page instead of an empty target question.
+- A build-ahead that fails on the config marks the repository "Needs setup" on the product page.
+- The sandbox image needs Kiln v0.15.0 or later for overlay2 storage. On an older Kiln, Docker stores its data with vfs, which is slower.
+
 ## [0.5.0] - 2026-11-05
 
 ### Added
