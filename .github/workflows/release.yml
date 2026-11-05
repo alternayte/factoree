@@ -76,8 +76,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # DI-21.14. A template is named by the image digest, so a new digest builds a new template
+      # and starts every repository cold. The image is keyed by the git tree of sandbox/: a release
+      # that changes nothing there reuses the digest of the last build and only adds its tag.
+      - name: Find a sandbox image for this sandbox/ tree.
+        id: tree
+        run: |
+          tree="$(git rev-parse HEAD:sandbox)"
+          repo="ghcr.io/${{ github.repository_owner }}/factoree-sandbox"
+          echo "tag=${repo}:tree-${tree}" >> "$GITHUB_OUTPUT"
+          if digest="$(docker buildx imagetools inspect "${repo}:tree-${tree}" --format '{{json .Manifest}}' | jq -r .digest)" && [ -n "${digest}" ] && [ "${digest}" != "null" ]; then
+            echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+            echo "The sandbox/ tree ${tree} has an image already: ${digest}."
+          fi
+
+      - name: Tag the existing sandbox image.
+        if: steps.tree.outputs.digest != ''
+        run: |
+          repo="ghcr.io/${{ github.repository_owner }}/factoree-sandbox"
+          docker buildx imagetools create \
+            -t "${repo}:${{ needs.check.outputs.version }}" \
+            -t "${repo}:${{ github.sha }}" \
+            "${repo}@${{ steps.tree.outputs.digest }}"
+
       - name: Build and push the sandbox image.
         id: build
+        if: steps.tree.outputs.digest == ''
         uses: docker/build-push-action@v6
         with:
           context: sandbox
@@ -87,13 +111,14 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/factoree-sandbox:${{ needs.check.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/factoree-sandbox:${{ github.sha }}
+            ${{ steps.tree.outputs.tag }}
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
       - name: Name the sandbox image by digest.
         id: ref
         run: |
-          image="ghcr.io/${{ github.repository_owner }}/factoree-sandbox@${{ steps.build.outputs.digest }}"
+          image="ghcr.io/${{ github.repository_owner }}/factoree-sandbox@${{ steps.tree.outputs.digest || steps.build.outputs.digest }}"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "Sandbox image: \`${image}\`" >> "$GITHUB_STEP_SUMMARY"
 
