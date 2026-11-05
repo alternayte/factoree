@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.6.2"
+    "version": "0.6.3"
   },
   "components": {
     "securitySchemes": {

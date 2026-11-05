@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-05
+
+### Changed
+
+- The sandbox image needs Kiln v0.16.1 or later for Docker. An older Kiln built templates without the setuid bit of `newuidmap`, so rootless Docker did not start. This release has a new sandbox image digest, so Kiln builds a new template and each repository starts cold once.
+- The ecosystem host list no longer holds the certificate revocation hosts. NuGet checks revocation offline in the sandbox, so no tool used them.
+
 ## [0.6.2] - 2026-11-05
 
 ### Fixed
