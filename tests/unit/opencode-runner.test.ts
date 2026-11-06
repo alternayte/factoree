@@ -133,6 +133,19 @@ describe("OpenCodeRunner", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("fails as a configuration error when the runner command does not exist (DI-21.17, FAC-74)", async () => {
+    // FAC-74: the refiner ran `claude`, which the sandbox image does not hold. The shell answered
+    // 127 in one second, and the Run reported only that the refiner wrote no proposal.
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    const started = runner.run({ ...runInput(sandbox, ref), role: "validator" });
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    sandbox.finishProcess("process-2", { exitCode: 127, stdout: "", stderr: "sh: 1: claude: not found" });
+    await expect(started).rejects.toMatchObject({ name: "RunConfigurationError" });
+    await expect(started).rejects.toThrow('The validator session could not start the runner "opencode" (exit code 127: sh: 1: claude: not found)');
+  });
+
   it("redacts a Project secret from the summary (SDD section 60)", async () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });

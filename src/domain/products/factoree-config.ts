@@ -164,11 +164,12 @@ const schema = z
     agents: z
       .object({
         implementer: z.string().min(1).default("opencode"),
-        validator: z.string().min(1).default("claude"),
-        reviewer: z.string().min(1).default("claude"),
+        // DI-21.17. The sandbox image ships opencode only, so every role defaults to it.
+        validator: z.string().min(1).default("opencode"),
+        reviewer: z.string().min(1).default("opencode"),
       })
       .strict()
-      .default({ implementer: "opencode", validator: "claude", reviewer: "claude" }),
+      .default({ implementer: "opencode", validator: "opencode", reviewer: "opencode" }),
     // SDD section 42. The default total repair limit is 2.
     repair: z
       .object({ maxAttempts: z.number().int().min(0).max(10).default(2) })

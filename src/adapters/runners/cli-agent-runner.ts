@@ -12,6 +12,7 @@ import type {
 import type { ProcessRef, ProcessSnapshot, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { buildRetainedLog } from "~/domain/runs/retained-log.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentSessionOutcome, AgentSessionUsage } from "~/domain/runs/agent-session.js";
 
 /** One command line a runner starts inside the sandbox. */
@@ -416,6 +417,17 @@ export abstract class CliAgentRunner implements AgentRunner {
     startedAt: number,
     options: { cancelled: boolean; completed?: boolean; fallbackExitCode: number; hung?: boolean },
   ): Promise<AgentRunResult> {
+    // DI-21.17. A shell answers 127 when the command does not exist. The agent never ran, so the
+    // caller would only see that it wrote nothing: FAC-74 reported "The refiner wrote no
+    // proposal" for `sh: 1: claude: not found`. A missing runner is a configuration fault, and a
+    // retry fails the same way.
+    if (!options.cancelled && snapshot.exitCode === 127) {
+      const said = this.cliOptions.redactor.redact(snapshot.stderr.trim().split("\n").slice(-3).join(" ").slice(-500));
+      throw new RunConfigurationError(
+        `The ${live.role} session could not start the runner "${this.name}" (exit code 127: ${said}). ` +
+          "The sandbox image does not hold it. Name an installed runner under agents in .factoree/config.yaml.",
+      );
+    }
     const output = `${snapshot.stdout}\n${snapshot.stderr}`;
     const parsed = this.safeParse(output);
     const sessionId = parsed.sessionId ?? live.cliSessionId;

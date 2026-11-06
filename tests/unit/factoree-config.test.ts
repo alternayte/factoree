@@ -81,7 +81,8 @@ describe("parseFactoreeConfig", () => {
     const config = parseFactoreeConfig(minimum);
     expect(config.bootstrap).toBeNull();
     expect(config.preview).toBeNull();
-    expect(config.agents.implementer).toBe("opencode");
+    // DI-21.17. The sandbox image ships opencode only. A claude default failed FAC-74.
+    expect(config.agents).toEqual({ implementer: "opencode", validator: "opencode", reviewer: "opencode" });
     expect(config.repair.maxAttempts).toBe(2);
     expect(config.sandbox.allowedDomains).toEqual([]);
     expect(config.secrets).toEqual({ require: [] });
