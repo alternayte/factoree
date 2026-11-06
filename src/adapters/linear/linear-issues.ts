@@ -25,9 +25,9 @@ const graphql = async <T>(accessToken: string, query: string, variables: Record<
 export const createLinearIssues = (accessToken: string, call: typeof fetch = fetch): AppChangeIssuePort => ({
   async createDelegatedIssue(input) {
     const viewer = await graphql<{ viewer: { id: string } }>(accessToken, "{ viewer { id } }", {}, call);
-    const created = await graphql<{ issueCreate: { success: boolean; issue: { id: string; identifier: string } | null } }>(
+    const created = await graphql<{ issueCreate: { success: boolean; issue: { id: string; identifier: string; url: string } | null } }>(
       accessToken,
-      "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier } } }",
+      "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }",
       { input: { teamId: input.teamId, title: input.title, description: input.description, delegateId: viewer.viewer.id } },
       call,
     );

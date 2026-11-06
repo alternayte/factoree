@@ -5778,6 +5778,12 @@
                                   "string",
                                   "null"
                                 ]
+                              },
+                              "skippedFromSetupId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
@@ -5788,7 +5794,8 @@
                               "report",
                               "deniedHosts",
                               "createdAt",
-                              "endedAt"
+                              "endedAt",
+                              "skippedFromSetupId"
                             ]
                           },
                           {
@@ -5955,6 +5962,303 @@
             }
           },
           "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/repository-setups/history": {
+      "get": {
+        "operationId": "listRepositorySetupHistory",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/\\s]+\\/[^/\\s]+$"
+            },
+            "in": "query",
+            "name": "repository",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "queued",
+                          "running",
+                          "proposed",
+                          "partial",
+                          "failed",
+                          "merged",
+                          "unchanged"
+                        ]
+                      },
+                      "pullRequestUrl": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "failureMessage": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "report": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "deniedHosts": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "endedAt": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "skippedFromSetupId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workflowId": {
+                        "type": "string"
+                      },
+                      "temporalRunId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "warm": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      },
+                      "proofMs": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "session": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "runner": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string"
+                              },
+                              "durationMs": {
+                                "type": "number"
+                              },
+                              "tokens": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "costUsd": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "turns": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "modelMs": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "toolMs": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "runner",
+                              "model",
+                              "outcome",
+                              "durationMs",
+                              "tokens",
+                              "costUsd",
+                              "turns",
+                              "modelMs",
+                              "toolMs"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "appChangeIssues": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "identifier": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "changes": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "outcome": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "merged",
+                                    "not_merged"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "identifier",
+                            "url",
+                            "changes",
+                            "outcome"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "status",
+                      "pullRequestUrl",
+                      "failureMessage",
+                      "report",
+                      "deniedHosts",
+                      "createdAt",
+                      "endedAt",
+                      "skippedFromSetupId",
+                      "workflowId",
+                      "temporalRunId",
+                      "warm",
+                      "proofMs",
+                      "session",
+                      "appChangeIssues"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
             "description": "Default Response",
             "content": {
               "application/json": {

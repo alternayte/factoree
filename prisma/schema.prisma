@@ -816,7 +816,7 @@ model RepositorySetup {
   repositoryFullName   String    @map("repository_full_name")
   githubInstallationId String    @map("github_installation_id")
   workflowId           String    @map("workflow_id")
-  // queued, running, proposed, partial, failed, merged.
+  // queued, running, proposed, partial, failed, merged, unchanged.
   status               String
   pullRequestUrl       String?   @map("pull_request_url")
   // The setup report: each part proven or failed, and the hosts the sandbox reached.
@@ -827,6 +827,14 @@ model RepositorySetup {
   // docs/specs/setup-app-change-issues.md. The setup Factoree started when every app-change issue
   // of this setup ended. Null until then, so a round starts one follow-up setup.
   followUpSetupId      String?   @map("follow_up_setup_id")
+  // docs/specs/setup-speed-and-history.md. The setup input key, the setup a skipped setup copied,
+  // the Temporal run id (every setup of a repository shares one workflow id), the proof time, and
+  // whether the session sandbox started from the warm snapshot.
+  inputKey             String?   @map("input_key")
+  skippedFromSetupId   String?   @map("skipped_from_setup_id")
+  temporalRunId        String?   @map("temporal_run_id")
+  proofMs              Int?      @map("proof_ms")
+  warm                 Boolean?
   createdAt            DateTime  @default(now()) @map("created_at")
   endedAt              DateTime? @map("ended_at")
   appChangeIssues      SetupAppChangeIssue[]
@@ -848,6 +856,8 @@ model SetupAppChangeIssue {
   changes               String[]
   linearIssueId         String          @map("linear_issue_id")
   linearIssueIdentifier String          @map("linear_issue_identifier")
+  // docs/specs/setup-speed-and-history.md. The issue link the setup history shows. Null before it existed.
+  linearIssueUrl        String?         @map("linear_issue_url")
   // Null while the issue is open. merged, or not_merged when its run ended without a merged pull request.
   outcome               String?
   createdAt             DateTime        @default(now()) @map("created_at")

@@ -71,6 +71,9 @@ import type {
   ListProductSecretsResponses,
   ListProductsErrors,
   ListProductsResponses,
+  ListRepositorySetupHistoryData,
+  ListRepositorySetupHistoryErrors,
+  ListRepositorySetupHistoryResponses,
   ListRepositorySetupsData,
   ListRepositorySetupsErrors,
   ListRepositorySetupsResponses,
@@ -634,6 +637,26 @@ export const startRepositorySetups = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+export const listRepositorySetupHistory = <ThrowOnError extends boolean = false>(
+  options: Options<ListRepositorySetupHistoryData, ThrowOnError>,
+): RequestResult<ListRepositorySetupHistoryResponses, ListRepositorySetupHistoryErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRepositorySetupHistoryResponses, ListRepositorySetupHistoryErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/repository-setups/history",
+    ...options,
   });
 
 export const listContextSources = <ThrowOnError extends boolean = false>(

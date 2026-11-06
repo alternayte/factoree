@@ -78,3 +78,6 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - ecosystem host list: the fixed list of package and toolchain hosts in Factoree's code that a setup sandbox can reach. Avoid: install hosts, default allow list.
 - app change: a change to the app code that a setup part needs and the setup agent may not make, named in the setup report. Avoid: required change, code change request.
 - app-change issue: a Linear issue that Factoree creates and delegates from one app change of a merged setup, or from all of them. Avoid: follow-up issue, setup issue.
+- setup input key: the SHA-256 of the default-branch head SHA and the rendered setup prompt. A setup whose key matches the newest unchanged setup skips its session. Avoid: setup hash, input fingerprint, cache key.
+- skipped setup: a setup that ends unchanged with no agent session, because its setup input key matches. It copies the report of the setup it matched. Avoid: cached setup, no-op setup.
+- setup history: the page per repository that lists every setup run with its time, cost and report. Avoid: setup log, setup runs page.

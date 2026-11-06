@@ -21,6 +21,11 @@ const setupOf = (patch: Partial<RepositorySetupRecord>): RepositorySetupRecord =
   failureMessage: null,
   sessionUsage: null,
   followUpSetupId: null,
+  inputKey: null,
+  skippedFromSetupId: null,
+  temporalRunId: null,
+  proofMs: null,
+  warm: null,
   createdAt: new Date(0),
   endedAt: new Date(0),
   ...patch,
@@ -43,6 +48,8 @@ const build = (input: { setups: RepositorySetupRecord[]; mode?: AppChangeIssueMo
     latestByProduct: () => Promise.resolve([]),
     previousWithReport: (_productId, _repository, before) =>
       Promise.resolve([...setups.values()].filter((setup) => setup.report !== null && setup.createdAt < before).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null),
+    latestEnded: () => Promise.resolve(null),
+    listForRepository: () => Promise.resolve([...setups.values()]),
     latestOpenPullRequest: () =>
       Promise.resolve([...setups.values()].reverse().find((setup) => (setup.status === "proposed" || setup.status === "partial") && setup.pullRequestUrl !== null) ?? null),
     update: (id, patch) => {
@@ -71,7 +78,7 @@ const build = (input: { setups: RepositorySetupRecord[]; mode?: AppChangeIssueMo
       Promise.resolve({
         createDelegatedIssue: (issue) => {
           created.push(issue);
-          return Promise.resolve({ id: `issue-${created.length}`, identifier: `FAC-${100 + created.length}` });
+          return Promise.resolve({ id: `issue-${created.length}`, identifier: `FAC-${100 + created.length}`, url: `https://linear.app/acme/issue/FAC-${100 + created.length}` });
         },
       }),
     pullRequestState: (slug, number) => Promise.resolve(states.get(`${slug}#${number}`) ?? "open"),
@@ -119,6 +126,7 @@ describe("afterSetupPush (docs/specs/setup-app-change-issues.md)", () => {
       changes: ["read the tmdb base URL  from TMDB__BaseUrl."],
       linearIssueId: "issue-0",
       linearIssueIdentifier: "FAC-90",
+      linearIssueUrl: null,
       outcome: null,
       createdAt: new Date(0),
       endedAt: null,

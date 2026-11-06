@@ -18,6 +18,8 @@ export interface AppChangeIssueRecord {
   changes: string[];
   linearIssueId: string;
   linearIssueIdentifier: string;
+  /** docs/specs/setup-speed-and-history.md. Null for an issue stored before the link was. */
+  linearIssueUrl: string | null;
   /** Null while the issue is open. */
   outcome: AppChangeIssueOutcome | null;
   createdAt: Date;
@@ -31,7 +33,7 @@ export interface AppChangeIssueRun {
 }
 
 export interface AppChangeIssueStore {
-  create(input: Pick<AppChangeIssueRecord, "tenantId" | "productId" | "setupId" | "repositoryFullName" | "changes" | "linearIssueId" | "linearIssueIdentifier">): Promise<AppChangeIssueRecord>;
+  create(input: Pick<AppChangeIssueRecord, "tenantId" | "productId" | "setupId" | "repositoryFullName" | "changes" | "linearIssueId" | "linearIssueIdentifier" | "linearIssueUrl">): Promise<AppChangeIssueRecord>;
   listForRepository(tenantId: string, repositoryFullName: string): Promise<AppChangeIssueRecord[]>;
   setOutcome(id: string, outcome: AppChangeIssueOutcome, at: Date): Promise<void>;
   /** The newest run of the Linear issue, or null when none started yet. */
@@ -40,7 +42,7 @@ export interface AppChangeIssueStore {
 
 /** The Linear side: one issue in the team, delegated to Factoree. */
 export interface AppChangeIssuePort {
-  createDelegatedIssue(input: { teamId: string; title: string; description: string }): Promise<{ id: string; identifier: string }>;
+  createDelegatedIssue(input: { teamId: string; title: string; description: string }): Promise<{ id: string; identifier: string; url: string }>;
 }
 
 /** Two lines name the same change when they match after trimming and collapsing whitespace. */

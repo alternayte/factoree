@@ -1,4 +1,4 @@
-import { ActivityFailure, ApplicationFailure, log, proxyActivities, sleep } from "@temporalio/workflow";
+import { ActivityFailure, ApplicationFailure, log, proxyActivities, sleep, workflowInfo } from "@temporalio/workflow";
 import type { Activities } from "~/activities/index.js";
 import { SANDBOX_SLOT_UNAVAILABLE_TYPE } from "../domain/runs/sandbox-slot-error.js";
 
@@ -51,7 +51,15 @@ const messageOf = (error: unknown): string => {
  */
 export const repositorySetupWorkflow = async (input: { setupId: string }): Promise<void> => {
   try {
-    const session = await withSlot(() => activities.runSetupSession({ setupId: input.setupId }));
+    // docs/specs/setup-speed-and-history.md. The inputs and the setup input key come first. A
+    // setup whose inputs match the last unchanged setup ends there, with no sandbox.
+    const prepared = await record.prepareSetup({ setupId: input.setupId, temporalRunId: workflowInfo().runId });
+    if (prepared.kind === "skipped") return;
+    if (prepared.kind === "failed") {
+      await record.finishSetup({ setupId: input.setupId, status: "failed", pullRequestUrl: null, failureMessage: prepared.reason });
+      return;
+    }
+    const session = await withSlot(() => activities.runSetupSession({ setupId: input.setupId, prepared }));
     if (session.kind === "failed") {
       await record.finishSetup({ setupId: input.setupId, status: "failed", pullRequestUrl: null, failureMessage: session.reason });
       return;

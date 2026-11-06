@@ -385,6 +385,8 @@ const worker = await Worker.create({
     logger,
     tokens: githubTokens,
     discoveryClient,
+    repositoryFiles: discoveryClient,
+    warmSnapshots,
     discoveryService,
     repositoryBaseUrl: githubBaseUrl(settings),
     // docs/specs/skill-registry.md. Skael is the one registry kind. The organization skills

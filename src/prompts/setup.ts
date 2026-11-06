@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@6";
+export const SETUP_PROMPT_VERSION = "setup@7";
 
 export interface SetupPromptFields {
   repository: string;
@@ -25,7 +25,30 @@ export interface SetupPromptFields {
    * on the change text, so the agent repeats a still-needed change word for word.
    */
   requestedChanges: readonly string[];
+  /**
+   * docs/specs/setup-speed-and-history.md. The parts the previous setup proved. On a repository
+   * with a config, the agent runs only the parts it changes and their dependents.
+   */
+  previousProven: ReadonlyArray<{ kind: string; name: string }>;
+  /**
+   * docs/specs/setup-speed-and-history.md. The repository instruction file, as SDD section 34 gives
+   * the implementer. opencode runs with OPENCODE_DISABLE_PROJECT_CONFIG=1 and loads none itself.
+   */
+  repositoryInstructions: { file: string; text: string } | null;
 }
+
+/** The name of a report part as the prompt writes it. */
+const partName = (part: { kind: string; name: string }): string => (part.kind === part.name ? part.kind : `${part.kind} \`${part.name}\``);
+
+/** docs/specs/setup-speed-and-history.md. What the agent runs itself before it stops. */
+const ownRunRule = (fields: SetupPromptFields): string =>
+  fields.existingConfig === null
+    ? "Run the bootstrap, the verify commands, the stack and the preview yourself before you stop, so the configuration works. Factoree checks each part again in a fresh sandbox, and your own run is not evidence."
+    : [
+        "Run yourself only the parts you add or change, and every part that depends on them, in this order: bootstrap, services, seed, verify and preview, accounts. A change to the bootstrap means you run every part again.",
+        "Do not run a part the previous setup proved and you leave unchanged. Factoree proves every part again in a fresh sandbox, and your own run is not evidence.",
+        `The previous setup proved these parts:\n${list(fields.previousProven.map(partName), "None.")}`,
+      ].join("\n");
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
 
@@ -150,7 +173,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         ? "No previous setup of this repository left a part unproven."
         : "The previous setup proposed these parts, and Factoree could not prove them in its fresh sandbox, so they are not in the configuration. Try each again: find the cause in the reason, and fix it from `.factoree/` when you can.\n\n" +
             list(
-              fields.previousNotProven.map((part) => `${part.kind === part.name ? part.kind : `${part.kind} \`${part.name}\``}: ${part.reason ?? "no reason recorded"}`),
+              fields.previousNotProven.map((part) => `${partName(part)}: ${part.reason ?? "no reason recorded"}`),
               "None.",
             ),
     ),
@@ -159,9 +182,15 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
       [
         "You must not change a file outside .factoree/.",
         "You must not put a real credential in the configuration. An account password is a local test value.",
-        "Run the bootstrap, the verify commands, the stack and the preview yourself before you stop, so the configuration works. Factoree checks each part again in a fresh sandbox, and your own run is not evidence.",
+        ownRunRule(fields),
         "Factoree proves the configuration in a fresh sandbox that holds only the repository and your `.factoree/` files. Nothing else you do in this session carries over: no `mise use --global`, no `npm install -g`, no file outside the repository. The bootstrap must install everything the verify commands, the seed and the preview need.",
         "The session stops after 60 minutes. Write the configuration as soon as one part works, and improve it after. Factoree proves what the files hold when the session stops.",
       ].join("\n"),
+    ),
+    section(
+      "Repository instructions",
+      fields.repositoryInstructions === null
+        ? "The repository has no AGENTS.md, CLAUDE.md or CONTRIBUTING.md."
+        : `The repository's ${fields.repositoryInstructions.file} follows. It names how the repository builds, tests and runs. Where it conflicts with the rules above, the rules above win: you still write only under .factoree/.\n\n${fields.repositoryInstructions.text}`,
     ),
   ].join("\n");

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { parseDocument } from "yaml";
-import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
+import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters/github/repository-discovery-client.js";
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -13,7 +14,10 @@ import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
 import { publishToBranch } from "~/domain/publishing/trusted-checkout.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { projectDefaultsOf } from "~/domain/runs/build-ahead.js";
-import { checkoutPrimary, withoutUrlCredentials } from "~/domain/runs/checkout.js";
+import { checkoutPrimary, refreshPrimary, withoutUrlCredentials } from "~/domain/runs/checkout.js";
+import { capInstructions, REPOSITORY_INSTRUCTION_FILES } from "~/domain/runs/repository-config-source.js";
+import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
+import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import { PreviewStartError, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import { bootstrapAllowListOf, DEFAULT_PROJECT_RUNTIME_CONFIG, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 import { narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
@@ -22,6 +26,7 @@ import { runVerification } from "~/domain/runs/verification.js";
 import { alreadyRequested, type AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
 import {
+  skipSourceOf,
   setupBranchName,
   setupSandboxRunId,
   type RepositorySetupStore,
@@ -31,7 +36,7 @@ import {
 import { failureExcerpt, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult, type SetupReport } from "~/domain/setup/setup-report.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import { signInStepsOf } from "~/domain/validation/user-validator.js";
-import { renderSetupPrompt, SETUP_PROMPT_VERSION } from "~/prompts/setup.js";
+import { renderSetupPrompt, SETUP_PROMPT_VERSION, type SetupPromptFields } from "~/prompts/setup.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { PUBLICATION_COMMIT_TIMESTAMP } from "./publishing.activities.js";
@@ -44,6 +49,10 @@ export interface SetupActivityDependencies {
   secrets: SecretStore;
   tokens: GitHubTokenProvider;
   discoveryClient: Pick<RepositoryDiscoveryClient, "listInstallationRepositories">;
+  /** docs/specs/setup-speed-and-history.md. Reads the head SHA and the files the setup input key needs. */
+  repositoryFiles: RepositoryFileReader;
+  /** docs/specs/setup-speed-and-history.md. The warm snapshots the session sandbox can start from. */
+  warmSnapshots?: Pick<WarmSnapshotStore, "find"> | undefined;
   browser: BrowserDriver;
   previewProbe: ReadinessProbe;
   pullRequests: (token: string) => PullRequestPort;
@@ -54,6 +63,24 @@ export interface SetupActivityDependencies {
   /** docs/specs/setup-app-change-issues.md. The stored app-change issues, so the report names the ones already requested. */
   appChangeIssues?: Pick<AppChangeIssueStore, "listForRepository"> | undefined;
 }
+
+/** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
+export type SetupPromptInputs = Omit<SetupPromptFields, "primaryRepositoryPath" | "appChangesPath">;
+
+/** docs/specs/setup-speed-and-history.md. What a setup does after its inputs are read. */
+export type PreparedSetup =
+  | { kind: "run"; defaultBranch: string; headSha: string; prompt: SetupPromptInputs }
+  | { kind: "skipped" }
+  | { kind: "failed"; reason: string };
+
+/**
+ * docs/specs/setup-speed-and-history.md. The setup input key: the SHA-256 of the head SHA and the
+ * rendered setup prompt, with fixed text where the sandbox paths go.
+ */
+export const setupInputKeyOf = (headSha: string, prompt: SetupPromptInputs): string =>
+  createHash("sha256")
+    .update(JSON.stringify({ headSha, prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>" }) }))
+    .digest("hex");
 
 /** The agent session of one setup, and what it wrote. */
 export type SetupSessionOutput =
@@ -68,6 +95,8 @@ export type SetupSessionOutput =
       deniedHosts: string[];
       egressRecorded: boolean;
       appChanges: string[];
+      /** docs/specs/setup-speed-and-history.md. The session sandbox started from the warm snapshot. */
+      warm: boolean;
     }
   | { kind: "failed"; reason: string };
 
@@ -89,6 +118,17 @@ const tail = (stdout: string, stderr: string): string => `${stdout}\n${stderr}`.
 const hostsOf = (url: string): string[] => {
   try {
     return [new URL(url).hostname.toLowerCase()];
+  } catch {
+    return [];
+  }
+};
+
+/** The bootstrap allow list of a config text, or none when it has no list or does not parse. */
+const existingBootstrapHosts = (config: string | null): string[] => {
+  if (config === null) return [];
+  try {
+    const hosts: unknown = (parseDocument(config).toJS() as { bootstrap?: { allowedDomains?: unknown } } | null)?.bootstrap?.allowedDomains;
+    return Array.isArray(hosts) ? hosts.filter((host): host is string => typeof host === "string") : [];
   } catch {
     return [];
   }
@@ -136,147 +176,41 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     return ref;
   };
 
-  return {
-    /**
-     * docs/specs/repository-setup-and-services.md. The setup agent reads the repository and writes
-     * `.factoree/`. The sandbox reaches the repository, the ecosystem host list and the product
-     * allow list, which holds the model API.
-     */
-    async runSetupSession(input: { setupId: string }): Promise<SetupSessionOutput> {
-      const { setup, product, url } = await load(input.setupId);
-      await dependencies.setups.update(setup.id, { status: "running" });
-      await registerProjectSecrets(dependencies.redactor, dependencies.secrets, setup.tenantId, setup.productId, dependencies.logger);
-      const repositories = await dependencies.discoveryClient.listInstallationRepositories(setup.githubInstallationId);
-      const defaultBranch = repositories.find((entry) => entry.fullName === setup.repositoryFullName)?.defaultBranch;
-      if (defaultBranch === undefined) {
-        return { kind: "failed", reason: `The GitHub App installation does not grant ${setup.repositoryFullName}.` };
-      }
-      const token = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
-      dependencies.redactor.addSecret(token);
-
-      const ref = await createSandbox(setup.id, setup.tenantId, setup.productId, [
-        ...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains]),
-      ]);
-      const started = Date.now();
+  /**
+   * docs/specs/setup-speed-and-history.md. The session sandbox starts from the repository's warm
+   * snapshot of the current template when one exists. A snapshot that does not restore leaves a
+   * cold start. A full provider says nothing about the snapshot, so its error goes to the caller.
+   */
+  const startSessionSandbox = async (
+    setup: { id: string; tenantId: string; productId: string },
+    url: string,
+    allowedDomains: string[],
+  ): Promise<{ ref: SandboxRef; warm: boolean }> => {
+    const provider = dependencies.sandbox.warmSnapshots;
+    const snapshot =
+      provider === undefined || dependencies.warmSnapshots === undefined
+        ? null
+        : await dependencies.warmSnapshots.find({ tenantId: setup.tenantId, adapter: dependencies.sandbox.name, repositoryUrl: url });
+    if (provider !== undefined && snapshot !== null && snapshot.template === provider.template) {
       try {
-        const primary = await checkoutPrimary(dependencies.sandbox, ref, { url, ref: defaultBranch }, token);
-        const existingConfig = await readText(dependencies.sandbox, ref, `${primary.path}/${CONFIG}`);
-        // DI-21.18. The parts the last setup could not prove, so the agent tries them again.
-        const previous = await dependencies.setups.previousWithReport(setup.productId, setup.repositoryFullName, setup.createdAt);
-        const previousNotProven = (previous?.report?.parts ?? [])
-          .filter((part) => !part.passed)
-          .map((part) => ({ kind: part.kind, name: part.name, reason: part.reason }));
-        // The agent may start the stack itself to try it. A provider without Docker runs none.
-        if (dependencies.sandbox.capabilities.supportsDocker) {
-          await ensureDocker(dependencies.sandbox, ref).catch((error: unknown) =>
-            dependencies.logger.warn("rootless Docker did not start in the setup sandbox", { setup_id: setup.id, error: String(error) }),
-          );
-        }
-        const testSecretNames = (await dependencies.secrets.list(setup.tenantId, setup.productId))
-          .filter((secret) => secret.kind === "test")
-          .map((secret) => secret.name);
-        const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
-        const requestedChanges =
-          dependencies.appChangeIssues === undefined
-            ? []
-            : (await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName))
-                .filter((row) => row.outcome === null)
-                .flatMap((row) => row.changes);
-        const runnerName = DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner;
-        const runner = dependencies.runners.get(runnerName);
-        const result = await runner.run({
-          runId: setupSandboxRunId(setup.id),
-          tenantId: setup.tenantId,
-          role: "setup",
-          sandbox: dependencies.sandbox,
-          ref,
-          workingDirectory: primary.path,
-          repositoryPath: primary.path,
-          prompt: renderSetupPrompt({
-            repository: setup.repositoryFullName,
-            primaryRepositoryPath: primary.path,
-            productSlug: product.slug,
-            linearTeamKey: product.linearTeamKey,
-            testSecretNames,
-            ecosystemHosts: ECOSYSTEM_HOSTS,
-            appChangesPath,
-            existingConfig,
-            previousNotProven,
-            requestedChanges,
-          }),
-          promptVersion: SETUP_PROMPT_VERSION,
-          environment: {},
-          actionPolicy: buildActionPolicy({ role: "setup" }),
-          timeoutMs: SETUP_SESSION_TIMEOUT_MS,
+        const ref = await provider.restore({ runId: setupSandboxRunId(setup.id), tenantId: setup.tenantId, productId: setup.productId }, snapshot.snapshotId);
+        await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, setup.tenantId, setup.productId);
+        await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains });
+        return { ref, warm: true };
+      } catch (error) {
+        if (error instanceof SandboxSlotUnavailableError) throw error;
+        dependencies.logger.warn("the warm snapshot did not restore, so the setup sandbox starts cold", {
+          setup_id: setup.id,
+          snapshot_id: snapshot.snapshotId,
+          detail: String(error).slice(0, 500),
         });
-        const usage: SetupSessionUsage = {
-          runner: runnerName,
-          model: result.model ?? null,
-          effort: result.effort ?? null,
-          outcome: result.outcome,
-          durationMs: Date.now() - started,
-          tokens:
-            result.usage === null
-              ? null
-              : (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0),
-          costUsd: result.usage?.costUsd ?? null,
-          turns: result.usage?.turns ?? null,
-          longestTurnMs: result.usage?.longestTurnMs ?? null,
-          modelMs: result.usage?.modelMs ?? null,
-          toolMs: result.usage?.toolMs ?? null,
-        };
-        await dependencies.setups.update(setup.id, { sessionUsage: usage });
-
-        const outside = (await changedPaths(dependencies.sandbox, ref, primary.path)).filter((path) => !path.startsWith(".factoree/"));
-        if (outside.length > 0) {
-          return {
-            kind: "failed",
-            reason: `The setup agent changed files outside .factoree/, so Factoree refused the setup: ${outside.slice(0, 20).join(", ")}.`,
-          };
-        }
-        const proposalText = await readText(dependencies.sandbox, ref, `${primary.path}/${CONFIG}`);
-        if (proposalText === null) return { kind: "failed", reason: "The setup agent wrote no .factoree/config.yaml." };
-
-        // The bootstrap allow list is what the sandbox reached inside the ecosystem host list. A
-        // provider that records no egress gets the whole list.
-        const log = dependencies.sandbox.egressLog === undefined ? null : await dependencies.sandbox.egressLog(ref);
-        const reached = log === null ? [...ECOSYSTEM_HOSTS] : [...new Set(log.filter((record) => record.decision === "allowed").map((record) => record.host))];
-        const bootstrapHosts = narrowAllowList(reached.length === 0 ? ["none.invalid"] : reached, [...ECOSYSTEM_HOSTS]).sort();
-        // DI-21.20. A name with no dot is a local lookup, such as the sandbox's own hostname or a
-        // compose service, never a host the allow list could name.
-        const deniedHosts =
-          log === null ? [] : [...new Set(log.filter((record) => record.decision === "denied" && record.host.includes(".")).map((record) => record.host))].sort();
-        const document = parseDocument(proposalText);
-        if (document.get("bootstrap") !== undefined) document.setIn(["bootstrap", "allowedDomains"], bootstrapHosts);
-        const proposal = document.toString();
-        await dependencies.sandbox.writeFile(ref, `${primary.path}/${CONFIG}`, proposal);
-
-        const appChanges = ((await readText(dependencies.sandbox, ref, appChangesPath)) ?? "")
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line !== "");
-        const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: primary.baseSha });
-        return {
-          kind: "proposed",
-          defaultBranch,
-          baseSha: primary.baseSha,
-          patchBase64: patch.patchBase64,
-          proposal,
-          observedHosts: bootstrapHosts,
-          deniedHosts,
-          egressRecorded: log !== null,
-          appChanges,
-        };
-      } finally {
-        await dependencies.sandbox.destroy(ref).catch(() => undefined);
       }
-    },
+    }
+    return { ref: await createSandbox(setup.id, setup.tenantId, setup.productId, allowedDomains), warm: false };
+  };
 
-    /**
-     * docs/specs/repository-setup-and-services.md. Proves each part in a fresh sandbox with only
-     * the proposed allow list, keeps the parts that passed, and opens the pull request.
-     */
-    async proveAndPublishSetup(input: { setupId: string; session: Extract<SetupSessionOutput, { kind: "proposed" }> }): Promise<SetupProofOutput> {
+  /** The proof of one setup. proveAndPublishSetup times it. */
+  const prove = async (input: { setupId: string; session: Extract<SetupSessionOutput, { kind: "proposed" }> }): Promise<SetupProofOutput> => {
       const { setup, product, url } = await load(input.setupId);
       const session = input.session;
       let config;
@@ -471,6 +405,199 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }, setup.githubInstallationId));
       const allPassed = finalParts.every((part) => part.passed);
       return { status: allPassed ? "proposed" : "partial", pullRequestUrl: pullRequest.url, failureMessage: null };
+  };
+
+  return {
+    /**
+     * docs/specs/setup-speed-and-history.md. Reads every input of the setup prompt through the
+     * GitHub API and the database, stores the setup input key, and skips the session when the newest
+     * ended setup of the repository is unchanged with the same key.
+     */
+    async prepareSetup(input: { setupId: string; temporalRunId: string }): Promise<PreparedSetup> {
+      const { setup, product } = await load(input.setupId);
+      await dependencies.setups.update(setup.id, { status: "running", temporalRunId: input.temporalRunId });
+      const repositories = await dependencies.discoveryClient.listInstallationRepositories(setup.githubInstallationId);
+      const defaultBranch = repositories.find((entry) => entry.fullName === setup.repositoryFullName)?.defaultBranch;
+      if (defaultBranch === undefined) {
+        return { kind: "failed", reason: `The GitHub App installation does not grant ${setup.repositoryFullName}.` };
+      }
+      const files = dependencies.repositoryFiles;
+      const headSha = await files.headSha(setup.repositoryFullName, defaultBranch, setup.githubInstallationId);
+      const existingConfig = await files.readFile(setup.repositoryFullName, CONFIG, headSha, setup.githubInstallationId);
+      let repositoryInstructions: SetupPromptInputs["repositoryInstructions"] = null;
+      for (const file of REPOSITORY_INSTRUCTION_FILES) {
+        const text = await files.readFile(setup.repositoryFullName, file, headSha, setup.githubInstallationId);
+        if (text === null) continue;
+        repositoryInstructions = { file, text: capInstructions(file, text) };
+        break;
+      }
+      // DI-21.18. The parts the last setup could not prove, so the agent tries them again, and the
+      // parts it proved, so a rerun leaves them alone.
+      const previous = await dependencies.setups.previousWithReport(setup.productId, setup.repositoryFullName, setup.createdAt);
+      const previousParts = previous?.report?.parts ?? [];
+      const testSecretNames = (await dependencies.secrets.list(setup.tenantId, setup.productId))
+        .filter((secret) => secret.kind === "test")
+        .map((secret) => secret.name)
+        .sort();
+      const requestedChanges =
+        dependencies.appChangeIssues === undefined
+          ? []
+          : (await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName))
+              .filter((row) => row.outcome === null)
+              .flatMap((row) => row.changes);
+      const prompt: SetupPromptInputs = {
+        repository: setup.repositoryFullName,
+        productSlug: product.slug,
+        linearTeamKey: product.linearTeamKey,
+        testSecretNames,
+        ecosystemHosts: ECOSYSTEM_HOSTS,
+        existingConfig,
+        previousNotProven: previousParts.filter((part) => !part.passed).map((part) => ({ kind: part.kind, name: part.name, reason: part.reason })),
+        previousProven: previousParts.filter((part) => part.passed).map((part) => ({ kind: part.kind, name: part.name })),
+        requestedChanges,
+        repositoryInstructions,
+      };
+      const inputKey = setupInputKeyOf(headSha, prompt);
+      await dependencies.setups.update(setup.id, { inputKey });
+
+      const latest = await dependencies.setups.latestEnded(setup.productId, setup.repositoryFullName, setup.createdAt);
+      const source = skipSourceOf(latest, inputKey);
+      if (latest !== null && source !== null) {
+        await dependencies.setups.update(setup.id, {
+          status: "unchanged",
+          skippedFromSetupId: source,
+          ...(latest.report === null ? {} : { report: latest.report }),
+          failureMessage: null,
+          endedAt: new Date(),
+        });
+        dependencies.logger.info("the setup inputs did not change, so the setup skipped its session", { setup_id: setup.id, skipped_from: source, step: "setup_skip" });
+        return { kind: "skipped" };
+      }
+      return { kind: "run", defaultBranch, headSha, prompt };
+    },
+
+    /**
+     * docs/specs/repository-setup-and-services.md. The setup agent reads the repository and writes
+     * `.factoree/`. The sandbox reaches the repository, the ecosystem host list and the product
+     * allow list, which holds the model API. docs/specs/setup-speed-and-history.md: the sandbox
+     * starts from the warm snapshot when one exists, and the prompt is the one the key holds.
+     */
+    async runSetupSession(input: { setupId: string; prepared: Extract<PreparedSetup, { kind: "run" }> }): Promise<SetupSessionOutput> {
+      const { setup, product, url } = await load(input.setupId);
+      const { defaultBranch, headSha, prompt } = input.prepared;
+      await registerProjectSecrets(dependencies.redactor, dependencies.secrets, setup.tenantId, setup.productId, dependencies.logger);
+      const token = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
+      dependencies.redactor.addSecret(token);
+
+      const { ref, warm } = await startSessionSandbox(setup, url, [...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains])]);
+      await dependencies.setups.update(setup.id, { warm });
+      const started = Date.now();
+      try {
+        const primary = warm
+          ? await refreshPrimary(dependencies.sandbox, ref, { url, ref: headSha }, token)
+          : await checkoutPrimary(dependencies.sandbox, ref, { url, ref: headSha }, token);
+        // The agent may start the stack itself to try it. A provider without Docker runs none.
+        if (dependencies.sandbox.capabilities.supportsDocker) {
+          await ensureDocker(dependencies.sandbox, ref).catch((error: unknown) =>
+            dependencies.logger.warn("rootless Docker did not start in the setup sandbox", { setup_id: setup.id, error: String(error) }),
+          );
+        }
+        const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
+        const runnerName = DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner;
+        const runner = dependencies.runners.get(runnerName);
+        const result = await runner.run({
+          runId: setupSandboxRunId(setup.id),
+          tenantId: setup.tenantId,
+          role: "setup",
+          sandbox: dependencies.sandbox,
+          ref,
+          workingDirectory: primary.path,
+          repositoryPath: primary.path,
+          prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: primary.path, appChangesPath }),
+          promptVersion: SETUP_PROMPT_VERSION,
+          environment: {},
+          actionPolicy: buildActionPolicy({ role: "setup" }),
+          timeoutMs: SETUP_SESSION_TIMEOUT_MS,
+        });
+        const usage: SetupSessionUsage = {
+          runner: runnerName,
+          model: result.model ?? null,
+          effort: result.effort ?? null,
+          outcome: result.outcome,
+          durationMs: Date.now() - started,
+          tokens:
+            result.usage === null
+              ? null
+              : (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0),
+          costUsd: result.usage?.costUsd ?? null,
+          turns: result.usage?.turns ?? null,
+          longestTurnMs: result.usage?.longestTurnMs ?? null,
+          modelMs: result.usage?.modelMs ?? null,
+          toolMs: result.usage?.toolMs ?? null,
+        };
+        await dependencies.setups.update(setup.id, { sessionUsage: usage });
+
+        const outside = (await changedPaths(dependencies.sandbox, ref, primary.path)).filter((path) => !path.startsWith(".factoree/"));
+        if (outside.length > 0) {
+          return {
+            kind: "failed",
+            reason: `The setup agent changed files outside .factoree/, so Factoree refused the setup: ${outside.slice(0, 20).join(", ")}.`,
+          };
+        }
+        const proposalText = await readText(dependencies.sandbox, ref, `${primary.path}/${CONFIG}`);
+        if (proposalText === null) return { kind: "failed", reason: "The setup agent wrote no .factoree/config.yaml." };
+
+        // The bootstrap allow list is what the sandbox reached inside the ecosystem host list. A
+        // provider that records no egress gets the whole list.
+        const log = dependencies.sandbox.egressLog === undefined ? null : await dependencies.sandbox.egressLog(ref);
+        const reached = log === null ? [...ECOSYSTEM_HOSTS] : [...new Set(log.filter((record) => record.decision === "allowed").map((record) => record.host))];
+        // docs/specs/setup-speed-and-history.md. A warm sandbox already holds the packages, so it
+        // reaches fewer hosts than a cold bootstrap needs. The existing allow list stays.
+        if (warm) reached.push(...existingBootstrapHosts(prompt.existingConfig));
+        const bootstrapHosts = narrowAllowList(reached.length === 0 ? ["none.invalid"] : reached, [...ECOSYSTEM_HOSTS]).sort();
+        // DI-21.20. A name with no dot is a local lookup, such as the sandbox's own hostname or a
+        // compose service, never a host the allow list could name.
+        const deniedHosts =
+          log === null ? [] : [...new Set(log.filter((record) => record.decision === "denied" && record.host.includes(".")).map((record) => record.host))].sort();
+        const document = parseDocument(proposalText);
+        if (document.get("bootstrap") !== undefined) document.setIn(["bootstrap", "allowedDomains"], bootstrapHosts);
+        const proposal = document.toString();
+        await dependencies.sandbox.writeFile(ref, `${primary.path}/${CONFIG}`, proposal);
+
+        const appChanges = ((await readText(dependencies.sandbox, ref, appChangesPath)) ?? "")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== "");
+        const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: primary.baseSha });
+        return {
+          kind: "proposed",
+          defaultBranch,
+          baseSha: primary.baseSha,
+          patchBase64: patch.patchBase64,
+          proposal,
+          observedHosts: bootstrapHosts,
+          deniedHosts,
+          egressRecorded: log !== null,
+          appChanges,
+          warm,
+        };
+      } finally {
+        await dependencies.sandbox.destroy(ref).catch(() => undefined);
+      }
+    },
+
+    /**
+     * docs/specs/repository-setup-and-services.md. Proves each part in a fresh sandbox with only
+     * the proposed allow list, keeps the parts that passed, and opens the pull request.
+     * docs/specs/setup-speed-and-history.md: the setup row records the proof time.
+     */
+    async proveAndPublishSetup(input: { setupId: string; session: Extract<SetupSessionOutput, { kind: "proposed" }> }): Promise<SetupProofOutput> {
+      const started = Date.now();
+      try {
+        return await prove(input);
+      } finally {
+        await dependencies.setups.update(input.setupId, { proofMs: Date.now() - started }).catch(() => undefined);
+      }
     },
 
     /** Records how a setup ended. */

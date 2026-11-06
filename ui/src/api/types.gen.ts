@@ -1650,6 +1650,7 @@ export type ListRepositorySetupsResponses = {
       deniedHosts: Array<string>;
       createdAt: string;
       endedAt: string | null;
+      skippedFromSetupId: string | null;
     } | null;
   }>;
 };
@@ -1702,6 +1703,76 @@ export type StartRepositorySetupsResponses = {
 };
 
 export type StartRepositorySetupsResponse = StartRepositorySetupsResponses[keyof StartRepositorySetupsResponses];
+
+export type ListRepositorySetupHistoryData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+    repository: string;
+  };
+  url: "/admin/products/{id}/repository-setups/history";
+};
+
+export type ListRepositorySetupHistoryErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRepositorySetupHistoryError = ListRepositorySetupHistoryErrors[keyof ListRepositorySetupHistoryErrors];
+
+export type ListRepositorySetupHistoryResponses = {
+  /**
+   * Default Response
+   */
+  200: Array<{
+    id: string;
+    status: "queued" | "running" | "proposed" | "partial" | "failed" | "merged" | "unchanged";
+    pullRequestUrl: string | null;
+    failureMessage: string | null;
+    report: string | null;
+    deniedHosts: Array<string>;
+    createdAt: string;
+    endedAt: string | null;
+    skippedFromSetupId: string | null;
+    workflowId: string;
+    temporalRunId: string | null;
+    warm: boolean | null;
+    proofMs: number | null;
+    session: {
+      runner: string;
+      model: string | null;
+      outcome: string;
+      durationMs: number;
+      tokens: number | null;
+      costUsd: number | null;
+      turns: number | null;
+      modelMs: number | null;
+      toolMs: number | null;
+    } | null;
+    appChangeIssues: Array<{
+      identifier: string;
+      url: string | null;
+      changes: Array<string>;
+      outcome: "merged" | "not_merged" | null;
+    }>;
+  }>;
+};
+
+export type ListRepositorySetupHistoryResponse =
+  ListRepositorySetupHistoryResponses[keyof ListRepositorySetupHistoryResponses];
 
 export type ListContextSourcesData = {
   body?: never;

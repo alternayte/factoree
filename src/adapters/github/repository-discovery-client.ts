@@ -38,6 +38,17 @@ export interface RepositoryDiscoveryClient {
   listFiles(fullName: string, ref: string, githubInstallationId: string): Promise<RepositoryFileEntry[] | null>;
 }
 
+/**
+ * docs/specs/setup-speed-and-history.md. Reads one file and the head commit of a repository through
+ * the GitHub API, so a setup computes its input key before any sandbox starts.
+ */
+export interface RepositoryFileReader {
+  /** The text of one file at the ref, or null when the file does not exist. */
+  readFile(fullName: string, path: string, ref: string, githubInstallationId: string): Promise<string | null>;
+  /** The commit SHA the ref points to. */
+  headSha(fullName: string, ref: string, githubInstallationId: string): Promise<string>;
+}
+
 export interface GitHubRepositoryDiscoveryClientOptions {
   apiBaseUrl?: GitHubApiBaseUrl;
   /** Mints the GitHub App installation token. The client holds no token of its own. */
@@ -66,7 +77,7 @@ interface GitHubRepositorySummary {
  * The caller supplies the token. `fetch` is injectable for a test. Every failure carries
  * the HTTP status and the repository name.
  */
-export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClient {
+export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClient, RepositoryFileReader {
   private readonly apiBaseUrl: GitHubApiBaseUrl;
   private readonly tokens: GitHubTokenProvider;
   private readonly fetchImpl: typeof fetch;
@@ -111,14 +122,38 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     ref: string,
     githubInstallationId: string,
   ): Promise<RepositoryConfigFile | null> {
+    return this.readContents(fullName, CONFIG_PATH, ref, githubInstallationId);
+  }
+
+  async readFile(fullName: string, path: string, ref: string, githubInstallationId: string): Promise<string | null> {
+    return (await this.readContents(fullName, path, ref, githubInstallationId))?.content ?? null;
+  }
+
+  async headSha(fullName: string, ref: string, githubInstallationId: string): Promise<string> {
+    const url = `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${fullName}/commits/${encodeURIComponent(ref)}`;
+    const response = await this.request(url, githubInstallationId);
+    const text = await response.text();
+    if (!response.ok) {
+      throw new GitHubApiError(
+        `the GitHub API answered ${String(response.status)} while it read the head of ${fullName} at ${ref}`,
+        response.status,
+        this.rateLimitHeaders(response.headers),
+      );
+    }
+    const sha = (JSON.parse(text) as { sha?: unknown }).sha;
+    if (typeof sha !== "string" || !/^[0-9a-f]{40}$/.test(sha)) throw new Error(`the GitHub API answered no commit SHA for ${fullName} at ${ref}`);
+    return sha;
+  }
+
+  private async readContents(fullName: string, path: string, ref: string, githubInstallationId: string): Promise<RepositoryConfigFile | null> {
     const query = new URLSearchParams({ ref });
-    const url = `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${fullName}/contents/${CONFIG_PATH}?${query.toString()}`;
+    const url = `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${fullName}/contents/${path}?${query.toString()}`;
     const response = await this.request(url, githubInstallationId);
     if (response.status === 404) return null;
     const text = await response.text();
     if (!response.ok) {
       throw new GitHubApiError(
-        `the GitHub API answered ${String(response.status)} while it read the configuration of ${fullName} at ${ref}`,
+        `the GitHub API answered ${String(response.status)} while it read ${path} of ${fullName} at ${ref}`,
         response.status,
         this.rateLimitHeaders(response.headers),
       );
@@ -126,8 +161,10 @@ export class GitHubRepositoryDiscoveryClient implements RepositoryDiscoveryClien
     const body = (text === "" ? {} : JSON.parse(text)) as GitHubContentsResponse;
     const sha = body.sha;
     const content = body.content;
+    // A directory answers an array, with no content of its own.
+    if (Array.isArray(body)) return null;
     if (typeof sha !== "string" || typeof content !== "string") {
-      throw new Error(`the GitHub API answered a configuration file of ${fullName} without a SHA or content`);
+      throw new Error(`the GitHub API answered ${path} of ${fullName} without a SHA or content`);
     }
     return { content: Buffer.from(content, "base64").toString("utf8"), sha };
   }

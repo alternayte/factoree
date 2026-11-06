@@ -1,5 +1,6 @@
 import { registerRepositorySetupRoutes, type RepositorySetupRouteDependencies } from "./admin/repository-setup.routes.js";
 import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
+import { PrismaAppChangeIssueStore } from "~/persistence/prisma/app-change-issue.prisma.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import type { Env } from "~/config/env.js";
@@ -187,6 +188,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         products: dependencies.products,
         tenants: dependencies.tenants,
         setups: new PrismaRepositorySetupStore(prisma),
+        appChangeIssues: new PrismaAppChangeIssueStore(prisma),
         registeredRepositories: async (tenantId) =>
           (await prisma.repository.findMany({ where: { tenantId } })).map((row) => ({
             ...row,

@@ -5,6 +5,7 @@ import { startRepositorySetups, updateProduct } from "@/api/sdk.gen";
 import type { ListRepositorySetupsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Input } from "@/components/form";
+import { Link } from "@tanstack/react-router";
 import { Badge, Empty, ErrorAlert, Section, SkeletonRows } from "@/components/layout";
 import { formatDate } from "@/lib/utils";
 
@@ -22,6 +23,12 @@ const STATUS: Record<Setup["status"], { tone: "neutral" | "success" | "warning" 
   merged: { tone: "success", label: "merged" },
   unchanged: { tone: "success", label: "no change" },
 };
+
+/** docs/specs/setup-speed-and-history.md. The badge of one setup; a skipped setup says so. */
+export function setupStatus(setup: Pick<Setup, "status" | "skippedFromSetupId">): { tone: "neutral" | "success" | "warning" | "danger"; label: string } {
+  if (setup.status === "unchanged" && setup.skippedFromSetupId !== null) return { tone: "success", label: "no change (skipped)" };
+  return STATUS[setup.status];
+}
 
 /**
  * One line that says where a repository stands. docs/specs/setup-app-change-issues.md: a
@@ -46,7 +53,7 @@ function State({ repository }: { repository: Repository }) {
     );
   }
   if (setup) {
-    const status = STATUS[setup.status];
+    const status = setupStatus(setup);
     return <Badge tone={status.tone}>{status.label}</Badge>;
   }
   return <Badge tone="neutral">no config</Badge>;
@@ -171,6 +178,8 @@ export function RepositorySetupSection({
                   starting={starting(repository.fullName)}
                   addingHost={allowHost.isPending && allowHost.variables?.repository === repository.fullName ? allowHost.variables.host : null}
                   canEdit={canEdit}
+                  productId={productId}
+                  linearWorkspaceId={linearWorkspaceId}
                 />
               ))}
             </tbody>
@@ -196,6 +205,8 @@ function RepositoryRow(props: {
   /** The host this row is adding to the allow list, or null. */
   addingHost: string | null;
   canEdit: boolean;
+  productId: string;
+  linearWorkspaceId: string;
 }) {
   const { repository } = props;
   const setup = repository.setup;
@@ -234,6 +245,16 @@ function RepositoryRow(props: {
           )}
         </td>
         <td className="whitespace-nowrap text-right">
+          {setup ? (
+            <Link
+              className="link mr-2"
+              to="/products/$productId/setups"
+              params={{ productId: props.productId }}
+              search={{ ws: props.linearWorkspaceId, repository: repository.fullName }}
+            >
+              History
+            </Link>
+          ) : null}
           {setup?.report || setup?.failureMessage ? (
             <Button variant="ghost" onClick={props.onOpen}>
               {props.open ? "Hide report" : "Report"}

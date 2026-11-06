@@ -18,6 +18,7 @@ const toRecord = (row: Row): AppChangeIssueRecord => ({
   changes: row.changes,
   linearIssueId: row.linearIssueId,
   linearIssueIdentifier: row.linearIssueIdentifier,
+  linearIssueUrl: row.linearIssueUrl,
   outcome: row.outcome === "merged" || row.outcome === "not_merged" ? row.outcome : null,
   createdAt: row.createdAt,
   endedAt: row.endedAt,
@@ -28,7 +29,7 @@ export class PrismaAppChangeIssueStore implements AppChangeIssueStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
 
   async create(
-    input: Pick<AppChangeIssueRecord, "tenantId" | "productId" | "setupId" | "repositoryFullName" | "changes" | "linearIssueId" | "linearIssueIdentifier">,
+    input: Pick<AppChangeIssueRecord, "tenantId" | "productId" | "setupId" | "repositoryFullName" | "changes" | "linearIssueId" | "linearIssueIdentifier" | "linearIssueUrl">,
   ): Promise<AppChangeIssueRecord> {
     return toRecord(await this.prisma.setupAppChangeIssue.create({ data: input }));
   }

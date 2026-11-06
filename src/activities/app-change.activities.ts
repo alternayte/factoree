@@ -59,6 +59,7 @@ export const createAppChangeActivities = (dependencies: AppChangeActivityDepende
         changes: issueChanges,
         linearIssueId: issue.id,
         linearIssueIdentifier: issue.identifier,
+        linearIssueUrl: issue.url,
       });
       dependencies.logger.info("app-change issue created", { setup_id: setup.id, issue: issue.identifier, step: "app_change_issue" });
     }

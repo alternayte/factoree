@@ -18,6 +18,15 @@ export const REPOSITORY_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", "CONTRIBU
 /** The largest instruction text Factoree places in the Implementer prompt. */
 const MAX_INSTRUCTION_BYTES = 64 * 1024;
 
+/**
+ * The instruction text Factoree places in a prompt. A very large instruction file must not push
+ * the goal out of the prompt. docs/specs/setup-speed-and-history.md gives the setup prompt the same rule.
+ */
+export const capInstructions = (name: string, text: string): string =>
+  Buffer.byteLength(text, "utf8") > MAX_INSTRUCTION_BYTES
+    ? `${text.slice(0, MAX_INSTRUCTION_BYTES)}\n\n[Factoree truncated ${name} at ${MAX_INSTRUCTION_BYTES} bytes.]`
+    : text;
+
 const join = (directory: string, path: string): string => `${directory.replace(/\/+$/, "")}/${path}`;
 
 /** Reads one file. It reports null when the file does not exist or cannot be read. */
@@ -57,10 +66,7 @@ export const readRepositoryInstructions = async (
   for (const name of REPOSITORY_INSTRUCTION_FILES) {
     const text = await readFile(sandbox, ref, join(primaryPath, name));
     if (text === null) continue;
-    // A very large instruction file must not push the goal out of the prompt.
-    return Buffer.byteLength(text, "utf8") > MAX_INSTRUCTION_BYTES
-      ? `${text.slice(0, MAX_INSTRUCTION_BYTES)}\n\n[Factoree truncated ${name} at ${MAX_INSTRUCTION_BYTES} bytes.]`
-      : text;
+    return capInstructions(name, text);
   }
   return "";
 };

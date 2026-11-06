@@ -4,6 +4,7 @@ import type { DiscoveredRepository } from "~/adapters/github/repository-discover
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
+import type { AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { setupWorkflowId, type RepositorySetupRecord, type RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import { renderSetupReport } from "~/domain/setup/setup-report.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
@@ -12,6 +13,8 @@ export interface RepositorySetupRouteDependencies {
   products: ProductRegistry;
   tenants: TenantRegistry;
   setups: RepositorySetupStore;
+  /** docs/specs/setup-speed-and-history.md. The app-change issues the setup history links. */
+  appChangeIssues?: Pick<AppChangeIssueStore, "listForRepository"> | undefined;
   /** Every repository of the tenant, registered to any product. */
   registeredRepositories: (tenantId: string) => Promise<RepositoryRecord[]>;
   /** The GitHub App installations of the tenant. */
@@ -34,7 +37,42 @@ const setupSchema = z.object({
   deniedHosts: z.array(z.string()),
   createdAt: z.string(),
   endedAt: z.string().nullable(),
+  /** docs/specs/setup-speed-and-history.md. The setup a skipped setup copied, or null. */
+  skippedFromSetupId: z.string().nullable(),
 });
+
+/** docs/specs/setup-speed-and-history.md. One setup in the setup history of a repository. */
+const setupHistoryEntrySchema = setupSchema.extend({
+  workflowId: z.string(),
+  /** Every setup of a repository shares the workflow id. Null for a setup from before the setup history. */
+  temporalRunId: z.string().nullable(),
+  /** Whether the session sandbox started from the warm snapshot. Null when no session ran. */
+  warm: z.boolean().nullable(),
+  proofMs: z.number().nullable(),
+  session: z
+    .object({
+      runner: z.string(),
+      model: z.string().nullable(),
+      outcome: z.string(),
+      durationMs: z.number(),
+      tokens: z.number().nullable(),
+      costUsd: z.number().nullable(),
+      turns: z.number().nullable(),
+      modelMs: z.number().nullable(),
+      toolMs: z.number().nullable(),
+    })
+    .nullable(),
+  appChangeIssues: z.array(
+    z.object({
+      identifier: z.string(),
+      url: z.string().nullable(),
+      changes: z.array(z.string()),
+      outcome: z.enum(["merged", "not_merged"]).nullable(),
+    }),
+  ),
+});
+
+const historyQuery = workspaceQuery.extend({ repository: z.string().min(1).regex(/^[^/\s]+\/[^/\s]+$/) });
 
 const repositorySetupSchema = z.object({
   fullName: z.string(),
@@ -62,6 +100,7 @@ const toSetup = (setup: RepositorySetupRecord): z.infer<typeof setupSchema> => (
   deniedHosts: setup.report?.deniedHosts ?? [],
   createdAt: setup.createdAt.toISOString(),
   endedAt: setup.endedAt?.toISOString() ?? null,
+  skippedFromSetupId: setup.skippedFromSetupId,
 });
 
 /**
@@ -117,6 +156,57 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
           registered: candidate.registered !== null,
           needsSetupReason: candidate.registered?.needsSetupReason ?? null,
           setup: setup === undefined ? null : toSetup(setup),
+        };
+      });
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id/repository-setups/history",
+    {
+      schema: {
+        tags: ["products"],
+        operationId: "listRepositorySetupHistory",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        querystring: schemaOf(historyQuery),
+        response: { 200: schemaOf(z.array(setupHistoryEntrySchema)), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const query = historyQuery.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(query.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      const setups = await dependencies.setups.listForRepository(product.id, query.data.repository);
+      const issues = (await dependencies.appChangeIssues?.listForRepository(tenant.id, query.data.repository)) ?? [];
+      return setups.map((setup) => {
+        const usage = setup.sessionUsage;
+        return {
+          ...toSetup(setup),
+          workflowId: setup.workflowId,
+          temporalRunId: setup.temporalRunId,
+          warm: setup.warm,
+          proofMs: setup.proofMs,
+          session:
+            usage === null
+              ? null
+              : {
+                  runner: usage.runner,
+                  model: usage.model,
+                  outcome: usage.outcome,
+                  durationMs: usage.durationMs,
+                  tokens: usage.tokens,
+                  costUsd: usage.costUsd,
+                  turns: usage.turns ?? null,
+                  modelMs: usage.modelMs ?? null,
+                  toolMs: usage.toolMs ?? null,
+                },
+          appChangeIssues: issues
+            .filter((issue) => issue.setupId === setup.id)
+            .map((issue) => ({ identifier: issue.linearIssueIdentifier, url: issue.linearIssueUrl, changes: issue.changes, outcome: issue.outcome })),
         };
       });
     },

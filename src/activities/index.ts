@@ -28,7 +28,8 @@ import type { ValidationResultStore } from "~/domain/validation/validation-resul
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
-import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
+import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters/github/repository-discovery-client.js";
+import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
@@ -99,6 +100,10 @@ export interface ActivityDependencies {
   tokens: GitHubTokenProvider;
   /** The read side of repository discovery. `syncInstallationWorkflow` lists an installation's repositories through it. */
   discoveryClient: RepositoryDiscoveryClient;
+  /** docs/specs/setup-speed-and-history.md. Reads the files a setup input key needs. */
+  repositoryFiles?: RepositoryFileReader | undefined;
+  /** docs/specs/setup-speed-and-history.md. The warm snapshots a setup session sandbox starts from. */
+  warmSnapshots?: Pick<WarmSnapshotStore, "find"> | undefined;
   /** Turns one repository's `.factoree/config.yaml` declaration into rows. */
   discoveryService: DiscoveryService;
   /** docs/specs/run-speed.md. The clone URL base of the install, for a build-ahead. */
@@ -125,6 +130,12 @@ const NO_APP_CHANGE_STORE: AppChangeIssueStore = {
   latestRun: () => Promise.reject(new Error("this worker holds no app-change issue store")),
 };
 
+/** A worker built without the file reader refuses a setup, and runs every other activity. */
+const NO_FILE_READER: RepositoryFileReader = {
+  readFile: () => Promise.reject(new Error("this worker holds no repository file reader")),
+  headSha: () => Promise.reject(new Error("this worker holds no repository file reader")),
+};
+
 /** A worker built without the setup store refuses a setup activity, and runs every other one. */
 const NO_SETUP_STORE: RepositorySetupStore = {
   create: () => Promise.reject(new Error("this worker holds no setup store")),
@@ -132,6 +143,8 @@ const NO_SETUP_STORE: RepositorySetupStore = {
   latestByProduct: () => Promise.reject(new Error("this worker holds no setup store")),
   previousWithReport: () => Promise.reject(new Error("this worker holds no setup store")),
   latestOpenPullRequest: () => Promise.reject(new Error("this worker holds no setup store")),
+  latestEnded: () => Promise.reject(new Error("this worker holds no setup store")),
+  listForRepository: () => Promise.reject(new Error("this worker holds no setup store")),
   update: () => Promise.reject(new Error("this worker holds no setup store")),
 };
 
@@ -293,6 +306,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     secrets: dependencies.secrets,
     tokens: dependencies.tokens,
     discoveryClient: dependencies.discoveryClient,
+    repositoryFiles: dependencies.repositoryFiles ?? NO_FILE_READER,
+    warmSnapshots: dependencies.warmSnapshots,
     browser: dependencies.browser,
     previewProbe: dependencies.previewProbe,
     pullRequests: dependencies.pullRequests,

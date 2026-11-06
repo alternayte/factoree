@@ -34,6 +34,7 @@ import {
   listProductAgentSessions,
   listProducts,
   listProductSecrets,
+  listRepositorySetupHistory,
   listRepositorySetups,
   listRuns,
   listSetupLinearTeams,
@@ -120,6 +121,9 @@ import type {
   ListProductSecretsResponse,
   ListProductsError,
   ListProductsResponse,
+  ListRepositorySetupHistoryData,
+  ListRepositorySetupHistoryError,
+  ListRepositorySetupHistoryResponse,
   ListRepositorySetupsData,
   ListRepositorySetupsError,
   ListRepositorySetupsResponse,
@@ -784,6 +788,28 @@ export const startRepositorySetupsMutation = (
   };
   return mutationOptions;
 };
+
+export const listRepositorySetupHistoryQueryKey = (options: Options<ListRepositorySetupHistoryData>) =>
+  createQueryKey("listRepositorySetupHistory", options);
+
+export const listRepositorySetupHistoryOptions = (options: Options<ListRepositorySetupHistoryData>) =>
+  queryOptions<
+    ListRepositorySetupHistoryResponse,
+    ListRepositorySetupHistoryError,
+    ListRepositorySetupHistoryResponse,
+    ReturnType<typeof listRepositorySetupHistoryQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listRepositorySetupHistory({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listRepositorySetupHistoryQueryKey(options),
+  });
 
 export const listContextSourcesQueryKey = (options: Options<ListContextSourcesData>) =>
   createQueryKey("listContextSources", options);

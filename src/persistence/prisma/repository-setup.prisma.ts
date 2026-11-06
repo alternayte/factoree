@@ -23,6 +23,11 @@ const toRecord = (row: Row): RepositorySetupRecord => ({
   failureMessage: row.failureMessage,
   sessionUsage: (row.sessionUsage ?? null) as SetupSessionUsage | null,
   followUpSetupId: row.followUpSetupId,
+  inputKey: row.inputKey,
+  skippedFromSetupId: row.skippedFromSetupId,
+  temporalRunId: row.temporalRunId,
+  proofMs: row.proofMs,
+  warm: row.warm,
   createdAt: row.createdAt,
   endedAt: row.endedAt,
 });
@@ -68,10 +73,20 @@ export class PrismaRepositorySetupStore implements RepositorySetupStore {
     return row === null ? null : toRecord(row);
   }
 
-  async update(
-    id: string,
-    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId">>,
-  ): Promise<void> {
+  async latestEnded(productId: string, repositoryFullName: string, before: Date): Promise<RepositorySetupRecord | null> {
+    const row = await this.prisma.repositorySetup.findFirst({
+      where: { productId, repositoryFullName, createdAt: { lt: before }, endedAt: { not: null } },
+      orderBy: { createdAt: "desc" },
+    });
+    return row === null ? null : toRecord(row);
+  }
+
+  async listForRepository(productId: string, repositoryFullName: string): Promise<RepositorySetupRecord[]> {
+    const rows = await this.prisma.repositorySetup.findMany({ where: { productId, repositoryFullName }, orderBy: { createdAt: "desc" } });
+    return rows.map(toRecord);
+  }
+
+  async update(id: string, patch: Parameters<RepositorySetupStore["update"]>[1]): Promise<void> {
     const { report, sessionUsage, ...rest } = patch;
     await this.prisma.repositorySetup.update({
       where: { id },

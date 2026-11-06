@@ -40,6 +40,16 @@ export interface RepositorySetupRecord {
   sessionUsage: SetupSessionUsage | null;
   /** docs/specs/setup-app-change-issues.md. The setup started when this setup's app-change issues ended. */
   followUpSetupId: string | null;
+  /** docs/specs/setup-speed-and-history.md. The setup input key, null before the setup computed it. */
+  inputKey: string | null;
+  /** docs/specs/setup-speed-and-history.md. The setup whose report a skipped setup copied. */
+  skippedFromSetupId: string | null;
+  /** The Temporal run id. Every setup of a repository shares one workflow id. */
+  temporalRunId: string | null;
+  /** The time the proof took, or null when no proof ran. */
+  proofMs: number | null;
+  /** Whether the session sandbox started from the warm snapshot, or null when no session ran. */
+  warm: boolean | null;
   createdAt: Date;
   endedAt: Date | null;
 }
@@ -53,9 +63,13 @@ export interface RepositorySetupStore {
   previousWithReport(productId: string, repositoryFullName: string, before: Date): Promise<RepositorySetupRecord | null>;
   /** docs/specs/setup-app-change-issues.md. The newest setup of the repository whose pull request is open, or null. */
   latestOpenPullRequest(tenantId: string, repositoryFullName: string): Promise<RepositorySetupRecord | null>;
+  /** docs/specs/setup-speed-and-history.md. The newest ended setup of the repository before the given one, or null. */
+  latestEnded(productId: string, repositoryFullName: string, before: Date): Promise<RepositorySetupRecord | null>;
+  /** docs/specs/setup-speed-and-history.md. Every setup of the repository, newest first. */
+  listForRepository(productId: string, repositoryFullName: string): Promise<RepositorySetupRecord[]>;
   update(
     id: string,
-    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId">>,
+    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId" | "inputKey" | "skippedFromSetupId" | "temporalRunId" | "proofMs" | "warm">>,
   ): Promise<void>;
 }
 
@@ -74,3 +88,13 @@ export const setupSandboxRunId = (setupId: string): string => `setup:${setupId}`
 
 /** The branch a setup pull request uses. */
 export const setupBranchName = (setupId: string): string => `factoree/setup-${setupId}`;
+
+/**
+ * docs/specs/setup-speed-and-history.md. The setup a new setup with this input key copies, or null
+ * when the session must run. Only an `unchanged` setup is final: a failure can be transient, and a
+ * proposed config is not on the default branch. A skipped setup names the setup it copied.
+ */
+export const skipSourceOf = (latestEnded: RepositorySetupRecord | null, inputKey: string): string | null =>
+  latestEnded !== null && latestEnded.status === "unchanged" && latestEnded.inputKey === inputKey
+    ? (latestEnded.skippedFromSetupId ?? latestEnded.id)
+    : null;
