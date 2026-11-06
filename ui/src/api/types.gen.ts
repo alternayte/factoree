@@ -723,6 +723,7 @@ export type CreateSetupProductResponses = {
     silenceMinutes: number;
     sandboxRetentionHours: number;
     maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
     updatedAt: string;
   };
@@ -869,6 +870,7 @@ export type ListProductsResponses = {
     silenceMinutes: number;
     sandboxRetentionHours: number;
     maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
     updatedAt: string;
   }>;
@@ -950,6 +952,7 @@ export type CreateProductResponses = {
     silenceMinutes: number;
     sandboxRetentionHours: number;
     maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
     updatedAt: string;
   };
@@ -1064,6 +1067,7 @@ export type GetProductResponses = {
     silenceMinutes: number;
     sandboxRetentionHours: number;
     maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
     updatedAt: string;
   };
@@ -1097,6 +1101,7 @@ export type UpdateProductData = {
     silenceMinutes?: number;
     sandboxRetentionHours?: number;
     maxConcurrentRuns?: number;
+    appChangeIssues?: "one_per_change" | "one_for_all";
   };
   path: {
     id: string;
@@ -1172,6 +1177,7 @@ export type UpdateProductResponses = {
     silenceMinutes: number;
     sandboxRetentionHours: number;
     maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
     updatedAt: string;
   };
@@ -1251,6 +1257,7 @@ export type ActivateProductResponses = {
     silenceMinutes: number;
     sandboxRetentionHours: number;
     maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
     updatedAt: string;
   };
@@ -1636,7 +1643,7 @@ export type ListRepositorySetupsResponses = {
     needsSetupReason: string | null;
     setup: {
       id: string;
-      status: "queued" | "running" | "proposed" | "partial" | "failed";
+      status: "queued" | "running" | "proposed" | "partial" | "failed" | "merged";
       pullRequestUrl: string | null;
       failureMessage: string | null;
       report: string | null;

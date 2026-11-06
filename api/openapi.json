@@ -2384,6 +2384,13 @@
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
+                    "appChangeIssues": {
+                      "type": "string",
+                      "enum": [
+                        "one_per_change",
+                        "one_for_all"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -2410,6 +2417,7 @@
                     "silenceMinutes",
                     "sandboxRetentionHours",
                     "maxConcurrentRuns",
+                    "appChangeIssues",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -2979,6 +2987,13 @@
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
+                    "appChangeIssues": {
+                      "type": "string",
+                      "enum": [
+                        "one_per_change",
+                        "one_for_all"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -3005,6 +3020,7 @@
                     "silenceMinutes",
                     "sandboxRetentionHours",
                     "maxConcurrentRuns",
+                    "appChangeIssues",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3250,6 +3266,13 @@
                       "maxConcurrentRuns": {
                         "type": "number"
                       },
+                      "appChangeIssues": {
+                        "type": "string",
+                        "enum": [
+                          "one_per_change",
+                          "one_for_all"
+                        ]
+                      },
                       "createdAt": {
                         "type": "string"
                       },
@@ -3276,6 +3299,7 @@
                       "silenceMinutes",
                       "sandboxRetentionHours",
                       "maxConcurrentRuns",
+                      "appChangeIssues",
                       "createdAt",
                       "updatedAt"
                     ]
@@ -3514,6 +3538,13 @@
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
+                    "appChangeIssues": {
+                      "type": "string",
+                      "enum": [
+                        "one_per_change",
+                        "one_for_all"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -3540,6 +3571,7 @@
                     "silenceMinutes",
                     "sandboxRetentionHours",
                     "maxConcurrentRuns",
+                    "appChangeIssues",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3781,6 +3813,13 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 100
+                  },
+                  "appChangeIssues": {
+                    "type": "string",
+                    "enum": [
+                      "one_per_change",
+                      "one_for_all"
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -3977,6 +4016,13 @@
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
+                    "appChangeIssues": {
+                      "type": "string",
+                      "enum": [
+                        "one_per_change",
+                        "one_for_all"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4003,6 +4049,7 @@
                     "silenceMinutes",
                     "sandboxRetentionHours",
                     "maxConcurrentRuns",
+                    "appChangeIssues",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -4367,6 +4414,13 @@
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
+                    "appChangeIssues": {
+                      "type": "string",
+                      "enum": [
+                        "one_per_change",
+                        "one_for_all"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4393,6 +4447,7 @@
                     "silenceMinutes",
                     "sandboxRetentionHours",
                     "maxConcurrentRuns",
+                    "appChangeIssues",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5686,7 +5741,8 @@
                                   "running",
                                   "proposed",
                                   "partial",
-                                  "failed"
+                                  "failed",
+                                  "merged"
                                 ]
                               },
                               "pullRequestUrl": {

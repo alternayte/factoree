@@ -22,6 +22,7 @@ const toRecord = (row: Row): RepositorySetupRecord => ({
   report: (row.report ?? null) as SetupReport | null,
   failureMessage: row.failureMessage,
   sessionUsage: (row.sessionUsage ?? null) as SetupSessionUsage | null,
+  followUpSetupId: row.followUpSetupId,
   createdAt: row.createdAt,
   endedAt: row.endedAt,
 });
@@ -59,9 +60,17 @@ export class PrismaRepositorySetupStore implements RepositorySetupStore {
     return row === null ? null : toRecord(row);
   }
 
+  async latestOpenPullRequest(tenantId: string, repositoryFullName: string): Promise<RepositorySetupRecord | null> {
+    const row = await this.prisma.repositorySetup.findFirst({
+      where: { tenantId, repositoryFullName, status: { in: ["proposed", "partial"] }, pullRequestUrl: { not: null } },
+      orderBy: { createdAt: "desc" },
+    });
+    return row === null ? null : toRecord(row);
+  }
+
   async update(
     id: string,
-    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt">>,
+    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId">>,
   ): Promise<void> {
     const { report, sessionUsage, ...rest } = patch;
     await this.prisma.repositorySetup.update({

@@ -120,6 +120,29 @@ export class GitHubPullRequests implements PullRequestPort {
     return this.toRecord(parsed, headBranch);
   }
 
+  /**
+   * docs/specs/setup-app-change-issues.md. Whether the pull request of that number is open, merged
+   * or closed without a merge, or null when it does not exist.
+   */
+  async stateByNumber(slug: string, number: number, githubInstallationId: string): Promise<"open" | "merged" | "closed" | null> {
+    assertRepositorySlug(slug);
+    let body: unknown;
+    try {
+      body = await this.call(
+        `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/pulls/${number}`,
+        { method: "GET" },
+        githubInstallationId,
+        slug,
+      );
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 404) return null;
+      throw error;
+    }
+    const parsed = body as { state?: unknown; merged?: unknown; merged_at?: unknown };
+    if (parsed.merged === true || (typeof parsed.merged_at === "string" && parsed.merged_at !== "")) return "merged";
+    return parsed.state === "open" ? "open" : "closed";
+  }
+
   async create(input: CreatePullRequestInput, githubInstallationId: string): Promise<PullRequestRecord> {
     assertRepositorySlug(input.slug);
     const body = await this.call(

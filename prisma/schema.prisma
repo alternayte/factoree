@@ -531,6 +531,9 @@ model Product {
   silenceMinutes Int      @default(10)
   // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
   sandboxRetentionHours Int @default(24)
+  // docs/specs/setup-app-change-issues.md. one_per_change or one_for_all: how many app-change
+  // issues a merged setup creates.
+  appChangeIssues String @default("one_per_change") @map("app_change_issues")
   // The most Runs of this Product that run at one time. The gate before PREPARING enforces it (DI-15.13).
   maxConcurrentRuns Int   @default(2)
   // SDD section 16. A Product can define one organization-wide skills repository. The value is
@@ -546,6 +549,7 @@ model Product {
   updatedAt      DateTime @updatedAt
   repositories   Repository[]
   setups         RepositorySetup[]
+  appChangeIssueRows SetupAppChangeIssue[]
   secrets        ProductSecret[]
   contextSources ContextSourceConfiguration[]
   runs           Run[]
@@ -812,7 +816,7 @@ model RepositorySetup {
   repositoryFullName   String    @map("repository_full_name")
   githubInstallationId String    @map("github_installation_id")
   workflowId           String    @map("workflow_id")
-  // queued, running, proposed, partial, failed.
+  // queued, running, proposed, partial, failed, merged.
   status               String
   pullRequestUrl       String?   @map("pull_request_url")
   // The setup report: each part proven or failed, and the hosts the sandbox reached.
@@ -820,9 +824,35 @@ model RepositorySetup {
   failureMessage       String?   @map("failure_message")
   // The usage of the setup agent session: runner, model, effort, outcome, tokens, cost, time.
   sessionUsage         Json?     @map("session_usage")
+  // docs/specs/setup-app-change-issues.md. The setup Factoree started when every app-change issue
+  // of this setup ended. Null until then, so a round starts one follow-up setup.
+  followUpSetupId      String?   @map("follow_up_setup_id")
   createdAt            DateTime  @default(now()) @map("created_at")
   endedAt              DateTime? @map("ended_at")
+  appChangeIssues      SetupAppChangeIssue[]
 
   @@index([productId, repositoryFullName, createdAt])
   @@map("repository_setup")
+}
+
+/// docs/specs/setup-app-change-issues.md. One Linear issue a merged setup created for its app changes.
+model SetupAppChangeIssue {
+  id                    String          @id @default(uuid())
+  tenantId              String          @map("tenant_id")
+  productId             String          @map("product_id")
+  product               Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  setupId               String          @map("setup_id")
+  setup                 RepositorySetup @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  repositoryFullName    String          @map("repository_full_name")
+  // One change, or every change of the setup when the product creates one issue for all.
+  changes               String[]
+  linearIssueId         String          @map("linear_issue_id")
+  linearIssueIdentifier String          @map("linear_issue_identifier")
+  // Null while the issue is open. merged, or not_merged when its run ended without a merged pull request.
+  outcome               String?
+  createdAt             DateTime        @default(now()) @map("created_at")
+  endedAt               DateTime?       @map("ended_at")
+
+  @@index([tenantId, repositoryFullName])
+  @@map("setup_app_change_issue")
 }

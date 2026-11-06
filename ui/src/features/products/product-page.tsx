@@ -204,6 +204,7 @@ function ProductEditor({
       ) : null}
       {/* docs/specs/run-visibility.md. On a desktop the sections sit in two columns. */}
       <form
+        id="product-form"
         className="stagger grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start"
         onSubmit={(event) => {
           event.preventDefault();
@@ -329,6 +330,25 @@ function ProductEditor({
           </Section>
 
           <Section
+            title="App change issues"
+            description="When a setup pull request merges, Factoree creates and delegates a Linear issue for the app changes its report names. When every one has ended, Factoree runs the setup again."
+          >
+            <Field label="Issues per merged setup">
+              {(props) => (
+                <Select
+                  {...props}
+                  disabled={disabled}
+                  value={form.appChangeIssues}
+                  onChange={(e) => set("appChangeIssues", e.target.value as ProductForm["appChangeIssues"])}
+                >
+                  <option value="one_per_change">One per change</option>
+                  <option value="one_for_all">One for all changes</option>
+                </Select>
+              )}
+            </Field>
+          </Section>
+
+          <Section
             title="Skill registry"
             description="Factoree resolves the registry on the worker for each run, checks every digest, and gives the skills to the implementer. A Skael server is the one registry kind."
           >
@@ -392,24 +412,6 @@ function ProductEditor({
           </Alert>
         ) : null}
         <ErrorAlert error={save.error} className="lg:col-span-2" />
-        {canEdit ? (
-          <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-3 border-t border-hairline bg-canvas px-1 py-3 lg:col-span-2">
-            {/* One primary action per view: a pending product's primary action is Activate. */}
-            <Button
-              type="submit"
-              variant={product.status === "pending" ? "secondary" : "primary"}
-              disabled={!dirty}
-              mutation={save}
-            >
-              Save product
-            </Button>
-            <Button variant="ghost" disabled={!dirty || save.isPending} onClick={() => setForm(formOf(product))}>
-              Discard changes
-            </Button>
-            <SavedNote show={save.isSuccess && !dirty} />
-            <span className="t-hint ml-auto">Updated {formatDate(product.updatedAt)}</span>
-          </div>
-        ) : null}
       </form>
 
       <RepositorySetupSection
@@ -436,6 +438,28 @@ function ProductEditor({
           ]}
         />
       </Section>
+
+      {/* The save bar ends the page, so it floats at the bottom of the window until the page ends. Its
+          submit button reaches the form through the form attribute. */}
+      {canEdit ? (
+        <div className="sticky bottom-0 z-10 -mx-1 mt-4 flex flex-wrap items-center gap-3 border-t border-hairline bg-canvas px-1 py-3">
+          {/* One primary action per view: a pending product's primary action is Activate. */}
+          <Button
+            type="submit"
+            form="product-form"
+            variant={product.status === "pending" ? "secondary" : "primary"}
+            disabled={!dirty}
+            mutation={save}
+          >
+            Save product
+          </Button>
+          <Button variant="ghost" disabled={!dirty || save.isPending} onClick={() => setForm(formOf(product))}>
+            Discard changes
+          </Button>
+          <SavedNote show={save.isSuccess && !dirty} />
+          <span className="t-hint ml-auto">Updated {formatDate(product.updatedAt)}</span>
+        </div>
+      ) : null}
 
       <Confirm
         open={deleting}

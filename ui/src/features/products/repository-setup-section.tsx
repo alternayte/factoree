@@ -4,6 +4,7 @@ import { getProductQueryKey, listRepositorySetupsOptions, listRepositorySetupsQu
 import { startRepositorySetups, updateProduct } from "@/api/sdk.gen";
 import type { ListRepositorySetupsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
+import { Input } from "@/components/form";
 import { Badge, Empty, ErrorAlert, Section, SkeletonRows } from "@/components/layout";
 import { formatDate } from "@/lib/utils";
 
@@ -18,16 +19,36 @@ const STATUS: Record<Setup["status"], { tone: "neutral" | "success" | "warning" 
   proposed: { tone: "success", label: "pull request open" },
   partial: { tone: "warning", label: "partial pull request" },
   failed: { tone: "danger", label: "failed" },
+  merged: { tone: "success", label: "merged" },
 };
 
-/** One line that says where a repository stands. */
+/**
+ * One line that says where a repository stands. docs/specs/setup-app-change-issues.md: a
+ * registered repository takes issues, so it reads active whatever its latest setup says.
+ */
 function State({ repository }: { repository: Repository }) {
   if (repository.needsSetupReason) return <Badge tone="danger">needs setup</Badge>;
-  if (repository.setup) {
-    const status = STATUS[repository.setup.status];
+  const setup = repository.setup;
+  if (repository.registered) {
+    const running = setup !== null && ACTIVE.includes(setup.status);
+    const open = setup !== null && (setup.status === "proposed" || setup.status === "partial") && setup.pullRequestUrl !== null;
+    return (
+      <span className="flex flex-col items-start gap-1">
+        <Badge tone="success">active</Badge>
+        {running ? <span className="text-xs text-mute">setup {setup.status}</span> : null}
+        {open ? (
+          <a className="link text-xs" href={setup.pullRequestUrl!} target="_blank" rel="noreferrer">
+            setup pull request open
+          </a>
+        ) : null}
+      </span>
+    );
+  }
+  if (setup) {
+    const status = STATUS[setup.status];
     return <Badge tone={status.tone}>{status.label}</Badge>;
   }
-  return repository.registered ? <Badge tone="success">set up</Badge> : <Badge tone="neutral">no config</Badge>;
+  return <Badge tone="neutral">no config</Badge>;
 }
 
 /**
@@ -55,6 +76,7 @@ export function RepositorySetupSection({
   });
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
   const refresh = () =>
     client.invalidateQueries({ queryKey: listRepositorySetupsQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }) });
 
@@ -83,7 +105,10 @@ export function RepositorySetupSection({
     },
   });
 
-  const rows = repositories.data ?? [];
+  const all = repositories.data ?? [];
+  const needle = filter.trim().toLowerCase();
+  const rows = needle === "" ? all : all.filter((repository) => repository.fullName.toLowerCase().includes(needle));
+  const starting = (name: string) => start.isPending && (start.variables ?? []).includes(name);
   const startable = (repository: Repository) => canEdit && !(repository.setup && ACTIVE.includes(repository.setup.status));
   const toggle = (name: string) => setSelected((current) => (current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]));
 
@@ -91,10 +116,10 @@ export function RepositorySetupSection({
     <Section
       title="Repositories"
       description="The repositories the GitHub App can read. A setup run writes and proves the Factoree config, then opens a pull request with the parts that passed."
-      flush={rows.length > 0}
+      flush={all.length > 0}
       actions={
         canEdit && selected.length > 0 ? (
-          <Button onClick={() => start.mutate(selected)} disabled={start.isPending}>
+          <Button onClick={() => start.mutate(selected)} mutation={start}>
             Set up {selected.length} selected
           </Button>
         ) : undefined
@@ -104,11 +129,23 @@ export function RepositorySetupSection({
       <ErrorAlert error={repositories.error} title="The repositories did not load" />
       <ErrorAlert error={start.error} title="The setup did not start" />
       <ErrorAlert error={allowHost.error} title="The host was not added" />
-      {repositories.data && rows.length === 0 ? <Empty>The GitHub App can read no repository for this product.</Empty> : null}
+      {repositories.data && all.length === 0 ? <Empty>The GitHub App can read no repository for this product.</Empty> : null}
+      {all.length > 0 ? (
+        <div className="border-b border-hairline px-4 py-3">
+          <Input
+            type="search"
+            aria-label="Filter repositories"
+            placeholder="Filter repositories"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
+      ) : null}
+      {all.length > 0 && rows.length === 0 ? <Empty>No repository matches “{filter.trim()}”.</Empty> : null}
       {rows.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="max-h-96 overflow-auto">
           <table className="table">
-            <thead>
+            <thead className="sticky top-0 z-[1] bg-canvas">
               <tr>
                 <th aria-label="Select" />
                 <th>Repository</th>
@@ -130,6 +167,8 @@ export function RepositorySetupSection({
                   onOpen={() => setOpen(open === repository.fullName ? null : repository.fullName)}
                   onAllowHost={(host) => allowHost.mutate({ host, repository: repository.fullName })}
                   busy={start.isPending || allowHost.isPending}
+                  starting={starting(repository.fullName)}
+                  addingHost={allowHost.isPending && allowHost.variables?.repository === repository.fullName ? allowHost.variables.host : null}
                   canEdit={canEdit}
                 />
               ))}
@@ -151,6 +190,10 @@ function RepositoryRow(props: {
   onOpen: () => void;
   onAllowHost: (host: string) => void;
   busy: boolean;
+  /** This row's setup start is in flight, so its button shows the spinner. */
+  starting: boolean;
+  /** The host this row is adding to the allow list, or null. */
+  addingHost: string | null;
   canEdit: boolean;
 }) {
   const { repository } = props;
@@ -196,7 +239,7 @@ function RepositoryRow(props: {
             </Button>
           ) : null}
           {props.startable ? (
-            <Button variant="secondary" onClick={props.onStart} disabled={props.busy}>
+            <Button variant="secondary" onClick={props.onStart} disabled={props.busy && !props.starting} pending={props.starting}>
               {again ? "Run setup again" : "Set up"}
             </Button>
           ) : null}
@@ -209,7 +252,13 @@ function RepositoryRow(props: {
             {setup.deniedHosts.length > 0 && props.canEdit ? (
               <div className="my-2 flex flex-wrap gap-2">
                 {setup.deniedHosts.map((host) => (
-                  <Button key={host} variant="secondary" onClick={() => props.onAllowHost(host)} disabled={props.busy}>
+                  <Button
+                    key={host}
+                    variant="secondary"
+                    onClick={() => props.onAllowHost(host)}
+                    disabled={props.busy && props.addingHost !== host}
+                    pending={props.addingHost === host}
+                  >
                     Add {host} to product allow list
                   </Button>
                 ))}

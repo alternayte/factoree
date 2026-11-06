@@ -66,6 +66,7 @@ type ProductRow = {
   silenceMinutes: number;
   sandboxRetentionHours: number;
   maxConcurrentRuns: number;
+  appChangeIssues: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -103,6 +104,7 @@ const toProduct = (row: ProductRow): ProductRecord => {
     skillRegistry: toSkillRegistry(skillRegistryKind, skillRegistryUrl, skillRegistrySet),
     riskCaps: toRiskCaps(row.riskCaps),
     status: row.status === "active" ? "active" : "pending",
+    appChangeIssues: row.appChangeIssues === "one_for_all" ? "one_for_all" : "one_per_change",
     effort: {
       implementer: effortImplementer,
       refiner: effortRefiner,
@@ -306,6 +308,7 @@ export class PrismaProductRegistry implements ProductRegistry {
         silenceMinutes: settings.silenceMinutes,
         sandboxRetentionHours: settings.sandboxRetentionHours,
         maxConcurrentRuns: settings.maxConcurrentRuns,
+        appChangeIssues: settings.appChangeIssues,
       }).filter(([, value]) => value !== undefined),
     );
     const updated = await this.prisma.product.updateMany({ where: { tenantId, id }, data });

@@ -1,4 +1,6 @@
 import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
+import { PrismaAppChangeIssueStore } from "~/persistence/prisma/app-change-issue.prisma.js";
+import { createLinearIssues } from "~/adapters/linear/linear-issues.js";
 import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
@@ -390,6 +392,16 @@ const worker = await Worker.create({
     skills: new PrismaRunSkillStore(prisma),
     runViews: new PrismaRunViewReader(prisma),
     setups: new PrismaRepositorySetupStore(prisma),
+    // docs/specs/setup-app-change-issues.md. The issues act as the Factoree app of the tenant's
+    // workspace. The state read mints a pull-request token of the one repository.
+    appChangeIssues: new PrismaAppChangeIssueStore(prisma),
+    linearIssues: async (tenantId: string) => {
+      const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { linearWorkspaceId: true } });
+      if (!tenant) throw new Error(`no tenant ${tenantId} for the app-change issue`);
+      return createLinearIssues(await linearTokens.tokenFor(tenant.linearWorkspaceId));
+    },
+    pullRequestState: (slug: string, number: number, githubInstallationId: string) =>
+      new GitHubPullRequests({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }).stateByNumber(slug, number, githubInstallationId),
     setupMarks: repositories,
     skillRegistries: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }),
     organizationSkills: ({ slug, repository, githubInstallationId }) =>

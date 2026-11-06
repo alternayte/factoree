@@ -30,6 +30,11 @@ export interface SetupReport {
   fakes: Array<{ service: string; name: string }>;
   /** The app changes the setup agent names for parts it could not configure from `.factoree/`. */
   appChanges: string[];
+  /**
+   * docs/specs/setup-app-change-issues.md. The app changes an open app-change issue already
+   * requests, with that issue. Absent in a report made before it existed.
+   */
+  alreadyRequested?: Array<{ change: string; issue: string }>;
 }
 
 /** Why a part that depends on another part did not run. */
@@ -104,7 +109,18 @@ export const renderSetupReport = (report: SetupReport): string => {
     lines.push("### Fakes", "", ...report.fakes.map((fake) => `- ${fake.name}, answered by the compose service \`${fake.service}\`. Its data is not real.`), "");
   }
   if (report.appChanges.length > 0) {
-    lines.push("### App changes a person must request", "", ...report.appChanges.map((change) => `- ${change}`), "");
+    const requested = new Map((report.alreadyRequested ?? []).map((found) => [found.change, found.issue]));
+    lines.push(
+      "### App changes",
+      "",
+      "When this pull request merges, Factoree creates a Linear issue for each change below that no open issue requests, and delegates it to itself.",
+      "",
+      ...report.appChanges.map((change) => {
+        const issue = requested.get(change);
+        return issue === undefined ? `- ${change}` : `- ${change} (already requested: ${issue})`;
+      }),
+      "",
+    );
   }
   lines.push("### Network", "");
   if (!report.egressRecorded) {

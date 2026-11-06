@@ -22,7 +22,7 @@ const product = (id: string, linearTeamId: string): ProductRecord => ({
   effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   silenceMinutes: 10,
   sandboxRetentionHours: 24,
-  maxConcurrentRuns: 2,
+  maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
   createdAt: new Date(),
   updatedAt: new Date(),
 });

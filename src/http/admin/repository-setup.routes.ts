@@ -25,7 +25,7 @@ const workspaceQuery = z.object({ linearWorkspaceId: z.string().min(1) });
 
 const setupSchema = z.object({
   id: z.string(),
-  status: z.enum(["queued", "running", "proposed", "partial", "failed"]),
+  status: z.enum(["queued", "running", "proposed", "partial", "failed", "merged"]),
   pullRequestUrl: z.string().nullable(),
   failureMessage: z.string().nullable(),
   /** The setup report in Markdown, as the pull request body holds it. */

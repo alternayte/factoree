@@ -1,4 +1,5 @@
 import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
+import type { AppChangeIssueMode } from "~/domain/setup/app-change-issues.js";
 
 export interface ProductRecord {
   id: string;
@@ -28,6 +29,8 @@ export interface ProductRecord {
   sandboxRetentionHours: number;
   /** The most Runs of this Product at one time. The gate before PREPARING enforces it (DI-15.13). */
   maxConcurrentRuns: number;
+  /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
+  appChangeIssues: AppChangeIssueMode;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +52,7 @@ export interface ProductSettingsUpdate {
   silenceMinutes?: number;
   sandboxRetentionHours?: number;
   maxConcurrentRuns?: number;
+  appChangeIssues?: AppChangeIssueMode;
 }
 
 export interface CreateProductInput {

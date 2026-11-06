@@ -35,6 +35,11 @@ export interface GitHubWebhookDependencies {
   logger: Logger;
   /** docs/specs/run-speed.md. A config push with a new bootstrap key requests a build-ahead. */
   buildAhead?: Pick<BuildAheadTrigger, "afterPush">;
+  /**
+   * docs/specs/setup-app-change-issues.md. Each push to the default branch: a merged setup creates
+   * its app-change issues, and a round whose issues all ended starts the next setup.
+   */
+  setupAfterPush?: (input: { tenantId: string; repositoryFullName: string }) => Promise<void>;
 }
 
 /**
@@ -156,6 +161,10 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         // bootstrap key, though it leaves the config alone. The trigger reads the key and decides.
         const tenantId = await resolveTenantId(dependencies, installation.id, undefined);
         if (tenantId !== null) await dependencies.buildAhead.afterPush(tenantId, repository.full_name);
+      }
+      if (dependencies.setupAfterPush !== undefined) {
+        const tenantId = await resolveTenantId(dependencies, installation.id, undefined);
+        if (tenantId !== null) await dependencies.setupAfterPush({ tenantId, repositoryFullName: repository.full_name });
       }
       return reply.code(200).send({ status: "handled" });
     }

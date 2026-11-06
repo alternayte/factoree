@@ -17,6 +17,7 @@ const setupRow: RepositorySetupRecord = {
   report: null,
   failureMessage: null,
   sessionUsage: null,
+  followUpSetupId: null,
   createdAt: new Date(0),
   endedAt: null,
 };
@@ -34,6 +35,7 @@ const build = (status: string, previous: RepositorySetupRecord | null = null) =>
     findById: () => Promise.resolve(setupRow),
     latestByProduct: () => Promise.resolve([]),
     previousWithReport: () => Promise.resolve(previous),
+    latestOpenPullRequest: () => Promise.resolve(null),
     update: (_id, patch) => {
       updates.push(patch);
       return Promise.resolve();

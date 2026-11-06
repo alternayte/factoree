@@ -270,7 +270,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.effort !== undefined ||
       body.data.silenceMinutes !== undefined ||
       body.data.sandboxRetentionHours !== undefined ||
-      body.data.maxConcurrentRuns !== undefined
+      body.data.maxConcurrentRuns !== undefined ||
+      body.data.appChangeIssues !== undefined
     ) {
       product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
         ...(body.data.model === undefined ? {} : { model: body.data.model }),
@@ -280,6 +281,7 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
           ? {}
           : { sandboxRetentionHours: body.data.sandboxRetentionHours }),
         ...(body.data.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: body.data.maxConcurrentRuns }),
+        ...(body.data.appChangeIssues === undefined ? {} : { appChangeIssues: body.data.appChangeIssues }),
       });
       if (!product) return reply.code(404).send({ error: "product not found" });
     }

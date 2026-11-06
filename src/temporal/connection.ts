@@ -12,6 +12,7 @@ import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
 import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
+import { setupAfterPushWorkflow, setupAfterPushWorkflowId, setupPushedSignal } from "~/workflows/setup-after-push.workflow.js";
 
 const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
 
@@ -105,4 +106,20 @@ export const createRepositorySetupStarter =
       if (error instanceof WorkflowExecutionAlreadyStartedError) return false;
       throw error;
     }
+  };
+
+/**
+ * docs/specs/setup-app-change-issues.md. One push to the default branch of a repository.
+ * Signal-with-start reaches the workflow of the repository that runs, which then checks once more.
+ */
+export const createSetupAfterPushRequester =
+  (client: Client, taskQueue: string) =>
+  async (input: { tenantId: string; repositoryFullName: string }): Promise<void> => {
+    await client.workflow.signalWithStart(setupAfterPushWorkflow, {
+      taskQueue,
+      workflowId: setupAfterPushWorkflowId(input.tenantId, input.repositoryFullName),
+      args: [input],
+      signal: setupPushedSignal,
+      signalArgs: [],
+    });
   };

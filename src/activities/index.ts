@@ -44,6 +44,8 @@ import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
 import { createBuildAheadActivities } from "./build-ahead.activities.js";
 import { createSetupActivities } from "./setup.activities.js";
+import { createAppChangeActivities } from "./app-change.activities.js";
+import type { AppChangeIssuePort, AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import type { RepositorySetupMarks, RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
@@ -110,7 +112,18 @@ export interface ActivityDependencies {
   /** docs/specs/repository-setup-and-services.md. The setup rows. */
   setups?: RepositorySetupStore | undefined;
   setupMarks?: RepositorySetupMarks | undefined;
+  /** docs/specs/setup-app-change-issues.md. The app-change issues, the Linear port of a tenant, and a pull request state. */
+  appChangeIssues?: AppChangeIssueStore | undefined;
+  linearIssues?: ((tenantId: string) => Promise<AppChangeIssuePort>) | undefined;
+  pullRequestState?: ((slug: string, number: number, githubInstallationId: string) => Promise<"open" | "merged" | "closed" | null>) | undefined;
 }
+
+const NO_APP_CHANGE_STORE: AppChangeIssueStore = {
+  create: () => Promise.reject(new Error("this worker holds no app-change issue store")),
+  listForRepository: () => Promise.reject(new Error("this worker holds no app-change issue store")),
+  setOutcome: () => Promise.reject(new Error("this worker holds no app-change issue store")),
+  latestRun: () => Promise.reject(new Error("this worker holds no app-change issue store")),
+};
 
 /** A worker built without the setup store refuses a setup activity, and runs every other one. */
 const NO_SETUP_STORE: RepositorySetupStore = {
@@ -118,6 +131,7 @@ const NO_SETUP_STORE: RepositorySetupStore = {
   findById: () => Promise.reject(new Error("this worker holds no setup store")),
   latestByProduct: () => Promise.reject(new Error("this worker holds no setup store")),
   previousWithReport: () => Promise.reject(new Error("this worker holds no setup store")),
+  latestOpenPullRequest: () => Promise.reject(new Error("this worker holds no setup store")),
   update: () => Promise.reject(new Error("this worker holds no setup store")),
 };
 
@@ -285,6 +299,15 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     gitAuthor: dependencies.gitAuthor,
     repositoryBaseUrl: dependencies.repositoryBaseUrl,
     redactor: dependencies.redactor,
+    logger: dependencies.logger,
+    appChangeIssues: dependencies.appChangeIssues,
+  }),
+  ...createAppChangeActivities({
+    setups: dependencies.setups ?? NO_SETUP_STORE,
+    appChangeIssues: dependencies.appChangeIssues ?? NO_APP_CHANGE_STORE,
+    products: dependencies.products,
+    linearIssues: dependencies.linearIssues ?? (() => Promise.reject(new Error("this worker holds no Linear issue port"))),
+    pullRequestState: dependencies.pullRequestState ?? (() => Promise.reject(new Error("this worker holds no pull request reader"))),
     logger: dependencies.logger,
   }),
   ...createBuildAheadActivities({

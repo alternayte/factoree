@@ -17,6 +17,7 @@ import { DelegationService } from "~/domain/runs/delegation-service.js";
 import {
   createBuildAheadRequester,
   createRepositorySetupStarter,
+  createSetupAfterPushRequester,
   createSyncInstallationStarter,
   createTemporalClient,
   createTemporalWorkflowStarter,
@@ -186,6 +187,7 @@ const app = buildServer({
   discovery,
   startInstallationSync,
   buildAhead,
+  setupAfterPush: createSetupAfterPushRequester(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
   temporalUiUrl: env.FACTOREE_TEMPORAL_UI_URL,
   // docs/specs/skill-registry.md. Skael is the one registry kind.
   checkSkillRegistry: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }).check(),

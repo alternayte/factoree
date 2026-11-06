@@ -78,6 +78,7 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
   const tenants = new FakeTenantRegistry(installations);
   const started: { tenantId: string; githubInstallationId: string }[] = [];
   const previews: { tenantId: string; repositoryFullName: string; commitSha: string; previewUrl: string }[] = [];
+  const pushes: { tenantId: string; repositoryFullName: string }[] = [];
 
   const app: FastifyInstance = Fastify({ logger: false });
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
@@ -103,10 +104,14 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
       previews.push(input);
       return Promise.resolve(input.commitSha === "published-sha");
     },
+    setupAfterPush: (input) => {
+      pushes.push(input);
+      return Promise.resolve();
+    },
     logger,
   });
 
-  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews };
+  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews, pushes };
 };
 
 describe("GitHub webhook route", () => {
@@ -209,8 +214,25 @@ describe("GitHub webhook route", () => {
     expect(synced).toEqual([["acme/api", "main", "42"]]);
   });
 
+  it("checks the setups of the repository after every push to the default branch (docs/specs/setup-app-change-issues.md)", async () => {
+    const { app, pushes } = build({});
+    // The merge of an app-change pull request touches no config, and still ends its issue.
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "push" },
+      payload: {
+        ref: "refs/heads/main",
+        installation: { id: 42 },
+        repository: { full_name: "acme/api", default_branch: "main" },
+        commits: [{ modified: ["src/index.ts"], added: [], removed: [] }],
+      },
+    });
+    expect(pushes).toEqual([{ tenantId: TENANT.id, repositoryFullName: "acme/api" }]);
+  });
+
   it("ignores a push to a branch other than the repository default, even when it touches the configuration file", async () => {
-    const { app, synced } = build({});
+    const { app, synced, pushes } = build({});
     await app.inject({
       method: "POST",
       url: "/webhooks/github",
@@ -223,6 +245,7 @@ describe("GitHub webhook route", () => {
       },
     });
     expect(synced).toEqual([]);
+    expect(pushes).toEqual([]);
   });
 
   it("marks a repository absent when a push removes the configuration file", async () => {

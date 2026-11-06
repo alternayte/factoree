@@ -17,6 +17,8 @@ export type ProductForm = {
   silenceMinutes: string;
   sandboxRetentionHours: string;
   maxConcurrentRuns: string;
+  /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
+  appChangeIssues: Product["appChangeIssues"];
   effort: Record<Role, string>;
   defaultAutonomy: AutonomyLevel;
   riskCaps: { label: string; level: AutonomyLevel }[];
@@ -38,6 +40,7 @@ export function formOf(p: Product): ProductForm {
     silenceMinutes: String(p.silenceMinutes),
     sandboxRetentionHours: String(p.sandboxRetentionHours),
     maxConcurrentRuns: String(p.maxConcurrentRuns),
+    appChangeIssues: p.appChangeIssues,
     effort: {
       implementer: p.effort.implementer ?? "",
       refiner: p.effort.refiner ?? "",
@@ -107,6 +110,7 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       silenceMinutes,
       sandboxRetentionHours,
       maxConcurrentRuns,
+      appChangeIssues: form.appChangeIssues,
       effort: {
         implementer: effort("implementer"),
         refiner: effort("refiner"),

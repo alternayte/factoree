@@ -1,7 +1,7 @@
 import type { SetupReport } from "./setup-report.js";
 
 /** docs/specs/repository-setup-and-services.md. The state of one setup run. */
-export type RepositorySetupStatus = "queued" | "running" | "proposed" | "partial" | "failed";
+export type RepositorySetupStatus = "queued" | "running" | "proposed" | "partial" | "failed" | "merged";
 
 /** The usage of the setup agent session, in the shape a run records per role. */
 export interface SetupSessionUsage {
@@ -35,6 +35,8 @@ export interface RepositorySetupRecord {
   report: SetupReport | null;
   failureMessage: string | null;
   sessionUsage: SetupSessionUsage | null;
+  /** docs/specs/setup-app-change-issues.md. The setup started when this setup's app-change issues ended. */
+  followUpSetupId: string | null;
   createdAt: Date;
   endedAt: Date | null;
 }
@@ -46,9 +48,11 @@ export interface RepositorySetupStore {
   latestByProduct(productId: string): Promise<RepositorySetupRecord[]>;
   /** DI-21.18. The newest setup of the repository before the given one that holds a report, or null. */
   previousWithReport(productId: string, repositoryFullName: string, before: Date): Promise<RepositorySetupRecord | null>;
+  /** docs/specs/setup-app-change-issues.md. The newest setup of the repository whose pull request is open, or null. */
+  latestOpenPullRequest(tenantId: string, repositoryFullName: string): Promise<RepositorySetupRecord | null>;
   update(
     id: string,
-    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt">>,
+    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId">>,
   ): Promise<void>;
 }
 

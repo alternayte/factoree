@@ -65,6 +65,8 @@ export interface ServerDependencies {
   startInstallationSync: (input: { tenantId: string; githubInstallationId: string }) => Promise<void>;
   /** docs/specs/run-speed.md. Requests a build-ahead when a bootstrap key changes. */
   buildAhead?: BuildAheadTrigger;
+  /** docs/specs/setup-app-change-issues.md. Checks the setups of a repository after a push. */
+  setupAfterPush?: (input: { tenantId: string; repositoryFullName: string }) => Promise<void>;
   /**
    * docs/specs/repository-setup-and-services.md. Lists the repositories one installation grants,
    * and starts one setup workflow. Absent in a server that starts no workflow, such as the
@@ -125,6 +127,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       recordPullRequestPreview: dependencies.recordPullRequestPreview,
       logger: dependencies.logger,
       ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
+      ...(dependencies.setupAfterPush === undefined ? {} : { setupAfterPush: dependencies.setupAfterPush }),
     });
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });

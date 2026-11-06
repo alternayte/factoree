@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@4";
+export const SETUP_PROMPT_VERSION = "setup@5";
 
 export interface SetupPromptFields {
   repository: string;
@@ -119,12 +119,15 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
       "Network",
       `The sandbox reaches only these hosts, the ecosystem host list:\n${list(fields.ecosystemHosts, "None.")}\n\n` +
         "Factoree records the hosts the bootstrap reaches and writes sandbox.allowedDomains itself. " +
-        "When a download fails because a host is denied, name the host in your app changes file.",
+        "When a download fails because a host is denied, leave the part out. Factoree reports each denied host itself, so never name a host in your app changes file.",
     ),
     section(
       "What you cannot configure",
       `When a part needs a change to the app itself, such as a hard-coded API URL with no environment override, ` +
-        `leave that part out and write one line per needed change to ${fields.appChangesPath}. Never change the app.`,
+        `leave that part out and write one line per needed change to ${fields.appChangesPath}. Never change the app. ` +
+        "Factoree turns each line into a Linear issue that a coding agent implements, so each line names one change on its own: " +
+        "the file, what to change, and what the setup can then configure. For example: " +
+        "\"src/Api/TmdbClient.cs hard-codes https://api.themoviedb.org. Read the base URL from TMDB__BaseUrl, so the setup can point it at a fake.\"",
     ),
     section(
       "Existing configuration",

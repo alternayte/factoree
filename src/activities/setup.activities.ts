@@ -19,6 +19,7 @@ import { bootstrapAllowListOf, DEFAULT_PROJECT_RUNTIME_CONFIG, toProjectRuntimeC
 import { narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
 import { runVerification } from "~/domain/runs/verification.js";
+import { alreadyRequested, type AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
 import {
   setupBranchName,
@@ -50,6 +51,8 @@ export interface SetupActivityDependencies {
   repositoryBaseUrl: () => Promise<string>;
   redactor: Redactor;
   logger: Logger;
+  /** docs/specs/setup-app-change-issues.md. The stored app-change issues, so the report names the ones already requested. */
+  appChangeIssues?: Pick<AppChangeIssueStore, "listForRepository"> | undefined;
 }
 
 /** The agent session of one setup, and what it wrote. */
@@ -407,6 +410,10 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         egressRecorded: session.egressRecorded,
         fakes,
         appChanges: session.appChanges,
+        alreadyRequested:
+          session.appChanges.length === 0 || dependencies.appChangeIssues === undefined
+            ? []
+            : alreadyRequested(session.appChanges, await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName)),
       };
       await dependencies.setups.update(setup.id, { report });
       if (finalPatch === null) {

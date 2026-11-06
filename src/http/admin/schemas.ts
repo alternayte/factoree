@@ -39,6 +39,8 @@ export const productSchema = z.object({
   silenceMinutes: z.number(),
   sandboxRetentionHours: z.number(),
   maxConcurrentRuns: z.number(),
+  /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
+  appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -72,6 +74,7 @@ export const productSettingsFields = {
   silenceMinutes: z.number().int().positive().max(240),
   sandboxRetentionHours: z.number().int().min(0).max(24 * 30),
   maxConcurrentRuns: z.number().int().positive().max(100),
+  appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
 };
 
 export { autonomyLevel };

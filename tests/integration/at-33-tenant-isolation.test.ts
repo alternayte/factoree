@@ -108,6 +108,8 @@ describe("AT-33 tenant isolation", () => {
         "Repository",
         // docs/specs/repository-setup-and-services.md. One row per setup run of one tenant.
         "repository_setup",
+        // docs/specs/setup-app-change-issues.md. One row per app-change issue of one tenant.
+        "setup_app_change_issue",
         // DI-15.29. A retired warm snapshot still holds one tenant's checkout.
         "RetiredWarmSnapshot",
         // SDD section 53 and SDD section 52. Phase 8 added the ReviewFinding table, and it is
