@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-11-06
+
+### Added
+
+- A merged setup creates a Linear issue for each app change in its report and delegates it to Factoree. The product setting "App change issues" creates one issue per change (the default) or one for all. Factoree reads the merge from each push to the default branch and the GitHub pull request state, so the GitHub App needs no new event (DI-21.19).
+- Factoree stores each app-change issue and creates no second issue for a change an open issue requests. The setup report names such a change as "already requested" (DI-21.19).
+- When every app-change issue of a setup has ended and one of their pull requests merged, Factoree runs the setup of the repository again, so it can add the fakes the changes made possible (DI-21.19).
+- The repository list on the product page has a filter and scrolls in a bounded area. Each setup button shows a spinner while its request runs.
+
+### Changed
+
+- A registered repository reads "active" on the product page, whatever its latest setup says. It read "pull request open" after its setup pull request merged.
+- The setup prompt (`setup@5`) tells the agent that each app-change line becomes a Linear issue, and to never name a denied host there.
+
+### Fixed
+
+- The product save bar ends the page. It stopped between the product form and the repository list.
+
 ## [0.6.10] - 2026-11-06
 
 ### Changed
