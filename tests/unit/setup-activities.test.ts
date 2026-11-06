@@ -118,3 +118,27 @@ describe("runSetupSession (repository-setup-and-services.md)", () => {
     expect(prompts[0]).not.toContain("bootstrap: null");
   });
 });
+
+describe("proveAndPublishSetup (DI-21.20)", () => {
+  it("proves an empty patch against the default branch and ends unchanged, with no pull request", async () => {
+    // anthology 2026-11-06: the agent kept the merged config, every gap needed an app change, and
+    // git apply refused the empty patch, so the setup failed.
+    const { activities, sandbox } = build("");
+    const proof = await activities.proveAndPublishSetup({
+      setupId: "setup-1",
+      session: {
+        kind: "proposed",
+        defaultBranch: "main",
+        baseSha: "a".repeat(40),
+        patchBase64: "",
+        proposal: "version: 1\nidentity:\n  product: anthology\n  linear:\n    teamKey: FAC\nverify:\n  commands:\n    - name: build\n      run: dotnet build\n",
+        observedHosts: [],
+        deniedHosts: [],
+        egressRecorded: true,
+        appChanges: ["src/Api/TmdbClient.cs hard-codes the TMDB base URL. Read it from TMDB__BaseUrl."],
+      },
+    });
+    expect(proof).toEqual({ status: "unchanged", pullRequestUrl: null, failureMessage: null });
+    expect(sandbox.calls).toContain("destroy");
+  });
+});

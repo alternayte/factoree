@@ -41,7 +41,8 @@ const build = (input: { setups: RepositorySetupRecord[]; mode?: AppChangeIssueMo
     },
     findById: (id) => Promise.resolve(setups.get(id) ?? null),
     latestByProduct: () => Promise.resolve([]),
-    previousWithReport: () => Promise.resolve(null),
+    previousWithReport: (_productId, _repository, before) =>
+      Promise.resolve([...setups.values()].filter((setup) => setup.report !== null && setup.createdAt < before).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null),
     latestOpenPullRequest: () =>
       Promise.resolve([...setups.values()].reverse().find((setup) => (setup.status === "proposed" || setup.status === "partial") && setup.pullRequestUrl !== null) ?? null),
     update: (id, patch) => {
@@ -158,5 +159,25 @@ describe("afterSetupPush (docs/specs/setup-app-change-issues.md)", () => {
     world.states.set("acme/anthology#13", "closed");
     expect((await world.activities.afterSetupPush(push)).followUps).toEqual([]);
     expect(world.stored.map((row) => row.outcome)).toEqual(["not_merged", "not_merged"]);
+  });
+
+  it("creates no issues for a merged setup that a newer setup report supersedes (DI-21.20)", async () => {
+    const newer = setupOf({ id: "setup-2", status: "unchanged", pullRequestUrl: null, createdAt: new Date(1000), report: report(["Read the TMDB base URL from Tmdb:BaseUrl."]) });
+    const world = build({ setups: [setupOf({}), newer] });
+    world.states.set("acme/anthology#11", "merged");
+    await world.activities.afterSetupPush(push);
+    expect(world.setups.get("setup-1")!.status).toBe("merged");
+    expect(world.created).toEqual([]);
+  });
+});
+
+describe("createSetupAppChangeIssues (DI-21.20)", () => {
+  it("creates the issues of a setup that ended unchanged, with no pull request to merge", async () => {
+    const world = build({ setups: [setupOf({ status: "unchanged", pullRequestUrl: null })] });
+    await world.activities.createSetupAppChangeIssues({ setupId: "setup-1" });
+    expect(world.created).toHaveLength(2);
+    expect(world.created[0]!.description).toContain("Repository: acme/anthology");
+    await world.activities.createSetupAppChangeIssues({ setupId: "setup-1" });
+    expect(world.created).toHaveLength(2);
   });
 });

@@ -1,7 +1,10 @@
 import type { SetupReport } from "./setup-report.js";
 
-/** docs/specs/repository-setup-and-services.md. The state of one setup run. */
-export type RepositorySetupStatus = "queued" | "running" | "proposed" | "partial" | "failed" | "merged";
+/**
+ * docs/specs/repository-setup-and-services.md. The state of one setup run. `unchanged`: the proven
+ * config equals the one on the default branch, so no pull request opens (DI-21.20).
+ */
+export type RepositorySetupStatus = "queued" | "running" | "proposed" | "partial" | "failed" | "merged" | "unchanged";
 
 /** The usage of the setup agent session, in the shape a run records per role. */
 export interface SetupSessionUsage {

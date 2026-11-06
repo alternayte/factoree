@@ -106,7 +106,7 @@ export const appChangeIssueText = (input: {
     ...input.changes.map((change) => `- ${change}`),
     "",
     input.setupPullRequestUrl === null
-      ? "Factoree created this issue when the setup merged."
+      ? "Factoree created this issue when a setup found the config on the default branch already holds every part it could prove."
       : `Factoree created this issue when the setup pull request merged: ${input.setupPullRequestUrl}`,
     "When every app-change issue of the setup has ended, Factoree runs the setup again, so it can configure what this change makes possible.",
   ].join("\n");

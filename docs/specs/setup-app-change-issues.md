@@ -19,13 +19,17 @@ When a setup pull request merges, Factoree creates a Linear issue for each app c
 - On each push to the default branch, Factoree checks the repositories with app-change issues. When every app-change issue of one setup has ended and at least one pull request merged, Factoree starts one new setup run of the repository — one setup per round, not one per merge.
 - The new setup gets the previous report's unproven parts (DI-21.18) — it adds the fakes for the URLs that are now configurable.
 - A setup with no app changes creates no issues and starts no follow-up setup — the loop ends when a round has nothing new.
+- A setup whose proven config equals the default branch ends `unchanged`: Factoree proves the config as it is, opens no pull request, and creates its app-change issues when it ends — no merge ever comes, so waiting for one loses the changes.
+- A merged setup creates no issues when a newer setup of the repository holds a report — the newer agent saw the repository later.
+- The setup prompt (`setup@6`) lists the app changes with an open issue, and the agent repeats a still-needed one word for word — dedupe compares the text.
+- A denied host with no dot leaves the report — it is a local lookup, such as the sandbox hostname or a compose service.
 - The repository row shows "active" when the repository is registered, whatever the latest setup status — registered means a run can take an issue.
 - An active repository with a newer open setup pull request also shows "setup pull request open" with its link.
 - A repository that is not registered shows the setup status as now.
 - Every setup button (set up, set up selected, run setup again, add host to allow list) shows the button spinner while its request runs — instant feedback on click.
 - The repository list sits in a bounded scroll area (`max-h-96 overflow-auto`, sticky header) under a client-side filter input that matches the repository full name, as in assay's connection scope list.
 - The product save bar moves to the end of the page and stays sticky at the bottom of the viewport; its submit button reaches the product form through the `form` attribute — the bar no longer stops between the form and the repositories.
-- The setup prompt (`setup@5`) tells the agent that each app-change line becomes a Linear issue, so each line names one change on its own, and never a denied host — Factoree reports denied hosts itself.
+- The setup prompt (`setup@5`, now `setup@6`) tells the agent that each app-change line becomes a Linear issue, so each line names one change on its own, and never a denied host — Factoree reports denied hosts itself.
 
 ## Out
 - Subscribing the GitHub App to `pull_request` events.
@@ -43,3 +47,4 @@ When a setup pull request merges, Factoree creates a Linear issue for each app c
 - Click "Run setup again": the button shows a spinner at once.
 - Type part of a repository name in the filter: the list shows only matching repositories, and a long list scrolls inside its box.
 - Scroll the product page: the save bar stays at the bottom of the viewport and rests at the end of the page.
+- Run the setup again when the config on the default branch already holds every part it can prove: the setup row reads "no change", and Linear shows the app-change issues.

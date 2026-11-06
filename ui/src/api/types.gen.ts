@@ -1643,7 +1643,7 @@ export type ListRepositorySetupsResponses = {
     needsSetupReason: string | null;
     setup: {
       id: string;
-      status: "queued" | "running" | "proposed" | "partial" | "failed" | "merged";
+      status: "queued" | "running" | "proposed" | "partial" | "failed" | "merged" | "unchanged";
       pullRequestUrl: string | null;
       failureMessage: string | null;
       report: string | null;

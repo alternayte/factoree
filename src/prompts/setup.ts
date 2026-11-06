@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@5";
+export const SETUP_PROMPT_VERSION = "setup@6";
 
 export interface SetupPromptFields {
   repository: string;
@@ -20,6 +20,11 @@ export interface SetupPromptFields {
    * list the next agent sees nothing to repair and never tries them again.
    */
   previousNotProven: ReadonlyArray<{ kind: string; name: string; reason: string | null }>;
+  /**
+   * DI-21.20. The app changes of the repository whose Linear issue is still open. Factoree dedupes
+   * on the change text, so the agent repeats a still-needed change word for word.
+   */
+  requestedChanges: readonly string[];
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -127,7 +132,11 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         `leave that part out and write one line per needed change to ${fields.appChangesPath}. Never change the app. ` +
         "Factoree turns each line into a Linear issue that a coding agent implements, so each line names one change on its own: " +
         "the file, what to change, and what the setup can then configure. For example: " +
-        "\"src/Api/TmdbClient.cs hard-codes https://api.themoviedb.org. Read the base URL from TMDB__BaseUrl, so the setup can point it at a fake.\"",
+        "\"src/Api/TmdbClient.cs hard-codes https://api.themoviedb.org. Read the base URL from TMDB__BaseUrl, so the setup can point it at a fake.\"" +
+        (fields.requestedChanges.length === 0
+          ? ""
+          : "\n\nThese app changes already have an open Linear issue. When the setup still needs one, copy its line exactly as it is here, so Factoree does not create a second issue:\n\n" +
+            list(fields.requestedChanges, "None.")),
     ),
     section(
       "Existing configuration",

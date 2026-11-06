@@ -20,6 +20,7 @@ const STATUS: Record<Setup["status"], { tone: "neutral" | "success" | "warning" 
   partial: { tone: "warning", label: "partial pull request" },
   failed: { tone: "danger", label: "failed" },
   merged: { tone: "success", label: "merged" },
+  unchanged: { tone: "success", label: "no change" },
 };
 
 /**

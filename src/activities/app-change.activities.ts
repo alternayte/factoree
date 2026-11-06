@@ -68,9 +68,12 @@ export const createAppChangeActivities = (dependencies: AppChangeActivityDepende
     async afterSetupPush(input: { tenantId: string; repositoryFullName: string }): Promise<{ followUps: FollowUpSetup[] }> {
       const open = await dependencies.setups.latestOpenPullRequest(input.tenantId, input.repositoryFullName);
       if (open !== null && open.pullRequestUrl !== null && (await stateOf(open.pullRequestUrl, open.githubInstallationId)) === "merged") {
+        // DI-21.20. A newer setup report supersedes the app changes of this one: its agent saw
+        // the repository later, and its own issues or its own merge cover what is still needed.
+        const newest = await dependencies.setups.previousWithReport(open.productId, open.repositoryFullName, new Date());
         // The issues come first. A retry after a failed create then finds the stored ones and
         // skips their changes, and the status still reads open until every issue exists.
-        await createIssues(open);
+        if (newest === null || newest.id === open.id) await createIssues(open);
         await dependencies.setups.update(open.id, { status: "merged" });
       }
 
@@ -105,6 +108,15 @@ export const createAppChangeActivities = (dependencies: AppChangeActivityDepende
         followUps.push({ setupId: next.id, workflowId });
       }
       return { followUps };
+    },
+
+    /**
+     * DI-21.20. A setup that ended `unchanged` opens no pull request, so no merge ever creates its
+     * app-change issues. Factoree creates them when the setup ends.
+     */
+    async createSetupAppChangeIssues(input: { setupId: string }): Promise<void> {
+      const setup = await dependencies.setups.findById(input.setupId);
+      if (setup !== null) await createIssues(setup);
     },
 
     /** A follow-up setup whose workflow could not start, because another setup of the repository runs. */

@@ -72,7 +72,7 @@ export type SetupSessionOutput =
   | { kind: "failed"; reason: string };
 
 export interface SetupProofOutput {
-  status: Extract<RepositorySetupStatus, "proposed" | "partial" | "failed">;
+  status: Extract<RepositorySetupStatus, "proposed" | "partial" | "failed" | "unchanged">;
   pullRequestUrl: string | null;
   failureMessage: string | null;
 }
@@ -176,6 +176,12 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           .filter((secret) => secret.kind === "test")
           .map((secret) => secret.name);
         const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
+        const requestedChanges =
+          dependencies.appChangeIssues === undefined
+            ? []
+            : (await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName))
+                .filter((row) => row.outcome === null)
+                .flatMap((row) => row.changes);
         const runnerName = DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner;
         const runner = dependencies.runners.get(runnerName);
         const result = await runner.run({
@@ -196,6 +202,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             appChangesPath,
             existingConfig,
             previousNotProven,
+            requestedChanges,
           }),
           promptVersion: SETUP_PROMPT_VERSION,
           environment: {},
@@ -235,7 +242,10 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         const log = dependencies.sandbox.egressLog === undefined ? null : await dependencies.sandbox.egressLog(ref);
         const reached = log === null ? [...ECOSYSTEM_HOSTS] : [...new Set(log.filter((record) => record.decision === "allowed").map((record) => record.host))];
         const bootstrapHosts = narrowAllowList(reached.length === 0 ? ["none.invalid"] : reached, [...ECOSYSTEM_HOSTS]).sort();
-        const deniedHosts = log === null ? [] : [...new Set(log.filter((record) => record.decision === "denied").map((record) => record.host))].sort();
+        // DI-21.20. A name with no dot is a local lookup, such as the sandbox's own hostname or a
+        // compose service, never a host the allow list could name.
+        const deniedHosts =
+          log === null ? [] : [...new Set(log.filter((record) => record.decision === "denied" && record.host.includes(".")).map((record) => record.host))].sort();
         const document = parseDocument(proposalText);
         if (document.get("bootstrap") !== undefined) document.setIn(["bootstrap", "allowedDomains"], bootstrapHosts);
         const proposal = document.toString();
@@ -286,16 +296,20 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       };
       let handle: PreviewHandle | null = null;
       let fakes: SetupReport["fakes"] = [];
-      let finalPatch: { patchBase64: string; patchSha256: string; gitVersion: string } | null = null;
+      let finalPatch: { patchBase64: string; patchSha256: string; gitVersion: string; empty: boolean } | null = null;
       try {
         const primary = await checkoutPrimary(dependencies.sandbox, ref, { url, ref: session.baseSha }, readToken);
-        const apply = await dependencies.sandbox.exec(ref, {
-          file: "sh",
-          args: ["-c", `printf '%s' "$FACTOREE_SETUP_PATCH" | base64 -d | git apply --whitespace=nowarn`],
-          cwd: primary.path,
-          env: { FACTOREE_SETUP_PATCH: session.patchBase64 },
-        });
-        if (apply.exitCode !== 0) throw new Error(`the setup patch did not apply: ${tail(apply.stdout, apply.stderr)}`);
+        // DI-21.20. An empty patch means the agent kept the config on the default branch. Factoree
+        // proves that config as it is, and git apply refuses an empty input.
+        if (session.patchBase64 !== "") {
+          const apply = await dependencies.sandbox.exec(ref, {
+            file: "sh",
+            args: ["-c", `printf '%s' "$FACTOREE_SETUP_PATCH" | base64 -d | git apply --whitespace=nowarn`],
+            cwd: primary.path,
+            env: { FACTOREE_SETUP_PATCH: session.patchBase64 },
+          });
+          if (apply.exitCode !== 0) throw new Error(`the setup patch did not apply: ${tail(apply.stdout, apply.stderr)}`);
+        }
 
         // Policy two: the bootstrap phase, with the repository hosts and the bootstrap allow list.
         await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains: [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)])] });
@@ -395,7 +409,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: session.baseSha });
           const outside = patch.changedFiles.filter((path) => !path.startsWith(".factoree/"));
           if (outside.length > 0) throw new Error(`the setup patch changes files outside .factoree/: ${outside.join(", ")}`);
-          finalPatch = { patchBase64: patch.patchBase64, patchSha256: patch.patchSha256, gitVersion: patch.gitVersion };
+          finalPatch = { patchBase64: patch.patchBase64, patchSha256: patch.patchSha256, gitVersion: patch.gitVersion, empty: patch.changedFiles.length === 0 };
         }
       } finally {
         if (handle !== null) await stopPreview(dependencies.sandbox, ref, handle).catch(() => undefined);
@@ -422,6 +436,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           : "No verify command passed, so the config would be invalid.";
         return { status: "failed", pullRequestUrl: null, failureMessage: failure };
       }
+      // DI-21.20. The proven config equals the default branch, so there is nothing to propose.
+      if (finalPatch.empty) return { status: "unchanged", pullRequestUrl: null, failureMessage: null };
 
       const token = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "write", pull_requests: "write" }, [setup.repositoryFullName]);
       dependencies.redactor.addSecret(token);

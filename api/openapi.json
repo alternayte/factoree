@@ -5742,7 +5742,8 @@
                                   "proposed",
                                   "partial",
                                   "failed",
-                                  "merged"
+                                  "merged",
+                                  "unchanged"
                                 ]
                               },
                               "pullRequestUrl": {

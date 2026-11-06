@@ -57,6 +57,9 @@ export const repositorySetupWorkflow = async (input: { setupId: string }): Promi
       return;
     }
     const proof = await withSlot(() => activities.proveAndPublishSetup({ setupId: input.setupId, session }));
+    // DI-21.20. No pull request means no merge, so the app-change issues start now. They come
+    // before the status, so a failed create leaves a failed setup, not a quiet unchanged one.
+    if (proof.status === "unchanged") await record.createSetupAppChangeIssues({ setupId: input.setupId });
     await record.finishSetup({ setupId: input.setupId, status: proof.status, pullRequestUrl: proof.pullRequestUrl, failureMessage: proof.failureMessage });
   } catch (error) {
     log.warn("the setup failed", { setup_id: input.setupId, error: messageOf(error) });
