@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-11-06
+
+### Fixed
+
+- A repository with no `agents` block runs every role on opencode, the runner the sandbox image ships. The validator and the reviewer defaulted to `claude`, so the refiner of FAC-74 failed with `sh: 1: claude: not found` (DI-21.17).
+- A runner session that exits 127 ends the Run as a configuration error that names the runner and the shell output, not as "The refiner wrote no proposal" (DI-21.17).
+
 ## [0.6.8] - 2026-11-05
 
 ### Fixed
