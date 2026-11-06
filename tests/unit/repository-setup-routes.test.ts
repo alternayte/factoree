@@ -18,6 +18,7 @@ const build = () => {
     },
     findById: (id) => Promise.resolve(rows.find((row) => row.id === id) ?? null),
     latestByProduct: () => Promise.resolve(rows.filter((row, index) => rows.findIndex((other) => other.repositoryFullName === row.repositoryFullName) === index)),
+    previousWithReport: () => Promise.resolve(null),
     update: () => Promise.resolve(),
   };
   const app = Fastify();

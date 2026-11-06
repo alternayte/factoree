@@ -158,6 +158,11 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       try {
         const primary = await checkoutPrimary(dependencies.sandbox, ref, { url, ref: defaultBranch }, token);
         const existingConfig = await readText(dependencies.sandbox, ref, `${primary.path}/${CONFIG}`);
+        // DI-21.18. The parts the last setup could not prove, so the agent tries them again.
+        const previous = await dependencies.setups.previousWithReport(setup.productId, setup.repositoryFullName, setup.createdAt);
+        const previousNotProven = (previous?.report?.parts ?? [])
+          .filter((part) => !part.passed)
+          .map((part) => ({ kind: part.kind, name: part.name, reason: part.reason }));
         // The agent may start the stack itself to try it. A provider without Docker runs none.
         if (dependencies.sandbox.capabilities.supportsDocker) {
           await ensureDocker(dependencies.sandbox, ref).catch((error: unknown) =>
@@ -187,6 +192,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             ecosystemHosts: ECOSYSTEM_HOSTS,
             appChangesPath,
             existingConfig,
+            previousNotProven,
           }),
           promptVersion: SETUP_PROMPT_VERSION,
           environment: {},

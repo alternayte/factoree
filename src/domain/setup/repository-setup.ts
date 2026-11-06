@@ -44,6 +44,8 @@ export interface RepositorySetupStore {
   findById(id: string): Promise<RepositorySetupRecord | null>;
   /** The newest setup of each repository of the product. */
   latestByProduct(productId: string): Promise<RepositorySetupRecord[]>;
+  /** DI-21.18. The newest setup of the repository before the given one that holds a report, or null. */
+  previousWithReport(productId: string, repositoryFullName: string, before: Date): Promise<RepositorySetupRecord | null>;
   update(
     id: string,
     patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt">>,

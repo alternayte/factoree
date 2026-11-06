@@ -117,6 +117,7 @@ const NO_SETUP_STORE: RepositorySetupStore = {
   create: () => Promise.reject(new Error("this worker holds no setup store")),
   findById: () => Promise.reject(new Error("this worker holds no setup store")),
   latestByProduct: () => Promise.reject(new Error("this worker holds no setup store")),
+  previousWithReport: () => Promise.reject(new Error("this worker holds no setup store")),
   update: () => Promise.reject(new Error("this worker holds no setup store")),
 };
 

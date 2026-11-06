@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type {
   RepositorySetupRecord,
@@ -49,6 +49,14 @@ export class PrismaRepositorySetupStore implements RepositorySetupStore {
       distinct: ["repositoryFullName"],
     });
     return rows.map(toRecord);
+  }
+
+  async previousWithReport(productId: string, repositoryFullName: string, before: Date): Promise<RepositorySetupRecord | null> {
+    const row = await this.prisma.repositorySetup.findFirst({
+      where: { productId, repositoryFullName, createdAt: { lt: before }, report: { not: Prisma.AnyNull } },
+      orderBy: { createdAt: "desc" },
+    });
+    return row === null ? null : toRecord(row);
   }
 
   async update(

@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@3";
+export const SETUP_PROMPT_VERSION = "setup@4";
 
 export interface SetupPromptFields {
   repository: string;
@@ -14,6 +14,12 @@ export interface SetupPromptFields {
   appChangesPath: string;
   /** The text of the existing config, for a setup run that updates one, or null. */
   existingConfig: string | null;
+  /**
+   * DI-21.18. The parts the previous setup of this repository proposed and Factoree could not
+   * prove, with the reason. A setup pull request holds only the proven parts, so without this
+   * list the next agent sees nothing to repair and never tries them again.
+   */
+  previousNotProven: ReadonlyArray<{ kind: string; name: string; reason: string | null }>;
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -124,7 +130,17 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
       "Existing configuration",
       fields.existingConfig === null
         ? "The repository has no Factoree configuration yet."
-        : `The repository already has this configuration. Repair it, and keep every part that still works:\n\n\`\`\`yaml\n${fields.existingConfig}\n\`\`\``,
+        : `The repository already has this configuration. Keep every part that still works, repair what fails, and add every part it lacks that the repository supports: a test command, the accounts, the fakes:\n\n\`\`\`yaml\n${fields.existingConfig}\n\`\`\``,
+    ),
+    section(
+      "Previous setup",
+      fields.previousNotProven.length === 0
+        ? "No previous setup of this repository left a part unproven."
+        : "The previous setup proposed these parts, and Factoree could not prove them in its fresh sandbox, so they are not in the configuration. Try each again: find the cause in the reason, and fix it from `.factoree/` when you can.\n\n" +
+            list(
+              fields.previousNotProven.map((part) => `${part.kind === part.name ? part.kind : `${part.kind} \`${part.name}\``}: ${part.reason ?? "no reason recorded"}`),
+              "None.",
+            ),
     ),
     section(
       "Rules",

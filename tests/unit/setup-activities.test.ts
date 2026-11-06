@@ -21,7 +21,7 @@ const setupRow: RepositorySetupRecord = {
   endedAt: null,
 };
 
-const build = (status: string) => {
+const build = (status: string, previous: RepositorySetupRecord | null = null) => {
   const sandbox = new FakeSandbox();
   sandbox.onExec = (command) => {
     if (command.file === "git" && command.args.includes("status")) return { exitCode: 0, stdout: status, stderr: "" };
@@ -33,12 +33,14 @@ const build = (status: string) => {
     create: () => Promise.reject(new Error("unused")),
     findById: () => Promise.resolve(setupRow),
     latestByProduct: () => Promise.resolve([]),
+    previousWithReport: () => Promise.resolve(previous),
     update: (_id, patch) => {
       updates.push(patch);
       return Promise.resolve();
     },
   };
   const runs: string[] = [];
+  const prompts: string[] = [];
   const dependencies = {
     setups,
     products: { findById: () => Promise.resolve({ id: "product-1", slug: "anthology", linearTeamKey: "FAC", allowedDomains: ["api.deepseek.com"], sandboxRetentionHours: 24 }) },
@@ -47,6 +49,7 @@ const build = (status: string) => {
       get: () => ({
         run: (input: { role: string; prompt: string }) => {
           runs.push(input.role);
+          prompts.push(input.prompt);
           return Promise.resolve({ outcome: "finished", usage: null, model: null, effort: null, session: { sessionId: "s", processId: "p" } });
         },
       }),
@@ -62,7 +65,7 @@ const build = (status: string) => {
     redactor: new Redactor(),
     logger: createLogger({ level: "error", redactor: new Redactor() }),
   } as unknown as SetupActivityDependencies;
-  return { activities: createSetupActivities(dependencies), sandbox, updates, runs };
+  return { activities: createSetupActivities(dependencies), sandbox, updates, runs, prompts };
 };
 
 describe("runSetupSession (repository-setup-and-services.md)", () => {
@@ -86,5 +89,30 @@ describe("runSetupSession (repository-setup-and-services.md)", () => {
     expect(policy).toContain("api.nuget.org");
     expect(policy).toContain("api.deepseek.com");
     expect(policy).not.toContain("example.org");
+  });
+
+  it("names the parts the previous setup could not prove (DI-21.18)", async () => {
+    // anthology: a setup pull request holds only the proven parts, and the next agent kept that
+    // config as it was. It never tried the test command or the account again.
+    const previous: RepositorySetupRecord = {
+      ...setupRow,
+      id: "setup-0",
+      report: {
+        parts: [
+          { kind: "bootstrap", name: "bootstrap", passed: true, reason: null },
+          { kind: "verify", name: "test", passed: false, reason: "it exited with code 1" },
+          { kind: "account", name: "member", passed: false, reason: "the sign-in failed at step 2" },
+        ],
+        observedHosts: [],
+        deniedHosts: [],
+        egressRecorded: true,
+        fakes: [],
+        appChanges: [],
+      },
+    };
+    const { activities, prompts } = build("", previous);
+    await activities.runSetupSession({ setupId: "setup-1" });
+    expect(prompts[0]).toContain("- verify `test`: it exited with code 1\n- account `member`: the sign-in failed at step 2");
+    expect(prompts[0]).not.toContain("bootstrap: null");
   });
 });
