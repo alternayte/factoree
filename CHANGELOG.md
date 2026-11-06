@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-11-06
+
+### Fixed
+
+- A setup whose agent keeps the config on the default branch no longer fails on an empty patch. Factoree proves that config as it is and ends the setup as `unchanged` ("no change" on the product page), with no pull request (DI-21.20).
+- An `unchanged` setup creates and delegates its app-change issues when it ends, because no merge ever comes for it (DI-21.20).
+- A merged setup creates no app-change issues when a newer setup of the repository holds a report, so an old report creates no duplicate issues (DI-21.20).
+- The setup report no longer lists the sandbox's own hostname, or another name with no dot, as a denied host (DI-21.20).
+
+### Changed
+
+- The setup prompt is `setup@6`. It lists the app changes with an open issue, so the agent repeats a still-needed change word for word and Factoree dedupes it (DI-21.20).
+
 ## [0.6.11] - 2026-11-06
 
 ### Added
