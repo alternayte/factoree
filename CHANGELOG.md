@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-11-06
+
+### Changed
+
+- A setup run gives its agent the parts the previous setup of the repository could not prove, with their reasons. The setup prompt (`setup@4`) asks it to try them again and to add every part the config lacks: a test command, the accounts, the fakes. A setup pull request holds only the proven parts, so the next run had kept that config as it was (DI-21.18).
+
 ## [0.6.9] - 2026-11-06
 
 ### Fixed
