@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-11-06
+
+### Added
+
+- A setup computes its setup input key from the default-branch head SHA and the rendered setup prompt before any sandbox starts. When the newest ended setup of the repository is `unchanged` with the same key, the setup skips its session and copies that report: "no change (skipped)" (DI-21.21).
+- The setup session sandbox starts from the repository's warm snapshot of the current Kiln template. The bootstrap allow list then keeps the existing hosts beside the hosts the session reached. The proof sandbox stays cold (DI-21.21).
+- The setup history page of each repository ("History" on the product page) lists every setup with its total, agent and proof time, cost, tokens, turns, model and tool time, warm, cold or skipped, the pull request, the Temporal run and the report with its app-change issues (DI-21.21).
+
+### Changed
+
+- The setup prompt is `setup@7`. It holds the repository instruction file (AGENTS.md, else CLAUDE.md, else CONTRIBUTING.md, capped at 64 KB) under the setup rules, and on a configured repository it limits the agent's own runs to the parts it changes and their dependents (DI-21.21).
+
 ## [0.6.12] - 2026-11-06
 
 ### Fixed
