@@ -73,6 +73,7 @@ const build = () => {
     logger: createLogger({ level: "error", redactor }),
     runners,
     agentSession,
+    redactor,
   });
   return { activities, calls, released };
 };

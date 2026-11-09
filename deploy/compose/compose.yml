@@ -51,6 +51,8 @@ services:
       POSTGRES_PWD: ${POSTGRES_PASSWORD:-factoree}
       BIND_ON_IP: 0.0.0.0
       TEMPORAL_BROADCAST_ADDRESS: 127.0.0.1
+      # docs/specs/run-failure-detail.md. auto-setup registers the namespace with 1 day otherwise.
+      DEFAULT_NAMESPACE_RETENTION: 7d
     healthcheck:
       test: ["CMD-SHELL", "temporal operator namespace describe -n default --address $$(hostname -i):7233 >/dev/null 2>&1"]
       interval: 5s
@@ -58,6 +60,16 @@ services:
       retries: 60
       start_period: 10s
     restart: unless-stopped
+
+  # docs/specs/run-failure-detail.md. auto-setup reads DEFAULT_NAMESPACE_RETENTION only when it
+  # creates the namespace, so this one-shot update sets it on an existing install too.
+  temporal-retention:
+    image: temporalio/auto-setup:${TEMPORAL_VERSION:-1.29.1}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    entrypoint: ["temporal", "operator", "namespace", "update", "-n", "default", "--retention", "7d", "--address", "temporal:7233"]
+    restart: "no"
 
   # docs/specs/run-visibility.md. The Temporal UI has no published port. The API proxies /temporal
   # to it for a signed-in Linear workspace admin, and it changes no workflow.

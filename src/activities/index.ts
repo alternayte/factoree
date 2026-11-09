@@ -155,8 +155,9 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     runners: dependencies.runners,
     agentSession: dependencies.agentSession,
+    redactor: dependencies.redactor,
   }),
-  ...createLinearActivities({ agentSession: dependencies.agentSession, workItems: dependencies.workItems }),
+  ...createLinearActivities({ agentSession: dependencies.agentSession, workItems: dependencies.workItems, redactor: dependencies.redactor }),
   ...createSandboxActivities({
     sandboxManager: dependencies.sandboxManager,
     sandbox: dependencies.sandbox,

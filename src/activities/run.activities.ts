@@ -1,5 +1,6 @@
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { Logger } from "~/telemetry/logger.js";
+import type { Redactor } from "~/telemetry/redaction.js";
 import type { CreateRunInput, RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
@@ -16,6 +17,8 @@ export interface RunActivityDependencies {
   logger: Logger;
   runners: AgentRunnerRegistry;
   agentSession: AgentSessionPort;
+  /** docs/specs/run-failure-detail.md. A failure message holds error text, so it is redacted. */
+  redactor: Redactor;
 }
 
 export const createRunActivities = (dependencies: RunActivityDependencies) => ({
@@ -107,7 +110,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     const run = await dependencies.runs.updateStatus(input.runId, input.status, {
       ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
       ...(failureCategory === undefined ? {} : { failureCategory }),
-      ...(input.failureMessage === undefined ? {} : { failureMessage: input.failureMessage }),
+      ...(input.failureMessage === undefined ? {} : { failureMessage: dependencies.redactor.redactText(input.failureMessage) }),
       completedAt: new Date(input.completedAt),
     });
     const labels = { tenant_id: run.tenantId, product_id: run.productId };

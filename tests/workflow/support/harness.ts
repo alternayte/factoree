@@ -86,6 +86,7 @@ export interface CompletionCall {
   runId: string;
   status: string;
   failureReason?: string;
+  failureMessage?: string;
 }
 
 /** The single verification command every Run of the harness gets by default. */

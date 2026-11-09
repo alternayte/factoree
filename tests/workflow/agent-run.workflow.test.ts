@@ -331,10 +331,14 @@ describe("agentRunWorkflow", () => {
     } finally {
       failingSessions.delete("session-e");
     }
+    // docs/specs/run-failure-detail.md. The row and the agent session keep the cause.
+    const message = "Factoree stopped the Run because of an internal error. Cause: Linear is down";
+    expect(postedErrors.at(-1)).toBe(message);
     expect(completions.at(-1)).toMatchObject({
       runId: "run-session-e",
       status: "FAILED",
       failureReason: "INTERNAL_ERROR",
+      failureMessage: message,
     });
   });
 });
@@ -356,6 +360,10 @@ describe("a configuration fault during preparation", () => {
     const completion = completions.find((entry) => entry.runId === "run-ses-configuration");
     expect(completion?.status).toBe("FAILED_CONFIGURATION");
     expect(completion?.failureReason).toBe("CONFIGURATION_INVALID");
+    // docs/specs/run-failure-detail.md. The fixed sentence, then the error of the activity.
+    expect(completion?.failureMessage).toMatch(
+      /Repair the repository reference, the reference repositories, or the bootstrap command\. Cause: the bootstrap command failed with exit code 1: no such file$/,
+    );
     // SDD section 49: a semantic failure must not consume the infrastructure retry policy.
     const attempts = prepared.filter((entry) => entry.runId === "run-ses-configuration").length - before;
     expect(attempts).toBe(1);

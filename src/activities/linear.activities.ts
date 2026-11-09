@@ -1,8 +1,11 @@
 import type { AgentSessionPort, WorkItemFacts, WorkItemPort } from "~/domain/runs/ports.js";
+import type { Redactor } from "~/telemetry/redaction.js";
 
 export interface LinearActivityDependencies {
   agentSession: AgentSessionPort;
   workItems: WorkItemPort;
+  /** docs/specs/run-failure-detail.md. An error post holds error text, so it is redacted. */
+  redactor: Redactor;
 }
 
 export const createLinearActivities = (dependencies: LinearActivityDependencies) => ({
@@ -15,7 +18,7 @@ export const createLinearActivities = (dependencies: LinearActivityDependencies)
   postFinalResponse: (input: { sessionId: string; body: string }): Promise<void> =>
     dependencies.agentSession.respond(input.sessionId, input.body),
   postError: (input: { sessionId: string; message: string }): Promise<void> =>
-    dependencies.agentSession.fail(input.sessionId, input.message),
+    dependencies.agentSession.fail(input.sessionId, dependencies.redactor.redactText(input.message)),
   /**
    * SDD section 28. The agent session webhook carries no label, so the cap needs a read against
    * the Linear API. An issue that no longer exists, and a transport fault the retry policy has

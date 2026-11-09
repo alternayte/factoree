@@ -44,6 +44,7 @@ export type { AgentRunProductRepositoryInput };
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias.
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
+import { INTERNAL_ERROR_SENTENCE, withCauseText } from "../domain/runs/failure-cause.js";
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time.
 import { SANDBOX_SLOT_UNAVAILABLE_TYPE } from "../domain/runs/sandbox-slot-error.js";
 import { queuedMessage } from "../domain/runs/run-slots.js";
@@ -169,6 +170,8 @@ const UNSTABLE_ASSERTION_PATCH = "unstable-assertion";
 
 /** docs/specs/run-recovery.md. A failed run posts what blocked it and how to reply. */
 const FAILURE_POST_PATCH = "failure-post";
+/** docs/specs/run-failure-detail.md. An internal error posts its cause to the agent session. */
+const INTERNAL_ERROR_POST_PATCH = "internal-error-post";
 
 /** docs/specs/skill-registry.md. Skill proposals and the run outcome reach the skill sources. */
 const SKILL_REGISTRY_PATCH = "skill-registry-signals";
@@ -287,6 +290,23 @@ const isConfigurationFault = (error: unknown): boolean => {
   }
   return false;
 };
+
+/**
+ * docs/specs/run-failure-detail.md. The error text that names the cause of a failure: the message
+ * of the configuration error when the chain holds one, else the innermost message. Temporal wraps
+ * an activity error, so the outer failure says only that the activity failed.
+ */
+const causeOf = (error: unknown): string => {
+  let innermost = "";
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ApplicationFailure && current.type === RUN_CONFIGURATION_ERROR_TYPE) return current.message;
+    if (current.message.trim() !== "") innermost = current.message;
+  }
+  return innermost;
+};
+
+/** The fixed sentence of a failed step, then the cause of its error. */
+const withCause = (sentence: string, error: unknown): string => withCauseText(sentence, causeOf(error));
 
 /**
  * Maps a publication failure to its SDD failure reason. The error crosses the activity boundary,
@@ -1387,8 +1407,11 @@ export async function agentRunWorkflow(
           if (isConfigurationFault(error)) {
             return await failRun(
               "CONFIGURATION_INVALID",
-              "Factoree could not resolve the context, because the Run configuration is invalid. " +
-                "Repair the repository reference, the reference repositories, or the default branch.",
+              withCause(
+                "Factoree could not resolve the context, because the Run configuration is invalid. " +
+                  "Repair the repository reference, the reference repositories, or the default branch.",
+                error,
+              ),
             );
           }
           throw error;
@@ -1555,8 +1578,11 @@ export async function agentRunWorkflow(
         if (isConfigurationFault(error)) {
           return await failRun(
             "CONFIGURATION_INVALID",
-            "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
-              "Repair the repository reference, the reference repositories, or the bootstrap command.",
+            withCause(
+              "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
+                "Repair the repository reference, the reference repositories, or the bootstrap command.",
+              error,
+            ),
           );
         }
         // Preparation is bounded by the remaining budget. A budget that ran out during
@@ -1623,8 +1649,11 @@ export async function agentRunWorkflow(
         if (isConfigurationFault(error)) {
           return await failRun(
             "CONFIGURATION_INVALID",
-            "Factoree could not start the Refiner, because the Run configuration is invalid. " +
-              "Repair `validator_runner` in `.factoree/config.yaml`.",
+            withCause(
+              "Factoree could not start the Refiner, because the Run configuration is invalid. " +
+                "Repair `validator_runner` in `.factoree/config.yaml`.",
+              error,
+            ),
           );
         }
         if (remainingMs() > 0) throw error;
@@ -1894,8 +1923,11 @@ export async function agentRunWorkflow(
           if (isConfigurationFault(error)) {
             return await failRun(
               "CONFIGURATION_INVALID",
-              "Factoree could not prepare the check sandbox, because the Run configuration is " +
-                "invalid. Repair the bootstrap command or the repository reference.",
+              withCause(
+                "Factoree could not prepare the check sandbox, because the Run configuration is " +
+                  "invalid. Repair the bootstrap command or the repository reference.",
+                error,
+              ),
             );
           }
           if (remainingMs() > 0) throw error;
@@ -2077,8 +2109,11 @@ export async function agentRunWorkflow(
           if (isConfigurationFault(error)) {
             return await failRun(
               "CONFIGURATION_INVALID",
-              "Factoree could not start the User Validator, because the Run configuration is " +
-                "invalid. Repair `validator_runner` in `.factoree/config.yaml`.",
+              withCause(
+                "Factoree could not start the User Validator, because the Run configuration is " +
+                  "invalid. Repair `validator_runner` in `.factoree/config.yaml`.",
+                error,
+              ),
             );
           }
           if (remainingMs() > 0) throw error;
@@ -2202,8 +2237,11 @@ export async function agentRunWorkflow(
             if (isConfigurationFault(error)) {
               return await failRun(
                 "CONFIGURATION_INVALID",
-                "Factoree could not start the Reviewer, because the Run configuration is " +
-                  "invalid. Repair `reviewer_runner` in `.factoree/config.yaml`.",
+                withCause(
+                  "Factoree could not start the Reviewer, because the Run configuration is " +
+                    "invalid. Repair `reviewer_runner` in `.factoree/config.yaml`.",
+                  error,
+                ),
               );
             }
             if (remainingMs() > 0) throw error;
@@ -2249,8 +2287,11 @@ export async function agentRunWorkflow(
           if (isConfigurationFault(error)) {
             return await failRun(
               "CONFIGURATION_INVALID",
-              "Factoree could not start the Reviewer, because the Run configuration is " +
-                "invalid. Repair `reviewer_runner` in `.factoree/config.yaml`.",
+              withCause(
+                "Factoree could not start the Reviewer, because the Run configuration is " +
+                  "invalid. Repair `reviewer_runner` in `.factoree/config.yaml`.",
+                error,
+              ),
             );
           }
           if (remainingMs() > 0) throw error;
@@ -2433,9 +2474,12 @@ export async function agentRunWorkflow(
         if (isConfigurationFault(error)) {
           return await failRun(
             "CONFIGURATION_INVALID",
-            "Factoree could not publish, because the Run configuration is invalid. Install the " +
-              "Factoree GitHub App on the target repository, so Factoree can mint a write " +
-              "credential that no agent session receives.",
+            withCause(
+              "Factoree could not publish, because the Run configuration is invalid. Install the " +
+                "Factoree GitHub App on the target repository, so Factoree can mint a write " +
+                "credential that no agent session receives.",
+              error,
+            ),
           );
         }
         const reason = publicationFailureReasonOf(error);
@@ -2582,13 +2626,28 @@ export async function agentRunWorkflow(
   } catch (error) {
     // Any unhandled activity failure must still drive the Run to a terminal state.
     status = "FAILED";
+    // docs/specs/run-failure-detail.md. The row and the agent session keep the cause.
+    const message = withCause(INTERNAL_ERROR_SENTENCE, error);
     await completeRun({
       tenantId: input.tenantId,
       runId: id,
       status,
       failureReason: "INTERNAL_ERROR",
+      failureMessage: message,
       completedAt: new Date(Date.now()).toISOString(),
     });
+    if (patched(INTERNAL_ERROR_POST_PATCH)) {
+      // A cancelled scope still posts, as the terminal write above still runs.
+      await CancellationScope.nonCancellable(async () => {
+        let post = message;
+        try {
+          post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message });
+        } catch {
+          // The post falls back to the message when the facts cannot be read.
+        }
+        await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
+      });
+    }
     // A plain error fails the workflow task, and Temporal retries that task for ever while the
     // row says FAILED. A Temporal failure ends the workflow.
     if (error instanceof TemporalFailure) throw error;
