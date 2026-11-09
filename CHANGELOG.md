@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-11-09
+
+### Changed
+
+- The reviewer's check sprite builds while deterministic verification runs, so the reviewer starts as soon as verify passes. A failed verify destroys that sprite in the background, and the repair starts at once (DI-21.23).
+
 ## [0.6.14] - 2026-11-09
 
 ### Changed
