@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-11-09
+
+### Changed
+
+- A Run that ends `CONFIGURATION_INVALID` keeps the cause after the fixed sentence: "Cause: " and the error text of the step that failed, such as the bootstrap exit code and its output tail, clipped to 2,000 characters and redacted (DI-21.22).
+- A Run that ends `INTERNAL_ERROR` stores "Factoree stopped the Run because of an internal error. Cause: …" and posts it to the Linear agent session with the follow-up reply prompt (DI-21.22).
+- The compose Temporal keeps closed workflows for 7 days instead of 1. A one-shot `temporal-retention` service updates an existing namespace (DI-21.22).
+
 ## [0.6.13] - 2026-11-06
 
 ### Added
