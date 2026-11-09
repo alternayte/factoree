@@ -136,7 +136,7 @@ describe("the Validation Contract state of the Run workflow", () => {
     // docs/specs/refiner-agent.md fixes this order. The refiner reads the work sprite, and the
     // contract freezes before the Implementer starts. The stop signal lands while deterministic
     // verification is held open, so the slice stops before user validation.
-    expect(order).toEqual([
+    expect(order.slice(0, 7)).toEqual([
       "resolveContext",
       "verifyTargetIdentity",
       "prepareSandbox",
@@ -144,8 +144,9 @@ describe("the Validation Contract state of the Run workflow", () => {
       "buildValidationContract",
       "implement",
       "prepareCheckSandbox",
-      "verify",
     ]);
+    // docs/specs/early-review-sprite.md. The reviewer's check sprite builds beside verify.
+    expect(order.slice(7).sort()).toEqual(["prepareCheckSandbox", "verify"]);
   });
 
   it("reports BUILDING_VALIDATION_CONTRACT to setRunStatus", async () => {

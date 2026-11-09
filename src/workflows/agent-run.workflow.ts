@@ -161,6 +161,8 @@ export interface RunSnapshot {
  * whose history began before this change replays the serial order.
  */
 const PARALLEL_REVIEW_PATCH = "run-speed-parallel-review";
+// docs/specs/early-review-sprite.md. The reviewer's check sprite builds while verify runs.
+const EARLY_REVIEW_SPRITE_PATCH = "early-review-sprite";
 
 /** A repair start posts one progress line, so a long repair never looks dead in Linear. */
 const REPAIR_PROGRESS_PATCH = "repair-progress";
@@ -177,6 +179,13 @@ const INTERNAL_ERROR_POST_PATCH = "internal-error-post";
 const SKILL_REGISTRY_PATCH = "skill-registry-signals";
 
 /** docs/specs/run-speed.md. How the reviewer that runs beside user validation ended. */
+/** docs/specs/early-review-sprite.md. The build of the reviewer's check sprite of one attempt. */
+type ReviewSpriteBuild =
+  | { kind: "sprite"; sprite: PrepareCheckSandboxActivityOutput }
+  /** The sandbox slot wait ended without a sprite: a stop or the Run deadline. */
+  | { kind: "unavailable" }
+  | { kind: "error"; error: unknown };
+
 type ReviewBranchOutcome =
   | { kind: "review"; review: ReviewActivityOutput }
   /** The sandbox slot wait or the session ended without a result: a stop or the Run deadline. */
@@ -499,6 +508,10 @@ export async function agentRunWorkflow(
   // docs/specs/run-speed.md. The check sprite of the reviewer of the current attempt, and the
   // reviewer that runs beside user validation.
   let reviewSandbox: PrepareCheckSandboxActivityOutput | null = null;
+  // docs/specs/early-review-sprite.md. The reviewer's check sprite build of the current attempt,
+  // with the destroy that follows a failed verify. The next build and the end of the Run wait for
+  // it, so the Run knows every sprite it built.
+  let reviewBuild: Promise<unknown> | null = null;
   let liveReview: { scope: CancellationScope; branch: Promise<ReviewBranchOutcome> } | null = null;
   let implementerSession: AgentSessionRef | null = null;
   // docs/specs/skill-registry.md. The skill sources of the Run, once the work sprite exists, and
@@ -599,6 +612,11 @@ export async function agentRunWorkflow(
         review.scope.cancel();
         await review.branch;
       }
+      // docs/specs/early-review-sprite.md. A reviewer's check sprite that still builds ends first,
+      // so the release below finds it.
+      const pendingBuild = reviewBuild;
+      reviewBuild = null;
+      if (pendingBuild !== null) await pendingBuild;
       for (const check of [checkSandbox, reviewSandbox]) {
         if (check === null) continue;
         // The last check sprites go with the Run. A failed delete is logged by the activity.
@@ -1940,6 +1958,60 @@ export async function agentRunWorkflow(
         status = "VERIFYING";
         await activities.setRunStatus({ runId: id, status });
 
+        /**
+         * docs/specs/run-speed.md. Builds the reviewer's check sprite of this attempt with the patch
+         * the first check sprite holds, and deletes the reviewer's sprite of an earlier attempt.
+         */
+        const prepareReviewSprite = (expectedPatchSha256: string): Promise<PrepareCheckSandboxActivityOutput | null> => {
+          const previousReview = reviewSandbox;
+          const reviewAttempt = attempt;
+          return withSandboxSlot((budgetMs) =>
+            buildSandboxActivities(budgetMs).prepareCheckSandbox({
+              ...prepareInput,
+              work: {
+                spriteId: preparedSandbox.spriteId,
+                adapter: preparedSandbox.adapter,
+                workspacePath: preparedSandbox.workspacePath,
+                primaryPath: preparedSandbox.primaryPath,
+                baseSha: preparedSandbox.baseSha,
+              },
+              previous:
+                previousReview === null
+                  ? null
+                  : {
+                      spriteId: previousReview.spriteId,
+                      adapter: previousReview.adapter,
+                      workspacePath: previousReview.workspacePath,
+                    },
+              attempt: reviewAttempt,
+              expectedPatchSha256,
+            }),
+          );
+        };
+
+        // docs/specs/early-review-sprite.md. The reviewer's check sprite builds while verify runs,
+        // and not after it passes. The build runs outside every cancellable scope: the activity
+        // sends no heartbeat, so a cancel never reaches it, and the sprite it builds would belong
+        // to no Run. A stop or the end of the Run waits for it instead.
+        let earlyReview: Promise<ReviewSpriteBuild> | null = null;
+        if (patched(EARLY_REVIEW_SPRITE_PATCH) && patched(PARALLEL_REVIEW_PATCH)) {
+          const earlier = reviewBuild;
+          reviewBuild = null;
+          if (earlier !== null) await earlier;
+          const expected = checked.patchSha256;
+          earlyReview = CancellationScope.nonCancellable(async (): Promise<ReviewSpriteBuild> => {
+            try {
+              const sprite = await prepareReviewSprite(expected);
+              if (sprite === null) return { kind: "unavailable" };
+              reviewSandbox = sprite;
+              return { kind: "sprite", sprite };
+            } catch (error) {
+              return { kind: "error", error };
+            }
+          });
+          reviewBuild = earlyReview;
+        }
+
         const verifyActivities = buildVerifyActivities(remainingMs());
         let verification: VerifyActivityOutput;
         try {
@@ -1968,6 +2040,30 @@ export async function agentRunWorkflow(
             message: verification.summary,
           }),
         );
+
+        // docs/specs/early-review-sprite.md. A failed verify ends the attempt, so its reviewer's
+        // check sprite holds a patch the repair replaces. The build ends in the background and the
+        // sprite goes at once, so the repair does not wait and the sprite keeps no slot.
+        if (!verification.passed && earlyReview !== null) {
+          const build = earlyReview;
+          reviewBuild = CancellationScope.nonCancellable(async () => {
+            const outcome = await build;
+            if (outcome.kind !== "sprite") return;
+            const sprite = outcome.sprite;
+            try {
+              await cancelActivities.releaseCheckSandbox({
+                runId: id,
+                spriteId: sprite.spriteId,
+                adapter: sprite.adapter,
+                workspacePath: sprite.workspacePath,
+              });
+              if (reviewSandbox === sprite) reviewSandbox = null;
+            } catch {
+              // The sprite stays the reviewer's sprite of the Run, so the next build or the end of
+              // the Run deletes it.
+            }
+          });
+        }
 
         if (stopRequested) return await cancelRun();
 
@@ -2010,36 +2106,21 @@ export async function agentRunWorkflow(
         let reviewBranch: Promise<ReviewBranchOutcome> | null = null;
         if (patched(PARALLEL_REVIEW_PATCH)) {
           reviewPasses += 1;
-          // The branch of the previous attempt set it, which the type narrowing cannot see.
-          const previousReview = reviewSandbox as PrepareCheckSandboxActivityOutput | null;
           const reviewAttempt = attempt;
           const verified = checked;
           const verificationSummary = verification.summary;
+          const early = earlyReview;
           const scope = new CancellationScope({ cancellable: true });
           const branch = scope.run(async (): Promise<ReviewBranchOutcome> => {
             try {
-              const sprite = await withSandboxSlot((budgetMs) =>
-                buildSandboxActivities(budgetMs).prepareCheckSandbox({
-                  ...prepareInput,
-                  work: {
-                    spriteId: preparedSandbox.spriteId,
-                    adapter: preparedSandbox.adapter,
-                    workspacePath: preparedSandbox.workspacePath,
-                    primaryPath: preparedSandbox.primaryPath,
-                    baseSha: preparedSandbox.baseSha,
-                  },
-                  previous:
-                    previousReview === null
-                      ? null
-                      : {
-                          spriteId: previousReview.spriteId,
-                          adapter: previousReview.adapter,
-                          workspacePath: previousReview.workspacePath,
-                        },
-                  attempt: reviewAttempt,
-                  expectedPatchSha256: verified.patchSha256,
-                }),
-              );
+              let sprite: PrepareCheckSandboxActivityOutput | null;
+              if (early !== null) {
+                const built = await early;
+                if (built.kind === "error") return { kind: "error", error: built.error };
+                sprite = built.kind === "sprite" ? built.sprite : null;
+              } else {
+                sprite = await prepareReviewSprite(verified.patchSha256);
+              }
               if (sprite === null) return { kind: "unavailable" };
               reviewSandbox = sprite;
               const reviewInput = {

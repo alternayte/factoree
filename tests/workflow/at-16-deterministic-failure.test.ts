@@ -57,15 +57,23 @@ const recordActivityCalls = (): void => {
     const original = doubles[name];
     if (original === undefined) continue;
     doubles[name] = (value: unknown): unknown => {
-      const runId = typeof value === "object" && value !== null ? (value as { runId?: unknown }).runId : undefined;
-      activityCalls.push({ name, runId: typeof runId === "string" ? runId : undefined });
+      const fields = typeof value === "object" && value !== null ? (value as { runId?: unknown; expectedPatchSha256?: unknown; spriteId?: unknown }) : {};
+      const runId = fields.runId;
+      // docs/specs/early-review-sprite.md. The reviewer's check sprite builds beside verify, so
+      // its calls carry their own name and leave the fixed order below.
+      const reviewer =
+        (name === "prepareCheckSandbox" && fields.expectedPatchSha256 !== undefined) ||
+        (name === "releaseCheckSandbox" && typeof fields.spriteId === "string" && fields.spriteId.endsWith("-review"));
+      activityCalls.push({ name: reviewer ? `${name}:review` : name, runId: typeof runId === "string" ? runId : undefined });
       return original(value);
     };
   }
 };
 
-const namesFor = (runId: string): string[] =>
+const allNamesFor = (runId: string): string[] =>
   activityCalls.filter((entry) => entry.runId === runId).map((entry) => entry.name);
+/** The calls of the Run in their fixed order, without the reviewer's check sprite. */
+const namesFor = (runId: string): string[] => allNamesFor(runId).filter((name) => !name.endsWith(":review"));
 
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const verifiesOf = (runId: string) => verifyCalls.filter((entry) => entry.runId === runId);
@@ -147,11 +155,23 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     expect(checks.map((entry) => entry.previous?.spriteId ?? null)).toEqual([null, "check-run-ses-at16a-1"]);
     expect(prepared.every((entry) => entry.work.spriteId === "sprite-run-ses-at16a")).toBe(true);
     expect(harness.releasedChecks).toContain("check-run-ses-at16a-2");
-    // docs/specs/run-speed.md. Only the attempt that passed verification got a reviewer's check
-    // sprite, with the patch that attempt verified, and the end of the Run deleted it.
+    // docs/specs/early-review-sprite.md. Each attempt built a reviewer's check sprite beside
+    // verify, with the patch of its first check sprite. The failed verify deleted the sprite of
+    // attempt 1, so attempt 2 had no earlier reviewer's sprite to delete, and the end of the Run
+    // deleted the sprite of attempt 2.
     const reviewers = prepared.filter((entry) => entry.expectedPatchSha256 !== undefined);
-    expect(reviewers.map((entry) => [entry.attempt, entry.expectedPatchSha256])).toEqual([[2, "d".repeat(64)]]);
+    expect(reviewers.map((entry) => [entry.attempt, entry.expectedPatchSha256, entry.previous])).toEqual([
+      [1, "d".repeat(64), null],
+      [2, "d".repeat(64), null],
+    ]);
+    expect(harness.releasedChecks).toContain("check-run-ses-at16a-1-review");
     expect(harness.releasedChecks).toContain("check-run-ses-at16a-2-review");
+    expect(allNamesFor("run-ses-at16a").filter((name) => name.endsWith(":review"))).toEqual([
+      "prepareCheckSandbox:review",
+      "releaseCheckSandbox:review",
+      "prepareCheckSandbox:review",
+      "releaseCheckSandbox:review",
+    ]);
 
     // Nothing was published. The Run invoked exactly these activities, in this order. A new
     // activity on this path changes the list, so the reader must judge it again.
@@ -186,12 +206,12 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "setRunStatus",
       "verify",
     ]);
-    // docs/specs/run-speed.md. The reviewer's check sprite and the review run beside user
-    // validation, so their order against it is not fixed.
-    expect(names.slice(secondVerify + 1, -3).sort()).toEqual(
-      ["prepareCheckSandbox", "review", "setRunStatus", "setRunStatus", "userValidate"].sort(),
+    // docs/specs/run-speed.md. The review runs beside user validation, so their order is not
+    // fixed.
+    expect(names.slice(secondVerify + 1, -2).sort()).toEqual(
+      ["review", "setRunStatus", "setRunStatus", "userValidate"].sort(),
     );
-    expect(names.slice(-3)).toEqual(["releaseCheckSandbox", "releaseCheckSandbox", "completeRun"]);
+    expect(names.slice(-2)).toEqual(["releaseCheckSandbox", "completeRun"]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);
     expect(result.status).toBe("CANCELLED");
   });
@@ -255,5 +275,15 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "describeRunFailure",
     ]);
     expect(namesFor("run-ses-at16b").filter(isPublishingName)).toEqual([]);
+    // docs/specs/early-review-sprite.md. Every failed verify deleted the reviewer's check sprite
+    // of its attempt.
+    expect(allNamesFor("run-ses-at16b").filter((name) => name.endsWith(":review"))).toEqual([
+      "prepareCheckSandbox:review",
+      "releaseCheckSandbox:review",
+      "prepareCheckSandbox:review",
+      "releaseCheckSandbox:review",
+      "prepareCheckSandbox:review",
+      "releaseCheckSandbox:review",
+    ]);
   });
 });
