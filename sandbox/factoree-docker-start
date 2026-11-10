@@ -18,6 +18,11 @@ chmod 700 "$XDG_RUNTIME_DIR"
 if [ -d /var/lib/kiln-data ] && [ -w /var/lib/kiln-data ]; then
   root=/var/lib/kiln-data/docker
   driver=overlay2
+elif [ "$(stat -f -c %T "$HOME")" = "ext2/ext3" ] || [ "$(stat -f -c %T "$HOME")" = "xfs" ]; then
+  # DI-21.31. An E2B guest root is ext4, and vfs filled its 13 GB disk with the images of one
+  # compose stack.
+  root="$HOME/.local/share/docker"
+  driver=overlay2
 else
   root="$HOME/.local/share/docker"
   driver=vfs
