@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-10
+
+### Added
+
+- Claude Code is a runner. A Product selects the runner, the model and the effort of each role, with a default and a per-role override. The sandbox image holds Claude Code 2.1.319, root-owned, with updates and telemetry off. A claude role needs the runner credential `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, and its API host joins the agent-phase allow list (DI-21.24 to DI-21.26).
+- The product page shows one row per role and a model picker: the runner, a searchable model list from the models.dev catalog, only the efforts the model takes, and the key name of the provider with Add key. A save refuses an effort the listed model does not take. `GET /admin/model-catalog` serves the catalog, which the API refreshes daily (DI-21.27).
+- An opencode session reads its model from the same catalog. A model id typed by hand that the catalog lacks still runs (DI-21.28).
+
+### Changed
+
+- The `agents` block of `.factoree/config.yaml` is ignored. The setup report says so, and a setup removes it.
+
 ## [0.6.15] - 2026-11-09
 
 ### Changed

@@ -2,8 +2,8 @@ apiVersion: v2
 name: factoree
 description: Factoree, a self-hosted control plane that turns a delegated Linear issue into a verified GitHub pull request.
 type: application
-version: 0.6.15
-appVersion: "0.6.15"
+version: 0.7.0
+appVersion: "0.7.0"
 home: https://github.com/alternayte/factoree
 sources:
   - https://github.com/alternayte/factoree
