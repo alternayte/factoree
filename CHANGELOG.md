@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-10
+
+### Changed
+
+- The run duration leaves out the time a run waited for a run slot (QUEUED) or a sandbox slot. The runs list and the run page show the wait apart, and the proof pack usage line names it. A wait for a sandbox slot no longer uses the run budget, as a wait in QUEUED already did not (DI-21.56).
+
 ## [0.8.2] - 2026-11-10
 
 ### Fixed
