@@ -7,6 +7,7 @@ const IDENTITY = "identity:\n  product: checkout-platform\n  linear:\n    teamKe
 const minimum = `version: 1\n${IDENTITY}verify:\n  commands:\n    - name: test\n      run: npm test\n`;
 
 describe("toProjectRuntimeConfig", () => {
+  // docs/specs/claude-code-runner.md. The Product selects the runners, and an agents block is ignored.
   it("maps the repository file onto the runtime configuration", () => {
     const config = parseFactoreeConfig(
       "version: 1\n" +
@@ -17,7 +18,12 @@ describe("toProjectRuntimeConfig", () => {
         "repair:\n  maxAttempts: 1\n" +
         "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n",
     );
-    const resolved = toProjectRuntimeConfig(config, { stagingRead: true, spriteRetentionHours: 48, allowedDomains: ["registry.npmjs.org"] });
+    const resolved = toProjectRuntimeConfig(config, {
+      stagingRead: true,
+      spriteRetentionHours: 48,
+      allowedDomains: ["registry.npmjs.org"],
+      runners: { refiner: "opencode", implementer: "opencode", validator: "opencode", reviewer: "claude" },
+    });
     expect(resolved.runtime).toEqual({
       bootstrapCommand: "npm ci",
       warmCommand: null,
@@ -27,9 +33,11 @@ describe("toProjectRuntimeConfig", () => {
       services: null,
       docker: false,
       accounts: [],
-      implementerRunner: "claude",
+      implementerRunner: "opencode",
       validatorRunner: "opencode",
-      reviewerRunner: "opencode",
+      reviewerRunner: "claude",
+      refinerRunner: "opencode",
+      agentsBlockIgnored: true,
       repairMaxAttempts: 1,
       stagingRead: true,
       spriteRetentionHours: 48,

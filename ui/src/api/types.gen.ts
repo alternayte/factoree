@@ -649,6 +649,7 @@ export type CreateSetupProductData = {
     slug: string;
     name: string;
     defaultAutonomy: "L0" | "L1" | "L2" | "L3";
+    runner?: "opencode" | "claude";
     model: string | null;
     modelKeyName?: string;
     modelKeyValue?: string;
@@ -712,7 +713,22 @@ export type CreateSetupProductResponses = {
       set: string | null;
     } | null;
     skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
     model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
     effort: {
       implementer: string | null;
       refiner: string | null;
@@ -859,7 +875,22 @@ export type ListProductsResponses = {
       set: string | null;
     } | null;
     skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
     model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
     effort: {
       implementer: string | null;
       refiner: string | null;
@@ -941,7 +972,22 @@ export type CreateProductResponses = {
       set: string | null;
     } | null;
     skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
     model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
     effort: {
       implementer: string | null;
       refiner: string | null;
@@ -1056,7 +1102,22 @@ export type GetProductResponses = {
       set: string | null;
     } | null;
     skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
     model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
     effort: {
       implementer: string | null;
       refiner: string | null;
@@ -1090,7 +1151,22 @@ export type UpdateProductData = {
       [key: string]: "L0" | "L1" | "L2" | "L3";
     };
     allowedDomains?: Array<string>;
+    defaultRunner?: "opencode" | "claude";
     model?: string | null;
+    runners?: {
+      implementer?: "opencode" | "claude" | null;
+      refiner?: "opencode" | "claude" | null;
+      validator?: "opencode" | "claude" | null;
+      reviewer?: "opencode" | "claude" | null;
+      setup?: "opencode" | "claude" | null;
+    };
+    models?: {
+      implementer?: string | null;
+      refiner?: string | null;
+      validator?: string | null;
+      reviewer?: string | null;
+      setup?: string | null;
+    };
     effort?: {
       implementer?: string | null;
       refiner?: string | null;
@@ -1166,7 +1242,22 @@ export type UpdateProductResponses = {
       set: string | null;
     } | null;
     skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
     model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
     effort: {
       implementer: string | null;
       refiner: string | null;
@@ -1246,7 +1337,22 @@ export type ActivateProductResponses = {
       set: string | null;
     } | null;
     skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
     model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
     effort: {
       implementer: string | null;
       refiner: string | null;
@@ -1373,6 +1479,53 @@ export type PutProductSecretResponses = {
 };
 
 export type PutProductSecretResponse = PutProductSecretResponses[keyof PutProductSecretResponses];
+
+export type GetModelCatalogData = {
+  body?: never;
+  path?: never;
+  query: {
+    runner: "opencode" | "claude";
+  };
+  url: "/admin/model-catalog";
+};
+
+export type GetModelCatalogErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+};
+
+export type GetModelCatalogError = GetModelCatalogErrors[keyof GetModelCatalogErrors];
+
+export type GetModelCatalogResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    available: boolean;
+    fetchedAt: string | null;
+    providers: Array<{
+      id: string;
+      name: string;
+      env: Array<string>;
+      models: Array<{
+        id: string;
+        name: string;
+        reasoning: boolean;
+        efforts: Array<string>;
+        contextTokens: number | null;
+        costInput: number | null;
+        costOutput: number | null;
+        releaseDate: string | null;
+      }>;
+    }>;
+  };
+};
+
+export type GetModelCatalogResponse = GetModelCatalogResponses[keyof GetModelCatalogResponses];
 
 export type ListRunsData = {
   body?: never;

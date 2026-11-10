@@ -35,6 +35,11 @@ export interface SetupReport {
    * requests, with that issue. Absent in a report made before it existed.
    */
   alreadyRequested?: Array<{ change: string; issue: string }>;
+  /**
+   * docs/specs/claude-code-runner.md. True when the proposal held an `agents` block, which the
+   * proven config drops. Absent in a report made before it existed.
+   */
+  agentsBlockRemoved?: boolean;
 }
 
 /** Why a part that depends on another part did not run. */
@@ -61,6 +66,9 @@ export const provenConfigOf = (proposal: string, parts: readonly SetupPartResult
     document.delete("docker");
   }
   if (failed("preview")) document.delete("preview");
+  // docs/specs/claude-code-runner.md. The Product selects the runner of each role, so a proven
+  // config holds no `agents` block.
+  document.delete("agents");
   const accounts = document.get("accounts");
   if (isSeq(accounts)) {
     accounts.items = accounts.items.filter((item) => !(isMap(item) && failed("account", String(item.get("name")))));
@@ -119,6 +127,14 @@ export const renderSetupReport = (report: SetupReport): string => {
         const issue = requested.get(change);
         return issue === undefined ? `- ${change}` : `- ${change} (already requested: ${issue})`;
       }),
+      "",
+    );
+  }
+  if (report.agentsBlockRemoved === true) {
+    lines.push(
+      "### Agents block",
+      "",
+      "Factoree removed the `agents` block. The product page selects the runner of each role, and Factoree ignores the block.",
       "",
     );
   }

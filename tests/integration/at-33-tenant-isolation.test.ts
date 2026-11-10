@@ -161,6 +161,9 @@ describe("AT-33 tenant isolation", () => {
     "auth_session",
     "auth_user",
     "auth_verification",
+    // docs/specs/model-picker.md. The public models.dev catalog, one copy for the install. It
+    // holds no tenant data.
+    "model_catalog",
   ];
 
   it("gives every other table a tenant column", async () => {

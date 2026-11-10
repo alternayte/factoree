@@ -17,6 +17,9 @@ import {
   type SkillRegistrySettings,
 } from "~/domain/runs/skill-registry.js";
 import { MAX_SKILLS } from "~/domain/runs/skill-discovery.js";
+import { agentSettingsProblems, PRODUCT_ROLES, resolveRole, type RoleValues } from "~/domain/products/agent-settings.js";
+import { catalogEffortProblem } from "~/domain/products/model-catalog.js";
+import type { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 import {
   autonomyLevel,
@@ -93,6 +96,12 @@ const activateSchema = z
 
 const tenantQuerySchema = z.object({ linearWorkspaceId: z.string().min(1) });
 
+/** The stored value of each role, with the request's value where it names one. */
+const mergeRoles = <T>(stored: RoleValues<T>, update: { [role: string]: T | null | undefined } | undefined): RoleValues<T> =>
+  Object.fromEntries(
+    PRODUCT_ROLES.map((role) => [role, update?.[role] === undefined ? stored[role] : update[role]]),
+  ) as RoleValues<T>;
+
 const isUniqueConstraintViolation = (error: unknown): boolean =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 
@@ -118,6 +127,8 @@ export interface ProductRouteDependencies {
    * does not resolve throws, and the save is refused.
    */
   checkSkillRegistry?: (settings: SkillRegistrySettings, key: string) => Promise<{ skills: number }>;
+  /** docs/specs/model-picker.md. A listed model's effort must be one of its catalog values. */
+  modelCatalog?: Pick<ModelCatalogService, "current">;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -239,6 +250,44 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!body.success) return reply.code(422).send({ error: body.error.flatten() });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    // docs/specs/claude-code-runner.md. A model or an effort that does not fit the runner its
+    // role resolves to fails here, before any write, and not in a run.
+    if (
+      body.data.defaultRunner !== undefined ||
+      body.data.model !== undefined ||
+      body.data.runners !== undefined ||
+      body.data.models !== undefined ||
+      body.data.effort !== undefined
+    ) {
+      const current = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!current) return reply.code(404).send({ error: "product not found" });
+      const merged = {
+        defaultRunner: body.data.defaultRunner ?? current.defaultRunner,
+        model: body.data.model === undefined ? current.model : body.data.model,
+        runners: mergeRoles(current.runners, body.data.runners),
+        models: mergeRoles(current.models, body.data.models),
+        effort: mergeRoles(current.effort, body.data.effort),
+      };
+      const problems = agentSettingsProblems(merged);
+      // docs/specs/model-picker.md. A model the catalog lists takes only its own effort values.
+      const catalog = (await dependencies.modelCatalog?.current()) ?? null;
+      if (catalog !== null) {
+        for (const role of PRODUCT_ROLES) {
+          const resolved = resolveRole(merged, role);
+          if (resolved.model === null || resolved.effort === null || problems[`effort.${role}`] !== undefined) continue;
+          const problem = catalogEffortProblem(catalog.raw, resolved.runner, resolved.model, resolved.effort);
+          if (problem !== null) problems[`effort.${role}`] = problem;
+        }
+      }
+      if (Object.keys(problems).length > 0) {
+        return reply.code(422).send({
+          error: {
+            formErrors: [],
+            fieldErrors: Object.fromEntries(Object.entries(problems).map(([field, message]) => [field, [message]])),
+          },
+        });
+      }
+    }
     // F8. The replaced `PUT /admin/projects/:id` route let an operator change the name and the
     // maximum Run minutes too. `updateSchema` now covers those, so both writes must apply.
     let product = null;
@@ -266,7 +315,10 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       }
     }
     if (
+      body.data.defaultRunner !== undefined ||
       body.data.model !== undefined ||
+      body.data.runners !== undefined ||
+      body.data.models !== undefined ||
       body.data.effort !== undefined ||
       body.data.silenceMinutes !== undefined ||
       body.data.sandboxRetentionHours !== undefined ||
@@ -274,7 +326,10 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.appChangeIssues !== undefined
     ) {
       product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
+        ...(body.data.defaultRunner === undefined ? {} : { defaultRunner: body.data.defaultRunner }),
         ...(body.data.model === undefined ? {} : { model: body.data.model }),
+        ...(body.data.runners === undefined ? {} : { runners: body.data.runners }),
+        ...(body.data.models === undefined ? {} : { models: body.data.models }),
         ...(body.data.effort === undefined ? {} : { effort: body.data.effort }),
         ...(body.data.silenceMinutes === undefined ? {} : { silenceMinutes: body.data.silenceMinutes }),
         ...(body.data.sandboxRetentionHours === undefined

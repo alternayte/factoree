@@ -43,6 +43,9 @@ import type {
   GetInstallSettingsResponses,
   GetMeData,
   GetMeResponses,
+  GetModelCatalogData,
+  GetModelCatalogErrors,
+  GetModelCatalogResponses,
   GetProductData,
   GetProductErrors,
   GetProductResponses,
@@ -533,6 +536,26 @@ export const putProductSecret = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+export const getModelCatalog = <ThrowOnError extends boolean = false>(
+  options: Options<GetModelCatalogData, ThrowOnError>,
+): RequestResult<GetModelCatalogResponses, GetModelCatalogErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetModelCatalogResponses, GetModelCatalogErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/model-catalog",
+    ...options,
   });
 
 export const listRuns = <ThrowOnError extends boolean = false>(

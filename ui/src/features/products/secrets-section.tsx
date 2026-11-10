@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listProductSecretsOptions, listProductSecretsQueryKey } from "@/api/@tanstack/react-query.gen";
 import { deleteProductSecret, putProductSecret } from "@/api/sdk.gen";
 import type { ListProductSecretsResponse, PutProductSecretData } from "@/api/types.gen";
@@ -27,19 +27,31 @@ const RETIRED: Record<string, string> = { repository_read: "Repository read (ret
 
 const kindLabel = (kind: string) => KINDS.find((k) => k.value === kind)?.label ?? RETIRED[kind] ?? kind;
 
+/** docs/specs/model-picker.md. A request from the model picker to add one provider key. */
+export type KeyRequest = { name: string; nonce: number };
+
 export function SecretsSection({
   productId,
   linearWorkspaceId,
   canEdit,
+  keyRequest,
 }: {
   productId: string;
   linearWorkspaceId: string;
   canEdit: boolean;
+  keyRequest?: KeyRequest | null;
 }) {
   const qc = useQueryClient();
   const options = { path: { id: productId }, query: { linearWorkspaceId } };
   const secrets = useQuery(listProductSecretsOptions(options));
-  const [editing, setEditing] = useState<Secret | "new" | null>(null);
+  const [editing, setEditing] = useState<Secret | "new" | KeyRequest | null>(null);
+  const anchor = useRef<HTMLDivElement>(null);
+  // Add key in the model picker opens this form with the provider key name and the runner kind.
+  useEffect(() => {
+    if (!keyRequest || !canEdit) return;
+    setEditing(keyRequest);
+    anchor.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [keyRequest, canEdit]);
   const [deleting, setDeleting] = useState<Secret | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: listProductSecretsQueryKey(options) });
 
@@ -64,11 +76,14 @@ export function SecretsSection({
         ) : null
       }
     >
+      <div ref={anchor} />
       {editing !== null ? (
         <SecretForm
+          key={editing === "new" ? "new" : "nonce" in editing ? editing.nonce : editing.name}
           productId={productId}
           linearWorkspaceId={linearWorkspaceId}
-          existing={editing === "new" ? null : editing}
+          existing={editing === "new" || "nonce" in editing ? null : editing}
+          preset={editing !== "new" && "nonce" in editing ? editing.name : null}
           onDone={() => {
             setEditing(null);
             void refresh();
@@ -120,18 +135,21 @@ function SecretForm({
   productId,
   linearWorkspaceId,
   existing,
+  preset,
   onDone,
   onCancel,
 }: {
   productId: string;
   linearWorkspaceId: string;
   existing: Secret | null;
+  /** A provider key name from the model picker. The form then adds a runner credential. */
+  preset?: string | null;
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState(existing?.name ?? "");
+  const [name, setName] = useState(existing?.name ?? preset ?? "");
   const [value, setValue] = useState("");
-  const [kind, setKind] = useState<Kind>(existing?.kind === "runner_credential" ? "runner_credential" : "test");
+  const [kind, setKind] = useState<Kind>(existing?.kind === "runner_credential" || preset ? "runner_credential" : "test");
   const [inject, setInject] = useState(existing?.injectIntoImplementer ?? false);
 
   const put = useMutation({
@@ -177,6 +195,7 @@ function SecretForm({
               required
               type="password"
               autoComplete="off"
+              autoFocus={Boolean(preset)}
               value={value}
               onChange={(e) => setValue(e.target.value)}
             />

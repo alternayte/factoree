@@ -60,7 +60,7 @@ const build = (status: string, world: World = {}) => {
   const prompts: string[] = [];
   const dependencies = {
     setups,
-    products: { findById: () => Promise.resolve({ id: "product-1", slug: "anthology", linearTeamKey: "FAC", allowedDomains: ["api.deepseek.com"], sandboxRetentionHours: 24 }) },
+    products: { findById: () => Promise.resolve({ id: "product-1", slug: "anthology", linearTeamKey: "FAC", allowedDomains: ["api.deepseek.com"], sandboxRetentionHours: 24, defaultRunner: "opencode", model: null, runners: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null }, models: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null }, effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null } }) },
     sandbox,
     runners: {
       get: () => ({

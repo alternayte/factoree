@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.6.14"
+    "version": "0.6.15"
   },
   "components": {
     "securitySchemes": {
@@ -2185,11 +2185,19 @@
                       "L3"
                     ]
                   },
+                  "runner": {
+                    "default": "opencode",
+                    "type": "string",
+                    "enum": [
+                      "opencode",
+                      "claude"
+                    ]
+                  },
                   "model": {
                     "anyOf": [
                       {
                         "type": "string",
-                        "pattern": "^[^\\s/]+\\/\\S+$"
+                        "minLength": 1
                       },
                       {
                         "type": "null"
@@ -2327,10 +2335,141 @@
                         "null"
                       ]
                     },
+                    "defaultRunner": {
+                      "type": "string",
+                      "enum": [
+                        "opencode",
+                        "claude"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "runners": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refiner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "validator": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "setup": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "models": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "effort": {
@@ -2412,7 +2551,10 @@
                     "maxRunMinutes",
                     "organizationSkillsRepository",
                     "skillRegistry",
+                    "defaultRunner",
                     "model",
+                    "runners",
+                    "models",
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
@@ -2930,10 +3072,141 @@
                         "null"
                       ]
                     },
+                    "defaultRunner": {
+                      "type": "string",
+                      "enum": [
+                        "opencode",
+                        "claude"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "runners": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refiner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "validator": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "setup": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "models": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "effort": {
@@ -3015,7 +3288,10 @@
                     "maxRunMinutes",
                     "organizationSkillsRepository",
                     "skillRegistry",
+                    "defaultRunner",
                     "model",
+                    "runners",
+                    "models",
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
@@ -3209,10 +3485,141 @@
                           "null"
                         ]
                       },
+                      "defaultRunner": {
+                        "type": "string",
+                        "enum": [
+                          "opencode",
+                          "claude"
+                        ]
+                      },
                       "model": {
                         "type": [
                           "string",
                           "null"
+                        ]
+                      },
+                      "runners": {
+                        "type": "object",
+                        "properties": {
+                          "implementer": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "opencode",
+                                  "claude"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "refiner": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "opencode",
+                                  "claude"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "validator": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "opencode",
+                                  "claude"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reviewer": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "opencode",
+                                  "claude"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "setup": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "opencode",
+                                  "claude"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "implementer",
+                          "refiner",
+                          "validator",
+                          "reviewer",
+                          "setup"
+                        ]
+                      },
+                      "models": {
+                        "type": "object",
+                        "properties": {
+                          "implementer": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "refiner": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "validator": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reviewer": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "setup": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "implementer",
+                          "refiner",
+                          "validator",
+                          "reviewer",
+                          "setup"
                         ]
                       },
                       "effort": {
@@ -3294,7 +3701,10 @@
                       "maxRunMinutes",
                       "organizationSkillsRepository",
                       "skillRegistry",
+                      "defaultRunner",
                       "model",
+                      "runners",
+                      "models",
                       "effort",
                       "silenceMinutes",
                       "sandboxRetentionHours",
@@ -3481,10 +3891,141 @@
                         "null"
                       ]
                     },
+                    "defaultRunner": {
+                      "type": "string",
+                      "enum": [
+                        "opencode",
+                        "claude"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "runners": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refiner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "validator": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "setup": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "models": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "effort": {
@@ -3566,7 +4107,10 @@
                     "maxRunMinutes",
                     "organizationSkillsRepository",
                     "skillRegistry",
+                    "defaultRunner",
                     "model",
+                    "runners",
+                    "models",
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
@@ -3727,16 +4271,160 @@
                       "minLength": 1
                     }
                   },
+                  "defaultRunner": {
+                    "type": "string",
+                    "enum": [
+                      "opencode",
+                      "claude"
+                    ]
+                  },
                   "model": {
                     "anyOf": [
                       {
                         "type": "string",
-                        "pattern": "^[^\\s/]+\\/\\S+$"
+                        "minLength": 1
                       },
                       {
                         "type": "null"
                       }
                     ]
+                  },
+                  "runners": {
+                    "type": "object",
+                    "properties": {
+                      "implementer": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "opencode",
+                              "claude"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "refiner": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "opencode",
+                              "claude"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "validator": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "opencode",
+                              "claude"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "reviewer": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "opencode",
+                              "claude"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "setup": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "opencode",
+                              "claude"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "models": {
+                    "type": "object",
+                    "properties": {
+                      "implementer": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "refiner": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "validator": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "reviewer": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "setup": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
                   },
                   "effort": {
                     "type": "object",
@@ -3959,10 +4647,141 @@
                         "null"
                       ]
                     },
+                    "defaultRunner": {
+                      "type": "string",
+                      "enum": [
+                        "opencode",
+                        "claude"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "runners": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refiner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "validator": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "setup": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "models": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "effort": {
@@ -4044,7 +4863,10 @@
                     "maxRunMinutes",
                     "organizationSkillsRepository",
                     "skillRegistry",
+                    "defaultRunner",
                     "model",
+                    "runners",
+                    "models",
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
@@ -4357,10 +5179,141 @@
                         "null"
                       ]
                     },
+                    "defaultRunner": {
+                      "type": "string",
+                      "enum": [
+                        "opencode",
+                        "claude"
+                      ]
+                    },
                     "model": {
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "runners": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refiner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "validator": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "setup": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "models": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
                       ]
                     },
                     "effort": {
@@ -4442,7 +5395,10 @@
                     "maxRunMinutes",
                     "organizationSkillsRepository",
                     "skillRegistry",
+                    "defaultRunner",
                     "model",
+                    "runners",
+                    "models",
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
@@ -4752,6 +5708,163 @@
             "description": "Default Response"
           },
           "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/model-catalog": {
+      "get": {
+        "operationId": "getModelCatalog",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "opencode",
+                "claude"
+              ]
+            },
+            "in": "query",
+            "name": "runner",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "fetchedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "env": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "models": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "reasoning": {
+                                  "type": "boolean"
+                                },
+                                "efforts": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "contextTokens": {
+                                  "type": [
+                                    "number",
+                                    "null"
+                                  ]
+                                },
+                                "costInput": {
+                                  "type": [
+                                    "number",
+                                    "null"
+                                  ]
+                                },
+                                "costOutput": {
+                                  "type": [
+                                    "number",
+                                    "null"
+                                  ]
+                                },
+                                "releaseDate": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name",
+                                "reasoning",
+                                "efforts",
+                                "contextTokens",
+                                "costInput",
+                                "costOutput",
+                                "releaseDate"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "env",
+                          "models"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "available",
+                    "fetchedAt",
+                    "providers"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
             "description": "Default Response",
             "content": {
               "application/json": {

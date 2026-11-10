@@ -1,5 +1,6 @@
 import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
 import type { AppChangeIssueMode } from "~/domain/setup/app-change-issues.js";
+import type { AgentRunnerName, RoleValues } from "~/domain/products/agent-settings.js";
 
 export interface ProductRecord {
   id: string;
@@ -19,8 +20,14 @@ export interface ProductRecord {
   organizationSkillsRepository: string | null;
   /** docs/specs/skill-registry.md. The skill registry of the Product, or null. */
   skillRegistry: SkillRegistrySettings | null;
-  /** docs/specs/release-0-1-0.md. The opencode model as `provider/model`, or null for its default. */
+  /** docs/specs/claude-code-runner.md. The runner of every role that names none. */
+  defaultRunner: AgentRunnerName;
+  /** The default model, in the form of the default runner, or null for the CLI default. */
   model: string | null;
+  /** docs/specs/claude-code-runner.md. The runner of each role, or null for the default runner. */
+  runners: RoleValues<AgentRunnerName>;
+  /** docs/specs/claude-code-runner.md. The model of each role, or null for the default model. */
+  models: RoleValues<string>;
   /** The reasoning effort of each role, or null for the CLI default. */
   effort: ProductEffort;
   /** The silence limit of an agent session, in minutes. */
@@ -46,7 +53,12 @@ export interface ProductEffort {
 
 /** docs/specs/release-0-1-0.md. The Product settings an operator changes in the UI. */
 export interface ProductSettingsUpdate {
+  defaultRunner?: AgentRunnerName;
   model?: string | null;
+  /** An absent role keeps its runner, and null clears it. */
+  runners?: { [Role in keyof ProductEffort]?: AgentRunnerName | null | undefined };
+  /** An absent role keeps its model, and null clears it. */
+  models?: { [Role in keyof ProductEffort]?: string | null | undefined };
   /** An absent role keeps its effort, and null clears it. */
   effort?: { [Role in keyof ProductEffort]?: string | null | undefined };
   silenceMinutes?: number;

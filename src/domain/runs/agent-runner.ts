@@ -161,15 +161,16 @@ export class AgentRunnerRegistry {
  */
 export const assertKnownRunners = (
   registry: AgentRunnerRegistry,
-  runtime: { implementerRunner: string; validatorRunner: string; reviewerRunner: string },
+  runtime: { implementerRunner: string; validatorRunner: string; reviewerRunner: string; refinerRunner?: string },
 ): void => {
   const known = new Set(registry.names());
-  const unknown = [...new Set([runtime.implementerRunner, runtime.validatorRunner, runtime.reviewerRunner])]
+  const names = [runtime.implementerRunner, runtime.validatorRunner, runtime.reviewerRunner, ...(runtime.refinerRunner === undefined ? [] : [runtime.refinerRunner])];
+  const unknown = [...new Set(names)]
     .filter((name) => !known.has(name))
     .sort();
   if (unknown.length === 0) return;
   throw new RunConfigurationError(
-    `.factoree/config.yaml names an agent runner Factoree does not implement: ` +
+    `The Product selects an agent runner Factoree does not implement: ` +
       `${unknown.map((name) => `"${name}"`).join(", ")}. ` +
       `The registered runners are: ${registry.names().join(", ")}.`,
   );

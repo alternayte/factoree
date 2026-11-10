@@ -171,6 +171,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     stages: dependencies.stages,
     skills: dependencies.skills,
     registries: dependencies.skillRegistries,
+    products: dependencies.products,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,

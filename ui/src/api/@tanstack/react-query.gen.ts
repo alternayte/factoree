@@ -24,6 +24,7 @@ import {
   deleteProductSecret,
   getInstallSettings,
   getMe,
+  getModelCatalog,
   getProduct,
   getRun,
   getSetupState,
@@ -93,6 +94,9 @@ import type {
   GetInstallSettingsResponse,
   GetMeData,
   GetMeResponse,
+  GetModelCatalogData,
+  GetModelCatalogError,
+  GetModelCatalogResponse,
   GetProductData,
   GetProductError,
   GetProductResponse,
@@ -618,6 +622,28 @@ export const putProductSecretMutation = (
   };
   return mutationOptions;
 };
+
+export const getModelCatalogQueryKey = (options: Options<GetModelCatalogData>) =>
+  createQueryKey("getModelCatalog", options);
+
+export const getModelCatalogOptions = (options: Options<GetModelCatalogData>) =>
+  queryOptions<
+    GetModelCatalogResponse,
+    GetModelCatalogError,
+    GetModelCatalogResponse,
+    ReturnType<typeof getModelCatalogQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getModelCatalog({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getModelCatalogQueryKey(options),
+  });
 
 export const listRunsQueryKey = (options: Options<ListRunsData>) => createQueryKey("listRuns", options);
 

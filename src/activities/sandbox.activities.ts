@@ -19,11 +19,15 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import { loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import { assertKnownRunners } from "~/domain/runs/agent-runner.js";
+import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import { CLAUDE_CREDENTIAL_NAMES, claudeApiHostOf, hasClaudeCredential, resolveRole } from "~/domain/products/agent-settings.js";
+import type { RunRunners } from "~/domain/runs/project-runtime-config.js";
 import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { SkillRegistrySettings, SkillResolution } from "~/domain/runs/skill-registry.js";
@@ -45,6 +49,11 @@ export interface SandboxActivityDependencies {
   /** docs/specs/skill-registry.md. The skills of each run, and the adapter of each registry kind. */
   skills?: RunSkillStore | undefined;
   registries?: SkillRegistryFactory | undefined;
+  /**
+   * docs/specs/claude-code-runner.md. The Product selects the runner of each role. Without it
+   * every role runs on opencode, which is what a test of another concern does.
+   */
+  products?: Pick<ProductRegistry, "findById"> | undefined;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -171,6 +180,28 @@ const build = async (
     input.productId,
   );
 
+  // docs/specs/claude-code-runner.md. The Product selects the runner of each role. A claude role
+  // needs an Anthropic credential, and the run fails here, before any sandbox exists, without one.
+  // Only the sandbox that hosts a claude session gets the model host: the work sprite hosts the
+  // refiner and the implementer, and a check sprite the validator and the reviewer.
+  const product = dependencies.products === undefined ? null : await dependencies.products.findById(input.tenantId, input.productId);
+  const runners: RunRunners = {
+    refiner: product === null ? "opencode" : resolveRole(product, "refiner").runner,
+    implementer: product === null ? "opencode" : resolveRole(product, "implementer").runner,
+    validator: product === null ? "opencode" : resolveRole(product, "validator").runner,
+    reviewer: product === null ? "opencode" : resolveRole(product, "reviewer").runner,
+  };
+  const claudeRoles = (Object.keys(runners) as (keyof RunRunners)[]).filter((role) => runners[role] === "claude");
+  if (claudeRoles.length > 0 && !hasClaudeCredential(runnerEnvironment)) {
+    throw new RunConfigurationError(
+      `The Product runs the ${claudeRoles.join(", ")} on Claude Code, and it holds no Anthropic credential. ` +
+        `Add ${CLAUDE_CREDENTIAL_NAMES.join(" or ")} as a runner credential on the product page.`,
+    );
+  }
+  const sandboxRoles: (keyof RunRunners)[] = beforeBootstrap === undefined ? ["refiner", "implementer"] : ["validator", "reviewer"];
+  const claudeHost = claudeApiHostOf(runnerEnvironment);
+  const agentHosts = sandboxRoles.some((role) => runners[role] === "claude") && claudeHost !== null ? [claudeHost] : [];
+
   // SDD section 30. A private repository needs a read-only credential for the checkout. It never
   // reaches an agent session: `checkout` gives it to the git clone command alone. The provider
   // mints it fresh for this one preparation, scoped to `contents: read`, so the credential this
@@ -239,8 +270,9 @@ const build = async (
     productId: input.productId,
     primary: input.primary,
     references: input.references,
-    defaults: input.defaults,
+    defaults: { ...input.defaults, runners },
     environment: { ...input.environment, ...runnerEnvironment },
+    agentHosts,
     ...(repositoryCredential === null ? {} : { repositoryCredential }),
     ...(input.organizationSkills === null ? {} : { organizationSkills: input.organizationSkills }),
     ...(registrySkills === null ? {} : { registrySkills }),
@@ -251,8 +283,7 @@ const build = async (
     beforeBootstrap,
   );
 
-  // SDD section 14. A runner name the repository configured must resolve to a registered
-  // adapter. This fault is a configuration fault, so the Run ends `CONFIGURATION_INVALID`.
+  // SDD section 14. A runner name the Product selects must resolve to a registered adapter. This fault is a configuration fault, so the Run ends `CONFIGURATION_INVALID`.
   try {
     assertKnownRunners(dependencies.runners, prepared.runtime);
   } catch (error) {

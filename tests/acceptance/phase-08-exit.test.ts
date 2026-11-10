@@ -478,7 +478,8 @@ const buildRig = async (name: string, reportFor: (call: number) => string | null
         referencePaths: [],
         referenceBaseShas: [],
         baselineCheckpointId: null,
-        runtime: { ...DEFAULT_PROJECT_RUNTIME_CONFIG, repairMaxAttempts: 2 },
+        // The scripted reviewer registers as claude, and the Product selects it.
+        runtime: { ...DEFAULT_PROJECT_RUNTIME_CONFIG, validatorRunner: "claude", reviewerRunner: "claude", refinerRunner: "claude", repairMaxAttempts: 2 },
         verifyCommands: VERIFY_COMMANDS,
         preview: {
           enabled: true,

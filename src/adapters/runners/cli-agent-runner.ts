@@ -77,6 +77,11 @@ export interface AgentSessionSettings {
   silenceLimitMs: number;
   /** The CLI inside the sandbox, or null for the runner default. */
   executable: string | null;
+  /**
+   * docs/specs/model-picker.md. The catalog entry an opencode session reads its model from, as
+   * JSON, or absent for opencode's own snapshot. The runner writes it into the sandbox.
+   */
+  modelsFile?: string | null;
 }
 
 export interface CliAgentRunnerOptions {
@@ -214,7 +219,7 @@ export abstract class CliAgentRunner implements AgentRunner {
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const settings = await this.settingsOf(input);
     const promptFile = await this.writePrompt(input.sandbox, input.ref, input.prompt);
-    const command = this.startCommand(promptFile, input.repositoryPath, settings);
+    const command = await this.withSessionFiles(input.sandbox, input.ref, settings, this.startCommand(promptFile, input.repositoryPath, settings));
     const process = await input.sandbox.startProcess(input.ref, {
       file: command.file,
       args: command.args,
@@ -253,7 +258,12 @@ export abstract class CliAgentRunner implements AgentRunner {
     }
 
     const promptFile = await this.writePrompt(previous.sandbox, previous.ref, input.prompt);
-    const command = this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath, previous.settings);
+    const command = await this.withSessionFiles(
+      previous.sandbox,
+      previous.ref,
+      previous.settings,
+      this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath, previous.settings),
+    );
     const process = await previous.sandbox.startProcess(previous.ref, {
       file: command.file,
       args: command.args,
@@ -314,6 +324,19 @@ export abstract class CliAgentRunner implements AgentRunner {
    * reaches a patch and never reads as repository content. SDD section 30 forbids a prompt on a
    * command line, and a file honours that: the content stays out of the process listing.
    */
+  /**
+   * Writes the files a command reads besides the prompt, fresh for each command, and adds their
+   * paths to its environment. A runner that needs none keeps the command as it is.
+   */
+  protected withSessionFiles(
+    _sandbox: Sandbox,
+    _ref: SandboxRef,
+    _settings: AgentSessionSettings,
+    command: CliAgentCommand,
+  ): Promise<CliAgentCommand> {
+    return Promise.resolve(command);
+  }
+
   private async writePrompt(sandbox: Sandbox, ref: SandboxRef, prompt: string): Promise<string> {
     const path = `${ref.workspacePath}/.factoree/prompt/${randomUUID()}.txt`;
     await sandbox.writeFile(ref, path, prompt);

@@ -1,5 +1,6 @@
 import type { RepositorySetupMarks } from "~/domain/setup/repository-setup.js";
 import { Prisma } from "@prisma/client";
+import { isAgentRunnerName, type AgentRunnerName } from "~/domain/products/agent-settings.js";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
 import type {
@@ -57,7 +58,18 @@ type ProductRow = {
   skillRegistryKind: string | null;
   skillRegistryUrl: string | null;
   skillRegistrySet: string | null;
+  defaultRunner: string;
   model: string | null;
+  runnerImplementer: string | null;
+  runnerRefiner: string | null;
+  runnerValidator: string | null;
+  runnerReviewer: string | null;
+  runnerSetup: string | null;
+  modelImplementer: string | null;
+  modelRefiner: string | null;
+  modelValidator: string | null;
+  modelReviewer: string | null;
+  modelSetup: string | null;
   effortImplementer: string | null;
   effortRefiner: string | null;
   effortValidator: string | null;
@@ -87,8 +99,22 @@ const toSkillRegistry = (kind: string | null, url: string | null, set: string | 
     ? { kind: kind as SkillRegistryKind, url, set }
     : null;
 
+/** A stored runner name that Factoree no longer implements reads as the default. */
+const toRunner = (value: string | null): AgentRunnerName | null => (value !== null && isAgentRunnerName(value) ? value : null);
+
 const toProduct = (row: ProductRow): ProductRecord => {
   const {
+    defaultRunner,
+    runnerImplementer,
+    runnerRefiner,
+    runnerValidator,
+    runnerReviewer,
+    runnerSetup,
+    modelImplementer,
+    modelRefiner,
+    modelValidator,
+    modelReviewer,
+    modelSetup,
     effortImplementer,
     effortRefiner,
     effortValidator,
@@ -105,6 +131,21 @@ const toProduct = (row: ProductRow): ProductRecord => {
     riskCaps: toRiskCaps(row.riskCaps),
     status: row.status === "active" ? "active" : "pending",
     appChangeIssues: row.appChangeIssues === "one_for_all" ? "one_for_all" : "one_per_change",
+    defaultRunner: toRunner(defaultRunner) ?? "opencode",
+    runners: {
+      implementer: toRunner(runnerImplementer),
+      refiner: toRunner(runnerRefiner),
+      validator: toRunner(runnerValidator),
+      reviewer: toRunner(runnerReviewer),
+      setup: toRunner(runnerSetup),
+    },
+    models: {
+      implementer: modelImplementer,
+      refiner: modelRefiner,
+      validator: modelValidator,
+      reviewer: modelReviewer,
+      setup: modelSetup,
+    },
     effort: {
       implementer: effortImplementer,
       refiner: effortRefiner,
@@ -299,7 +340,18 @@ export class PrismaProductRegistry implements ProductRegistry {
   async updateSettings(tenantId: string, id: string, settings: ProductSettingsUpdate): Promise<ProductRecord | null> {
     const data = Object.fromEntries(
       Object.entries({
+        defaultRunner: settings.defaultRunner,
         model: settings.model,
+        runnerImplementer: settings.runners?.implementer,
+        runnerRefiner: settings.runners?.refiner,
+        runnerValidator: settings.runners?.validator,
+        runnerReviewer: settings.runners?.reviewer,
+        runnerSetup: settings.runners?.setup,
+        modelImplementer: settings.models?.implementer,
+        modelRefiner: settings.models?.refiner,
+        modelValidator: settings.models?.validator,
+        modelReviewer: settings.models?.reviewer,
+        modelSetup: settings.models?.setup,
         effortImplementer: settings.effort?.implementer,
         effortRefiner: settings.effort?.refiner,
         effortValidator: settings.effort?.validator,

@@ -1639,7 +1639,9 @@ export async function agentRunWorkflow(
             runId: id,
             tenantId: input.tenantId,
             productId: input.productId,
-            runnerName: preparedSandbox.runtime.validatorRunner,
+            // docs/specs/claude-code-runner.md. An old history holds no refiner runner, and its
+            // refiner took the validator runner.
+            runnerName: preparedSandbox.runtime.refinerRunner ?? preparedSandbox.runtime.validatorRunner,
             spriteId: preparedSandbox.spriteId,
             adapter: preparedSandbox.adapter,
             workspacePath: preparedSandbox.workspacePath,

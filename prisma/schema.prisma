@@ -517,9 +517,21 @@ model Product {
   // R-4. The egress ceiling of every sandbox of this Product. A repository can only narrow it.
   allowedDomains String[] @default([])
   maxRunMinutes  Int      @default(90)
-  // docs/specs/release-0-1-0.md. The opencode model of every agent session of this Product, as
-  // `provider/model`. Null means the opencode default model.
+  // docs/specs/claude-code-runner.md. The runner of every role that names none: opencode or claude.
+  defaultRunner  String   @default("opencode") @map("default_runner")
+  // The default model, in the form of the default runner. Null means the CLI default model.
   model          String?
+  // The runner and the model of each role. Null means the default runner and the default model.
+  runnerImplementer String? @map("runner_implementer")
+  runnerRefiner     String? @map("runner_refiner")
+  runnerValidator   String? @map("runner_validator")
+  runnerReviewer    String? @map("runner_reviewer")
+  runnerSetup       String? @map("runner_setup")
+  modelImplementer  String? @map("model_implementer")
+  modelRefiner      String? @map("model_refiner")
+  modelValidator    String? @map("model_validator")
+  modelReviewer     String? @map("model_reviewer")
+  modelSetup        String? @map("model_setup")
   // The reasoning effort of each role. Null means the CLI default for that role.
   effortImplementer String?
   effortRefiner     String?
@@ -865,4 +877,16 @@ model SetupAppChangeIssue {
 
   @@index([tenantId, repositoryFullName])
   @@map("setup_app_change_issue")
+}
+
+// docs/specs/model-picker.md. The last good copy of the models.dev catalog. One row, keyed by its
+// source URL. `data` holds the raw api.json, because the sandbox model file needs the raw entry.
+model ModelCatalog {
+  source    String   @id
+  etag      String?
+  data      Json
+  fetchedAt DateTime @map("fetched_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("model_catalog")
 }

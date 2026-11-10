@@ -161,15 +161,9 @@ const schema = z
       .strict()
       .nullable()
       .default(null),
-    agents: z
-      .object({
-        implementer: z.string().min(1).default("opencode"),
-        // DI-21.17. The sandbox image ships opencode only, so every role defaults to it.
-        validator: z.string().min(1).default("opencode"),
-        reviewer: z.string().min(1).default("opencode"),
-      })
-      .strict()
-      .default({ implementer: "opencode", validator: "opencode", reviewer: "opencode" }),
+    // docs/specs/claude-code-runner.md. The Product selects the runner of each role. An `agents`
+    // block parses so a repository that holds one still runs, and Factoree ignores it and says so.
+    agents: z.record(z.string(), z.unknown()).optional(),
     // SDD section 42. The default total repair limit is 2.
     repair: z
       .object({ maxAttempts: z.number().int().min(0).max(10).default(2) })

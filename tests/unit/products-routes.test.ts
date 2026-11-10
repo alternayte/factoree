@@ -59,7 +59,10 @@ class FakeProductRegistry implements ProductRegistry {
       maxRunMinutes: input.maxRunMinutes ?? 90,
       organizationSkillsRepository: input.organizationSkillsRepository ?? null,
       skillRegistry: null,
+      defaultRunner: "opencode",
       model: null,
+      runners: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
+      models: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
       effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
       silenceMinutes: 10,
       sandboxRetentionHours: 24,
@@ -161,11 +164,15 @@ class FakeProductRegistry implements ProductRegistry {
   updateSettings(tenantId: string, id: string, settings: ProductSettingsUpdate): Promise<ProductRecord | null> {
     const row = this.rows.get(id);
     if (!row || row.tenantId !== tenantId) return Promise.resolve(null);
-    const effort = Object.fromEntries(Object.entries(settings.effort ?? {}).filter(([, value]) => value !== undefined));
+    const set = <T extends object>(update: T | undefined) =>
+      Object.fromEntries(Object.entries(update ?? {}).filter(([, value]) => value !== undefined));
     const updated: ProductRecord = {
       ...row,
+      ...(settings.defaultRunner === undefined ? {} : { defaultRunner: settings.defaultRunner }),
       ...(settings.model === undefined ? {} : { model: settings.model }),
-      effort: { ...row.effort, ...effort },
+      runners: { ...row.runners, ...set(settings.runners) },
+      models: { ...row.models, ...set(settings.models) },
+      effort: { ...row.effort, ...set(settings.effort) },
       ...(settings.silenceMinutes === undefined ? {} : { silenceMinutes: settings.silenceMinutes }),
       ...(settings.sandboxRetentionHours === undefined ? {} : { sandboxRetentionHours: settings.sandboxRetentionHours }),
       ...(settings.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: settings.maxConcurrentRuns }),
@@ -437,6 +444,36 @@ describe("Products administration API", () => {
     expect(refused.statusCode).toBe(422);
     expect(products.policyChanges).toEqual([]);
     expect(products.rows.get(product.id)?.defaultAutonomy).toBe(before);
+  });
+
+  // docs/specs/claude-code-runner.md. A model or an effort of one runner means nothing to the other.
+  it("refuses a model and an effort that do not fit the runner a role resolves to, and changes nothing", async () => {
+    const { app, products } = build({});
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: { linearWorkspaceId: "ws-1", slug: "mix", name: "Mix", linearTeamKey: "MIX" },
+    });
+    const product = created.json<{ id: string }>();
+    const url = `/admin/products/${product.id}?linearWorkspaceId=ws-1`;
+
+    const refused = await app.inject({
+      method: "PUT",
+      url,
+      payload: { runners: { implementer: "claude" }, models: { implementer: "deepseek/deepseek-chat" }, effort: { implementer: "ultra" } },
+    });
+    expect(refused.statusCode).toBe(422);
+    expect(Object.keys(refused.json<{ error: { fieldErrors: Record<string, string[]> } }>().error.fieldErrors).sort()).toEqual([
+      "effort.implementer",
+      "models.implementer",
+    ]);
+    expect(products.rows.get(product.id)?.runners.implementer).toBeNull();
+
+    // A claude override takes no opencode default model, so it saves with the CLI default.
+    await app.inject({ method: "PUT", url, payload: { model: "deepseek/deepseek-chat" } });
+    const saved = await app.inject({ method: "PUT", url, payload: { runners: { implementer: "claude" }, effort: { implementer: "high" } } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<{ runners: { implementer: string } }>().runners.implementer).toBe("claude");
   });
 
   it("lists repositories of a product, read only", async () => {

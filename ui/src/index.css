@@ -272,6 +272,50 @@
     background: transparent;
     border-color: transparent;
   }
+  /* docs/specs/model-picker.md. A segmented control for a short ordinal choice. */
+  .segmented {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius-control, 0.5rem);
+    background: var(--canvas);
+    align-self: flex-start;
+  }
+  .segment {
+    padding: 0.3rem 0.75rem;
+    border-radius: calc(var(--radius-control, 0.5rem) - 2px);
+    font-size: 0.8125rem;
+    color: var(--mute);
+    transition: background var(--fast) var(--ease-out), color var(--fast) var(--ease-out);
+  }
+  .segment:hover {
+    color: var(--ink);
+  }
+  .segment:focus-visible {
+    outline: none;
+    box-shadow: var(--glow-focus);
+  }
+  .segment-on {
+    background: var(--raised);
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  }
+  /* One row of the model list. */
+  .model-option {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+  .model-option-active {
+    background: var(--raised);
+  }
+  .model-option-on {
+    background: var(--accent-soft);
+  }
   .btn-danger {
     color: var(--danger);
   }

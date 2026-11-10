@@ -5,7 +5,8 @@ import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
-import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import { attachRunnerEnvironment, loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
+import { CLAUDE_CREDENTIAL_NAMES, claudeApiHostOf, hasClaudeCredential, resolveRole } from "~/domain/products/agent-settings.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
@@ -19,7 +20,7 @@ import { capInstructions, REPOSITORY_INSTRUCTION_FILES } from "~/domain/runs/rep
 import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import { PreviewStartError, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
-import { bootstrapAllowListOf, DEFAULT_PROJECT_RUNTIME_CONFIG, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
+import { bootstrapAllowListOf, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 import { narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
 import { runVerification } from "~/domain/runs/verification.js";
@@ -358,6 +359,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         egressRecorded: session.egressRecorded,
         fakes,
         appChanges: session.appChanges,
+        // docs/specs/claude-code-runner.md. The proven config drops an `agents` block, and the report says so.
+        agentsBlockRemoved: config.agents !== undefined,
         alreadyRequested:
           session.appChanges.length === 0 || dependencies.appChangeIssues === undefined
             ? []
@@ -489,7 +492,20 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const token = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
       dependencies.redactor.addSecret(token);
 
-      const { ref, warm } = await startSessionSandbox(setup, url, [...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains])]);
+      // docs/specs/claude-code-runner.md. The Product selects the setup runner. A claude setup
+      // needs an Anthropic credential, and its sandbox reaches the model host.
+      const runnerName = resolveRole(product, "setup").runner;
+      const runnerEnvironment = await loadRunnerEnvironment(dependencies.secrets, setup.tenantId, setup.productId);
+      if (runnerName === "claude" && !hasClaudeCredential(runnerEnvironment)) {
+        return {
+          kind: "failed",
+          reason: `The Product runs the setup agent on Claude Code, and it holds no Anthropic credential. Add ${CLAUDE_CREDENTIAL_NAMES.join(" or ")} as a runner credential on the product page.`,
+        };
+      }
+      const claudeHost = runnerName === "claude" ? claudeApiHostOf(runnerEnvironment) : null;
+      const { ref, warm } = await startSessionSandbox(setup, url, [
+        ...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains, ...(claudeHost === null ? [] : [claudeHost])]),
+      ]);
       await dependencies.setups.update(setup.id, { warm });
       const started = Date.now();
       try {
@@ -503,7 +519,6 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           );
         }
         const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
-        const runnerName = DEFAULT_PROJECT_RUNTIME_CONFIG.implementerRunner;
         const runner = dependencies.runners.get(runnerName);
         const result = await runner.run({
           runId: setupSandboxRunId(setup.id),
