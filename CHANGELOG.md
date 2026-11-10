@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-10
+
+### Fixed
+
+- The human comment that starts an agent session, such as "@factoree run this again, and …", reaches the run as Work Item text. 0.8.1 dropped it with the session thread (DI-21.55).
+- The refiner and its gate read the human comments as Work Item text, so a criterion a comment states freezes instead of being listed as not built (DI-21.54).
+
 ## [0.8.1] - 2026-11-10
 
 ### Fixed
