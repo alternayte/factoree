@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-10
+
+### Fixed
+
+- A container starts under rootless Docker in an E2B sandbox. `factoree-docker-start` sets the cgroupfs driver, so dockerd uses no cgroup, as on Kiln. The sandbox image masks the root Docker and containerd services that systemd started in an E2B guest (DI-21.30).
+
 ## [0.7.1] - 2026-11-10
 
 ### Fixed
