@@ -40,6 +40,8 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   startedAt: null,
   completedAt: null,
+  issueStateFromId: null,
+  issueStateSetId: null,
 });
 
 /** Records every `updateStatus` call, so a test can read the patch the activity sent. */

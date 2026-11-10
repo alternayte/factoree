@@ -28,6 +28,7 @@ describe("toProjectRuntimeConfig", () => {
       bootstrapCommand: "npm ci",
       warmCommand: null,
       allowedDomains: ["registry.npmjs.org"],
+      sandboxAllowListDeclared: true,
       keyFiles: [],
       bootstrapAllowedDomains: [],
       services: null,

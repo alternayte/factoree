@@ -1,7 +1,7 @@
 import { imageFilesBody } from "./context-files.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REVIEWER_PROMPT_VERSION = "reviewer@5";
+export const REVIEWER_PROMPT_VERSION = "reviewer@6";
 
 export interface ReviewerPromptFields {
   goal: string;
@@ -74,6 +74,8 @@ export const renderReviewerPrompt = (fields: ReviewerPromptFields): string =>
         "You must not report a style preference as a blocker or as a high finding.",
         "You must name a mandatory requirement and one changed file for every blocker and every high finding.",
         "You must report useful work outside this change as a low finding of category scope.",
+        "You must report a blocker when the change delivers a hand-built stand-in for a tool or a package the Work Item names, for example a vendored package under the name of the real one or a local package source that serves it.",
+        "You must report a blocker when the change publishes a package under the id of another project.",
         "Factoree decides which findings block. Your verdict does not decide it.",
       ].join("\n"),
     ),

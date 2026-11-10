@@ -160,6 +160,11 @@ export interface PrepareSandboxActivityOutput {
    * work sprite or a check sprite. Absent in a history recorded before the images existed.
    */
   imageFiles?: string[];
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md, DI-21.46. The effective allow list of the agent
+   * phase of this sandbox. Absent in a history recorded before it existed.
+   */
+  allowedHosts?: string[];
 }
 
 /** The work sprite of the Run, where the Implementer wrote the change. */
@@ -372,6 +377,7 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
   repositoryInstructions: prepared.repositoryInstructions,
   skills: prepared.skills,
   selfCheckReady: prepared.selfCheckReady,
+  allowedHosts: prepared.allowedHosts,
   ...(prepared.organizationSkillsSha === undefined
     ? {}
     : { organizationSkillsSha: prepared.organizationSkillsSha }),

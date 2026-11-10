@@ -2,6 +2,13 @@ import { z } from "zod";
 import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
 import { VALIDATION_METHODS, type ValidationMethod } from "~/domain/validation/validation-contract.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
+import type { MissingHost } from "~/domain/runs/egress.js";
+
+/**
+ * docs/specs/egress-honesty-and-issue-status.md, DI-21.47. One host the work needs and the sandbox
+ * does not reach. The implementer result file holds the same shape.
+ */
+export const missingHostSchema = z.object({ host: z.string().min(1), reason: z.string() }).strict();
 
 /**
  * docs/specs/refiner-agent.md. The refiner writes one proposal file. It is data, never code, and
@@ -36,6 +43,9 @@ const proposalSchema = z
       .array(z.object({ question: z.string().min(1), proposal: z.string().min(1), reason: z.string().min(1) }).strict())
       .max(5),
     patterns: z.array(z.string().min(1)).max(20),
+    // docs/specs/egress-honesty-and-issue-status.md. The hosts the work needs and the sandbox does
+    // not reach. An older proposal without the field names none.
+    missingHosts: z.array(missingHostSchema).max(20).default([]),
   })
   .strict();
 
@@ -67,7 +77,8 @@ export const REFINER_PROPOSAL_SCHEMA = [
   "{",
   '  "criteria": [{ "statement": string, "origin": "stated" | "implied" | "new", "quote": string | null, "method": "command" | "test" | "http" | "browser" | "code_review" | "manual", "target": string | null, "visible": boolean }],',
   '  "questions": [{ "question": string, "proposal": string, "reason": string }],',
-  '  "patterns": [string]',
+  '  "patterns": [string],',
+  '  "missingHosts": [{ "host": string, "reason": string }]',
   "}",
 ].join("\n");
 
@@ -111,6 +122,8 @@ export interface GatedRefinement {
    * "Needs your attention".
    */
   visualEvidenceGap: string | null;
+  /** DI-21.47. The hosts the refiner named. The activity drops the ones the allow list holds. */
+  missingHosts: MissingHost[];
 }
 
 /** What the gate knows about the repository. */
@@ -170,6 +183,7 @@ export const gateRefinerProposal = (
     questions: proposal.questions,
     unverifiable,
     visualEvidenceGap: visualEvidenceGapOf(unproven, repository),
+    missingHosts: proposal.missingHosts,
   };
 };
 

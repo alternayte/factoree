@@ -2,6 +2,7 @@ import type { DeliveredContextEntry } from "~/domain/context/context-delivery.js
 import type { FactoreeDecision } from "./factoree-decision.js";
 import type { RunFailureReason, RunStatus } from "./run-status.js";
 import type { RunFailureCategory } from "./failure-category.js";
+import type { IssueStateRecord, PullRequestState } from "./issue-status.js";
 
 export interface RunRecord {
   id: string;
@@ -44,6 +45,23 @@ export interface RunRecord {
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
+  /** docs/specs/egress-honesty-and-issue-status.md. The Linear state the run moved its issue from, or null. */
+  issueStateFromId: string | null;
+  /** The Linear state the run set on its issue, or null when it moved nothing. */
+  issueStateSetId: string | null;
+}
+
+/**
+ * docs/specs/egress-honesty-and-issue-status.md, DI-21.51. The run of a pull request that closed,
+ * with the state of every pull request of the run after the close.
+ */
+export interface ClosedPullRequestRun {
+  runId: string;
+  linearIssueId: string | null;
+  linearAgentSessionId: string;
+  issueStateFromId: string | null;
+  issueStateSetId: string | null;
+  pullRequestStates: PullRequestState[];
 }
 
 export interface CreateRunInput {
@@ -257,6 +275,18 @@ export interface RunRepository {
    * would be lost.
    */
   countByProduct(tenantId: string, productId: string): Promise<number>;
+  /** docs/specs/egress-honesty-and-issue-status.md, DI-21.49. Records the issue states of the run. */
+  setIssueState(tenantId: string, runId: string, state: IssueStateRecord): Promise<void>;
+  /**
+   * DI-21.51. Records that the pull request `number` of `repositoryFullName` merged or closed, and
+   * answers its run, or null when no run target of the tenant opened that pull request.
+   */
+  closePullRequest(
+    tenantId: string,
+    repositoryFullName: string,
+    number: number,
+    state: "merged" | "closed",
+  ): Promise<ClosedPullRequestRun | null>;
 }
 
 export interface WebhookLog {

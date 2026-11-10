@@ -84,6 +84,8 @@ export interface ServerDependencies {
   checkSkillRegistry?: ProductRouteDependencies["checkSkillRegistry"];
   /** docs/specs/proof-pack-and-visual-evidence.md. Records a pull request preview. */
   recordPullRequestPreview: GitHubWebhookDependencies["recordPullRequestPreview"];
+  /** docs/specs/egress-honesty-and-issue-status.md. A pull request of a run merged or closed. */
+  pullRequestClosed?: GitHubWebhookDependencies["pullRequestClosed"];
   /** The GitHub and Linear calls of setup. */
   setup: Pick<SetupRouteDependencies, "github" | "linear">;
   /** The built UI. Absent, or a directory without index.html, serves no UI. */
@@ -133,6 +135,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       logger: dependencies.logger,
       ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       ...(dependencies.setupAfterPush === undefined ? {} : { setupAfterPush: dependencies.setupAfterPush }),
+      ...(dependencies.pullRequestClosed === undefined ? {} : { pullRequestClosed: dependencies.pullRequestClosed }),
     });
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });

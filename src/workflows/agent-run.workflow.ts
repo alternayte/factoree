@@ -62,6 +62,11 @@ import { completionInvariantFailures, prePublicationFailures } from "../domain/r
 // `~/` alias either.
 import { proposeTarget, selectTarget } from "../domain/routing/select-targets.js";
 import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
+// The workflow bundler resolves a relative path only. Both modules import nothing at run time but
+// `sandbox.js`, which imports nothing.
+import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from "../domain/runs/egress.js";
+import { allowListCovers } from "../domain/runs/sandbox.js";
+import { endsWithoutPullRequest } from "../domain/runs/issue-status.js";
 // The workflow bundler resolves a relative path only. The module imports nothing.
 import {
   describeAgentRole,
@@ -99,6 +104,11 @@ export interface AgentRunProductInput {
    * recorded before the registry existed.
    */
   skillRegistry?: SkillRegistrySettings | null;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The product page of the Factoree UI, where an
+   * operator widens the allow list. Absent in an older history.
+   */
+  productPageUrl?: string;
 }
 
 /** SDD section 7. The Work Item text, exactly as the author wrote it. */
@@ -203,6 +213,27 @@ const IGNORE_IMAGES_DECISION = {
 
 /** docs/specs/skill-registry.md. Skill proposals and the run outcome reach the skill sources. */
 const SKILL_REGISTRY_PATCH = "skill-registry-signals";
+
+/**
+ * docs/specs/egress-honesty-and-issue-status.md. The run moves its issue to started, and back when
+ * it ends with no pull request. A history that began before this change moves nothing.
+ */
+const ISSUE_STATUS_PATCH = "issue-status";
+/** docs/specs/egress-honesty-and-issue-status.md. A new pull request links to the issue at once. */
+const PULL_REQUEST_LINK_PATCH = "pull-request-link";
+
+/**
+ * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
+ * before the facts existed. A bootstrap host the agent phase also reaches is no bootstrap-only host.
+ */
+const egressOf = (prepared: PrepareSandboxActivityOutput): EgressFacts | null => {
+  const allowed = prepared.allowedHosts;
+  if (allowed === undefined) return null;
+  return {
+    allowed,
+    bootstrapOnly: (prepared.runtime.bootstrapAllowedDomains ?? []).filter((host) => !allowListCovers(allowed, host)).sort(),
+  };
+};
 
 /** docs/specs/run-speed.md. How the reviewer that runs beside user validation ended. */
 /** docs/specs/early-review-sprite.md. The build of the reviewer's check sprite of one attempt. */
@@ -569,6 +600,8 @@ export async function agentRunWorkflow(
   let contextContractVersion: string | null = null;
   let validationContractVersion: string | null = null;
   let questionRounds = 0;
+  /** DI-21.50. True once this run moved, or tried to move, its issue to started. */
+  let issueStatusTracked = false;
 
   // Refinement needs a repository pair before target selection runs, further below. This
   // placeholder feeds Refinement only, and the pass-through echo never reaches the sandbox. The
@@ -672,6 +705,11 @@ export async function agentRunWorkflow(
         if (!skillProposalsSent) await notify(() => sendSkillProposals(sources, work));
       }
       await activities.completeRun(args);
+      // DI-21.50. A run that ends with no pull request moves its issue back, while the issue is
+      // still in the state the run set. The start already took the patch, so no new marker lands here.
+      if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrl === null) {
+        await notify(() => activities.restoreIssueStatus({ tenantId: input.tenantId, runId: id }));
+      }
       if (sources !== null && patched(SKILL_REGISTRY_PATCH)) {
         await notify(() =>
           activities.reportSkillOutcome({
@@ -1039,6 +1077,7 @@ export async function agentRunWorkflow(
         // agent-browser is installed. The preview command stays with the check sprite.
         verifyCommands: attemptInput.prepared.verifyCommands,
         selfCheck: attemptInput.prepared.selfCheckReady === true,
+        egress: egressOf(attemptInput.prepared),
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
         ...((attemptInput.continueSession ?? null) === null ? {} : { continueSession: attemptInput.continueSession }),
@@ -1092,6 +1131,7 @@ export async function agentRunWorkflow(
         services: attemptInput.prepared.runtime.services ?? null,
         // docs/specs/work-item-images-and-links.md. The images of the check sprite.
         imageFiles: attemptInput.prepared.imageFiles ?? [],
+        egress: egressOf(attemptInput.prepared),
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
       }),
     );
@@ -1251,6 +1291,14 @@ export async function agentRunWorkflow(
 
     status = "RECEIVED";
     await activities.setRunStatus({ runId: id, status, startedAt: new Date(Date.now()).toISOString() });
+
+    // docs/specs/egress-honesty-and-issue-status.md, DI-21.49. Started means that Factoree works on
+    // the issue. A Linear fault never fails the Run.
+    const startedIssueId = input.workItem.issueId;
+    if (startedIssueId !== null && patched(ISSUE_STATUS_PATCH)) {
+      issueStatusTracked = true;
+      await notify(() => activities.startIssueWork({ tenantId: input.tenantId, runId: id, issueId: startedIssueId }));
+    }
 
     {
       // A Run whose budget has already passed must not start work it cannot finish.
@@ -1722,6 +1770,21 @@ export async function agentRunWorkflow(
         return await failRun("RUN_TIMEOUT", timeoutMessage);
       }
       sprite = preparedSandbox;
+      // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The Run ends FAILED_CONFIGURATION
+      // and the post names each host, its reason and where to add it. A reply starts a follow-up run
+      // with a new sandbox, which gets the new allow list.
+      const failMissingHosts = (role: "refiner" | "implementer", hosts: MissingHost[]): Promise<AgentRunWorkflowResult> =>
+        failRun(
+          "CONFIGURATION_INVALID",
+          renderMissingHostsFailure({
+            role,
+            hosts,
+            productSlug: input.product.productSlug,
+            productPageUrl: input.product.productPageUrl ?? null,
+            repositorySlug: resolvedContext.primary.slug,
+            repositoryListDeclared: preparedSandbox.runtime.sandboxAllowListDeclared === true,
+          }),
+        );
       // docs/specs/skill-registry.md. A Product with no skill source sends no signal and no proposal.
       if ((input.product.skillRegistry ?? null) !== null || sandbox.organizationSkills !== null) {
         skillSources = {
@@ -1768,6 +1831,7 @@ export async function agentRunWorkflow(
             imageFiles: preparedSandbox.imageFiles ?? [],
             skills: preparedSandbox.skills,
             previewConfigured: preparedSandbox.preview !== null && preparedSandbox.preview.enabled,
+            egress: egressOf(preparedSandbox),
             timeoutMs: remainingMs(),
             ...(afterHang ? { afterHang: true } : {}),
           }),
@@ -1811,6 +1875,10 @@ export async function agentRunWorkflow(
           `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
         );
       }
+      // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. A host the work needs and the
+      // allow list does not hold stops the Run before anything freezes. Only a human widens it.
+      const refinerMissingHosts = proposal.missingHosts ?? [];
+      if (refinerMissingHosts.length > 0) return await failMissingHosts("refiner", refinerMissingHosts);
       // A refiner that freezes nothing leaves the criteria the Work Item states.
       const contractCriteria = proposal.accepted.length === 0 ? refined.criteria : proposal.accepted;
       const validationAnswers: string[] = [];
@@ -1978,6 +2046,11 @@ export async function agentRunWorkflow(
 
         // A stop that arrived while the Implementer ran must end the Run here.
         if (stopRequested) return await cancelRun();
+
+        // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. A host the implementer named and
+        // the allow list does not hold ends the Run, whatever else the session reported.
+        const implementerMissingHosts = implementation?.missingHosts ?? [];
+        if (implementerMissingHosts.length > 0) return await failMissingHosts("implementer", implementerMissingHosts);
 
         // docs/specs/agent-session-usage-and-hangs.md. The first hang resumes the session once
         // with "continue", and that attempt uses the repair budget. A second hang in the same
@@ -2709,6 +2782,22 @@ export async function agentRunWorkflow(
       // value, so neither one claims that Factoree published nothing.
       publishedPullRequestUrl = publication.pullRequestUrl;
 
+      // DI-21.52. The issue shows its pull request as an attachment, and the session as a link.
+      let pullRequestLinked = false;
+      if (patched(PULL_REQUEST_LINK_PATCH)) {
+        const linkedUrl = publication.pullRequestUrl;
+        await notify(async () => {
+          await activities.linkPullRequest({
+            tenantId: input.tenantId,
+            sessionId: input.agentSessionId,
+            issueId: input.workItem.issueId,
+            pullRequestUrl: linkedUrl,
+            repositorySlug: resolvedContext.primary.slug,
+          });
+          pullRequestLinked = true;
+        });
+      }
+
       // Specification section 14. The patch hash and commit SHA are known after publication, and
       // the pull request URL is known once the pull request exists. All three describe the same
       // moment here.
@@ -2743,6 +2832,7 @@ export async function agentRunWorkflow(
           sessionId: input.agentSessionId,
           workItem: { title: input.workItem.title, url: input.workItem.url },
           pullRequestUrl: publication.pullRequestUrl,
+          pullRequestLinked,
           commitSha: publication.commitSha,
           patchSha256: publication.patchSha256,
           baseSha: publishInput.baseSha,

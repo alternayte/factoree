@@ -3,7 +3,8 @@ import { signGitHubAppJwt, type GitHubAppCredentials } from "./app-token-provide
 /**
  * docs/specs/release-0-1-0.md. The GitHub App manifest flow of setup. The permissions and the
  * events are the ones docs/quickstart.md granted by hand before 0.1.0, plus Workflows
- * (DI-21.33) and Issues read (DI-21.41): six repository permissions and two events. GitHub delivers `installation` and `installation_repositories` to
+ * (DI-21.33) and Issues read (DI-21.41): six repository permissions and three events, with Pull
+ * request (DI-21.51). GitHub delivers `installation` and `installation_repositories` to
  * every App, so the manifest does not name them.
  */
 export const GITHUB_APP_PERMISSIONS = {
@@ -17,7 +18,9 @@ export const GITHUB_APP_PERMISSIONS = {
   metadata: "read",
 } as const;
 
-export const GITHUB_APP_EVENTS = ["push", "deployment_status"] as const;
+// docs/specs/egress-honesty-and-issue-status.md. A close without a merge makes no push, so the
+// pull_request event says when a pull request of a run merged or closed.
+export const GITHUB_APP_EVENTS = ["push", "deployment_status", "pull_request"] as const;
 
 export interface GitHubAppManifest {
   name: string;

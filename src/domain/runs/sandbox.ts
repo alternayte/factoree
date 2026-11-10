@@ -231,6 +231,15 @@ const covers = (allowed: string, domain: string): boolean => {
 };
 
 /**
+ * docs/specs/egress-honesty-and-issue-status.md. True when an entry of `allowList` permits `host`:
+ * the same host, or a wildcard that covers it. The comparison ignores case.
+ */
+export const allowListCovers = (allowList: readonly string[], host: string): boolean => {
+  const domain = host.trim().toLowerCase();
+  return allowList.some((allowed) => covers(allowed.trim().toLowerCase(), domain));
+};
+
+/**
  * R-4. The Product owns the egress ceiling. A repository can only narrow it: the result keeps the
  * repository entries the ceiling covers. A repository that declares nothing gets the ceiling.
  */

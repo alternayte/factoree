@@ -104,6 +104,11 @@ export interface PreparedSandbox {
   skillRecords: DeliveredSkill[];
   /** docs/specs/skill-registry.md. The registry resolution the sandbox holds, or null. */
   skillResolution: { set: string | null; id: string } | null;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md, DI-21.46. The effective allow list of the agent
+   * phase: the run's allow list and the agent hosts of this sandbox, sorted.
+   */
+  allowedHosts: string[];
 }
 
 /** docs/specs/skill-registry.md. One skill that reached a sandbox. SDD section 55 records it. */
@@ -518,7 +523,8 @@ export class SandboxManager {
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.
       // SDD section 29.
-      await sandbox.applyNetworkPolicy(ref, { allowedDomains: [...new Set([...runtime.allowedDomains, ...(input.agentHosts ?? [])])] });
+      const allowedHosts = [...new Set([...runtime.allowedDomains, ...(input.agentHosts ?? [])])].sort();
+      await sandbox.applyNetworkPolicy(ref, { allowedDomains: allowedHosts });
 
       // SDD section 16. Discovery runs on the checkouts, in precedence order. A repository skill
       // always precedes an organization skill of the same name. Discovery needs no egress, so it
@@ -552,6 +558,7 @@ export class SandboxManager {
         skillRecords: deliveredSkillsOf(skillSet, input.registrySkills ?? null),
         skillResolution:
           input.registrySkills === undefined ? null : { set: input.registrySkills.set, id: input.registrySkills.id },
+        allowedHosts,
       };
     } catch (error) {
       // A half-prepared sandbox must not leak. Destruction is idempotent, and a destroy failure

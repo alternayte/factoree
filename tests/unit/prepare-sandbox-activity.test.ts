@@ -112,6 +112,8 @@ const build = (
     recordLastPatch: vi.fn().mockResolvedValue(undefined),
     lastPatch: vi.fn().mockResolvedValue(null),
     setDeliveredContext: vi.fn().mockResolvedValue(undefined),
+    setIssueState: vi.fn().mockResolvedValue(undefined),
+    closePullRequest: vi.fn().mockResolvedValue(null),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({

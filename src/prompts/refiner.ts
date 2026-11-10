@@ -1,7 +1,9 @@
+import type { EgressFacts } from "~/domain/runs/egress.js";
 import { contextFilesBody, imageFilesBody } from "./context-files.js";
+import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@6";
+export const REFINER_PROMPT_VERSION = "refiner@7";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -16,6 +18,11 @@ export interface RefinerPromptFields {
   proposalPath: string;
   proposalSchema: string;
   skills: string[];
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
+   * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
+   */
+  egress?: EgressFacts | null;
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -47,6 +54,18 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
       `The repository is at ${fields.primaryRepositoryPath}. Read it. You must not change any file in it.`,
     ),
     section("Skills", list(fields.skills, "None.")),
+    ...(fields.egress === undefined || fields.egress === null
+      ? []
+      : [
+          section(
+            "Network access",
+            egressBody(
+              fields.egress,
+              "When a check or the work needs a host this sandbox does not reach, list the host and the reason under `missingHosts`, " +
+                "and freeze no check that needs the host. Factoree then stops the Run and asks a human to allow the host.",
+            ),
+          ),
+        ]),
     section(
       "Proposal",
       `Write one JSON document to ${fields.proposalPath}, and nothing else.\n\n${fields.proposalSchema}`,
@@ -64,6 +83,7 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "Prefer an existing test or command of the repository. Name the files that show the pattern in `patterns`.",
         "Ask a question only for a decision the Work Item and the code leave open. Give your proposed answer and its reason. Factoree takes your answer without asking a human, and the reviewer reads the reason, so give a reason the code or the Work Item supports.",
         "You must not invent product behaviour the Work Item and the code do not imply.",
+        "You must not propose a check that needs a host this sandbox does not reach. Name the host under `missingHosts` instead.",
       ].join("\n"),
     ),
   ].join("\n");
