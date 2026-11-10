@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-10
+
+### Fixed
+
+- An issue image reaches the run. The agent session webhook sends it as a `<linear-image>` tag with a signed URL, not as markdown, so 0.8.0 listed it under "Links not read" (DI-21.53).
+- The description, the comments and the images of an issue never raise a context conflict with each other. A later sentence supersedes an earlier one (DI-21.53).
+
 ## [0.8.0] - 2026-11-10
 
 ### Added
