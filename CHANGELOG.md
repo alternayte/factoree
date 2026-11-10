@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-10
+
+### Fixed
+
+- A change to a GitHub Actions workflow publishes. The publication token asks for `workflows: write` only when the patch edits `.github/workflows/`, and a missing permission fails with a message that names it. The App manifest asks for Workflows. An App created before this release needs Workflows added in its settings and accepted on each installation (DI-21.33).
+- A publication failure posts its cause. A failure post lists no repaired failure when the newest attempt passed every check (DI-21.33).
+
 ## [0.7.3] - 2026-11-10
 
 ### Fixed
