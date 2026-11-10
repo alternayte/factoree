@@ -1822,7 +1822,12 @@ export async function agentRunWorkflow(
             adapter: preparedSandbox.adapter,
             workspacePath: preparedSandbox.workspacePath,
             primaryPath: preparedSandbox.primaryPath,
-            workItemText: `${input.workItem.title}\n\n${input.workItem.description}`,
+            // DI-21.54. The kept human comments are Work Item text too, so the refiner reads them
+            // and the gate finds a criterion quoted from a comment.
+            workItemText:
+              workItemContent?.comments === null || workItemContent?.comments === undefined
+                ? `${input.workItem.title}\n\n${input.workItem.description}`
+                : `${input.workItem.title}\n\n${input.workItem.description}\n\n${workItemContent.comments}`,
             goal: refined.goal,
             statedCriteria: refined.acceptanceCriteria,
             contextContract: resolvedContext.document,
