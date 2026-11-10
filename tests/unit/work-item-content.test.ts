@@ -28,7 +28,7 @@ const comment = (overrides: Partial<WorkItemComment> & { id: string }): WorkItem
 });
 
 describe("keptComments", () => {
-  it("keeps human comments in time order and drops bots, agent-session threads and later comments", () => {
+  it("keeps human comments in time order and drops bots, replies in agent-session threads and later comments", () => {
     const kept = keptComments(
       [
         comment({ id: "late", createdAt: "2026-11-10T12:00:00.000Z" }),
@@ -44,7 +44,7 @@ describe("keptComments", () => {
       ],
       "2026-11-10T11:00:00.000Z",
     );
-    expect(kept.map((entry) => entry.id)).toEqual(["first", "reply-to-human", "second"]);
+    expect(kept.map((entry) => entry.id)).toEqual(["first", "reply-to-human", "session-root", "second"]);
   });
 });
 
@@ -115,6 +115,19 @@ describe("classifyLink", () => {
     expect(classifyLink("http://docs.example.dev/guide.md", HOSTS)).toMatchObject({ kind: "not_read" });
     expect(classifyLink("https://user:pw@docs.example.dev/guide.md", HOSTS)).toMatchObject({ kind: "not_read" });
     expect(classifyLink("https://169.254.169.254/latest/meta-data", HOSTS)).toMatchObject({ kind: "not_read" });
+  });
+});
+
+describe("the comment that starts a session (DI-21.55)", () => {
+  it("keeps a human mention that starts a session and drops the replies in its thread", () => {
+    const kept = keptComments(
+      [
+        comment({ id: "root", body: "@factoree run this again. Exclude the migrations.", agentSessionId: "s1", parentId: null }),
+        comment({ id: "reply", body: "Both govern.", agentSessionId: null, parentId: "root" }),
+      ],
+      null,
+    );
+    expect(kept.map((c) => c.id)).toEqual(["root"]);
   });
 });
 

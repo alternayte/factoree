@@ -65,7 +65,10 @@ export const keptComments = (comments: WorkItemComment[], delegatedAt: string | 
     const seen = new Set<string>();
     while (current !== undefined && !seen.has(current.id)) {
       seen.add(current.id);
-      if (current.agentSessionId !== null) return true;
+      // DI-21.55. The human comment that starts a session, such as "@factoree run this again,
+      // and exclude the migrations", is the instruction of the run, so it stays. A reply inside
+      // the session is a decision and stays out.
+      if (current.agentSessionId !== null) return !(current === comment && comment.parentId === null);
       if (current.parentId === null) return current !== comment && current.bot;
       current = byId.get(current.parentId);
     }
