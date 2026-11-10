@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-10
+
+### Added
+
+- An llms.txt context source. MCP answers over server-sent events work. The work sprite receives each external context item as a hash-checked file under `$HOME/.factoree/context`, and the prompts name each file and hold no content (DI-21.34 to DI-21.38).
+- A run reads the human comments, the images and the known-host links of its issue. Images are frozen with their hash and delivered to the refiner, implementer, user validator and reviewer. A run stops before preparation when a role model cannot read images; the reply "ignore the images" continues without the check. Reading a linked GitHub issue needs the App permission Issues: Read (DI-21.39 to DI-21.45).
+- Factoree moves the Linear issue to started when a run starts, back when the run ends without a pull request or every pull request closes, and to completed when every pull request merges. It attaches the pull request to the issue. An App created before this release must subscribe to Pull request events (DI-21.46 to DI-21.52).
+
+### Changed
+
+- A run that needs a host outside its egress allow list ends FAILED_CONFIGURATION and names the host. The agent prompts state the effective allow list, and the reviewer blocks a hand-built stand-in for a named tool or package (DI-21.46 to DI-21.48).
+
 ## [0.7.4] - 2026-11-10
 
 ### Fixed
