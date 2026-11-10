@@ -1,7 +1,9 @@
+import type { EgressFacts } from "~/domain/runs/egress.js";
 import { contextFilesBody, imageFilesBody } from "./context-files.js";
+import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/10";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/11";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -31,6 +33,13 @@ export interface ImplementerPromptFields {
    * prompt never names the preview command, so the implementer starts no production build.
    */
   selfCheck?: boolean;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
+   * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
+   */
+  egress?: EgressFacts | null;
+  /** The file the implementer writes the hosts it needs and cannot reach to. It is outside the repository. */
+  resultPath?: string | null;
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -88,6 +97,19 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
       `${list(fields.actionPolicyLines, "None supplied.")}\n\n` +
         "Each rule names the mechanism that holds it outside this prompt. A rule you cannot see still applies.",
     ),
+    ...(fields.egress === undefined || fields.egress === null || fields.resultPath === undefined || fields.resultPath === null
+      ? []
+      : [
+          section(
+            "Network access",
+            egressBody(
+              fields.egress,
+              "When the work needs a host this sandbox does not reach, stop. Write " +
+                `{ "missingHosts": [{ "host": string, "reason": string }] } to ${fields.resultPath}, and end the session. ` +
+                "Factoree stops the Run and asks a human to allow the host. A new Run then gets the new allow list.",
+            ),
+          ),
+        ]),
     section("Repair findings", list(fields.repairFindings, "None. This is the first attempt.")),
     section(
       "Checks after you finish",
@@ -112,6 +134,8 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
         "You must not push to a git remote.",
         "You must not write a reference repository.",
         "You must state plainly what you did not do.",
+        "You must not work around a denied host: no vendored copy, no local package source and no mirror of what the host serves.",
+        "You must not hand-build a stand-in for a tool or a package the Work Item names, and you must not publish a package under the id of another project.",
       ].join("\n"),
     ),
   ].join("\n");

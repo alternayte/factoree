@@ -179,6 +179,10 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     const secondVerify = names.lastIndexOf("verify");
     expect(names.slice(0, secondVerify + 1)).toEqual([
       "setRunStatus",
+      // docs/specs/egress-honesty-and-issue-status.md. The issue moves to started.
+      "startIssueWork",
+      // docs/specs/work-item-images-and-links.md. The comments, the images and the links.
+      "readWorkItemContent",
       "setRunStatus",
       "refine",
       "setRunAutonomyLevel",
@@ -208,10 +212,11 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     ]);
     // docs/specs/run-speed.md. The review runs beside user validation, so their order is not
     // fixed.
-    expect(names.slice(secondVerify + 1, -2).sort()).toEqual(
+    expect(names.slice(secondVerify + 1, -3).sort()).toEqual(
       ["review", "setRunStatus", "setRunStatus", "userValidate"].sort(),
     );
-    expect(names.slice(-2)).toEqual(["releaseCheckSandbox", "completeRun"]);
+    // docs/specs/egress-honesty-and-issue-status.md. A run with no pull request moves its issue back.
+    expect(names.slice(-3)).toEqual(["releaseCheckSandbox", "completeRun", "restoreIssueStatus"]);
     expect(namesFor("run-ses-at16a").filter(isPublishingName)).toEqual([]);
     expect(result.status).toBe("CANCELLED");
   });
@@ -237,6 +242,10 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
     // implement calls and three verify calls appear, and no publishing activity appears.
     expect(namesFor("run-ses-at16b")).toEqual([
       "setRunStatus",
+      // docs/specs/egress-honesty-and-issue-status.md. The issue moves to started.
+      "startIssueWork",
+      // docs/specs/work-item-images-and-links.md. The comments, the images and the links.
+      "readWorkItemContent",
       "setRunStatus",
       "refine",
       "setRunAutonomyLevel",
@@ -271,6 +280,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "verify",
       "releaseCheckSandbox",
       "completeRun",
+      // docs/specs/egress-honesty-and-issue-status.md. A run with no pull request moves its issue back.
+      "restoreIssueStatus",
       // docs/specs/run-recovery.md. The failure post reads the recorded facts.
       "describeRunFailure",
     ]);

@@ -176,6 +176,11 @@ export interface PublishProofPackActivityInput {
   sessionId: string;
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md, DI-21.52. True when the session already holds
+   * the pull request link from the moment the pull request opened.
+   */
+  pullRequestLinked?: boolean;
   commitSha: string;
   patchSha256: string;
   baseSha: string;
@@ -510,7 +515,9 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     // Pack exists, and the activity retry then posts the identical body again.
     await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt, document });
     // Linear documents the session link as the way to name a published pull request.
-    await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
+    if (input.pullRequestLinked !== true) {
+      await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
+    }
     await dependencies.agentSession.respond(input.sessionId, body);
 
     dependencies.logger.info("proof pack posted", {

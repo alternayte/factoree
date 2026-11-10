@@ -132,6 +132,10 @@ model Run {
   // docs/specs/release-0-1-0.md, DI-15.13. The moment the Run took one of its Product's
   // maxConcurrentRuns slots. A Run holds the slot until its status is terminal.
   slotGrantedAt            DateTime?
+  // docs/specs/egress-honesty-and-issue-status.md, DI-21.49. The Linear state the run moved its
+  // issue from, and the state it set. Both null when the run moved nothing.
+  issueStateFromId         String?   @map("issue_state_from_id")
+  issueStateSetId          String?   @map("issue_state_set_id")
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   stages                   RunStage[]
@@ -637,12 +641,17 @@ model RunTarget {
   // docs/specs/proof-pack-and-visual-evidence.md. The pull request preview that CI published for
   // the commit, from a GitHub deployment status. A link for humans, never evidence.
   previewUrl      String?
+  // docs/specs/egress-honesty-and-issue-status.md, DI-21.51. The pull request number, and open,
+  // merged or closed from the GitHub pull_request event.
+  pullRequestNumber Int?     @map("pull_request_number")
+  pullRequestState  String?  @map("pull_request_state")
   createdAt       DateTime   @default(now())
 
   @@unique([runId, repositoryId])
   @@index([runId])
   @@index([tenantId])
   @@index([tenantId, commitSha])
+  @@index([tenantId, pullRequestNumber])
 }
 
 // docs/specs/autonomy-levels.md. One row for each change of a Product policy field, so raising

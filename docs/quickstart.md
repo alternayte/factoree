@@ -106,9 +106,15 @@ and the run then lists the link under "Links not read".
 | Deployments | Read |
 | Metadata | Read |
 
-The App subscribes to the `Push` and `Deployment status` events. A
-`deployment_status` event carries the pull request preview URL that CI
-publishes, and Factoree adds it to the Linear session. GitHub delivers the
+The App subscribes to the `Push`, `Deployment status` and `Pull request`
+events. A `deployment_status` event carries the pull request preview URL that
+CI publishes, and Factoree adds it to the Linear session. A `pull_request`
+event tells Factoree that a pull request of a run merged or closed. Factoree
+then moves the Linear issue to its completed state, or back to its previous
+state. An App created with release 0.7.4 or earlier lacks the `Pull request` event. Open the App
+settings, then Permissions & events, and select `Pull request` under Subscribe
+to events. Without it, the issue stays in its started state after a merge.
+GitHub delivers the
 `installation` and the `installation_repositories` events to every App
 automatically. The webhook URL is `<FACTOREE_PUBLIC_URL>/webhooks/github`.
 

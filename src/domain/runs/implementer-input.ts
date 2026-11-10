@@ -1,4 +1,5 @@
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
+import type { EgressFacts } from "~/domain/runs/egress.js";
 import { looksLikeCredentialValue } from "~/domain/security/credential-formats.js";
 import { IMPLEMENTER_PROMPT_VERSION, renderImplementerPrompt } from "~/prompts/implementer.js";
 
@@ -26,6 +27,9 @@ export interface BuildImplementerInput {
   verifyCommands?: Array<{ name: string; run: string }>;
   /** docs/specs/implementer-self-check.md. True when the work sprite holds agent-browser. */
   selfCheck?: boolean;
+  /** docs/specs/egress-honesty-and-issue-status.md. The allow list facts, and the result file. */
+  egress?: EgressFacts | null;
+  resultPath?: string | null;
 }
 
 export interface ImplementerInput {
@@ -193,6 +197,8 @@ export const buildImplementerInput = (input: BuildImplementerInput): Implementer
       skillProposals: input.skillProposals === true,
       verifyCommands: input.verifyCommands ?? [],
       selfCheck: input.selfCheck === true,
+      egress: input.egress ?? null,
+      resultPath: input.resultPath ?? null,
       actionPolicyLines: input.actionPolicy.describe(),
       repairFindings: input.repairFindings,
     }),

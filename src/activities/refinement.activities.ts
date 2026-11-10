@@ -33,6 +33,7 @@ import type {
 } from "~/domain/refinement/refinement-engine.js";
 import type { WorkItemSource } from "~/domain/refinement/work-item.js";
 import type { RunStageStore } from "~/domain/runs/run-stage.js";
+import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
 
 export interface RefineActivityInput {
   runId: string;
@@ -121,6 +122,11 @@ export interface ProposeRefinementActivityInput {
    * hung one. It writes its own proposal file and its own rows.
    */
   afterHang?: boolean;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
+   * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
+   */
+  egress?: EgressFacts | null;
 }
 
 export interface ProposeRefinementActivityOutput {
@@ -141,6 +147,11 @@ export interface ProposeRefinementActivityOutput {
   reason: string;
   /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
   hang: AgentHang;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The named hosts the effective allow
+   * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
+   */
+  missingHosts?: MissingHost[];
 }
 
 const REFINER_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -259,6 +270,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       proposalPath,
       proposalSchema: REFINER_PROPOSAL_SCHEMA,
       skills: input.skills,
+      egress: input.egress ?? null,
     });
 
     const context = Context.current();
@@ -374,6 +386,16 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       } catch (error) {
         return { status: "unavailable", ...empty, reason: agent.redactor.redactText(String(error)) };
       }
+      // DI-21.48. A host the allow list already holds is a misread fault, not a missing host.
+      const hosts = gateMissingHosts(gated.missingHosts, input.egress?.allowed ?? []);
+      if (hosts.dropped.length > 0) {
+        dependencies.logger.warn("the refiner named hosts the allow list already holds, and Factoree dropped them", {
+          tenant_id: input.tenantId,
+          run_id: input.runId,
+          step: "propose_refinement",
+          hosts: hosts.dropped.map((entry) => entry.host).join(", "),
+        });
+      }
       dependencies.logger.info("refinement proposed", {
         tenant_id: input.tenantId,
         run_id: input.runId,
@@ -389,6 +411,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         visualEvidenceGap: gated.visualEvidenceGap,
         reason: "",
         hang: null,
+        missingHosts: hosts.missing,
       };
     } finally {
       clearInterval(heartbeat);

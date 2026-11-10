@@ -79,6 +79,7 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
   const started: { tenantId: string; githubInstallationId: string }[] = [];
   const previews: { tenantId: string; repositoryFullName: string; commitSha: string; previewUrl: string }[] = [];
   const pushes: { tenantId: string; repositoryFullName: string }[] = [];
+  const closes: { tenantId: string; deliveryId: string; repositoryFullName: string; number: number; merged: boolean }[] = [];
 
   const app: FastifyInstance = Fastify({ logger: false });
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
@@ -108,10 +109,15 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
       pushes.push(input);
       return Promise.resolve();
     },
+    // Only pull request 7 belongs to a run.
+    pullRequestClosed: (input) => {
+      closes.push(input);
+      return Promise.resolve(input.number === 7 ? "handled" : "unmatched");
+    },
     logger,
   });
 
-  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews, pushes };
+  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews, pushes, closes };
 };
 
 describe("GitHub webhook route", () => {
@@ -402,5 +408,36 @@ describe("GitHub webhook route", () => {
     const response = await app.inject(deploymentStatus(state, "published-sha", url));
     expect(response.json()).toEqual({ status: "ignored", reason: "no live preview" });
     expect(previews).toEqual([]);
+  });
+
+  // docs/specs/egress-honesty-and-issue-status.md. A close without a merge makes no push.
+  const pullRequest = (action: string, number: number, merged: boolean) => ({
+    method: "POST" as const,
+    url: "/webhooks/github",
+    headers: { "x-github-event": "pull_request", "x-github-delivery": "delivery-1" },
+    payload: {
+      action,
+      number,
+      pull_request: { number, merged, state: "closed" },
+      repository: { full_name: "Acme/API", default_branch: "main" },
+      installation: { id: 42 },
+    },
+  });
+
+  it("passes a merged and a closed pull request to the run with the delivery id", async () => {
+    const { app, closes } = build({});
+    expect((await app.inject(pullRequest("closed", 7, true))).json()).toEqual({ status: "handled" });
+    expect((await app.inject(pullRequest("closed", 7, false))).json()).toEqual({ status: "handled" });
+    expect(closes).toEqual([
+      { tenantId: "tenant-1", deliveryId: "github:delivery-1", repositoryFullName: "Acme/API", number: 7, merged: true },
+      { tenantId: "tenant-1", deliveryId: "github:delivery-1", repositoryFullName: "Acme/API", number: 7, merged: false },
+    ]);
+  });
+
+  it("ignores a pull request no run opened, and every action but closed", async () => {
+    const { app, closes } = build({});
+    expect((await app.inject(pullRequest("closed", 8, true))).json()).toEqual({ status: "ignored", reason: "no run opened this pull request" });
+    expect((await app.inject(pullRequest("opened", 7, false))).json()).toEqual({ status: "ignored", reason: "unsupported action" });
+    expect(closes.map((entry) => entry.number)).toEqual([8]);
   });
 });

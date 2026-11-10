@@ -312,6 +312,7 @@ describe("DelegationService", () => {
       allowedDomains: [],
       organizationSkillsRepository: null,
       skillRegistry: null,
+      productPageUrl: "https://factoree.example/products/product-app",
     });
     expect(started.args[0]?.workItem).toMatchObject({
       title: "Fix the header",

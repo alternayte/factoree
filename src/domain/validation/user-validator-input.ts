@@ -1,4 +1,5 @@
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
+import type { EgressFacts } from "~/domain/runs/egress.js";
 import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.js";
 import {
   USER_VALIDATOR_PLAN_CORRECTION_VERSION,
@@ -24,6 +25,8 @@ export interface BuildUserValidatorInput {
   fakes?: ReadonlyArray<{ service: string; name: string }>;
   /** docs/specs/work-item-images-and-links.md. One line per image file of the check sprite. */
   imageFiles?: string[];
+  /** docs/specs/egress-honesty-and-issue-status.md. The allow list facts of the check sprite. */
+  egress?: EgressFacts | null;
 }
 
 export interface UserValidatorInput {
@@ -93,6 +96,7 @@ export const buildUserValidatorInput = (input: BuildUserValidatorInput): UserVal
       accounts: input.accounts ?? [],
       fakes: (input.fakes ?? []).map((fake) => `${fake.name}, answered by the compose service "${fake.service}"`),
       imageFiles: input.imageFiles ?? [],
+      egress: input.egress ?? null,
     }),
     promptVersion: USER_VALIDATOR_PROMPT_VERSION,
     environment: { ...input.projectTestSecrets },

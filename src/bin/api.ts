@@ -28,6 +28,8 @@ import { buildServer } from "~/http/server.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
+import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.js";
+import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
@@ -166,6 +168,21 @@ const recordPullRequestPreview = async (input: {
   return true;
 };
 
+// docs/specs/egress-honesty-and-issue-status.md. A merged or closed pull request of a run moves its
+// issue status. The tenant row carries the workspace id of the Linear token.
+const linearTokenOfTenant = async (tenantId: string): Promise<string> => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  if (tenant === null) throw new Error(`no tenant ${tenantId} for the issue status`);
+  return await linearTokens.tokenFor(tenant.linearWorkspaceId);
+};
+const pullRequestClose = new PullRequestCloseHandler({
+  webhookLog: new PrismaWebhookLog(prisma),
+  runs,
+  issues: async (tenantId) => createLinearIssueStatus(await linearTokenOfTenant(tenantId)),
+  respond: async (tenantId, sessionId, body) => createLinearAgentClient(await linearTokenOfTenant(tenantId)).respond(sessionId, body),
+  logger,
+});
+
 const auth = new AuthHandle({ prisma, settings, publicUrl: env.FACTOREE_PUBLIC_URL, masterKey: env.FACTOREE_MASTER_KEY, logger });
 
 const startRepositorySetup = createRepositorySetupStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
@@ -197,6 +214,7 @@ const app = buildServer({
   modelCatalog: new ModelCatalogService({ store: new PrismaModelCatalogStore(prisma), source: createModelsDevSource(), logger }),
   checkSkillRegistry: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }).check(),
   recordPullRequestPreview,
+  pullRequestClosed: (input) => pullRequestClose.handle(input),
   setup: {
     github: {
       convertManifest: (input) => convertGitHubAppManifest(input),

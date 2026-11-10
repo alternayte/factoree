@@ -1,6 +1,8 @@
 import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import { PrismaAppChangeIssueStore } from "~/persistence/prisma/app-change-issue.prisma.js";
 import { createLinearIssues } from "~/adapters/linear/linear-issues.js";
+import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.js";
+import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
@@ -335,6 +337,18 @@ const workItemContent: WorkItemContentPort = {
   github: (target) => githubWorkItemLinks.read(target),
 };
 
+// docs/specs/egress-honesty-and-issue-status.md. The issue status moves act as the Factoree app of
+// the tenant's workspace, and each call retries once with a fresh token.
+const issueStatusFor = async (tenantId: string): Promise<IssueStatusPort> => {
+  const workspaceId = await linearWorkspaceOf(tenantId);
+  return {
+    read: (issueId) => withLinearToken(workspaceId, (token) => createLinearIssueStatus(token).read(issueId)),
+    move: (issueId, stateId) => withLinearToken(workspaceId, (token) => createLinearIssueStatus(token).move(issueId, stateId)),
+    attachPullRequest: (issueId, pullRequest) =>
+      withLinearToken(workspaceId, (token) => createLinearIssueStatus(token).attachPullRequest(issueId, pullRequest)),
+  };
+};
+
 // docs/specs/work-item-images-and-links.md. The input types of each role model, from the stored
 // models.dev catalog. A product the worker cannot read is not checked here: preparation fails it.
 const vision = async (tenantId: string, productId: string, imageCount: number): Promise<string | null> => {
@@ -421,6 +435,7 @@ const worker = await Worker.create({
     workItemContent,
     contextConfigurations,
     vision,
+    issueStatus: issueStatusFor,
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),

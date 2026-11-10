@@ -70,3 +70,15 @@ export const deploymentStatusEventSchema = z.object({
   repository: z.object({ full_name: z.string() }),
   installation: z.object({ id: z.number() }),
 });
+
+/**
+ * docs/specs/egress-honesty-and-issue-status.md. A pull_request event. Factoree reads the action,
+ * the number, whether the pull request merged, the repository and the installation.
+ */
+export const pullRequestEventSchema = z.object({
+  action: z.string(),
+  number: z.number().int(),
+  pull_request: z.object({ merged: z.boolean().nullish() }),
+  repository: z.object({ full_name: z.string() }),
+  installation: z.object({ id: z.number() }),
+});

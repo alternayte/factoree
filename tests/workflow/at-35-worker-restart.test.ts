@@ -44,6 +44,10 @@ const activities = {
   postFinalResponse: async () => undefined,
   postError: async () => undefined,
   fetchWorkItemFacts: async () => ({ labels: [], project: null }),
+  // docs/specs/egress-honesty-and-issue-status.md. The issue status moves reach no Linear.
+  startIssueWork: async () => undefined,
+  restoreIssueStatus: async () => undefined,
+  linkPullRequest: async () => undefined,
   // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
   readWorkItemContent: async () => ({
     comments: null,

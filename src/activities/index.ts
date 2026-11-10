@@ -54,6 +54,8 @@ import type { RepositorySetupMarks, RepositorySetupStore } from "~/domain/setup/
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
 import { createRecoveryActivities } from "./recovery.activities.js";
+import { createIssueStatusActivities } from "./issue-status.activities.js";
+import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import {
   createSkillRegistryActivities,
   type OrganizationSkillsFactory,
@@ -134,6 +136,11 @@ export interface ActivityDependencies {
   workItemContent?: WorkItemContentPort | undefined;
   contextConfigurations?: Pick<ContextSourceConfigurationStore, "list"> | undefined;
   vision?: ((tenantId: string, productId: string, imageCount: number) => Promise<string | null>) | undefined;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The Linear status port of a tenant. A worker
+   * without it moves no issue status.
+   */
+  issueStatus?: ((tenantId: string) => Promise<IssueStatusPort>) | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -309,6 +316,12 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     logger: dependencies.logger,
     skills: dependencies.skills,
+  }),
+  ...createIssueStatusActivities({
+    runs: dependencies.runs,
+    issues: dependencies.issueStatus ?? (() => Promise.reject(new Error("this worker holds no Linear issue status port"))),
+    agentSession: dependencies.agentSession,
+    logger: dependencies.logger,
   }),
   ...createRecoveryActivities({
     runViews: dependencies.runViews,

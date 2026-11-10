@@ -17,6 +17,8 @@ import type {
 } from "~/domain/runs/run-repository.js";
 import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
 import type { RunFailureCategory } from "~/domain/runs/failure-category.js";
+import { pullRequestNumberOf, type IssueStateRecord, type PullRequestState } from "~/domain/runs/issue-status.js";
+import type { ClosedPullRequestRun } from "~/domain/runs/run-repository.js";
 
 type RunRow = Awaited<ReturnType<FactoreePrismaClient["run"]["findFirst"]>>;
 
@@ -53,7 +55,12 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   createdAt: row.createdAt,
   startedAt: row.startedAt,
   completedAt: row.completedAt,
+  issueStateFromId: row.issueStateFromId ?? null,
+  issueStateSetId: row.issueStateSetId ?? null,
 });
+
+const pullRequestStateOf = (value: string | null): PullRequestState =>
+  value === "merged" || value === "closed" ? value : "open";
 
 export class PrismaRunRepository implements RunRepository {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -291,9 +298,14 @@ export class PrismaRunRepository implements RunRepository {
     patch: RunTargetPatch,
   ): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    // DI-21.51. The pull request number matches the pull_request event, and a new pull request is open.
+    const number = patch.pullRequestUrl === undefined ? null : pullRequestNumberOf(patch.pullRequestUrl);
     const updated = await this.prisma.runTarget.updateMany({
       where: { runId, repositoryId, tenantId },
-      data: patch,
+      data: {
+        ...patch,
+        ...(patch.pullRequestUrl === undefined ? {} : { pullRequestNumber: number, pullRequestState: "open" }),
+      },
     });
     // A write that reaches no row must not report success. A wrong Run, repository, or tenant is
     // a caller defect, and a silent success leaves the RunTarget facts unrecorded.
@@ -370,6 +382,55 @@ export class PrismaRunRepository implements RunRepository {
     if (updated.count === 0) {
       throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the config SHA`);
     }
+  }
+
+  async setIssueState(tenantId: string, runId: string, state: IssueStateRecord): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { issueStateFromId: state.fromId, issueStateSetId: state.setId },
+    });
+    if (updated.count === 0) throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the issue state`);
+  }
+
+  async closePullRequest(
+    tenantId: string,
+    repositoryFullName: string,
+    number: number,
+    state: "merged" | "closed",
+  ): Promise<ClosedPullRequestRun | null> {
+    // GitHub names a repository with its own case, so the match ignores case. The tenant filter is
+    // part of the query, and the newest target wins when a number was reused across a rename.
+    const target = await this.prisma.runTarget.findFirst({
+      where: {
+        tenantId,
+        pullRequestNumber: number,
+        repository: { fullName: { equals: repositoryFullName, mode: "insensitive" } },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, runId: true },
+    });
+    if (target === null) return null;
+    await this.prisma.runTarget.update({ where: { id: target.id }, data: { pullRequestState: state } });
+    const run = await this.prisma.run.findFirstOrThrow({
+      where: { id: target.runId, tenantId },
+      select: {
+        id: true,
+        linearIssueId: true,
+        linearAgentSessionId: true,
+        issueStateFromId: true,
+        issueStateSetId: true,
+        targets: { where: { pullRequestUrl: { not: null } }, select: { pullRequestState: true } },
+      },
+    });
+    return {
+      runId: run.id,
+      linearIssueId: run.linearIssueId,
+      linearAgentSessionId: run.linearAgentSessionId,
+      issueStateFromId: run.issueStateFromId,
+      issueStateSetId: run.issueStateSetId,
+      pullRequestStates: run.targets.map((entry) => pullRequestStateOf(entry.pullRequestState)),
+    };
   }
 
   async countByProduct(tenantId: string, productId: string): Promise<number> {

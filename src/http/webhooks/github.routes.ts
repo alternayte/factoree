@@ -5,6 +5,7 @@ import {
   FACTOREE_CONFIG_PATH,
   installationEventSchema,
   installationRepositoriesEventSchema,
+  pullRequestEventSchema,
   pushEventSchema,
 } from "~/adapters/github/webhook-schemas.js";
 import type { DiscoveryOutcome, DiscoveryService } from "~/domain/products/discovery-service.js";
@@ -40,6 +41,17 @@ export interface GitHubWebhookDependencies {
    * its app-change issues, and a round whose issues all ended starts the next setup.
    */
   setupAfterPush?: (input: { tenantId: string; repositoryFullName: string }) => Promise<void>;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. A pull request of a run merged or closed. It
+   * answers "unmatched" when no run target of the tenant opened it.
+   */
+  pullRequestClosed?: (input: {
+    tenantId: string;
+    deliveryId: string;
+    repositoryFullName: string;
+    number: number;
+    merged: boolean;
+  }) => Promise<"handled" | "duplicate" | "unmatched">;
 }
 
 /**
@@ -189,6 +201,33 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         previewUrl: url,
       });
       return reply.code(200).send(linked ? { status: "handled" } : { status: "ignored", reason: "no run published this commit" });
+    }
+
+    if (event === "pull_request") {
+      const parsed = pullRequestEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      // A close without a merge makes no push, so only this event says a pull request ended.
+      if (parsed.data.action !== "closed" || dependencies.pullRequestClosed === undefined) {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const merged = parsed.data.pull_request.merged === true;
+      const delivery = request.headers["x-github-delivery"];
+      const outcome = await dependencies.pullRequestClosed({
+        tenantId,
+        // GitHub always names the delivery. Without it, the event itself keys the marker.
+        deliveryId:
+          typeof delivery === "string" && delivery !== ""
+            ? `github:${delivery}`
+            : `github:pull_request:${parsed.data.repository.full_name}#${String(parsed.data.number)}:${merged ? "merged" : "closed"}`,
+        repositoryFullName: parsed.data.repository.full_name,
+        number: parsed.data.number,
+        merged,
+      });
+      return reply
+        .code(200)
+        .send(outcome === "unmatched" ? { status: "ignored", reason: "no run opened this pull request" } : { status: outcome });
     }
 
     if (event === "installation") {

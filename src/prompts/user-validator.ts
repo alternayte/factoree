@@ -1,7 +1,9 @@
+import type { EgressFacts } from "~/domain/runs/egress.js";
 import { imageFilesBody } from "./context-files.js";
+import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@8";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@9";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -20,6 +22,11 @@ export interface UserValidatorPromptFields {
    * images are the author's intent, not an Implementer artefact, so the fresh context may see them.
    */
   imageFiles?: string[];
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the check sprite and
+   * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
+   */
+  egress?: EgressFacts | null;
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -71,6 +78,17 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
           : `These external APIs are fakes in the sandbox, so their data is not real:\n${(fields.fakes ?? []).map((line) => `- ${line}`).join("\n")}`,
       ].join("\n\n"),
     ),
+    ...(fields.egress === undefined || fields.egress === null
+      ? []
+      : [
+          section(
+            "Network access",
+            egressBody(
+              fields.egress,
+              "When a check needs a host this sandbox does not reach, state plainly that you cannot check the assertion, and name the host.",
+            ),
+          ),
+        ]),
     section(
       "What Factoree does",
       [

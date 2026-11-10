@@ -20,6 +20,8 @@ import type { RunStageStore } from "~/domain/runs/run-stage.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
 import { recordSessionActivations, type SkillRegistryFactory } from "./skill-registry.activities.js";
+import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
+import { parseImplementerResult } from "~/domain/runs/implementer-result.js";
 
 export interface AgentActivityDependencies {
   runners: AgentRunnerRegistry;
@@ -105,6 +107,11 @@ export interface ImplementActivityInput {
    * starts a fresh session.
    */
   continueSession?: AgentSessionRef | null;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
+   * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
+   */
+  egress?: EgressFacts | null;
 }
 
 export interface ImplementActivityOutput {
@@ -120,7 +127,19 @@ export interface ImplementActivityOutput {
   cancelledSession: boolean;
   /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
   hang: AgentHang;
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The named hosts the effective allow
+   * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
+   */
+  missingHosts?: MissingHost[];
 }
+
+/**
+ * DI-21.47. The result file of one implementer attempt. It sits outside the primary worktree, so
+ * it never reaches the patch, and each attempt has its own, so a repair never reads an old one.
+ */
+export const implementerResultPath = (workspacePath: string, attempt: number): string =>
+  `${workspacePath}/implementer/result-${String(attempt)}.json`;
 
 /** docs/specs/agent-session-usage-and-hangs.md. The whole prompt of the resume after a hang. */
 export const CONTINUE_PROMPT = "continue";
@@ -183,6 +202,11 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     }
 
     const actionPolicy = buildActionPolicy({ stagingRead: input.stagingRead });
+    const sandboxRef = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+    const resultPath = input.egress === undefined || input.egress === null ? null : implementerResultPath(input.workspacePath, input.attempt);
+    if (resultPath !== null) {
+      await dependencies.sandbox.exec(sandboxRef, { file: "mkdir", args: ["-p", `${input.workspacePath}/implementer`], cwd: "/" });
+    }
     const implementerInput = buildImplementerInput({
       goal: input.goal,
       humanDecisions: input.humanDecisions,
@@ -201,6 +225,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       projectTestSecrets,
       verifyCommands: input.verifyCommands ?? [],
       selfCheck: input.selfCheck !== undefined && input.selfCheck !== null && input.selfCheck !== false,
+      egress: input.egress ?? null,
+      resultPath,
     });
 
     // SDD section 30. The runner credential is attached again here, because the attachment lives
@@ -422,6 +448,35 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       },
     );
 
+    // DI-21.47 and DI-21.48. The hosts the implementer named. A missing file names none, and a
+    // file Factoree cannot read names none and leaves a warning, because a named host can only
+    // stop a Run.
+    let missingHosts: MissingHost[] = [];
+    if (resultPath !== null) {
+      const read = await dependencies.sandbox.exec(sandboxRef, { file: "cat", args: [resultPath], cwd: "/" });
+      if (read.exitCode === 0 && read.stdout.trim() !== "") {
+        const named = parseImplementerResult(read.stdout);
+        if (named === null) {
+          dependencies.logger.warn("the implementer result file is not valid, so Factoree reads no missing host from it", {
+            tenant_id: input.tenantId,
+            run_id: input.runId,
+            step: "implement",
+          });
+        } else {
+          const hosts = gateMissingHosts(named, input.egress?.allowed ?? []);
+          missingHosts = hosts.missing;
+          if (hosts.dropped.length > 0) {
+            dependencies.logger.warn("the implementer named hosts the allow list already holds, and Factoree dropped them", {
+              tenant_id: input.tenantId,
+              run_id: input.runId,
+              step: "implement",
+              hosts: hosts.dropped.map((entry) => entry.host).join(", "),
+            });
+          }
+        }
+      }
+    }
+
     metrics.implementationDuration.observe(
       { tenant_id: input.tenantId, product_id: input.productId, runner: runner.name },
       result.durationMs / 1000,
@@ -446,6 +501,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       durationMs: result.durationMs,
       cancelledSession,
       hang: hangOf([result]),
+      missingHosts,
     };
   },
 

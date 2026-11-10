@@ -13,6 +13,11 @@ export interface ProjectRuntimeConfig {
   /** SDD section 29. An empty list denies all egress. */
   allowedDomains: string[];
   /**
+   * docs/specs/egress-honesty-and-issue-status.md. True when `.factoree/config.yaml` declares a
+   * non-empty `sandbox.allowedDomains`, which narrows the Product list. Absent in an old history.
+   */
+  sandboxAllowListDeclared?: boolean;
+  /**
    * docs/specs/repository-setup-and-services.md. The globs of the files whose content keys the
    * warm snapshot. Absent in a history recorded before it existed.
    */
@@ -164,6 +169,7 @@ export const toProjectRuntimeConfig = (
     // The same normalisation the sandbox applies, so the value carried on the Run and the value
     // sent to the adapter can never differ.
     allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),
+    sandboxAllowListDeclared: config.sandbox.allowedDomains.length > 0,
     keyFiles: config.bootstrap?.keyFiles ?? [],
     bootstrapAllowedDomains: ecosystemHostsOf(config.bootstrap?.allowedDomains ?? []),
     services:

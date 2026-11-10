@@ -1,4 +1,5 @@
 import type { AccountConfig, ServicesConfig } from "~/domain/runs/project-runtime-config.js";
+import type { EgressFacts } from "~/domain/runs/egress.js";
 import { listFakes, type FakeService } from "~/domain/runs/services.js";
 import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
@@ -134,6 +135,11 @@ export interface UserValidateActivityInput {
    * history recorded before the images existed.
    */
   imageFiles?: string[];
+  /**
+   * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the check sprite and
+   * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
+   */
+  egress?: EgressFacts | null;
 }
 
 export interface UserValidateActivityOutput {
@@ -469,6 +475,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         accounts: accountNames,
         fakes,
         imageFiles: input.imageFiles ?? [],
+        egress: input.egress ?? null,
       });
 
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the
@@ -752,6 +759,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               projectTestSecrets,
               accounts: accountNames,
               fakes,
+              imageFiles: input.imageFiles ?? [],
+              egress: input.egress ?? null,
             });
             const promptVersion = `${freshInput.promptVersion}+${correction.promptVersion}`;
             const fresh = await runner.run({
