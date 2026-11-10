@@ -1579,6 +1579,7 @@ export type ListRunsResponses = {
       createdAt: string;
       completedAt: string | null;
       durationMs: number | null;
+      waitedMs: number;
     }>;
     nextCursor: string | null;
   };
@@ -1635,6 +1636,7 @@ export type GetRunResponses = {
     createdAt: string;
     completedAt: string | null;
     durationMs: number | null;
+    waitedMs: number;
     temporalWorkflowId: string;
     autonomyLevel: string;
     followUpOfRunId: string | null;

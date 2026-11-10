@@ -207,6 +207,8 @@ export interface PublishProofPackActivityInput {
   decisions?: FactoreeDecision[];
   /** docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved, or null. */
   baseMove?: ProofPackBaseMove | null;
+  /** DI-21.56. The wait for a run slot or a sandbox slot. Absent in an older history. */
+  waitedMs?: number;
   /** docs/specs/autonomy-levels.md. The level of the Run, and the caps that applied. */
   autonomyLevel: string;
   autonomyReasons: string[];
@@ -464,6 +466,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       baseMove: input.baseMove ?? null,
       // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.
       agentUsage: summarizeAgentSessions(sessionRows),
+      waitedMs: input.waitedMs ?? 0,
       modelWarning,
       // DI-15.23. A plan correction session marks a pass whose first Validation Plan was rejected.
       planCorrections: sessionRows

@@ -21,8 +21,13 @@ export interface RunListItem {
   costUsd: number | null;
   createdAt: Date;
   completedAt: Date | null;
-  /** From the start of the work to the end, or null while the run is active. */
+  /**
+   * From the start of the work to the end, without the wait for a run slot or a sandbox slot, or
+   * null while the run is active (DI-21.56).
+   */
   durationMs: number | null;
+  /** DI-21.56. The time the run waited for a run slot or a sandbox slot. */
+  waitedMs: number;
 }
 
 export interface RunStageView {

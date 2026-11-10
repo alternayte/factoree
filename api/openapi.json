@@ -6033,6 +6033,9 @@
                               "number",
                               "null"
                             ]
+                          },
+                          "waitedMs": {
+                            "type": "number"
                           }
                         },
                         "required": [
@@ -6051,7 +6054,8 @@
                           "costUsd",
                           "createdAt",
                           "completedAt",
-                          "durationMs"
+                          "durationMs",
+                          "waitedMs"
                         ]
                       }
                     },
@@ -6220,6 +6224,9 @@
                         "number",
                         "null"
                       ]
+                    },
+                    "waitedMs": {
+                      "type": "number"
                     },
                     "temporalWorkflowId": {
                       "type": "string"
@@ -6570,6 +6577,7 @@
                     "createdAt",
                     "completedAt",
                     "durationMs",
+                    "waitedMs",
                     "temporalWorkflowId",
                     "autonomyLevel",
                     "followUpOfRunId",

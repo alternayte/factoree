@@ -36,6 +36,7 @@ export const runListItemSchema = z.object({
   createdAt: z.string(),
   completedAt: z.string().nullable(),
   durationMs: z.number().nullable(),
+  waitedMs: z.number(),
 });
 
 export const runDetailSchema = runListItemSchema.extend({

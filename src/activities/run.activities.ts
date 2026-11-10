@@ -101,6 +101,8 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     /** docs/specs/run-visibility.md. The sentence the human read. Absent in an older history. */
     failureMessage?: string;
     completedAt: string;
+    /** DI-21.56. The total wait for a run slot or a sandbox slot. Absent in an older history. */
+    waitedMs?: number;
   }): Promise<void> {
     const before = await dependencies.runs.findById(input.tenantId, input.runId);
     const alreadyTerminal = before !== null && isTerminalRunStatus(before.status);
@@ -112,13 +114,14 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       ...(failureCategory === undefined ? {} : { failureCategory }),
       ...(input.failureMessage === undefined ? {} : { failureMessage: dependencies.redactor.redactText(input.failureMessage) }),
       completedAt: new Date(input.completedAt),
+      ...(input.waitedMs === undefined ? {} : { waitedMs: Math.max(0, Math.round(input.waitedMs)) }),
     });
     const labels = { tenant_id: run.tenantId, product_id: run.productId };
     const completedAt = run.completedAt ?? new Date(input.completedAt);
     // An activity retry after a successful write must not count the terminal state twice.
     if (!alreadyTerminal) {
       metrics.activeRuns.dec(labels);
-      metrics.runDuration.observe(labels, (completedAt.getTime() - run.createdAt.getTime()) / 1000);
+      metrics.runDuration.observe(labels, Math.max(0, completedAt.getTime() - run.createdAt.getTime() - (input.waitedMs ?? 0)) / 1000);
       if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
       else if (input.status === "REPORTED") metrics.runsReported.inc(labels);
       else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);

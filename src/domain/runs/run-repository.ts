@@ -87,6 +87,8 @@ export interface RunStatusPatch {
   failureCategory?: RunFailureCategory;
   startedAt?: Date;
   completedAt?: Date;
+  /** DI-21.56. The total wait of the Run for a run slot or a sandbox slot. */
+  waitedMs?: number;
   repairCount?: number;
   /** docs/specs/run-visibility.md. The sentence that told the human why the run ended. */
   failureMessage?: string;

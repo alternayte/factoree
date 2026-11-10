@@ -129,6 +129,9 @@ model Run {
   createdAt                DateTime  @default(now())
   startedAt                DateTime?
   completedAt              DateTime?
+  // DI-21.56. The time the Run waited for a run slot (QUEUED) or a sandbox slot. It is not work,
+  // so the shown duration and the deadline leave it out.
+  waitedMs                 Int       @default(0) @map("waited_ms")
   // docs/specs/release-0-1-0.md, DI-15.13. The moment the Run took one of its Product's
   // maxConcurrentRuns slots. A Run holds the slot until its status is terminal.
   slotGrantedAt            DateTime?

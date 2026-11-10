@@ -204,6 +204,8 @@ export interface ProofPackInput {
   baseMove?: ProofPackBaseMove | null;
   /** docs/specs/agent-session-usage-and-hangs.md. The usage of every agent session, per role. */
   agentUsage?: AgentUsageTotals;
+  /** DI-21.56. The time the run waited for a run slot or a sandbox slot. */
+  waitedMs?: number;
   /** Issue 6, DI-15.17. Why the model of the Run is a guess, or null. `defaultModelWarning` builds it. */
   modelWarning?: string | null;
   /** DI-15.23. The passes whose first Validation Plan Factoree rejected, in attempt order. */
@@ -466,12 +468,14 @@ const formatDuration = (milliseconds: number): string => {
  * model time. A session with no usage record is named, so a reader never takes a partial total
  * for the whole cost.
  */
-export const agentUsageLine = (usage: AgentUsageTotals): string => {
+export const agentUsageLine = (usage: AgentUsageTotals, waitedMs = 0): string => {
   const missing = usage.sessionsWithoutUsage;
   return [
     `**Agent usage:** $${usage.costUsd.toFixed(2)}`,
     `${usage.tokens.toLocaleString("en-US")} tokens`,
     `${formatDuration(usage.modelTimeMs)} model time`,
+    // DI-21.56. A wait for a run slot or a sandbox slot is not work, so it stands apart.
+    ...(waitedMs >= 1_000 ? [`waited ${formatDuration(waitedMs)} for a free slot`] : []),
     ...(missing === 0 ? [] : [`${missing} ${missing === 1 ? "session" : "sessions"} without a usage record`]),
   ].join(" · ");
 };
@@ -543,7 +547,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     "",
     ...checkLines(input),
     "",
-    ...(input.agentUsage === undefined || input.agentUsage.roles.length === 0 ? [] : [agentUsageLine(input.agentUsage), ""]),
+    ...(input.agentUsage === undefined || input.agentUsage.roles.length === 0 ? [] : [agentUsageLine(input.agentUsage, input.waitedMs ?? 0), ""]),
     ...(skillLines(input).length === 0 ? [] : [...skillLines(input), ""]),
     "---",
     "",

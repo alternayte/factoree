@@ -221,6 +221,8 @@ const SKILL_REGISTRY_PATCH = "skill-registry-signals";
 const ISSUE_STATUS_PATCH = "issue-status";
 /** docs/specs/egress-honesty-and-issue-status.md. A new pull request links to the issue at once. */
 const PULL_REQUEST_LINK_PATCH = "pull-request-link";
+/** DI-21.56. A wait for a sandbox slot moves the deadline, as a wait in QUEUED already does. */
+const SANDBOX_SLOT_WAIT_PATCH = "sandbox-slot-wait";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -666,6 +668,9 @@ export async function agentRunWorkflow(
   const runBudgetMs = Math.max(1_000, Math.round(input.maxRunMinutes * 60_000));
   // DI-15.13. A wait in QUEUED is not work, so the deadline moves by the time the Run waited there.
   let deadline = Date.now() + runBudgetMs;
+  // DI-21.56. The total wait for a run slot or a sandbox slot. completeRun records it, and the
+  // shown duration leaves it out.
+  let waitedMs = 0;
   const remainingMs = (): number => Math.max(0, deadline - Date.now());
 
   // A terminal write must run even when the workflow scope is cancelled, or the Run row stays in
@@ -704,7 +709,7 @@ export async function agentRunWorkflow(
       if (sources !== null && work !== null && patched(SKILL_REGISTRY_PATCH)) {
         if (!skillProposalsSent) await notify(() => sendSkillProposals(sources, work));
       }
-      await activities.completeRun(args);
+      await activities.completeRun({ ...args, waitedMs });
       // DI-21.50. A run that ends with no pull request moves its issue back, while the issue is
       // still in the state the run set. The start already took the patch, so no new marker lands here.
       if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrl === null) {
@@ -1250,7 +1255,11 @@ export async function agentRunWorkflow(
       }
       if (await condition(() => stopRequested, RUN_SLOT_POLL_MS)) return await cancelRun();
     }
-    if (queuedSince !== null) deadline += Date.now() - queuedSince;
+    if (queuedSince !== null) {
+      const waited = Date.now() - queuedSince;
+      deadline += waited;
+      waitedMs += waited;
+    }
     return null;
   };
 
@@ -1279,7 +1288,16 @@ export async function agentRunWorkflow(
           }),
         );
       }
-      if (await condition(() => stopRequested, Math.max(1, Math.min(SANDBOX_SLOT_POLL_MS, remainingMs())))) return null;
+      const waitStarted = Date.now();
+      const stopped = await condition(() => stopRequested, Math.max(1, Math.min(SANDBOX_SLOT_POLL_MS, remainingMs())));
+      // DI-21.56. A wait for a sandbox slot is not work, so it moves the deadline, as a wait in
+      // QUEUED does. An older history keeps its budget.
+      if (patched(SANDBOX_SLOT_WAIT_PATCH)) {
+        const waited = Date.now() - waitStarted;
+        deadline += waited;
+        waitedMs += waited;
+      }
+      if (stopped) return null;
     }
   };
 
@@ -2831,6 +2849,7 @@ export async function agentRunWorkflow(
       let proofPack: PublishProofPackActivityOutput;
       try {
         proofPack = await proofPackActivities.publishProofPack({
+          waitedMs,
           runId: id,
           tenantId: input.tenantId,
           productId: input.productId,

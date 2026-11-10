@@ -117,6 +117,7 @@ function RunDetail({
           <KeyValue
             items={[
               { label: "Duration", value: formatDuration(run.durationMs) },
+              { label: "Waited", value: run.waitedMs > 0 ? formatDuration(run.waitedMs) : "—" },
               { label: "Cost", value: formatCost(run.costUsd) },
               { label: "Repairs", value: `${run.repairCount}${run.repairLimit === null ? "" : ` of ${run.repairLimit}`}` },
               { label: "Autonomy", value: run.autonomyLevel },

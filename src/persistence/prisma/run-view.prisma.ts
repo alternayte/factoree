@@ -43,6 +43,7 @@ const runSelect = {
   createdAt: true,
   startedAt: true,
   completedAt: true,
+  waitedMs: true,
   product: { select: { slug: true, name: true } },
 } satisfies Prisma.RunSelect;
 
@@ -65,7 +66,10 @@ const toListItem = (row: RunRow, costUsd: number | null): RunListItem => ({
   createdAt: row.createdAt,
   completedAt: row.completedAt,
   durationMs:
-    row.completedAt === null ? null : row.completedAt.getTime() - (row.startedAt ?? row.createdAt).getTime(),
+    row.completedAt === null
+      ? null
+      : Math.max(0, row.completedAt.getTime() - (row.startedAt ?? row.createdAt).getTime() - row.waitedMs),
+  waitedMs: row.waitedMs,
 });
 
 /** docs/specs/run-visibility.md. Every query carries the tenant. SDD section 52. */

@@ -125,6 +125,7 @@ export class PrismaRunRepository implements RunRepository {
         ...(patch.failureCategory === undefined ? {} : { failureCategory: patch.failureCategory }),
         ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
         ...(patch.completedAt === undefined ? {} : { completedAt: patch.completedAt }),
+        ...(patch.waitedMs === undefined ? {} : { waitedMs: patch.waitedMs }),
         ...(patch.repairCount === undefined ? {} : { repairCount: patch.repairCount }),
         ...(patch.failureMessage === undefined ? {} : { failureMessage: patch.failureMessage }),
       },
