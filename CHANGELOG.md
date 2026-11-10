@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-10
+
+### Fixed
+
+- Rootless Docker starts in an E2B sandbox. The adapter opens `/dev/net/tun` and `/dev/fuse` as root after each create and restore, as Kiln does in its guest (DI-21.29).
+
 ## [0.7.0] - 2026-11-10
 
 ### Added
