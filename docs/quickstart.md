@@ -90,12 +90,16 @@ through the GitHub App manifest flow.
    for github.com.
 4. Continue to GitHub, and create the App there.
 
-GitHub creates the App with exactly these repository permissions:
+GitHub creates the App with exactly these repository permissions. A publication
+asks for Workflows only when the change edits a file in `.github/workflows`. An
+App created before 0.7.4 lacks it: add it in the App settings, and accept the
+new permission on each installation.
 
 | Permission | Access |
 | --- | --- |
 | Contents | Read and write |
 | Pull requests | Read and write |
+| Workflows | Read and write |
 | Deployments | Read |
 | Metadata | Read |
 

@@ -22,6 +22,7 @@ import {
   type BaseMove,
 } from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
@@ -35,6 +36,20 @@ import type { Redactor } from "~/telemetry/redaction.js";
  * nothing else, so the token carries no permission beyond those two calls.
  */
 export const PUBLISH_TOKEN_SCOPE: GitHubTokenScope = { contents: "write", pull_requests: "write" };
+
+const WORKFLOW_DIRECTORY = ".github/workflows/";
+
+/** The files of a patch that GitHub lets an App push only with the `workflows` permission. */
+export const workflowFilesOf = (changedFiles: readonly string[]): string[] =>
+  changedFiles.filter((file) => file.startsWith(WORKFLOW_DIRECTORY));
+
+/**
+ * DI-21.33. A patch that changes a GitHub Actions workflow also needs `workflows: write`, or GitHub
+ * refuses the push. Only such a patch asks for it, so an installation without the permission still
+ * publishes every other patch.
+ */
+export const publishTokenScope = (changedFiles: readonly string[]): GitHubTokenScope =>
+  workflowFilesOf(changedFiles).length === 0 ? PUBLISH_TOKEN_SCOPE : { ...PUBLISH_TOKEN_SCOPE, workflows: "write" };
 
 /**
  * The author date and the committer date of every Factoree publication commit. The value is a
@@ -210,12 +225,27 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
 
       // Ruling 2 requires the token to carry a scope no wider than this publish needs. This
       // publish pushes one branch. It opens one pull request. The token carries exactly those
-      // two permissions, never more.
-      const token = await dependencies.tokens.tokenForInstallation(
-        input.githubInstallationId,
-        PUBLISH_TOKEN_SCOPE,
-        [input.repositorySlug],
-      );
+      // two permissions, plus `workflows` only for a patch that changes a workflow (DI-21.33).
+      // Step 6 proves later that the captured patch changes exactly the reviewed files.
+      const workflowFiles = workflowFilesOf(input.reviewedChangedFiles);
+      let token: string;
+      try {
+        token = await dependencies.tokens.tokenForInstallation(
+          input.githubInstallationId,
+          publishTokenScope(input.reviewedChangedFiles),
+          [input.repositorySlug],
+        );
+      } catch (error) {
+        if (workflowFiles.length > 0 && error instanceof GitHubAppAuthError && error.status === 422) {
+          throw new RunConfigurationError(
+            `The change edits ${workflowFiles.join(", ")}, and GitHub lets an App push a workflow file ` +
+              "only with the Workflows permission. In the Factoree GitHub App, set Repository " +
+              "permissions, Workflows, to Read and write, accept the new permission on the " +
+              "installation, then reply here.",
+          );
+        }
+        throw error;
+      }
 
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
       dependencies.redactor.addSecret(token);

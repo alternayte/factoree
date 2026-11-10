@@ -2568,9 +2568,9 @@ export async function agentRunWorkflow(
           return await failRun(
             "CONFIGURATION_INVALID",
             withCause(
-              "Factoree could not publish, because the Run configuration is invalid. Install the " +
-                "Factoree GitHub App on the target repository, so Factoree can mint a write " +
-                "credential that no agent session receives.",
+              "Factoree could not publish, because the GitHub App installation cannot mint the write " +
+                "credential this change needs. Repair the installation or its permissions as the " +
+                "cause says. No agent session ever receives that credential.",
               error,
             ),
           );
@@ -2584,8 +2584,11 @@ export async function agentRunWorkflow(
             : reason === "EMPTY_PATCH"
               ? "Every check passed and the change holds no file, so Factoree had nothing to " +
                   "publish."
-              : "Factoree could not publish the verified change. Factoree created no pull request " +
-                  "for it.",
+              : withCause(
+                  "Factoree could not publish the verified change. Factoree created no pull request " +
+                    "for it.",
+                  error,
+                ),
         );
       }
 

@@ -46,6 +46,19 @@ describe("run recovery (docs/specs/run-recovery.md)", () => {
     expect(post).toContain('"Do not change components/layouts/HeaderNav.tsx."');
   });
 
+  it("lists no repaired failure when the newest attempt passed every check, as FAC-101 failed at publication (DI-21.33)", () => {
+    const fac101 = {
+      assertions: [
+        { key: "VAL-CMD-001", attempt: 1, method: "command", statement: "CSharpier is pinned.", result: "FAIL", reason: "exited with code 1" },
+        { key: "VAL-CMD-001", attempt: 2, method: "command", statement: "CSharpier is pinned.", result: "PASS", reason: "" },
+      ],
+      findings: [],
+    };
+    const post = renderFailurePost("Factoree could not publish the verified change.", fac101);
+    expect(post).not.toContain("What blocked the run");
+    expect(post).not.toContain("VAL-CMD-001");
+  });
+
   it("gives a follow-up run the reply above everything, the frozen criteria and the last patch", () => {
     const text = renderFollowUpDescription({
       description: "Change Loading... to Loading configs...",

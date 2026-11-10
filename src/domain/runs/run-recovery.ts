@@ -45,8 +45,24 @@ const fileOf = (evidence: string): string | null => {
   return match?.[1] ?? null;
 };
 
+/**
+ * DI-21.33. The facts of a run whose newest attempt failed a check, or no facts when the newest
+ * attempt passed every assertion and has no blocking finding. Such a run failed after its checks,
+ * at publication for example, and an earlier failure that a repair fixed did not block it. A run
+ * whose newest attempt failed keeps every attempt, because a result that flips between attempts
+ * is itself a fact (FAC-73).
+ */
+const blockingAttempts = (run: Pick<RunDetail, "assertions" | "findings">): Pick<RunDetail, "assertions" | "findings"> => {
+  const attempt = Math.max(0, ...run.assertions.map((a) => a.attempt), ...run.findings.map((f) => f.attempt));
+  const newestFailed =
+    run.assertions.some((assertion) => assertion.attempt === attempt && assertion.result !== "PASS") ||
+    run.findings.some((finding) => finding.attempt === attempt && finding.blocking);
+  return newestFailed ? run : { assertions: [], findings: [] };
+};
+
 /** Each recorded fact that blocked the run, newest attempt first. */
-export const failureFacts = (run: Pick<RunDetail, "assertions" | "findings">): string[] => {
+export const failureFacts = (all: Pick<RunDetail, "assertions" | "findings">): string[] => {
+  const run = blockingAttempts(all);
   const facts: Array<{ attempt: number; text: string }> = [];
   for (const assertion of run.assertions) {
     if (assertion.result === "PASS") continue;
@@ -66,7 +82,8 @@ export const failureFacts = (run: Pick<RunDetail, "assertions" | "findings">): s
 };
 
 /** Example replies built from the facts, so the human sees what a useful reply looks like. */
-export const exampleReplies = (run: Pick<RunDetail, "assertions" | "findings">): string[] => {
+export const exampleReplies = (all: Pick<RunDetail, "assertions" | "findings">): string[] => {
+  const run = blockingAttempts(all);
   const replies: string[] = [];
   const keys = [...new Set(run.assertions.filter((assertion) => assertion.result !== "PASS").map((assertion) => assertion.key))];
   for (const key of keys.slice(0, 2)) {

@@ -234,6 +234,25 @@ describe("the publish activity", () => {
     getSpy.mockRestore();
   });
 
+  it("asks for workflows only for a patch that changes a GitHub Actions workflow (DI-21.33)", async () => {
+    const tokens = stubTokens();
+    const files = ["src/a.ts", ".github/workflows/format.yml"];
+    const { activities } = build({ tokens, changedFiles: files });
+    await environment.run((value: PublishActivityInput) => activities.publish(value), { ...input, reviewedChangedFiles: files });
+    expect(tokens.calls).toEqual([
+      { id: "install-1", scope: { contents: "write", pull_requests: "write", workflows: "write" } },
+    ]);
+  });
+
+  it("names the Workflows permission when the installation lacks it (DI-21.33)", async () => {
+    const tokens = stubTokens(new GitHubAppAuthError("the GitHub API answered 422", 422, "install-1"));
+    const files = [".github/workflows/format.yml"];
+    const { activities } = build({ tokens, changedFiles: files });
+    const failure = environment.run((value: PublishActivityInput) => activities.publish(value), { ...input, reviewedChangedFiles: files });
+    await expect(failure).rejects.toBeInstanceOf(RunConfigurationError);
+    await expect(failure).rejects.toThrow(/edits \.github\/workflows\/format\.yml.*Workflows permission/);
+  });
+
   it("names the installation when a mint fails", async () => {
     const tokens = stubTokens(new Error("the GitHub API answered 401 while it minted a token for installation install-1"));
     const { activities } = build({ tokens });
