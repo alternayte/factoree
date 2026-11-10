@@ -35,6 +35,7 @@ export const createIssueStatusActivities = (dependencies: IssueStatusActivityDep
       return;
     }
     await dependencies.runs.setIssueState(input.tenantId, input.runId, { fromId: move.from.id, setId: move.to.id });
+    if (move.to.id === move.from.id) return;
     await port.move(input.issueId, move.to.id);
     dependencies.logger.info("the issue moved to started", { run_id: input.runId, step: "issue_status", state: move.to.name });
   },
