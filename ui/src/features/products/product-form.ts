@@ -23,6 +23,8 @@ export type ProductForm = {
   silenceMinutes: string;
   sandboxRetentionHours: string;
   maxConcurrentRuns: string;
+  /** docs/specs/sandbox-provider-spillover.md. The providers the runs may use. Empty allows all. */
+  sandboxProviderIds: string[];
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: Product["appChangeIssues"];
   effort: Record<Role, string>;
@@ -64,6 +66,7 @@ export function formOf(p: Product): ProductForm {
     silenceMinutes: String(p.silenceMinutes),
     sandboxRetentionHours: String(p.sandboxRetentionHours),
     maxConcurrentRuns: String(p.maxConcurrentRuns),
+    sandboxProviderIds: p.sandboxProviderIds,
     appChangeIssues: p.appChangeIssues,
     effort: roleValues((role) => p.effort[role] ?? ""),
     defaultAutonomy: asLevel(p.defaultAutonomy),
@@ -111,9 +114,11 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
   // The API checks each model and effort against the runner its role resolves to.
   const model = form.model.trim();
   const skills = form.organizationSkillsRepository.trim();
-  if (skills && !/^[^/]+\/[^/]+$/.test(skills)) problems.push("The skills repository must have the form owner/repository.");
+  if (skills && !/^[^/]+\/[^/]+$/.test(skills))
+    problems.push("The skills repository must have the form owner/repository.");
   const registryUrl = form.skillRegistryUrl.trim();
-  if (registryUrl && !/^https?:\/\/\S+$/.test(registryUrl)) problems.push("The skill registry URL must start with http:// or https://.");
+  if (registryUrl && !/^https?:\/\/\S+$/.test(registryUrl))
+    problems.push("The skill registry URL must start with http:// or https://.");
   if (!registryUrl && form.skillRegistrySet.trim()) problems.push("A skill set needs a skill registry URL.");
   if (!form.name.trim()) problems.push("The product needs a name.");
   if (problems.length > 0) return { problems };
@@ -126,11 +131,14 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       runners: roleValues((role) => form.runners[role] || null),
       models: roleValues((role) => form.models[role].trim() || null),
       organizationSkillsRepository: skills || null,
-      skillRegistry: registryUrl ? { kind: "skael", url: registryUrl, set: form.skillRegistrySet.trim() || null } : null,
+      skillRegistry: registryUrl
+        ? { kind: "skael", url: registryUrl, set: form.skillRegistrySet.trim() || null }
+        : null,
       maxRunMinutes,
       silenceMinutes,
       sandboxRetentionHours,
       maxConcurrentRuns,
+      sandboxProviderIds: form.sandboxProviderIds,
       appChangeIssues: form.appChangeIssues,
       effort: roleValues(effort),
       defaultAutonomy: form.defaultAutonomy,

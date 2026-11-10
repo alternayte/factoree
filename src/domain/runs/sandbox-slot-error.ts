@@ -15,3 +15,18 @@ export class SandboxSlotUnavailableError extends Error {
 
 /** The Temporal application failure type of `SandboxSlotUnavailableError`. */
 export const SANDBOX_SLOT_UNAVAILABLE_TYPE = "SandboxSlotUnavailableError";
+
+/**
+ * docs/specs/sandbox-provider-spillover.md. The work sprite create failed at the provider the run
+ * was pinned to. The provider is marked down, the run holds no slots there now, and the workflow
+ * selects a provider again. The retry policy must not spend its attempts on it.
+ */
+export class SandboxProviderDownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SandboxProviderDownError";
+  }
+}
+
+/** The Temporal application failure type of `SandboxProviderDownError`. */
+export const SANDBOX_PROVIDER_DOWN_TYPE = "SandboxProviderDownError";

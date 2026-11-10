@@ -3,7 +3,9 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
-import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import { SandboxCreateError, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
+import { SandboxProviderDownError } from "~/domain/runs/sandbox-slot-error.js";
+import { PROVIDER_DOWN_MS } from "~/domain/settings/sandbox-providers.js";
 import type { PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
 import type { VerifiedPatch } from "~/domain/publishing/patch.js";
 import { applyPatch, capturePatch, PatchError } from "~/domain/publishing/patch.js";
@@ -56,8 +58,19 @@ import {
 import { linkReadersFor } from "./work-item.activities.js";
 import { createHash } from "node:crypto";
 
+/**
+ * docs/specs/sandbox-provider-spillover.md. What the work sprite needs when its create fails at
+ * the provider: the provider is marked down, and the run gives back its held slots there.
+ */
+export interface ProviderFailover {
+  markDown(providerId: string, until: Date, reason: string): Promise<void>;
+  releaseHolds(runId: string): Promise<void>;
+}
+
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
+  /** docs/specs/sandbox-provider-spillover.md. Absent in a test with one bare sandbox. */
+  failover?: ProviderFailover | undefined;
   sandbox: Sandbox;
   runs: RunRepository;
   reaper: SpriteReaper;
@@ -326,8 +339,13 @@ const build = async (
     }
   }
 
+  // docs/specs/sandbox-provider-spillover.md. Every sandbox of a run goes to the provider it is
+  // pinned to. A run from before the provider list names none, and gets the default provider.
+  const provider = (await dependencies.runs.findById(input.tenantId, input.runId))?.sandboxProviderId ?? null;
+
   const prepared = await dependencies.sandboxManager.prepare(
     {
+    ...(provider === null ? {} : { provider }),
     runId: input.runId,
     tenantId: input.tenantId,
     productId: input.productId,
@@ -666,6 +684,22 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
         (output) => output.spriteId,
       );
     } catch (error) {
+      // docs/specs/sandbox-provider-spillover.md. The work sprite create failed at its provider.
+      // No sandbox of the run exists there yet, so the run moves: the provider is down for a while,
+      // the run gives back its held slots, and the workflow selects again.
+      if (error instanceof SandboxCreateError && dependencies.failover !== undefined) {
+        const reason = dependencies.redactor.redactText(error.message);
+        await dependencies.failover.markDown(error.providerId, new Date(Date.now() + PROVIDER_DOWN_MS), reason);
+        await dependencies.failover.releaseHolds(input.runId);
+        await dependencies.runs.setSandboxProvider(input.tenantId, input.runId, null);
+        dependencies.logger.warn("the sandbox provider failed the work sprite create, so the run selects again", {
+          run_id: input.runId,
+          provider: error.providerId,
+          error: reason,
+          step: "prepare",
+        });
+        throw new SandboxProviderDownError(reason);
+      }
       // SDD section 60: an activity error becomes Temporal history, which is external
       // persistence. The redaction happens here, at the one boundary the whole preparation path
       // passes through, rather than at each throw site. A new error would lose the class, and

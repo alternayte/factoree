@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { getProductQueryKey, listRepositorySetupsOptions, listRepositorySetupsQueryKey } from "@/api/@tanstack/react-query.gen";
+import {
+  getProductQueryKey,
+  listRepositorySetupsOptions,
+  listRepositorySetupsQueryKey,
+} from "@/api/@tanstack/react-query.gen";
 import { startRepositorySetups, updateProduct } from "@/api/sdk.gen";
 import type { ListRepositorySetupsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
@@ -25,8 +29,12 @@ const STATUS: Record<Setup["status"], { tone: "neutral" | "success" | "warning" 
 };
 
 /** docs/specs/setup-speed-and-history.md. The badge of one setup; a skipped setup says so. */
-export function setupStatus(setup: Pick<Setup, "status" | "skippedFromSetupId">): { tone: "neutral" | "success" | "warning" | "danger"; label: string } {
-  if (setup.status === "unchanged" && setup.skippedFromSetupId !== null) return { tone: "success", label: "no change (skipped)" };
+export function setupStatus(setup: Pick<Setup, "status" | "skippedFromSetupId">): {
+  tone: "neutral" | "success" | "warning" | "danger";
+  label: string;
+} {
+  if (setup.status === "unchanged" && setup.skippedFromSetupId !== null)
+    return { tone: "success", label: "no change (skipped)" };
   return STATUS[setup.status];
 }
 
@@ -39,7 +47,8 @@ function State({ repository }: { repository: Repository }) {
   const setup = repository.setup;
   if (repository.registered) {
     const running = setup !== null && ACTIVE.includes(setup.status);
-    const open = setup !== null && (setup.status === "proposed" || setup.status === "partial") && setup.pullRequestUrl !== null;
+    const open =
+      setup !== null && (setup.status === "proposed" || setup.status === "partial") && setup.pullRequestUrl !== null;
     return (
       <span className="flex flex-col items-start gap-1">
         <Badge tone="success">active</Badge>
@@ -80,17 +89,26 @@ export function RepositorySetupSection({
   const repositories = useQuery({
     ...options,
     // A running setup changes its row, so the list refreshes while one runs.
-    refetchInterval: (query) => (query.state.data?.some((repository) => repository.setup && ACTIVE.includes(repository.setup.status)) ? 10_000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.some((repository) => repository.setup && ACTIVE.includes(repository.setup.status))
+        ? 10_000
+        : false,
   });
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const refresh = () =>
-    client.invalidateQueries({ queryKey: listRepositorySetupsQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }) });
+    client.invalidateQueries({
+      queryKey: listRepositorySetupsQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }),
+    });
 
   const start = useMutation({
     mutationFn: async (names: string[]) =>
-      startRepositorySetups({ path: { id: productId }, body: { linearWorkspaceId, repositories: names }, throwOnError: true }),
+      startRepositorySetups({
+        path: { id: productId },
+        body: { linearWorkspaceId, repositories: names },
+        throwOnError: true,
+      }),
     onSuccess: () => {
       setSelected([]);
       void refresh();
@@ -108,7 +126,9 @@ export function RepositorySetupSection({
         throwOnError: true,
       }),
     onSuccess: async (_result, { repository }) => {
-      await client.invalidateQueries({ queryKey: getProductQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }) });
+      await client.invalidateQueries({
+        queryKey: getProductQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }),
+      });
       start.mutate([repository]);
     },
   });
@@ -117,8 +137,10 @@ export function RepositorySetupSection({
   const needle = filter.trim().toLowerCase();
   const rows = needle === "" ? all : all.filter((repository) => repository.fullName.toLowerCase().includes(needle));
   const starting = (name: string) => start.isPending && (start.variables ?? []).includes(name);
-  const startable = (repository: Repository) => canEdit && !(repository.setup && ACTIVE.includes(repository.setup.status));
-  const toggle = (name: string) => setSelected((current) => (current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]));
+  const startable = (repository: Repository) =>
+    canEdit && !(repository.setup && ACTIVE.includes(repository.setup.status));
+  const toggle = (name: string) =>
+    setSelected((current) => (current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]));
 
   return (
     <Section
@@ -137,7 +159,9 @@ export function RepositorySetupSection({
       <ErrorAlert error={repositories.error} title="The repositories did not load" />
       <ErrorAlert error={start.error} title="The setup did not start" />
       <ErrorAlert error={allowHost.error} title="The host was not added" />
-      {repositories.data && all.length === 0 ? <Empty>The GitHub App can read no repository for this product.</Empty> : null}
+      {repositories.data && all.length === 0 ? (
+        <Empty>The GitHub App can read no repository for this product.</Empty>
+      ) : null}
       {all.length > 0 ? (
         <div className="border-b border-hairline px-4 py-3">
           <Input
@@ -176,7 +200,11 @@ export function RepositorySetupSection({
                   onAllowHost={(host) => allowHost.mutate({ host, repository: repository.fullName })}
                   busy={start.isPending || allowHost.isPending}
                   starting={starting(repository.fullName)}
-                  addingHost={allowHost.isPending && allowHost.variables?.repository === repository.fullName ? allowHost.variables.host : null}
+                  addingHost={
+                    allowHost.isPending && allowHost.variables?.repository === repository.fullName
+                      ? allowHost.variables.host
+                      : null
+                  }
                   canEdit={canEdit}
                   productId={productId}
                   linearWorkspaceId={linearWorkspaceId}
@@ -226,6 +254,12 @@ function RepositoryRow(props: {
         <td className="t-value">
           <span className="block text-ink">{repository.fullName}</span>
           {repository.needsSetupReason ? <span className="block text-mute">{repository.needsSetupReason}</span> : null}
+          {/* docs/specs/sandbox-provider-spillover.md. Runs go to another provider while one is left. */}
+          {repository.buildAheadFailures.map((failure) => (
+            <span key={failure.provider} className="block text-xs text-danger">
+              Build-ahead failed on {failure.provider}: {failure.reason}
+            </span>
+          ))}
         </td>
         <td>
           <State repository={repository} />
@@ -261,7 +295,12 @@ function RepositoryRow(props: {
             </Button>
           ) : null}
           {props.startable ? (
-            <Button variant="secondary" onClick={props.onStart} disabled={props.busy && !props.starting} pending={props.starting}>
+            <Button
+              variant="secondary"
+              onClick={props.onStart}
+              disabled={props.busy && !props.starting}
+              pending={props.starting}
+            >
               {again ? "Run setup again" : "Set up"}
             </Button>
           ) : null}
@@ -286,7 +325,9 @@ function RepositoryRow(props: {
                 ))}
               </div>
             ) : null}
-            {setup.report ? <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-body">{setup.report}</pre> : null}
+            {setup.report ? (
+              <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-body">{setup.report}</pre>
+            ) : null}
           </td>
         </tr>
       ) : null}

@@ -15,7 +15,7 @@ import type {
   RunRepository,
   RunStatusPatch,
 } from "~/domain/runs/run-repository.js";
-import type { RunFailureReason, RunStatus } from "~/domain/runs/run-status.js";
+import { TERMINAL_RUN_STATUSES, type RunFailureReason, type RunStatus } from "~/domain/runs/run-status.js";
 import type { RunFailureCategory } from "~/domain/runs/failure-category.js";
 import { pullRequestNumberOf, type IssueStateRecord, type PullRequestState } from "~/domain/runs/issue-status.js";
 import type { ClosedPullRequestRun } from "~/domain/runs/run-repository.js";
@@ -38,6 +38,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   reviewerRunner: row.reviewerRunner,
   spriteId: row.spriteId,
   spriteAdapter: row.spriteAdapter,
+  sandboxProviderId: row.sandboxProviderId,
   spriteRetainUntil: row.spriteRetainUntil,
   baseSha: row.baseSha,
   patchSha256: row.patchSha256,
@@ -117,20 +118,35 @@ export class PrismaRunRepository implements RunRepository {
   }
 
   async updateStatus(id: string, status: RunStatus, patch: RunStatusPatch = {}): Promise<RunRecord> {
-    const row = await this.prisma.run.update({
-      where: { id },
-      data: {
-        status,
-        ...(patch.failureReason === undefined ? {} : { failureReason: patch.failureReason }),
-        ...(patch.failureCategory === undefined ? {} : { failureCategory: patch.failureCategory }),
-        ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
-        ...(patch.completedAt === undefined ? {} : { completedAt: patch.completedAt }),
-        ...(patch.waitedMs === undefined ? {} : { waitedMs: patch.waitedMs }),
-        ...(patch.repairCount === undefined ? {} : { repairCount: patch.repairCount }),
-        ...(patch.failureMessage === undefined ? {} : { failureMessage: patch.failureMessage }),
-      },
-    });
+    // docs/specs/sandbox-provider-spillover.md. A terminal run gives back the held slots that no
+    // sandbox uses, in the same step. A retained work sprite keeps its lease until its delete.
+    if ((TERMINAL_RUN_STATUSES as readonly string[]).includes(status)) {
+      const [row] = await this.prisma.$transaction([
+        this.prisma.run.update({ where: { id }, data: this.statusData(status, patch) }),
+        this.prisma.sandboxLease.deleteMany({ where: { runId: id, held: true, sandboxId: null } }),
+      ]);
+      return toRecord(row);
+    }
+    const row = await this.prisma.run.update({ where: { id }, data: this.statusData(status, patch) });
     return toRecord(row);
+  }
+
+  private statusData(status: RunStatus, patch: RunStatusPatch) {
+    return {
+      status,
+      ...(patch.failureReason === undefined ? {} : { failureReason: patch.failureReason }),
+      ...(patch.failureCategory === undefined ? {} : { failureCategory: patch.failureCategory }),
+      ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
+      ...(patch.completedAt === undefined ? {} : { completedAt: patch.completedAt }),
+      ...(patch.waitedMs === undefined ? {} : { waitedMs: patch.waitedMs }),
+      ...(patch.repairCount === undefined ? {} : { repairCount: patch.repairCount }),
+      ...(patch.failureMessage === undefined ? {} : { failureMessage: patch.failureMessage }),
+    };
+  }
+
+  async setSandboxProvider(tenantId: string, runId: string, providerId: string | null): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    await this.prisma.run.updateMany({ where: { id: runId, tenantId }, data: { sandboxProviderId: providerId } });
   }
 
   async setSandbox(

@@ -1,4 +1,9 @@
-import { registerRepositorySetupRoutes, type RepositorySetupRouteDependencies } from "./admin/repository-setup.routes.js";
+import {
+  registerRepositorySetupRoutes,
+  type BuildAheadFailureView,
+  type RepositorySetupRouteDependencies,
+} from "./admin/repository-setup.routes.js";
+import { repositoryNamesOf } from "~/activities/repository-credential.js";
 import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import { PrismaAppChangeIssueStore } from "~/persistence/prisma/app-change-issue.prisma.js";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -26,6 +31,9 @@ import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.pris
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerSettingsRoutes } from "./admin/settings.routes.js";
+import { registerSandboxProviderRoutes } from "./admin/sandbox-providers.routes.js";
+import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
+import type { SandboxProviderStore } from "~/domain/settings/sandbox-providers.js";
 import { registerModelCatalogRoutes } from "./admin/model-catalog.routes.js";
 import type { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
@@ -51,6 +59,8 @@ export interface ServerDependencies {
   logger: Logger;
   prisma: FactoreePrismaClient;
   settings: InstallSettingsStore;
+  /** docs/specs/sandbox-provider-spillover.md. Absent means the store on `prisma`. */
+  sandboxProviders?: SandboxProviderStore;
   auth: AuthHandle;
   tenants: TenantRegistry;
   products: ProductRegistry;
@@ -97,6 +107,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
   const publicUrl = dependencies.env.FACTOREE_PUBLIC_URL;
   const masterKey = dependencies.env.FACTOREE_MASTER_KEY;
   const localSandboxAllowed = dependencies.env.FACTOREE_UNSAFE_LOCAL_SANDBOX === "1";
+  const sandboxProviders = dependencies.sandboxProviders ?? new PrismaSandboxProviderStore(dependencies.prisma, masterKey);
 
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
     const buffer = body as Buffer;
@@ -149,6 +160,8 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       publicUrl,
       masterKey,
       localSandboxAllowed,
+      sandboxProviders,
+      buildAhead: dependencies.buildAhead,
       logger: dependencies.logger,
       startInstallationSync: dependencies.startInstallationSync,
       ...dependencies.setup,
@@ -179,6 +192,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
         ...(dependencies.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: dependencies.checkSkillRegistry }),
         ...(dependencies.modelCatalog === undefined ? {} : { modelCatalog: dependencies.modelCatalog }),
+        sandboxProviders,
       });
       registerModelCatalogRoutes(admin, { modelCatalog: dependencies.modelCatalog });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
@@ -209,6 +223,18 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         listInstallationRepositories:
           dependencies.repositorySetup?.listInstallationRepositories ?? (() => Promise.reject(new Error("this server lists no repository"))),
         startSetup: dependencies.repositorySetup?.startSetup ?? (() => Promise.reject(new Error("this server starts no workflow"))),
+        buildAheadFailures: async (tenantId) => {
+          const names = new Map((await sandboxProviders.list()).map((provider) => [provider.id, provider.name]));
+          const byRepository = new Map<string, BuildAheadFailureView[]>();
+          for (const row of await prisma.buildAheadFailure.findMany({ where: { tenantId }, orderBy: { failedAt: "desc" } })) {
+            const fullName = repositoryNamesOf([row.repositoryUrl])?.[0];
+            if (fullName === undefined) continue;
+            const entries = byRepository.get(fullName) ?? [];
+            entries.push({ provider: names.get(row.providerId) ?? row.providerId, reason: row.reason, failedAt: row.failedAt.toISOString() });
+            byRepository.set(fullName, entries);
+          }
+          return byRepository;
+        },
       });
       registerContextSourceRoutes(admin, {
         products: dependencies.products,
@@ -216,6 +242,12 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         contextSources: new PrismaContextSourceConfigurationStore(dependencies.prisma),
         repositories: dependencies.repositories,
         secrets: dependencies.secrets,
+      });
+      registerSandboxProviderRoutes(admin, {
+        providers: sandboxProviders,
+        settings: dependencies.settings,
+        localSandboxAllowed,
+        ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       });
       registerSettingsRoutes(admin, {
         prisma: dependencies.prisma,

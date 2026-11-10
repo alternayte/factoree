@@ -42,7 +42,11 @@ function useCatalog(runner: Runner) {
 }
 
 /** The listed model a runner model names. opencode names `provider/model`, claude the Anthropic id. */
-function lookup(catalog: Catalog | undefined, runner: Runner, model: string): { provider: Provider; model: Model } | null {
+function lookup(
+  catalog: Catalog | undefined,
+  runner: Runner,
+  model: string,
+): { provider: Provider; model: Model } | null {
   if (!catalog || !model) return null;
   const slash = model.indexOf("/");
   const providerId = runner === "claude" ? "anthropic" : model.slice(0, slash);
@@ -87,12 +91,27 @@ export function AgentsSection({
   const summary = (runner: Runner, model: string, effort: string | null) => {
     const found = lookup(catalogs[runner], runner, model);
     const keys = keyNamesOf(runner, found?.provider ?? null);
-    const missing = model && secretNames !== null && keys.length > 0 && !keys.some((name) => secretNames.has(name)) ? keys[0]! : null;
+    const missing =
+      model && secretNames !== null && keys.length > 0 && !keys.some((name) => secretNames.has(name)) ? keys[0]! : null;
     return { name: found?.model.name ?? (model || DEFAULT_MODEL[runner]), missing, effort };
   };
 
-  const rows: { key: Role | "default"; label: string; runner: Runner; model: string; effort: string | null; inherits: boolean }[] = [
-    { key: "default", label: "Default", runner: form.defaultRunner, model: form.model.trim(), effort: null, inherits: false },
+  const rows: {
+    key: Role | "default";
+    label: string;
+    runner: Runner;
+    model: string;
+    effort: string | null;
+    inherits: boolean;
+  }[] = [
+    {
+      key: "default",
+      label: "Default",
+      runner: form.defaultRunner,
+      model: form.model.trim(),
+      effort: null,
+      inherits: false,
+    },
     ...EFFORT_ROLES.map((role) => {
       const resolved = resolvedRole(form, role);
       return {
@@ -140,7 +159,11 @@ export function AgentsSection({
                     <TriangleAlert className="size-3.5" aria-hidden />
                     needs <span className="font-mono">{s.missing}</span>
                     {!disabled ? (
-                      <button type="button" className="underline underline-offset-2" onClick={() => onAddKey(s.missing!)}>
+                      <button
+                        type="button"
+                        className="underline underline-offset-2"
+                        onClick={() => onAddKey(s.missing!)}
+                      >
                         Add key
                       </button>
                     ) : null}
@@ -212,8 +235,14 @@ function PickerDialog({
   const listId = useId();
   const isDefault = target === "default";
   const [inherit, setInherit] = useState(!isDefault && !form.runners[target] && !form.models[target].trim());
-  const [runner, setRunner] = useState<Runner>(isDefault ? form.defaultRunner : form.runners[target] || form.defaultRunner);
-  const [model, setModel] = useState(isDefault ? form.model.trim() : form.models[target].trim() || (runner === form.defaultRunner ? form.model.trim() : ""));
+  const [runner, setRunner] = useState<Runner>(
+    isDefault ? form.defaultRunner : form.runners[target] || form.defaultRunner,
+  );
+  const [model, setModel] = useState(
+    isDefault
+      ? form.model.trim()
+      : form.models[target].trim() || (runner === form.defaultRunner ? form.model.trim() : ""),
+  );
   const [effort, setEffort] = useState(isDefault ? "" : form.effort[target].trim());
   const [query, setQuery] = useState("");
   const catalog = catalogs[runner];
@@ -331,7 +360,10 @@ function PickerDialog({
               <div className="flex min-h-0 flex-col gap-2">
                 <label className="relative block">
                   <span className="sr-only">Search models</span>
-                  <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-mute" aria-hidden />
+                  <Search
+                    className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-mute"
+                    aria-hidden
+                  />
                   <Input
                     autoFocus
                     role="combobox"
@@ -348,7 +380,12 @@ function PickerDialog({
                     onKeyDown={onListKey}
                   />
                 </label>
-                <ul id={listId} role="listbox" aria-label="Models" className="max-h-72 overflow-y-auto rounded-control border border-hairline">
+                <ul
+                  id={listId}
+                  role="listbox"
+                  aria-label="Models"
+                  className="max-h-72 overflow-y-auto rounded-control border border-hairline"
+                >
                   <li
                     role="option"
                     aria-selected={!model}
@@ -366,7 +403,8 @@ function PickerDialog({
                     const header = entry.provider.id !== lastProvider;
                     lastProvider = entry.provider.id;
                     const keys = keyNamesOf(runner, entry.provider);
-                    const hasKey = secretNames === null || keys.length === 0 || keys.some((name) => secretNames.has(name));
+                    const hasKey =
+                      secretNames === null || keys.length === 0 || keys.some((name) => secretNames.has(name));
                     return (
                       <li key={id} role="presentation">
                         {header ? (
@@ -375,12 +413,20 @@ function PickerDialog({
                             {keys[0] ? (
                               hasKey ? (
                                 <span className="text-success">
-                                  key <span className="font-mono">{keys.find((name) => secretNames?.has(name)) ?? keys[0]}</span> ✓
+                                  key{" "}
+                                  <span className="font-mono">
+                                    {keys.find((name) => secretNames?.has(name)) ?? keys[0]}
+                                  </span>{" "}
+                                  ✓
                                 </span>
                               ) : (
                                 <span className="flex items-center gap-1.5 text-warning">
                                   needs <span className="font-mono">{keys[0]}</span>
-                                  <button type="button" className="underline underline-offset-2" onClick={() => onAddKey(keys[0]!)}>
+                                  <button
+                                    type="button"
+                                    className="underline underline-offset-2"
+                                    onClick={() => onAddKey(keys[0]!)}
+                                  >
                                     Add key
                                   </button>
                                 </span>
@@ -392,7 +438,11 @@ function PickerDialog({
                           id={`${listId}-${index}`}
                           role="option"
                           aria-selected={model === id}
-                          className={cn("model-option", model === id && "model-option-on", index === active && "model-option-active")}
+                          className={cn(
+                            "model-option",
+                            model === id && "model-option-on",
+                            index === active && "model-option-active",
+                          )}
                           onMouseEnter={() => setActive(index)}
                           onClick={() => choose(entry)}
                         >
@@ -401,7 +451,9 @@ function PickerDialog({
                             <span className="block truncate font-mono text-xs text-mute">{id}</span>
                           </span>
                           <span className="hidden shrink-0 text-right text-xs text-mute sm:block">
-                            {formatTokens(entry.model.contextTokens) ? `${formatTokens(entry.model.contextTokens)} ctx · ` : ""}
+                            {formatTokens(entry.model.contextTokens)
+                              ? `${formatTokens(entry.model.contextTokens)} ctx · `
+                              : ""}
                             {formatCost(entry.model.costInput)}/{formatCost(entry.model.costOutput)}
                             {entry.model.efforts.length > 0 ? " · effort" : ""}
                           </span>
@@ -411,11 +463,15 @@ function PickerDialog({
                     );
                   })}
                   {matches.length > SHOWN ? (
-                    <li className="px-3 py-2 text-xs text-mute">{matches.length - SHOWN} more. Type to narrow the list.</li>
+                    <li className="px-3 py-2 text-xs text-mute">
+                      {matches.length - SHOWN} more. Type to narrow the list.
+                    </li>
                   ) : null}
                   {matches.length === 0 ? <li className="px-3 py-2 text-xs text-mute">No model matches.</li> : null}
                 </ul>
-                <p className="text-xs text-mute">Prices are US dollars per million input and output tokens, from models.dev.</p>
+                <p className="text-xs text-mute">
+                  Prices are US dollars per million input and output tokens, from models.dev.
+                </p>
               </div>
             ) : loading ? (
               <p className="text-sm text-mute">Loading the model catalog…</p>
@@ -437,7 +493,11 @@ function PickerDialog({
               </Field>
             )}
             {catalog?.available ? (
-              <button type="button" className="self-start text-xs text-mute underline underline-offset-2" onClick={() => setCustom((c) => !c)}>
+              <button
+                type="button"
+                className="self-start text-xs text-mute underline underline-offset-2"
+                onClick={() => setCustom((c) => !c)}
+              >
                 {custom ? "Pick from the list" : "Use a model id not in the list"}
               </button>
             ) : null}
@@ -446,8 +506,18 @@ function PickerDialog({
 
         {!isDefault ? (
           efforts === null ? (
-            <Field label="Effort" hint={target === "setup" ? "Empty takes the implementer effort." : "Empty takes the model default."}>
-              {(props) => <Input {...props} placeholder="low, high, max" value={effort} onChange={(e) => setEffort(e.target.value)} />}
+            <Field
+              label="Effort"
+              hint={target === "setup" ? "Empty takes the implementer effort." : "Empty takes the model default."}
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  placeholder="low, high, max"
+                  value={effort}
+                  onChange={(e) => setEffort(e.target.value)}
+                />
+              )}
             </Field>
           ) : efforts.length === 0 ? (
             <p className="text-sm text-mute">This model takes no reasoning effort.</p>

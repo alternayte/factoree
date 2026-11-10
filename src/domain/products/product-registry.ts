@@ -34,6 +34,8 @@ export interface ProductRecord {
   silenceMinutes: number;
   /** SDD section 51. The hours a finished sandbox stays before the reaper deletes it. */
   sandboxRetentionHours: number;
+  /** docs/specs/sandbox-provider-spillover.md. The sandbox providers its runs may use. Empty allows all. */
+  sandboxProviderIds: string[];
   /** The most Runs of this Product at one time. The gate before PREPARING enforces it (DI-15.13). */
   maxConcurrentRuns: number;
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
@@ -63,6 +65,7 @@ export interface ProductSettingsUpdate {
   effort?: { [Role in keyof ProductEffort]?: string | null | undefined };
   silenceMinutes?: number;
   sandboxRetentionHours?: number;
+  sandboxProviderIds?: string[];
   maxConcurrentRuns?: number;
   appChangeIssues?: AppChangeIssueMode;
 }

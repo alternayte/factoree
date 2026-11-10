@@ -1,4 +1,5 @@
 import { RepositorySetupSection } from "./repository-setup-section";
+import { SandboxProviderChoice } from "./sandbox-provider-choice";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
@@ -111,13 +112,14 @@ function ProductEditor({
   const [registryWarning, setRegistryWarning] = useState<string | null>(null);
   const dirty = JSON.stringify(form) !== JSON.stringify(formOf(product));
   // The same query as the secrets section, so the cache answers both.
-  const secrets = useQuery(
-    listProductSecretsOptions({ path: { id: product.id }, query: { linearWorkspaceId } }),
-  );
+  const secrets = useQuery(listProductSecretsOptions({ path: { id: product.id }, query: { linearWorkspaceId } }));
   const hasRunnerCredential = secrets.data?.some((secret) => secret.kind === "runner_credential");
   // docs/specs/model-picker.md. Add key in the model picker opens the secrets form with the key name.
   const [keyRequest, setKeyRequest] = useState<KeyRequest | null>(null);
-  const secretNames = useMemo(() => (secrets.data ? new Set(secrets.data.map((secret) => secret.name)) : null), [secrets.data]);
+  const secretNames = useMemo(
+    () => (secrets.data ? new Set(secrets.data.map((secret) => secret.name)) : null),
+    [secrets.data],
+  );
   const hasRegistryKey = secrets.data?.some((secret) => secret.name === SKILL_REGISTRY_KEY);
 
   const save = useMutation({
@@ -264,11 +266,7 @@ function ProductEditor({
           >
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-4">
-                <Field
-                  label="Default autonomy"
-                  help={<AutonomyHelp />}
-                  hint={levelHelp(form.defaultAutonomy).detail}
-                >
+                <Field label="Default autonomy" help={<AutonomyHelp />} hint={levelHelp(form.defaultAutonomy).detail}>
                   {(props) => (
                     <Select
                       {...props}
@@ -328,6 +326,17 @@ function ProductEditor({
           </Section>
 
           <Section
+            title="Sandbox providers"
+            description="The providers this product's runs may use. With none chosen, runs may use every enabled provider. Choose your own hosts only to keep this product's code and secrets off a cloud provider."
+          >
+            <SandboxProviderChoice
+              value={form.sandboxProviderIds}
+              disabled={disabled}
+              onChange={(next) => set("sandboxProviderIds", next)}
+            />
+          </Section>
+
+          <Section
             title="App change issues"
             description="When a setup pull request merges, Factoree creates and delegates a Linear issue for the app changes its report names. When every one has ended, Factoree runs the setup again."
           >
@@ -377,7 +386,11 @@ function ProductEditor({
               </Field>
               <Field
                 label="Service key"
-                hint={hasRegistryKey ? "Stored. Enter a new key to replace it." : "Stored as the secret SKILL_REGISTRY_KEY. It never reaches a sandbox."}
+                hint={
+                  hasRegistryKey
+                    ? "Stored. Enter a new key to replace it."
+                    : "Stored as the secret SKILL_REGISTRY_KEY. It never reaches a sandbox."
+                }
               >
                 {(props) => (
                   <Input
@@ -421,7 +434,12 @@ function ProductEditor({
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <div className="flex min-w-0 flex-col gap-4">
-          <SecretsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} keyRequest={keyRequest} />
+          <SecretsSection
+            productId={product.id}
+            linearWorkspaceId={linearWorkspaceId}
+            canEdit={canEdit}
+            keyRequest={keyRequest}
+          />
           <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
         </div>
         <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />

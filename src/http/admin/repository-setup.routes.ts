@@ -22,6 +22,17 @@ export interface RepositorySetupRouteDependencies {
   listInstallationRepositories: (installationId: string) => Promise<DiscoveredRepository[]>;
   /** Starts the setup workflow. False when one already runs for the repository. */
   startSetup: (input: { setupId: string; workflowId: string }) => Promise<boolean>;
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The failed build-ahead of each repository of the
+   * tenant, per sandbox provider, keyed by the repository full name.
+   */
+  buildAheadFailures?: ((tenantId: string) => Promise<Map<string, BuildAheadFailureView[]>>) | undefined;
+}
+
+export interface BuildAheadFailureView {
+  provider: string;
+  reason: string;
+  failedAt: string;
 }
 
 const workspaceQuery = z.object({ linearWorkspaceId: z.string().min(1) });
@@ -81,6 +92,11 @@ const repositorySetupSchema = z.object({
   registered: z.boolean(),
   /** Why a build-ahead marked the repository for setup, or null. */
   needsSetupReason: z.string().nullable(),
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The sandbox providers where the last build-ahead of the
+   * repository failed. Runs of the repository go to another provider while one is left.
+   */
+  buildAheadFailures: z.array(z.object({ provider: z.string(), reason: z.string(), failedAt: z.string() })),
   setup: setupSchema.nullable(),
 });
 
@@ -148,6 +164,7 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
       const product = await dependencies.products.findById(tenant.id, request.params.id);
       if (!product) return reply.code(404).send({ error: "product not found" });
       const latest = new Map((await dependencies.setups.latestByProduct(product.id)).map((setup) => [setup.repositoryFullName, setup]));
+      const failures = (await dependencies.buildAheadFailures?.(tenant.id)) ?? new Map<string, BuildAheadFailureView[]>();
       return (await candidatesOf(tenant.id, product.id)).map((candidate) => {
         const setup = latest.get(candidate.fullName);
         return {
@@ -155,6 +172,7 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
           githubInstallationId: candidate.githubInstallationId,
           registered: candidate.registered !== null,
           needsSetupReason: candidate.registered?.needsSetupReason ?? null,
+          buildAheadFailures: failures.get(candidate.fullName) ?? [],
           setup: setup === undefined ? null : toSetup(setup),
         };
       });

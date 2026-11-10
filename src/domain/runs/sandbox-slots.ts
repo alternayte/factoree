@@ -24,13 +24,30 @@ export type SandboxReservation =
  * provider, so concurrent creates on any worker never pass `maxLive`.
  */
 export interface SandboxLeaseStore {
-  /** `maxLive` null records the lease and enforces no limit. */
+  /**
+   * `maxLive` null records the lease and enforces no limit. docs/specs/sandbox-provider-spillover.md:
+   * a run that holds an unused slot on the provider takes that slot, and counts nothing.
+   */
   reserve(input: { adapter: string; runId: string; maxLive: number | null }): Promise<SandboxReservation>;
+  /**
+   * docs/specs/sandbox-provider-spillover.md. Holds `count` slots of the provider for the run, the
+   * slots it already holds or uses included. Granted answers an empty lease id.
+   */
+  hold(input: { adapter: string; runId: string; count: number; maxLive: number | null }): Promise<SandboxReservation>;
+  /** The provider where the run holds slots, or null. */
+  heldProviderOf(runId: string): Promise<string | null>;
+  /** Gives back the held slots of the run that no sandbox uses. */
+  releaseHolds(runId: string): Promise<void>;
+  /** The live leases of each provider, and how many of them are retained sandboxes. */
+  usage(): Promise<Record<string, { live: number; retained: number }>>;
   /** The create returned this sandbox. */
   bind(leaseId: string, sandboxId: string): Promise<void>;
   /** The create failed, so the reservation goes. */
   abandon(leaseId: string): Promise<void>;
-  /** The sandbox is deleted, so its lease goes. A sandbox with no lease is ignored. */
+  /**
+   * The sandbox is deleted, so its lease goes. A held slot of a run that has not ended stays held.
+   * A sandbox with no lease is ignored.
+   */
   release(adapter: string, sandboxId: string): Promise<void>;
   /** The evicted sandbox is deleted: its lease goes, and its Run no longer names it. */
   evicted(victim: RetainedSandbox): Promise<void>;
@@ -108,6 +125,20 @@ export class SandboxSlots {
       step: "sandbox_limit",
     });
     return true;
+  }
+
+  /**
+   * docs/specs/sandbox-provider-spillover.md. Holds `count` slots of the provider for the run. At the
+   * limit it deletes retained sandboxes of that provider, one at a time. False when the provider
+   * has no room: the caller then tries the next provider.
+   */
+  async hold(adapter: string, runId: string, count: number, maxLive: number | null): Promise<boolean> {
+    for (;;) {
+      const reservation = await this.options.store.hold({ adapter, runId, count, maxLive });
+      if (reservation.kind === "granted") return true;
+      if (reservation.kind === "full") return false;
+      if (!(await this.evict(reservation.victim, runId))) return false;
+    }
   }
 
   bind(leaseId: string, sandboxId: string): Promise<void> {

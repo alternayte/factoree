@@ -521,12 +521,12 @@ export type BindGitHubInstallationResponse = BindGitHubInstallationResponses[key
 
 export type PutSandboxData = {
   body: {
-    provider: "kiln" | "e2b" | "fly-sprites" | "local";
-    url?: string | null;
-    apiKey?: string;
     image?: string | null;
     registryUsername?: string | null;
     registryToken?: string | null;
+    provider: "kiln" | "e2b" | "fly-sprites" | "local";
+    url?: string | null;
+    apiKey?: string;
     maxLive?: number | null;
     vcpus?: number | null;
     memoryMb?: number | null;
@@ -738,6 +738,7 @@ export type CreateSetupProductResponses = {
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
@@ -900,6 +901,7 @@ export type ListProductsResponses = {
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
@@ -997,6 +999,7 @@ export type CreateProductResponses = {
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
@@ -1127,6 +1130,7 @@ export type GetProductResponses = {
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
@@ -1176,6 +1180,7 @@ export type UpdateProductData = {
     };
     silenceMinutes?: number;
     sandboxRetentionHours?: number;
+    sandboxProviderIds?: Array<string>;
     maxConcurrentRuns?: number;
     appChangeIssues?: "one_per_change" | "one_for_all";
   };
@@ -1267,6 +1272,7 @@ export type UpdateProductResponses = {
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
@@ -1362,6 +1368,7 @@ export type ActivateProductResponses = {
     };
     silenceMinutes: number;
     sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
     createdAt: string;
@@ -1580,6 +1587,7 @@ export type ListRunsResponses = {
       completedAt: string | null;
       durationMs: number | null;
       waitedMs: number;
+      sandboxProvider: string | null;
     }>;
     nextCursor: string | null;
   };
@@ -1637,6 +1645,7 @@ export type GetRunResponses = {
     completedAt: string | null;
     durationMs: number | null;
     waitedMs: number;
+    sandboxProvider: string | null;
     temporalWorkflowId: string;
     autonomyLevel: string;
     followUpOfRunId: string | null;
@@ -1796,6 +1805,11 @@ export type ListRepositorySetupsResponses = {
     githubInstallationId: string;
     registered: boolean;
     needsSetupReason: string | null;
+    buildAheadFailures: Array<{
+      provider: string;
+      reason: string;
+      failedAt: string;
+    }>;
     setup: {
       id: string;
       status: "queued" | "running" | "proposed" | "partial" | "failed" | "merged" | "unchanged";
@@ -2333,6 +2347,202 @@ export type DeleteContextSourceResponses = {
 
 export type DeleteContextSourceResponse = DeleteContextSourceResponses[keyof DeleteContextSourceResponses];
 
+export type ListSandboxProvidersData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/admin/sandbox-providers";
+};
+
+export type ListSandboxProvidersResponses = {
+  /**
+   * Default Response
+   */
+  200: Array<{
+    id: string;
+    name: string;
+    type: "kiln" | "e2b" | "fly-sprites" | "local";
+    url: string | null;
+    apiKeySet: boolean;
+    maxLive: number | null;
+    vcpus: number | null;
+    memoryMb: number | null;
+    priority: number;
+    enabled: boolean;
+    downUntil: string | null;
+    downReason: string | null;
+    live: number;
+    problem: string | null;
+  }>;
+};
+
+export type ListSandboxProvidersResponse = ListSandboxProvidersResponses[keyof ListSandboxProvidersResponses];
+
+export type CreateSandboxProviderData = {
+  body: {
+    name: string;
+    type: "kiln" | "e2b" | "fly-sprites" | "local";
+    url?: string | null;
+    apiKey?: string | null;
+    maxLive?: number | null;
+    vcpus?: number | null;
+    memoryMb?: number | null;
+    priority?: number;
+    enabled?: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/admin/sandbox-providers";
+};
+
+export type CreateSandboxProviderErrors = {
+  /**
+   * Default Response
+   */
+  403: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type CreateSandboxProviderError = CreateSandboxProviderErrors[keyof CreateSandboxProviderErrors];
+
+export type CreateSandboxProviderResponses = {
+  /**
+   * Default Response
+   */
+  201: {
+    id: string;
+    name: string;
+    type: "kiln" | "e2b" | "fly-sprites" | "local";
+    url: string | null;
+    apiKeySet: boolean;
+    maxLive: number | null;
+    vcpus: number | null;
+    memoryMb: number | null;
+    priority: number;
+    enabled: boolean;
+    downUntil: string | null;
+    downReason: string | null;
+    live: number;
+    problem: string | null;
+  };
+};
+
+export type CreateSandboxProviderResponse = CreateSandboxProviderResponses[keyof CreateSandboxProviderResponses];
+
+export type DeleteSandboxProviderData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/sandbox-providers/{id}";
+};
+
+export type DeleteSandboxProviderErrors = {
+  /**
+   * Default Response
+   */
+  403: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type DeleteSandboxProviderError = DeleteSandboxProviderErrors[keyof DeleteSandboxProviderErrors];
+
+export type DeleteSandboxProviderResponses = {
+  /**
+   * Default Response
+   */
+  204: void;
+};
+
+export type DeleteSandboxProviderResponse = DeleteSandboxProviderResponses[keyof DeleteSandboxProviderResponses];
+
+export type UpdateSandboxProviderData = {
+  body: {
+    name?: string;
+    type?: "kiln" | "e2b" | "fly-sprites" | "local";
+    url?: string | null;
+    apiKey?: string | null;
+    maxLive?: number | null;
+    vcpus?: number | null;
+    memoryMb?: number | null;
+    priority?: number;
+    enabled?: boolean;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/sandbox-providers/{id}";
+};
+
+export type UpdateSandboxProviderErrors = {
+  /**
+   * Default Response
+   */
+  403: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type UpdateSandboxProviderError = UpdateSandboxProviderErrors[keyof UpdateSandboxProviderErrors];
+
+export type UpdateSandboxProviderResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    name: string;
+    type: "kiln" | "e2b" | "fly-sprites" | "local";
+    url: string | null;
+    apiKeySet: boolean;
+    maxLive: number | null;
+    vcpus: number | null;
+    memoryMb: number | null;
+    priority: number;
+    enabled: boolean;
+    downUntil: string | null;
+    downReason: string | null;
+    live: number;
+    problem: string | null;
+  };
+};
+
+export type UpdateSandboxProviderResponse = UpdateSandboxProviderResponses[keyof UpdateSandboxProviderResponses];
+
 export type GetMeData = {
   body?: never;
   path?: never;
@@ -2395,16 +2605,10 @@ export type GetInstallSettingsResponses = {
       signInCallbackUrl: string;
     };
     sandbox: {
-      provider: "kiln" | "e2b" | "fly-sprites" | "local" | null;
-      url: string | null;
-      apiKeySet: boolean;
       image: string | null;
       pinnedImage: string | null;
       registryUsername: string | null;
       registryTokenSet: boolean;
-      maxLive: number | null;
-      vcpus: number | null;
-      memoryMb: number | null;
       defaultSize: {
         vcpus: number;
         memoryMb: number;
@@ -2432,15 +2636,9 @@ export type UpdateInstallSettingsData = {
       webhookSecret?: string;
     };
     sandbox?: {
-      provider?: "kiln" | "e2b" | "fly-sprites" | "local";
-      url?: string | null;
-      apiKey?: string;
       image?: string | null;
       registryUsername?: string | null;
       registryToken?: string | null;
-      maxLive?: number | null;
-      vcpus?: number | null;
-      memoryMb?: number | null;
     };
     gitAuthor?: {
       name?: string;
@@ -2495,16 +2693,10 @@ export type UpdateInstallSettingsResponses = {
       signInCallbackUrl: string;
     };
     sandbox: {
-      provider: "kiln" | "e2b" | "fly-sprites" | "local" | null;
-      url: string | null;
-      apiKeySet: boolean;
       image: string | null;
       pinnedImage: string | null;
       registryUsername: string | null;
       registryTokenSet: boolean;
-      maxLive: number | null;
-      vcpus: number | null;
-      memoryMb: number | null;
       defaultSize: {
         vcpus: number;
         memoryMb: number;

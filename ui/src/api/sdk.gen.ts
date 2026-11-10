@@ -27,6 +27,9 @@ import type {
   CreateProductData,
   CreateProductErrors,
   CreateProductResponses,
+  CreateSandboxProviderData,
+  CreateSandboxProviderErrors,
+  CreateSandboxProviderResponses,
   CreateSetupProductData,
   CreateSetupProductErrors,
   CreateSetupProductResponses,
@@ -39,6 +42,9 @@ import type {
   DeleteProductSecretData,
   DeleteProductSecretErrors,
   DeleteProductSecretResponses,
+  DeleteSandboxProviderData,
+  DeleteSandboxProviderErrors,
+  DeleteSandboxProviderResponses,
   GetInstallSettingsData,
   GetInstallSettingsResponses,
   GetMeData,
@@ -83,6 +89,8 @@ import type {
   ListRunsData,
   ListRunsErrors,
   ListRunsResponses,
+  ListSandboxProvidersData,
+  ListSandboxProvidersResponses,
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsErrors,
   ListSetupLinearTeamsResponses,
@@ -121,6 +129,9 @@ import type {
   UpdateProductData,
   UpdateProductErrors,
   UpdateProductResponses,
+  UpdateSandboxProviderData,
+  UpdateSandboxProviderErrors,
+  UpdateSandboxProviderResponses,
 } from "./types.gen";
 
 export type Options<
@@ -768,6 +779,94 @@ export const deleteContextSource = <ThrowOnError extends boolean = false>(
     ],
     url: "/admin/products/{id}/context-sources/{sourceId}",
     ...options,
+  });
+
+export const listSandboxProviders = <ThrowOnError extends boolean = false>(
+  options?: Options<ListSandboxProvidersData, ThrowOnError>,
+): RequestResult<ListSandboxProvidersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<ListSandboxProvidersResponses, unknown, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/sandbox-providers",
+    ...options,
+  });
+
+export const createSandboxProvider = <ThrowOnError extends boolean = false>(
+  options: Options<CreateSandboxProviderData, ThrowOnError>,
+): RequestResult<CreateSandboxProviderResponses, CreateSandboxProviderErrors, ThrowOnError> =>
+  (options.client ?? client).post<CreateSandboxProviderResponses, CreateSandboxProviderErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/sandbox-providers",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const deleteSandboxProvider = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteSandboxProviderData, ThrowOnError>,
+): RequestResult<DeleteSandboxProviderResponses, DeleteSandboxProviderErrors, ThrowOnError> =>
+  (options.client ?? client).delete<DeleteSandboxProviderResponses, DeleteSandboxProviderErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/sandbox-providers/{id}",
+    ...options,
+  });
+
+export const updateSandboxProvider = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateSandboxProviderData, ThrowOnError>,
+): RequestResult<UpdateSandboxProviderResponses, UpdateSandboxProviderErrors, ThrowOnError> =>
+  (options.client ?? client).put<UpdateSandboxProviderResponses, UpdateSandboxProviderErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/sandbox-providers/{id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 export const getMe = <ThrowOnError extends boolean = false>(

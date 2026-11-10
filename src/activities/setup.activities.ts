@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { parseDocument } from "yaml";
 import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters/github/repository-discovery-client.js";
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
@@ -46,6 +47,11 @@ export interface SetupActivityDependencies {
   setups: RepositorySetupStore;
   products: Pick<ProductRegistry, "findById">;
   sandbox: Sandbox;
+  /**
+   * docs/specs/sandbox-provider-spillover.md. Picks the provider of a setup by the rule of a run.
+   * Absent means the default provider.
+   */
+  providerSelector?: SandboxProviderSelector | undefined;
   runners: AgentRunnerRegistry;
   secrets: SecretStore;
   tokens: GitHubTokenProvider;
@@ -169,8 +175,34 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     return { setup, product, url };
   };
 
-  const createSandbox = async (setupId: string, tenantId: string, productId: string, allowedDomains: string[]): Promise<SandboxRef> => {
-    const ref = await dependencies.sandbox.create({ runId: setupSandboxRunId(setupId), tenantId, productId });
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The sandbox provider of a setup: the rule of a run, with
+   * no held slots. A setup prefers a provider with Docker, because its agent writes compose stacks.
+   */
+  const sandboxOf = async (
+    setup: { id: string; tenantId: string },
+    product: { sandboxProviderIds: string[] },
+    url: string,
+  ): Promise<Sandbox> => {
+    if (dependencies.providerSelector === undefined || dependencies.sandbox.forProvider === undefined) return dependencies.sandbox;
+    const providerId = await dependencies.providerSelector.selectForSetup({
+      runId: setupSandboxRunId(setup.id),
+      tenantId: setup.tenantId,
+      allowedProviderIds: product.sandboxProviderIds,
+      repositoryUrl: url,
+      needsDocker: true,
+    });
+    return dependencies.sandbox.forProvider(providerId);
+  };
+
+  const createSandbox = async (
+    sandbox: Sandbox,
+    setupId: string,
+    tenantId: string,
+    productId: string,
+    allowedDomains: string[],
+  ): Promise<SandboxRef> => {
+    const ref = await sandbox.create({ runId: setupSandboxRunId(setupId), tenantId, productId });
     await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, tenantId, productId);
     await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains });
     await dependencies.sandbox.exec(ref, { file: "mkdir", args: ["-p", ref.workspacePath], cwd: "/" });
@@ -184,14 +216,16 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
    */
   const startSessionSandbox = async (
     setup: { id: string; tenantId: string; productId: string },
+    product: { sandboxProviderIds: string[] },
     url: string,
     allowedDomains: string[],
   ): Promise<{ ref: SandboxRef; warm: boolean }> => {
-    const provider = dependencies.sandbox.warmSnapshots;
+    const sandbox = await sandboxOf(setup, product, url);
+    const provider = sandbox.warmSnapshots;
     const snapshot =
       provider === undefined || dependencies.warmSnapshots === undefined
         ? null
-        : await dependencies.warmSnapshots.find({ tenantId: setup.tenantId, adapter: dependencies.sandbox.name, repositoryUrl: url });
+        : await dependencies.warmSnapshots.find({ tenantId: setup.tenantId, adapter: sandbox.name, repositoryUrl: url });
     if (provider !== undefined && snapshot !== null && snapshot.template === provider.template) {
       try {
         const ref = await provider.restore({ runId: setupSandboxRunId(setup.id), tenantId: setup.tenantId, productId: setup.productId }, snapshot.snapshotId);
@@ -207,7 +241,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         });
       }
     }
-    return { ref: await createSandbox(setup.id, setup.tenantId, setup.productId, allowedDomains), warm: false };
+    return { ref: await createSandbox(sandbox, setup.id, setup.tenantId, setup.productId, allowedDomains), warm: false };
   };
 
   /** The proof of one setup. proveAndPublishSetup times it. */
@@ -224,7 +258,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const readToken = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
       dependencies.redactor.addSecret(readToken);
       const repositoryHosts = hostsOf(url);
-      const ref = await createSandbox(setup.id, setup.tenantId, setup.productId, repositoryHosts);
+      const ref = await createSandbox(await sandboxOf(setup, product, url), setup.id, setup.tenantId, setup.productId, repositoryHosts);
       const parts: SetupPartResult[] = [];
       const record = (part: SetupPartResult): void => {
         parts.push({ ...part, ...(part.logTail === undefined ? {} : { logTail: dependencies.redactor.redactText(withoutUrlCredentials(part.logTail)) }) });
@@ -503,7 +537,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         };
       }
       const claudeHost = runnerName === "claude" ? claudeApiHostOf(runnerEnvironment) : null;
-      const { ref, warm } = await startSessionSandbox(setup, url, [
+      const { ref, warm } = await startSessionSandbox(setup, product, url, [
         ...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains, ...(claudeHost === null ? [] : [claudeHost])]),
       ]);
       await dependencies.setups.update(setup.id, { warm });
@@ -513,7 +547,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           ? await refreshPrimary(dependencies.sandbox, ref, { url, ref: headSha }, token)
           : await checkoutPrimary(dependencies.sandbox, ref, { url, ref: headSha }, token);
         // The agent may start the stack itself to try it. A provider without Docker runs none.
-        if (dependencies.sandbox.capabilities.supportsDocker) {
+        // The capabilities of the provider that runs this sandbox, which the ref names.
+        const owner = dependencies.sandbox.forProvider === undefined ? dependencies.sandbox : await dependencies.sandbox.forProvider(ref.adapter);
+        if (owner.capabilities.supportsDocker) {
           await ensureDocker(dependencies.sandbox, ref).catch((error: unknown) =>
             dependencies.logger.warn("rootless Docker did not start in the setup sandbox", { setup_id: setup.id, error: String(error) }),
           );

@@ -44,12 +44,13 @@ const runSelect = {
   startedAt: true,
   completedAt: true,
   waitedMs: true,
+  sandboxProviderId: true,
   product: { select: { slug: true, name: true } },
 } satisfies Prisma.RunSelect;
 
 type RunRow = Prisma.RunGetPayload<{ select: typeof runSelect }>;
 
-const toListItem = (row: RunRow, costUsd: number | null): RunListItem => ({
+const toListItem = (row: RunRow, costUsd: number | null, providerNames: ReadonlyMap<string, string> = new Map()): RunListItem => ({
   id: row.id,
   productId: row.productId,
   productSlug: row.product.slug,
@@ -70,11 +71,18 @@ const toListItem = (row: RunRow, costUsd: number | null): RunListItem => ({
       ? null
       : Math.max(0, row.completedAt.getTime() - (row.startedAt ?? row.createdAt).getTime() - row.waitedMs),
   waitedMs: row.waitedMs,
+  sandboxProvider: row.sandboxProviderId === null ? null : (providerNames.get(row.sandboxProviderId) ?? row.sandboxProviderId),
 });
 
 /** docs/specs/run-visibility.md. Every query carries the tenant. SDD section 52. */
 export class PrismaRunViewReader implements RunViewReader {
   constructor(private readonly prisma: FactoreePrismaClient) {}
+
+  /** docs/specs/sandbox-provider-spillover.md. The name of each sandbox provider, by id. */
+  private async providerNames(): Promise<Map<string, string>> {
+    const rows = await this.prisma.sandboxProvider.findMany({ select: { id: true, name: true } });
+    return new Map(rows.map((row) => [row.id, row.name]));
+  }
 
   private async costs(tenantId: string, runIds: string[]): Promise<Map<string, number | null>> {
     const sums = await this.prisma.agentSession.groupBy({
@@ -110,9 +118,10 @@ export class PrismaRunViewReader implements RunViewReader {
       query.tenantId,
       page.map((row) => row.id),
     );
+    const names = await this.providerNames();
     const last = page.at(-1);
     return {
-      items: page.map((row) => toListItem(row, costs.get(row.id) ?? null)),
+      items: page.map((row) => toListItem(row, costs.get(row.id) ?? null, names)),
       nextCursor: rows.length > query.limit && last !== undefined ? encodeRunCursor(last.createdAt, last.id) : null,
     };
   }
@@ -149,7 +158,7 @@ export class PrismaRunViewReader implements RunViewReader {
       this.prisma.runSkillProposal.findMany({ where, orderBy: { createdAt: "asc" } }),
     ]);
     return {
-      ...toListItem(row, costs.get(runId) ?? null),
+      ...toListItem(row, costs.get(runId) ?? null, await this.providerNames()),
       temporalWorkflowId: row.temporalWorkflowId,
       autonomyLevel: row.autonomyLevel,
       followUpOfRunId: row.followUpOfRunId,

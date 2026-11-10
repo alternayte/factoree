@@ -152,7 +152,11 @@ export function ProductStep() {
             <Field label="Name" errors={fieldErrors.name}>
               {(props) => <Input {...props} required value={name} onChange={(e) => setName(e.target.value)} />}
             </Field>
-            <Field label="Runner" hint="The coding agent of every role. Change it per role later." errors={fieldErrors.runner}>
+            <Field
+              label="Runner"
+              hint="The coding agent of every role. Change it per role later."
+              errors={fieldErrors.runner}
+            >
               {(props) => (
                 <Select {...props} value={runner} onChange={(e) => setRunner(e.target.value as Runner)}>
                   <option value="opencode">opencode</option>

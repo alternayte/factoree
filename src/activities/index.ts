@@ -36,7 +36,10 @@ import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { createRunActivities } from "./run.activities.js";
 import { createLinearActivities } from "./linear.activities.js";
-import { createSandboxActivities } from "./sandbox.activities.js";
+import { createSandboxActivities, type ProviderFailover } from "./sandbox.activities.js";
+import { createProviderSelectionActivities } from "./provider-selection.activities.js";
+import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
+import type { BuildAheadFailureStore } from "~/domain/runs/build-ahead.js";
 import { createAgentActivities } from "./agent.activities.js";
 import { createVerificationActivities } from "./verification.activities.js";
 import { createRefinementActivities } from "./refinement.activities.js";
@@ -72,6 +75,17 @@ export interface ActivityDependencies {
   workItems: WorkItemPort;
   sandboxManager: SandboxManager;
   sandbox: Sandbox;
+  /**
+   * docs/specs/sandbox-provider-spillover.md. Picks the sandbox provider of a run or a setup. A
+   * worker without it runs every sandbox on the default provider.
+   */
+  providerSelector?: SandboxProviderSelector | undefined;
+  failover?: ProviderFailover | undefined;
+  /** The ids of the enabled sandbox providers whose adapter builds. A build-ahead builds on each. */
+  sandboxProviderIds?: (() => Promise<string[]>) | undefined;
+  buildAheadFailures?: BuildAheadFailureStore | undefined;
+  /** The name of a sandbox provider, for the proof pack. */
+  sandboxProviderName?: ((providerId: string) => Promise<string | null>) | undefined;
   runners: AgentRunnerRegistry;
   executions: AgentExecutionRepository;
   /** docs/specs/agent-session-usage-and-hangs.md. One row per agent session, with its usage. */
@@ -189,6 +203,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
   ...createSandboxActivities({
     sandboxManager: dependencies.sandboxManager,
     sandbox: dependencies.sandbox,
+    failover: dependencies.failover,
     runs: dependencies.runs,
     reaper: dependencies.reaper,
     secrets: dependencies.secrets,
@@ -316,6 +331,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     logger: dependencies.logger,
     skills: dependencies.skills,
+    sandboxProviderName: dependencies.sandboxProviderName,
   }),
   ...createIssueStatusActivities({
     runs: dependencies.runs,
@@ -354,6 +370,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     setups: dependencies.setups ?? NO_SETUP_STORE,
     products: dependencies.products,
     sandbox: dependencies.sandbox,
+    providerSelector: dependencies.providerSelector,
     runners: dependencies.runners,
     secrets: dependencies.secrets,
     tokens: dependencies.tokens,
@@ -377,8 +394,18 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     pullRequestState: dependencies.pullRequestState ?? (() => Promise.reject(new Error("this worker holds no pull request reader"))),
     logger: dependencies.logger,
   }),
+  ...createProviderSelectionActivities({
+    selector: dependencies.providerSelector,
+    runs: dependencies.runs,
+    products: dependencies.products,
+    repositories: dependencies.repositories,
+    discoveryClient: dependencies.discoveryClient,
+    logger: dependencies.logger,
+  }),
   ...createBuildAheadActivities({
     sandboxManager: dependencies.sandboxManager,
+    providerIds: dependencies.sandboxProviderIds,
+    failures: dependencies.buildAheadFailures,
     products: dependencies.products,
     repositories: dependencies.repositories,
     discoveryClient: dependencies.discoveryClient,

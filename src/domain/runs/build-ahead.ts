@@ -162,3 +162,23 @@ export class BuildAheadTrigger {
     }
   }
 }
+
+/**
+ * docs/specs/sandbox-provider-spillover.md. The last failed build-ahead of one repository on one
+ * sandbox provider. Selection prefers another provider for the repository while it exists.
+ */
+export interface BuildAheadFailureRecord {
+  tenantId: string;
+  providerId: string;
+  repositoryUrl: string;
+  reason: string;
+  failedAt: Date;
+}
+
+export interface BuildAheadFailureStore {
+  record(failure: BuildAheadFailureRecord): Promise<void>;
+  /** A build-ahead on the provider succeeded, so the failure ends. */
+  clear(tenantId: string, providerId: string, repositoryUrl: string): Promise<void>;
+  failedProviders(tenantId: string, repositoryUrl: string): Promise<string[]>;
+  listFor(tenantId: string, repositoryUrls: readonly string[]): Promise<BuildAheadFailureRecord[]>;
+}

@@ -68,6 +68,11 @@ export interface PrepareSandboxInput {
    * example `api.anthropic.com` for a claude session. The agent phase adds them to the allow list.
    */
   agentHosts?: string[];
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The sandbox provider of the sandbox: the one the run is
+   * pinned to, or the one a build-ahead builds for. Absent means the default provider.
+   */
+  provider?: string;
 }
 
 /** docs/specs/run-speed.md. What one build-ahead did. */
@@ -226,6 +231,13 @@ const checkoutHosts = (specs: RepositorySpec[]): string[] => {
 export class SandboxManager {
   constructor(private readonly options: SandboxManagerOptions) {}
 
+  /** docs/specs/sandbox-provider-spillover.md. The sandbox of one provider, or the default one. */
+  private async sandboxOf(provider: string | undefined): Promise<Sandbox> {
+    const sandbox = this.options.sandbox;
+    if (provider === undefined || sandbox.forProvider === undefined) return sandbox;
+    return sandbox.forProvider(provider);
+  }
+
   private installsBrowserTools(sandboxName: string): boolean {
     const option = this.options.installBrowserTools;
     return typeof option === "function" ? option(sandboxName) : option === true;
@@ -241,9 +253,9 @@ export class SandboxManager {
     input: PrepareSandboxInput,
     beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
   ): Promise<PreparedSandbox> {
-    const sandbox = this.options.sandbox;
     // docs/specs/release-0-1-0.md. The install settings choose the provider of each new sandbox.
-    await sandbox.refresh?.();
+    await this.options.sandbox.refresh?.();
+    const sandbox = await this.sandboxOf(input.provider);
     if (!sandbox.capabilities.enforcesNetworkPolicy && this.options.allowUnenforcedNetwork !== true) {
       throw new NetworkPolicyNotEnforcedError(sandbox.name);
     }
@@ -276,9 +288,14 @@ export class SandboxManager {
    * docs/specs/run-speed.md. True when the stored warm snapshot of the repository belongs to the
    * current template and to `bootstrapKey`, so a build-ahead has nothing to do.
    */
-  async hasCurrentWarmSnapshot(input: { tenantId: string; repositoryUrl: string; bootstrapKey: string }): Promise<boolean> {
-    const sandbox = this.options.sandbox;
-    await sandbox.refresh?.();
+  async hasCurrentWarmSnapshot(input: {
+    tenantId: string;
+    repositoryUrl: string;
+    bootstrapKey: string;
+    provider?: string;
+  }): Promise<boolean> {
+    await this.options.sandbox.refresh?.();
+    const sandbox = await this.sandboxOf(input.provider);
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return false;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.repositoryUrl });
@@ -290,8 +307,8 @@ export class SandboxManager {
    * cold sandbox, the clone, the bootstrap and the warm command, the snapshot, then the delete.
    */
   async buildAhead(input: PrepareSandboxInput): Promise<BuildAheadOutcome> {
-    const sandbox = this.options.sandbox;
-    await sandbox.refresh?.();
+    await this.options.sandbox.refresh?.();
+    const sandbox = await this.sandboxOf(input.provider);
     if (this.options.warmSnapshots === undefined || sandbox.warmSnapshots === undefined) {
       return { kind: "skipped", reason: `the ${sandbox.name} adapter takes no warm snapshot` };
     }
@@ -309,7 +326,7 @@ export class SandboxManager {
 
   /** The warm snapshot this Run can start from, or null when it starts cold. */
   private async warmSnapshotFor(input: PrepareSandboxInput): Promise<WarmSnapshot | null> {
-    const sandbox = this.options.sandbox;
+    const sandbox = await this.sandboxOf(input.provider);
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.primary.url });
@@ -328,7 +345,7 @@ export class SandboxManager {
     warm: WarmSnapshot | null,
     onSaved?: (snapshot: { snapshotId: string; bootstrapKey: string }) => void,
   ): Promise<PreparedSandbox | null> {
-    const sandbox = this.options.sandbox;
+    const sandbox = await this.sandboxOf(input.provider);
     const createInput = {
       runId: input.runId,
       tenantId: input.tenantId,
@@ -664,7 +681,8 @@ export class SandboxManager {
     warmCommand: string | null,
     bootstrapKey: string,
   ): Promise<string | null> {
-    const sandbox = this.options.sandbox;
+    // The ref names the provider that created the sandbox, and its snapshot belongs to that provider.
+    const sandbox = await this.sandboxOf(input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter));
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const startedAt = new Date();

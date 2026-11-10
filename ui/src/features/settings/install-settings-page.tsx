@@ -9,7 +9,8 @@ import { CopyValue } from "@/components/copy";
 import { Field, FieldGrid, Input, SavedNote } from "@/components/form";
 import { Alert, Badge, ErrorAlert, KeyValue, PageHeader, Section, SkeletonCard, Stack } from "@/components/layout";
 import { useMe } from "@/lib/session";
-import { parseMaxLive, parseSize, SandboxFields, type SandboxForm, type SandboxProvider } from "./sandbox-fields";
+import { emptySandboxForm, SandboxFields, type SandboxForm } from "./sandbox-fields";
+import { SandboxProvidersSection } from "./sandbox-providers-section";
 
 type Settings = GetInstallSettingsResponse;
 type Patch = UpdateInstallSettingsData["body"];
@@ -23,7 +24,7 @@ export function InstallSettingsPage() {
     <>
       <PageHeader
         title="Install settings"
-        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox provider and the git author."
+        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, and the git author."
       />
       {!canEdit ? (
         <Alert tone="info" className="mb-4 max-w-[640px]">
@@ -41,8 +42,14 @@ export function InstallSettingsPage() {
         <Stack className="lg:grid lg:grid-cols-2 lg:items-start">
           <GitHubSection settings={settings.data} canEdit={canEdit} />
           <LinearSection settings={settings.data} canEdit={canEdit} />
-          <SandboxSection settings={settings.data} canEdit={canEdit} />
+          <SandboxImageSection settings={settings.data} canEdit={canEdit} />
           <GitAuthorSection settings={settings.data} canEdit={canEdit} />
+          <SandboxProvidersSection
+            canEdit={canEdit}
+            localAllowed={settings.data.sandbox.localAllowed}
+            pinnedImage={settings.data.sandbox.pinnedImage}
+            defaultSize={settings.data.sandbox.defaultSize}
+          />
         </Stack>
       ) : null}
     </>
@@ -277,73 +284,61 @@ function LinearSection({ settings, canEdit }: { settings: Settings; canEdit: boo
 
 function sandboxFormOf(s: Settings["sandbox"]): SandboxForm {
   return {
-    provider: (s.provider ?? "kiln") as SandboxProvider,
-    url: s.url ?? "",
-    apiKey: "",
+    ...emptySandboxForm,
     image: s.image ?? "",
     registryUsername: s.registryUsername ?? "",
     registryToken: "",
-    maxLive: s.maxLive === null ? "" : String(s.maxLive),
-    vcpus: s.vcpus === null ? "" : String(s.vcpus),
-    memoryMb: s.memoryMb === null ? "" : String(s.memoryMb),
   };
 }
 
 /** sandboxPatch sends only what changed. An emptied optional field becomes null, which clears it. */
-function sandboxPatch(form: SandboxForm, s: Settings["sandbox"]): NonNullable<Patch["sandbox"]> | string {
-  const maxLive = parseMaxLive(form.maxLive);
-  if (maxLive === undefined) return "The live sandbox limit must be a whole number above 0.";
-  const size = parseSize(form);
-  if (typeof size === "string") return size;
+function sandboxPatch(form: SandboxForm, s: Settings["sandbox"]): NonNullable<Patch["sandbox"]> {
   const patch: NonNullable<Patch["sandbox"]> = {};
   const text = (v: string) => (v.trim() ? v.trim() : null);
-  if (form.provider !== s.provider) patch.provider = form.provider;
-  if (text(form.url) !== s.url) patch.url = text(form.url);
-  if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim();
   if (text(form.image) !== s.image) patch.image = text(form.image);
   if (text(form.registryUsername) !== s.registryUsername) patch.registryUsername = text(form.registryUsername);
   if (form.registryToken.trim()) patch.registryToken = form.registryToken.trim();
-  if (maxLive !== s.maxLive) patch.maxLive = maxLive;
-  if (size.vcpus !== s.vcpus) patch.vcpus = size.vcpus;
-  if (size.memoryMb !== s.memoryMb) patch.memoryMb = size.memoryMb;
   return patch;
 }
 
-function SandboxSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
+/** docs/specs/sandbox-provider-spillover.md. One image serves every sandbox provider. */
+function SandboxImageSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
   const s = settings.sandbox;
   const [form, setForm] = useState<SandboxForm>(() => sandboxFormOf(s));
   const save = useSave();
   // The removal is its own request, so its button shows its own state.
   const clear = useSave();
   const patch = sandboxPatch(form, s);
-  const changed = typeof patch === "string" || Object.keys(patch).length > 0;
+  const changed = Object.keys(patch).length > 0;
 
   return (
-    <Section title="Sandbox" description="The provider where agents run. One provider serves the whole install.">
+    <Section
+      title="Sandbox image"
+      description="Every sandbox provider builds its template from this image. A change builds new templates, and each repository starts cold once per provider."
+    >
       <form
         className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          if (typeof patch === "string") return;
           save.mutate({ sandbox: patch }, { onSuccess: (next) => setForm(sandboxFormOf(next.sandbox)) });
         }}
       >
         <SandboxFields
+          parts="image"
           value={form}
           onChange={setForm}
           localAllowed={s.localAllowed}
           disabled={!canEdit}
-          stored={{ apiKey: s.apiKeySet, registryToken: s.registryTokenSet }}
+          stored={{ apiKey: false, registryToken: s.registryTokenSet }}
           pinnedImage={s.pinnedImage}
           defaultSize={s.defaultSize}
         />
-        {typeof patch === "string" ? <Alert tone="danger">{patch}</Alert> : null}
         <ErrorAlert error={save.error} />
         <ErrorAlert error={clear.error} />
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={!changed || typeof patch === "string" || clear.isPending} mutation={save}>
-              Save sandbox
+            <Button type="submit" disabled={!changed || clear.isPending} mutation={save}>
+              Save the image
             </Button>
             {s.registryTokenSet || s.registryUsername ? (
               <Button

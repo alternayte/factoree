@@ -1,3 +1,4 @@
+import type { SandboxProviderStore } from "~/domain/settings/sandbox-providers.js";
 import type { FastifyInstance } from "fastify";
 import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import { Prisma } from "@prisma/client";
@@ -129,6 +130,8 @@ export interface ProductRouteDependencies {
   checkSkillRegistry?: (settings: SkillRegistrySettings, key: string) => Promise<{ skills: number }>;
   /** docs/specs/model-picker.md. A listed model's effort must be one of its catalog values. */
   modelCatalog?: Pick<ModelCatalogService, "current">;
+  /** docs/specs/sandbox-provider-spillover.md. A product names only providers the install lists. */
+  sandboxProviders?: Pick<SandboxProviderStore, "list">;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -250,6 +253,14 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!body.success) return reply.code(422).send({ error: body.error.flatten() });
     const tenant = await resolveTenant(query.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    const providerIds = body.data.sandboxProviderIds;
+    if (providerIds !== undefined && dependencies.sandboxProviders !== undefined) {
+      const known = new Set((await dependencies.sandboxProviders.list()).map((provider) => provider.id));
+      const unknown = providerIds.filter((id) => !known.has(id));
+      if (unknown.length > 0) {
+        return reply.code(422).send({ error: `the install holds no sandbox provider ${unknown.join(", ")}` });
+      }
+    }
     // docs/specs/claude-code-runner.md. A model or an effort that does not fit the runner its
     // role resolves to fails here, before any write, and not in a run.
     if (
@@ -322,9 +333,11 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.effort !== undefined ||
       body.data.silenceMinutes !== undefined ||
       body.data.sandboxRetentionHours !== undefined ||
+      body.data.sandboxProviderIds !== undefined ||
       body.data.maxConcurrentRuns !== undefined ||
       body.data.appChangeIssues !== undefined
     ) {
+      const before = await dependencies.products.findById(tenant.id, request.params.id);
       product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
         ...(body.data.defaultRunner === undefined ? {} : { defaultRunner: body.data.defaultRunner }),
         ...(body.data.model === undefined ? {} : { model: body.data.model }),
@@ -337,8 +350,16 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
           : { sandboxRetentionHours: body.data.sandboxRetentionHours }),
         ...(body.data.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: body.data.maxConcurrentRuns }),
         ...(body.data.appChangeIssues === undefined ? {} : { appChangeIssues: body.data.appChangeIssues }),
+        ...(body.data.sandboxProviderIds === undefined
+          ? {}
+          : { sandboxProviderIds: [...new Set(body.data.sandboxProviderIds)].sort() }),
       });
       if (!product) return reply.code(404).send({ error: "product not found" });
+      // docs/specs/sandbox-provider-spillover.md. A provider the product newly allows needs the
+      // warm snapshots of its repositories.
+      if (before !== null && before.sandboxProviderIds.join(",") !== product.sandboxProviderIds.join(",")) {
+        await dependencies.buildAhead?.afterAllowListChange(tenant.id, product.id);
+      }
     }
     let skillRegistryWarning: string | null = null;
     if (body.data.skillRegistry !== undefined) {

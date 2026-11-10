@@ -206,6 +206,8 @@ export interface ProofPackInput {
   agentUsage?: AgentUsageTotals;
   /** DI-21.56. The time the run waited for a run slot or a sandbox slot. */
   waitedMs?: number;
+  /** docs/specs/sandbox-provider-spillover.md. The name of the sandbox provider the run ran on. */
+  sandboxProvider?: string | null;
   /** Issue 6, DI-15.17. Why the model of the Run is a guess, or null. `defaultModelWarning` builds it. */
   modelWarning?: string | null;
   /** DI-15.23. The passes whose first Validation Plan Factoree rejected, in attempt order. */
@@ -548,6 +550,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     ...checkLines(input),
     "",
     ...(input.agentUsage === undefined || input.agentUsage.roles.length === 0 ? [] : [agentUsageLine(input.agentUsage, input.waitedMs ?? 0), ""]),
+    ...(input.sandboxProvider === undefined || input.sandboxProvider === null ? [] : [`**Sandbox provider:** ${input.sandboxProvider}`, ""]),
     ...(skillLines(input).length === 0 ? [] : [...skillLines(input), ""]),
     "---",
     "",

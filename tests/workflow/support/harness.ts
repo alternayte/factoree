@@ -58,7 +58,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_CONFIG,
 } from "~/domain/runs/project-runtime-config.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
-import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
+import { SandboxProviderDownError, SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { RunSlotClaim } from "~/domain/runs/run-slots.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
@@ -207,6 +207,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * the work sprite before one succeeds.
    */
   const sandboxSlotWaits = new Map<string, number>();
+  // docs/specs/sandbox-provider-spillover.md. How many times each run's selection finds no room,
+  // and how many times its work sprite create fails at the provider. Each selection is recorded.
+  const selectionWaits = new Map<string, number>();
+  const providerDowns = new Map<string, number>();
+  const providerSelections: string[] = [];
   /** The run ids whose preparation double raises a configuration fault. */
   const configurationFaults = new Set<string>();
   /** The run ids whose `userValidate` double raises a configuration fault. */
@@ -542,11 +547,26 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       linksNotRead: [],
       visionFailure: null,
     }),
+    // docs/specs/sandbox-provider-spillover.md. The harness has one bare sandbox, so no provider is pinned.
+    selectSandboxProvider: (activityInput: { runId: string }) => {
+      providerSelections.push(activityInput.runId);
+      const full = selectionWaits.get(activityInput.runId) ?? 0;
+      if (full > 0) {
+        selectionWaits.set(activityInput.runId, full - 1);
+        return Promise.reject(new SandboxSlotUnavailableError("no sandbox provider the run may use has 3 free slots"));
+      }
+      return Promise.resolve({ providerId: null });
+    },
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       activityOrder.push("prepareSandbox");
       prepared.push(activityInput);
       if (configurationFaults.has(activityInput.runId)) {
         throw new RunConfigurationError("the bootstrap command failed with exit code 1: no such file");
+      }
+      const down = providerDowns.get(activityInput.runId) ?? 0;
+      if (down > 0) {
+        providerDowns.set(activityInput.runId, down - 1);
+        throw new SandboxProviderDownError("the sandbox provider kiln did not create a sandbox: connection refused");
       }
       const fullProvider = sandboxSlotWaits.get(activityInput.runId) ?? 0;
       if (fullProvider > 0) {
@@ -1026,6 +1046,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     runSlotClaims,
     runSlotCalls,
     sandboxSlotWaits,
+    selectionWaits,
+    providerDowns,
+    providerSelections,
     validatorConfigurationFaults,
     runtimeOverrides,
     verifyOutcomes,

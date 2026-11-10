@@ -60,7 +60,12 @@ const authorityOf = (source: Source): string =>
     : "declarative_catalog";
 
 const secretNameFor = (sourceId: string) =>
-  `${sourceId.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "CONTEXT_SOURCE"}_TOKEN`;
+  `${
+    sourceId
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "CONTEXT_SOURCE"
+  }_TOKEN`;
 
 /** Issue 8. The Backstage catalogs, MCP servers and llms.txt files a run of this product reads context from. */
 export function ContextSourcesSection({
@@ -125,7 +130,9 @@ export function ContextSourcesSection({
       {sources.isPending ? <SkeletonRows label="Loading the context sources" /> : null}
       <ErrorAlert error={sources.error} title="The context sources did not load" />
       <ErrorAlert error={remove.error} />
-      {sources.data?.length === 0 && adding === null ? <Empty>No context source. Runs read Linear and the repositories only.</Empty> : null}
+      {sources.data?.length === 0 && adding === null ? (
+        <Empty>No context source. Runs read Linear and the repositories only.</Empty>
+      ) : null}
       {sources.data && sources.data.length > 0 ? (
         <ul className="stagger -my-2 divide-y divide-hairline">
           {sources.data.map((source) => (
@@ -156,7 +163,8 @@ export function ContextSourcesSection({
                   <>
                     <dt className="t-label text-mute">Pages</dt>
                     <dd className="t-value min-w-0 break-all text-body">
-                      at most {source.settings.maxPages ?? 5}, {Math.round((source.settings.maxPageBytes ?? 262144) / 1024)} KiB each
+                      at most {source.settings.maxPages ?? 5},{" "}
+                      {Math.round((source.settings.maxPageBytes ?? 262144) / 1024)} KiB each
                     </dd>
                   </>
                 ) : null}
@@ -166,7 +174,11 @@ export function ContextSourcesSection({
                 </dd>
                 <dt className="t-label text-mute">Last read</dt>
                 <dd className="min-w-0 text-body">
-                  {source.lastReadAt ? formatDate(source.lastReadAt) : <span className="text-mute">No run read it yet</span>}
+                  {source.lastReadAt ? (
+                    formatDate(source.lastReadAt)
+                  ) : (
+                    <span className="text-mute">No run read it yet</span>
+                  )}
                 </dd>
               </dl>
             </li>
@@ -332,7 +344,11 @@ function SourceForm({
         {kind === "mcp" ? "New MCP server" : kind === "llms_txt" ? "New llms.txt" : "New Backstage catalog"}
       </p>
       <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
-        <Field label="Source id" hint="Lower case letters, digits, dot, colon, underscore and dash." errors={fieldErrors.sourceId}>
+        <Field
+          label="Source id"
+          hint="Lower case letters, digits, dot, colon, underscore and dash."
+          errors={fieldErrors.sourceId}
+        >
           {(props) => (
             <Input
               {...props}
@@ -376,8 +392,8 @@ function SourceForm({
               <span className="t-label">Transport</span>
               <p className="t-value text-ink">Streamable HTTP · JSON or SSE</p>
               <p className="t-hint">
-                Factoree sends JSON-RPC in an HTTP POST and reads the answer as JSON or as a server-sent event stream. It
-                supports no other MCP transport.
+                Factoree sends JSON-RPC in an HTTP POST and reads the answer as JSON or as a server-sent event stream.
+                It supports no other MCP transport.
               </p>
             </div>
             <Field label="Discover tool" hint="Factoree calls it with the goal, the topics and the repository.">
@@ -498,7 +514,10 @@ function SourceForm({
       </div>
 
       {test.data ? (
-        <Alert tone={test.data.ok ? "success" : "danger"} title={test.data.ok ? "The source answered" : "The test failed"}>
+        <Alert
+          tone={test.data.ok ? "success" : "danger"}
+          title={test.data.ok ? "The source answered" : "The test failed"}
+        >
           <p>{test.data.message}</p>
           {test.data.items.length > 0 ? (
             <ul className="mt-2 flex flex-col gap-1">

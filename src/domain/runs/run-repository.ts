@@ -20,6 +20,8 @@ export interface RunRecord {
   reviewerRunner: string | null;
   spriteId: string | null;
   spriteAdapter: string | null;
+  /** docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to. */
+  sandboxProviderId: string | null;
   spriteRetainUntil: Date | null;
   baseSha: string | null;
   patchSha256: string | null;
@@ -190,6 +192,8 @@ export interface RunRepository {
   setDeliveredContext(tenantId: string, runId: string, entries: DeliveredContextEntry[]): Promise<void>;
   /** Removes the sandbox reference after the sandbox is deleted. The evidence stays. */
   clearSandbox(tenantId: string, runId: string): Promise<void>;
+  /** docs/specs/sandbox-provider-spillover.md. Pins the run to a sandbox provider, or null to unpin it. */
+  setSandboxProvider(tenantId: string, runId: string, providerId: string | null): Promise<void>;
   /**
    * SDD section 53. `Run.contextContractVersion` holds the SHA-256 of the frozen contract, because
    * that value names the exact contract the Run uses. The method throws when it reaches no Run of

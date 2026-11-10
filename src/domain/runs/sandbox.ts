@@ -2,7 +2,11 @@
 export interface SandboxRef {
   /** Adapter-scoped identifier. This value is stored as `Run.spriteId`. */
   id: string;
-  /** The adapter that owns this sandbox, for example `fly-sprites` or `local`. */
+  /**
+   * The sandbox provider that owns this sandbox, for example `kiln` or `e2b-3f2a1c`
+   * (docs/specs/sandbox-provider-spillover.md). The first provider of a type has the type name as
+   * its id. A bare adapter outside `SettingsSandbox` writes its own name here.
+   */
   adapter: string;
   /** The absolute path inside the sandbox that holds every checkout. */
   workspacePath: string;
@@ -132,7 +136,7 @@ export interface EgressRecord {
 
 /** SDD section 31. */
 export interface Sandbox {
-  /** The adapter name. It appears in `SandboxRef.adapter` and in logs. */
+  /** The adapter name, or the sandbox provider id. It appears in `SandboxRef.adapter` and in logs. */
   readonly name: string;
   readonly capabilities: SandboxCapabilities;
   /** The sandbox image by digest, when `supportsCustomImage` is true. */
@@ -146,6 +150,11 @@ export interface Sandbox {
    * sandbox. An adapter with fixed settings leaves it out.
    */
   refresh?(): Promise<void>;
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The view of one sandbox provider, when this sandbox
+   * routes to several. A create through the view goes to that provider only.
+   */
+  forProvider?(providerId: string): Promise<Sandbox>;
   create(input: SandboxCreateInput): Promise<SandboxRef>;
   /**
    * docs/specs/repository-setup-and-services.md. The hosts the sandbox reached and the hosts its
@@ -204,6 +213,23 @@ export class SandboxError extends Error {
   ) {
     super(message, options);
     this.name = "SandboxError";
+  }
+}
+
+/**
+ * docs/specs/sandbox-provider-spillover.md. The sandbox provider failed to create a sandbox: the
+ * call to the provider threw. A work sprite create that fails this way marks the provider down,
+ * and the run selects another one.
+ */
+export class SandboxCreateError extends Error {
+  constructor(
+    readonly providerId: string,
+    cause: unknown,
+  ) {
+    super(`the sandbox provider ${providerId} did not create a sandbox: ${cause instanceof Error ? cause.message : String(cause)}`, {
+      cause,
+    });
+    this.name = "SandboxCreateError";
   }
 }
 

@@ -37,6 +37,8 @@ export const runListItemSchema = z.object({
   completedAt: z.string().nullable(),
   durationMs: z.number().nullable(),
   waitedMs: z.number(),
+  /** docs/specs/sandbox-provider-spillover.md. The sandbox provider of the run, or null. */
+  sandboxProvider: z.string().nullable(),
 });
 
 export const runDetailSchema = runListItemSchema.extend({

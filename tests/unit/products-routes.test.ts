@@ -66,6 +66,7 @@ class FakeProductRegistry implements ProductRegistry {
       effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
       silenceMinutes: 10,
       sandboxRetentionHours: 24,
+      sandboxProviderIds: [],
       maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -176,6 +177,7 @@ class FakeProductRegistry implements ProductRegistry {
       ...(settings.silenceMinutes === undefined ? {} : { silenceMinutes: settings.silenceMinutes }),
       ...(settings.sandboxRetentionHours === undefined ? {} : { sandboxRetentionHours: settings.sandboxRetentionHours }),
       ...(settings.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: settings.maxConcurrentRuns }),
+      ...(settings.sandboxProviderIds === undefined ? {} : { sandboxProviderIds: settings.sandboxProviderIds }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
+import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
 import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
 
@@ -54,6 +55,8 @@ export const productSchema = z.object({
   effort: effortSchema,
   silenceMinutes: z.number(),
   sandboxRetentionHours: z.number(),
+  /** docs/specs/sandbox-provider-spillover.md. The sandbox providers the runs may use. Empty allows all. */
+  sandboxProviderIds: z.array(z.string()),
   maxConcurrentRuns: z.number(),
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
@@ -108,6 +111,7 @@ export const productSettingsFields = {
     .strict(),
   silenceMinutes: z.number().int().positive().max(240),
   sandboxRetentionHours: z.number().int().min(0).max(24 * 30),
+  sandboxProviderIds: z.array(z.string().min(1)).max(50),
   maxConcurrentRuns: z.number().int().positive().max(100),
   appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
 };
@@ -133,18 +137,13 @@ export const installSettingsUpdateSchema = z
       })
       .partial()
       .strict(),
+    // docs/specs/sandbox-provider-spillover.md. The image serves every sandbox provider. The
+    // providers have their own routes.
     sandbox: z
       .object({
-        provider: z.enum(SANDBOX_PROVIDERS),
-        url: z.string().url().nullable(),
-        apiKey: z.string().min(1),
         image: z.string().regex(IMAGE_BY_DIGEST, "must name the image by digest, as <name>@sha256:<hex>").nullable(),
         registryUsername: z.string().min(1).nullable(),
         registryToken: z.string().min(1).nullable(),
-        maxLive: z.number().int().positive().nullable(),
-        // docs/specs/kiln-sandbox-size.md. Kiln accepts 1 to 32 vCPUs. npm ci needs 1024 MB.
-        vcpus: z.number().int().min(1).max(32).nullable(),
-        memoryMb: z.number().int().min(1024).max(1_048_576).nullable(),
       })
       .partial()
       .strict(),
@@ -183,16 +182,10 @@ export const installSettingsViewSchema = z.object({
     signInCallbackUrl: z.string(),
   }),
   sandbox: z.object({
-    provider: z.enum(SANDBOX_PROVIDERS).nullable(),
-    url: z.string().nullable(),
-    apiKeySet: z.boolean(),
     image: z.string().nullable(),
     pinnedImage: z.string().nullable(),
     registryUsername: z.string().nullable(),
     registryTokenSet: z.boolean(),
-    maxLive: z.number().nullable(),
-    vcpus: z.number().nullable(),
-    memoryMb: z.number().nullable(),
     defaultSize: z.object({ vcpus: z.number(), memoryMb: z.number() }),
     localAllowed: z.boolean(),
   }),
@@ -235,47 +228,111 @@ export const viewInstallSettings = (
     signInCallbackUrl: linearSignInCallbackUrl(publicUrl),
   },
   sandbox: {
-    provider: settings.sandbox.provider,
-    url: settings.sandbox.url,
-    apiKeySet: settings.sandbox.apiKey !== null,
     image: settings.sandbox.image,
     pinnedImage: buildInfo.sandboxImageDefault,
     registryUsername: settings.sandbox.registryUsername,
     registryTokenSet: settings.sandbox.registryToken !== null,
-    maxLive: settings.sandbox.maxLive,
-    vcpus: settings.sandbox.vcpus,
-    memoryMb: settings.sandbox.memoryMb,
     defaultSize: DEFAULT_KILN_SANDBOX_SIZE,
     localAllowed,
   },
   gitAuthor: settings.gitAuthor,
 });
 
-/** A sandbox provider must carry what its adapter needs before a Run can use it. */
-export const sandboxSettingsProblem = (sandbox: InstallSettings["sandbox"], localAllowed: boolean): string | null => {
-  switch (sandbox.provider) {
-    case null:
-      return null;
+/** The registry login of the sandbox image is a pair. */
+export const sandboxSettingsProblem = (sandbox: InstallSettings["sandbox"]): string | null =>
+  (sandbox.registryUsername === null) !== (sandbox.registryToken === null) ? "the registry username and token go together" : null;
+
+/**
+ * docs/specs/sandbox-provider-spillover.md. A sandbox provider must carry what its adapter needs
+ * before a run can use it. `image` is the install image override.
+ */
+export const sandboxProviderProblem = (
+  provider: Pick<SandboxProviderSettings, "type" | "url" | "apiKey">,
+  image: string | null,
+  localAllowed: boolean,
+): string | null => {
+  switch (provider.type) {
     case "local":
       return localAllowed ? null : "the local sandbox isolates nothing; set FACTOREE_UNSAFE_LOCAL_SANDBOX=1 on a development machine to allow it";
     case "kiln":
-      if (sandbox.url === null) return "Kiln needs its URL";
-      if (sandbox.apiKey === null) return "Kiln needs an API key";
-      if (sandbox.image === null && buildInfo.sandboxImageDefault === null) return "this build pins no sandbox image, so Kiln needs an image";
-      break;
+      if (provider.url === null) return "Kiln needs its URL";
+      if (provider.apiKey === null) return "Kiln needs an API key";
+      if (image === null && buildInfo.sandboxImageDefault === null) return "this build pins no sandbox image, so Kiln needs an image";
+      return null;
     case "e2b":
-      if (sandbox.apiKey === null) return "E2B needs an API key";
-      if (sandbox.image === null && buildInfo.sandboxImageDefault === null) return "this build pins no sandbox image, so E2B needs an image";
-      break;
+      if (provider.apiKey === null) return "E2B needs an API key";
+      if (image === null && buildInfo.sandboxImageDefault === null) return "this build pins no sandbox image, so E2B needs an image";
+      return null;
     case "fly-sprites":
-      if (sandbox.apiKey === null) return "Fly Sprites needs a token";
-      break;
+      return provider.apiKey === null ? "Fly Sprites needs a token" : null;
   }
-  if ((sandbox.registryUsername === null) !== (sandbox.registryToken === null)) {
-    return "the registry username and token go together";
-  }
-  return null;
 };
+
+const sandboxProviderFields = {
+  name: z.string().trim().min(1).max(60),
+  type: z.enum(SANDBOX_PROVIDERS),
+  url: z.string().url().nullable(),
+  apiKey: z.string().min(1).nullable(),
+  maxLive: z.number().int().positive().nullable(),
+  // docs/specs/kiln-sandbox-size.md. Kiln accepts 1 to 32 vCPUs. npm ci needs 1024 MB. E2B accepts
+  // 1 to 8 vCPUs and 8 GiB.
+  vcpus: z.number().int().min(1).max(32).nullable(),
+  memoryMb: z.number().int().min(1024).max(1_048_576).nullable(),
+  priority: z.number().int().min(1).max(100),
+  enabled: z.boolean(),
+};
+
+export const sandboxProviderCreateSchema = z
+  .object(sandboxProviderFields)
+  .partial()
+  .required({ name: true, type: true })
+  .strict();
+
+export const sandboxProviderUpdateSchema = z.object(sandboxProviderFields).partial().strict();
+
+export const sandboxProviderViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(SANDBOX_PROVIDERS),
+  url: z.string().nullable(),
+  apiKeySet: z.boolean(),
+  maxLive: z.number().nullable(),
+  vcpus: z.number().nullable(),
+  memoryMb: z.number().nullable(),
+  priority: z.number(),
+  enabled: z.boolean(),
+  /** Set while selection skips the provider after a failed create. */
+  downUntil: z.string().nullable(),
+  downReason: z.string().nullable(),
+  /** The live leases: running sandboxes and held slots. */
+  live: z.number(),
+  /** What the provider lacks before a run can use it, or null. */
+  problem: z.string().nullable(),
+});
+
+export type SandboxProviderView = z.infer<typeof sandboxProviderViewSchema>;
+
+export const viewSandboxProvider = (
+  provider: SandboxProviderSettings,
+  live: number,
+  problem: string | null,
+  now: Date,
+): SandboxProviderView => ({
+  id: provider.id,
+  name: provider.name,
+  type: provider.type,
+  url: provider.url,
+  apiKeySet: provider.apiKey !== null,
+  maxLive: provider.maxLive,
+  vcpus: provider.vcpus,
+  memoryMb: provider.memoryMb,
+  priority: provider.priority,
+  enabled: provider.enabled,
+  downUntil: provider.downUntil !== null && provider.downUntil > now ? provider.downUntil.toISOString() : null,
+  downReason: provider.downUntil !== null && provider.downUntil > now ? provider.downReason : null,
+  live,
+  problem,
+});
 
 export const apiKeySchema = z.object({
   id: z.string(),

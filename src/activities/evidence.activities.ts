@@ -167,6 +167,8 @@ export interface ProofPackActivityDependencies {
   logger: Logger;
   /** docs/specs/skill-registry.md. The skills and the skill proposals of each run. */
   skills?: RunSkillStore | undefined;
+  /** docs/specs/sandbox-provider-spillover.md. The name of a sandbox provider, or null when it is gone. */
+  sandboxProviderName?: ((providerId: string) => Promise<string | null>) | undefined;
 }
 
 export interface PublishProofPackActivityInput {
@@ -237,6 +239,19 @@ const metadataText = (metadata: Record<string, unknown>, key: string): string =>
  * and posts it as the Linear final response. It reads recorded facts only. No agent claim and no
  * workflow-carried summary decides what it reports.
  */
+/** docs/specs/sandbox-provider-spillover.md. The provider name, or its id when the provider is gone. */
+const sandboxProviderOf = async (
+  dependencies: Pick<ProofPackActivityDependencies, "runs" | "sandboxProviderName">,
+  tenantId: string,
+  runId: string,
+): Promise<string | null> => {
+  // A worker without the provider list names no provider.
+  if (dependencies.sandboxProviderName === undefined) return null;
+  const providerId = (await dependencies.runs.findById(tenantId, runId))?.sandboxProviderId ?? null;
+  if (providerId === null) return null;
+  return (await dependencies.sandboxProviderName(providerId)) ?? providerId;
+};
+
 export const createProofPackActivities = (dependencies: ProofPackActivityDependencies) => ({
   async publishProofPack(
     input: PublishProofPackActivityInput,
@@ -467,6 +482,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.
       agentUsage: summarizeAgentSessions(sessionRows),
       waitedMs: input.waitedMs ?? 0,
+      sandboxProvider: await sandboxProviderOf(dependencies, input.tenantId, input.runId),
       modelWarning,
       // DI-15.23. A plan correction session marks a pass whose first Validation Plan was rejected.
       planCorrections: sessionRows

@@ -1716,30 +1716,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "provider": {
-                    "type": "string",
-                    "enum": [
-                      "kiln",
-                      "e2b",
-                      "fly-sprites",
-                      "local"
-                    ]
-                  },
-                  "url": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "apiKey": {
-                    "type": "string",
-                    "minLength": 1
-                  },
                   "image": {
                     "anyOf": [
                       {
@@ -1772,6 +1748,30 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "kiln",
+                      "e2b",
+                      "fly-sprites",
+                      "local"
+                    ]
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 1
                   },
                   "maxLive": {
                     "anyOf": [
@@ -2520,6 +2520,12 @@
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
+                    "sandboxProviderIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
@@ -2558,6 +2564,7 @@
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
+                    "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
                     "createdAt",
@@ -3257,6 +3264,12 @@
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
+                    "sandboxProviderIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
@@ -3295,6 +3308,7 @@
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
+                    "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
                     "createdAt",
@@ -3670,6 +3684,12 @@
                       "sandboxRetentionHours": {
                         "type": "number"
                       },
+                      "sandboxProviderIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "maxConcurrentRuns": {
                         "type": "number"
                       },
@@ -3708,6 +3728,7 @@
                       "effort",
                       "silenceMinutes",
                       "sandboxRetentionHours",
+                      "sandboxProviderIds",
                       "maxConcurrentRuns",
                       "appChangeIssues",
                       "createdAt",
@@ -4076,6 +4097,12 @@
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
+                    "sandboxProviderIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
@@ -4114,6 +4141,7 @@
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
+                    "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
                     "createdAt",
@@ -4497,6 +4525,14 @@
                     "minimum": 0,
                     "maximum": 720
                   },
+                  "sandboxProviderIds": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
                   "maxConcurrentRuns": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -4832,6 +4868,12 @@
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
+                    "sandboxProviderIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
@@ -4870,6 +4912,7 @@
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
+                    "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
                     "createdAt",
@@ -5364,6 +5407,12 @@
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
+                    "sandboxProviderIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "maxConcurrentRuns": {
                       "type": "number"
                     },
@@ -5402,6 +5451,7 @@
                     "effort",
                     "silenceMinutes",
                     "sandboxRetentionHours",
+                    "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
                     "createdAt",
@@ -6036,6 +6086,12 @@
                           },
                           "waitedMs": {
                             "type": "number"
+                          },
+                          "sandboxProvider": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
                           }
                         },
                         "required": [
@@ -6055,7 +6111,8 @@
                           "createdAt",
                           "completedAt",
                           "durationMs",
-                          "waitedMs"
+                          "waitedMs",
+                          "sandboxProvider"
                         ]
                       }
                     },
@@ -6227,6 +6284,12 @@
                     },
                     "waitedMs": {
                       "type": "number"
+                    },
+                    "sandboxProvider": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "temporalWorkflowId": {
                       "type": "string"
@@ -6578,6 +6641,7 @@
                     "completedAt",
                     "durationMs",
                     "waitedMs",
+                    "sandboxProvider",
                     "temporalWorkflowId",
                     "autonomyLevel",
                     "followUpOfRunId",
@@ -6847,6 +6911,28 @@
                           "null"
                         ]
                       },
+                      "buildAheadFailures": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "failedAt": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "reason",
+                            "failedAt"
+                          ]
+                        }
+                      },
                       "setup": {
                         "anyOf": [
                           {
@@ -6930,6 +7016,7 @@
                       "githubInstallationId",
                       "registered",
                       "needsSetupReason",
+                      "buildAheadFailures",
                       "setup"
                     ]
                   }
@@ -8552,6 +8639,711 @@
         }
       }
     },
+    "/admin/sandbox-providers": {
+      "get": {
+        "operationId": "listSandboxProviders",
+        "tags": [
+          "install"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "kiln",
+                          "e2b",
+                          "fly-sprites",
+                          "local"
+                        ]
+                      },
+                      "url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "apiKeySet": {
+                        "type": "boolean"
+                      },
+                      "maxLive": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "vcpus": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "memoryMb": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "priority": {
+                        "type": "number"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "downUntil": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "downReason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "live": {
+                        "type": "number"
+                      },
+                      "problem": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "type",
+                      "url",
+                      "apiKeySet",
+                      "maxLive",
+                      "vcpus",
+                      "memoryMb",
+                      "priority",
+                      "enabled",
+                      "downUntil",
+                      "downReason",
+                      "live",
+                      "problem"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSandboxProvider",
+        "tags": [
+          "install"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "kiln",
+                      "e2b",
+                      "fly-sprites",
+                      "local"
+                    ]
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "apiKey": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxLive": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "vcpus": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "memoryMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 1048576
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "type"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "kiln",
+                        "e2b",
+                        "fly-sprites",
+                        "local"
+                      ]
+                    },
+                    "url": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "apiKeySet": {
+                      "type": "boolean"
+                    },
+                    "maxLive": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "vcpus": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "memoryMb": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "priority": {
+                      "type": "number"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "downUntil": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "downReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "live": {
+                      "type": "number"
+                    },
+                    "problem": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "type",
+                    "url",
+                    "apiKeySet",
+                    "maxLive",
+                    "vcpus",
+                    "memoryMb",
+                    "priority",
+                    "enabled",
+                    "downUntil",
+                    "downReason",
+                    "live",
+                    "problem"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/sandbox-providers/{id}": {
+      "put": {
+        "operationId": "updateSandboxProvider",
+        "tags": [
+          "install"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "kiln",
+                      "e2b",
+                      "fly-sprites",
+                      "local"
+                    ]
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "apiKey": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxLive": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "vcpus": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "memoryMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 1048576
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "kiln",
+                        "e2b",
+                        "fly-sprites",
+                        "local"
+                      ]
+                    },
+                    "url": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "apiKeySet": {
+                      "type": "boolean"
+                    },
+                    "maxLive": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "vcpus": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "memoryMb": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "priority": {
+                      "type": "number"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "downUntil": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "downReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "live": {
+                      "type": "number"
+                    },
+                    "problem": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "type",
+                    "url",
+                    "apiKeySet",
+                    "maxLive",
+                    "vcpus",
+                    "memoryMb",
+                    "priority",
+                    "enabled",
+                    "downUntil",
+                    "downReason",
+                    "live",
+                    "problem"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSandboxProvider",
+        "tags": [
+          "install"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/me": {
       "get": {
         "operationId": "getMe",
@@ -8758,31 +9550,6 @@
                     "sandbox": {
                       "type": "object",
                       "properties": {
-                        "provider": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "enum": [
-                                "kiln",
-                                "e2b",
-                                "fly-sprites",
-                                "local"
-                              ]
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "url": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "apiKeySet": {
-                          "type": "boolean"
-                        },
                         "image": {
                           "type": [
                             "string",
@@ -8804,24 +9571,6 @@
                         "registryTokenSet": {
                           "type": "boolean"
                         },
-                        "maxLive": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "vcpus": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "memoryMb": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
                         "defaultSize": {
                           "type": "object",
                           "properties": {
@@ -8842,16 +9591,10 @@
                         }
                       },
                       "required": [
-                        "provider",
-                        "url",
-                        "apiKeySet",
                         "image",
                         "pinnedImage",
                         "registryUsername",
                         "registryTokenSet",
-                        "maxLive",
-                        "vcpus",
-                        "memoryMb",
                         "defaultSize",
                         "localAllowed"
                       ]
@@ -8932,30 +9675,6 @@
                   "sandbox": {
                     "type": "object",
                     "properties": {
-                      "provider": {
-                        "type": "string",
-                        "enum": [
-                          "kiln",
-                          "e2b",
-                          "fly-sprites",
-                          "local"
-                        ]
-                      },
-                      "url": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "format": "uri"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "apiKey": {
-                        "type": "string",
-                        "minLength": 1
-                      },
                       "image": {
                         "anyOf": [
                           {
@@ -8983,42 +9702,6 @@
                           {
                             "type": "string",
                             "minLength": 1
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "maxLive": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "vcpus": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 32
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "memoryMb": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "minimum": 1024,
-                            "maximum": 1048576
                           },
                           {
                             "type": "null"
@@ -9160,31 +9843,6 @@
                     "sandbox": {
                       "type": "object",
                       "properties": {
-                        "provider": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "enum": [
-                                "kiln",
-                                "e2b",
-                                "fly-sprites",
-                                "local"
-                              ]
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "url": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "apiKeySet": {
-                          "type": "boolean"
-                        },
                         "image": {
                           "type": [
                             "string",
@@ -9206,24 +9864,6 @@
                         "registryTokenSet": {
                           "type": "boolean"
                         },
-                        "maxLive": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "vcpus": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
-                        "memoryMb": {
-                          "type": [
-                            "number",
-                            "null"
-                          ]
-                        },
                         "defaultSize": {
                           "type": "object",
                           "properties": {
@@ -9244,16 +9884,10 @@
                         }
                       },
                       "required": [
-                        "provider",
-                        "url",
-                        "apiKeySet",
                         "image",
                         "pinnedImage",
                         "registryUsername",
                         "registryTokenSet",
-                        "maxLive",
-                        "vcpus",
-                        "memoryMb",
                         "defaultSize",
                         "localAllowed"
                       ]

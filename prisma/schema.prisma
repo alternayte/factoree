@@ -19,6 +19,7 @@ model Tenant {
   webhooks          ProcessedWebhook[]
   warmSnapshots     WarmSnapshot[]
   retiredSnapshots  RetiredWarmSnapshot[]
+  buildAheadFailures BuildAheadFailure[]
   linearMembers     LinearMember[]
 }
 
@@ -102,6 +103,9 @@ model Run {
   spriteId                 String?
   spriteAdapter            String?
   spriteRetainUntil        DateTime?
+  // docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to. It stays
+  // after the reaper clears spriteAdapter, so the run page and the proof pack can name it.
+  sandboxProviderId        String?   @map("sandbox_provider_id")
   baseSha                  String?
   organizationSkillsSha    String?
   // docs/specs/skill-registry.md. The registry set the run used, null for every released skill,
@@ -460,7 +464,8 @@ model ProcessedWebhook {
   @@index([tenantId])
 }
 
-/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, adapter and repository.
+/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, sandbox provider and repository.
+/// docs/specs/sandbox-provider-spillover.md. `adapter` holds the sandbox provider id.
 model WarmSnapshot {
   id            String   @id @default(uuid())
   tenantId      String
@@ -495,11 +500,14 @@ model RetiredWarmSnapshot {
 }
 
 // docs/specs/release-0-1-0.md, DI-15.14. One live sandbox of a provider that Factoree created, from
-// the reservation before the create until the delete. sandboxMaxLive counts these rows.
+// the reservation before the create until the delete. The maxLive of its provider counts these rows.
+// docs/specs/sandbox-provider-spillover.md. `adapter` holds the sandbox provider id. A held lease
+// is one of the three slots a run takes at start: unbound while no sandbox of the run uses it.
 model SandboxLease {
   id            String    @id @default(uuid())
   adapter       String
   runId         String
+  held          Boolean   @default(false)
   // Null between the reservation and the end of the create.
   sandboxId     String?
   createdAt     DateTime  @default(now())
@@ -508,6 +516,47 @@ model SandboxLease {
 
   @@unique([adapter, sandboxId])
   @@index([adapter, createdAt])
+  @@index([runId])
+}
+
+// docs/specs/sandbox-provider-spillover.md. One sandbox provider of the install: a Kiln host, an E2B
+// account, a Sprites account or the local adapter. The id is stable: leases, warm snapshots and
+// runs name it. The first provider of a type takes the type name as its id.
+model SandboxProvider {
+  id           String    @id
+  name         String
+  // kiln, e2b, fly-sprites or local.
+  type         String
+  // The Kiln host, the Sprites API base URL, or a self-hosted E2B URL. Null means the type default.
+  url          String?
+  apiKeyCipher String?
+  // The limit of live sandboxes on this provider. Null means no limit.
+  maxLive      Int?
+  vcpus        Int?
+  memoryMb     Int?
+  // A lower number is a better priority.
+  priority     Int       @default(1)
+  enabled      Boolean   @default(true)
+  // Set when a work sprite create failed. Selection skips the provider until then.
+  downUntil    DateTime?
+  downReason   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// docs/specs/sandbox-provider-spillover.md. The last failed build-ahead of one repository on one
+// sandbox provider. Selection skips the provider for the repository while the row exists, and a
+// build-ahead that succeeds there deletes it.
+model BuildAheadFailure {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  providerId    String
+  repositoryUrl String
+  reason        String
+  failedAt      DateTime @default(now())
+
+  @@unique([tenantId, providerId, repositoryUrl])
 }
 
 model Product {
@@ -553,6 +602,9 @@ model Product {
   silenceMinutes Int      @default(10)
   // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
   sandboxRetentionHours Int @default(24)
+  // docs/specs/sandbox-provider-spillover.md. The sandbox provider ids the runs of this product may
+  // use. Empty allows every provider.
+  sandboxProviderIds String[] @default([]) @map("sandbox_provider_ids")
   // docs/specs/setup-app-change-issues.md. one_per_change or one_for_all: how many app-change
   // issues a merged setup creates.
   appChangeIssues String @default("one_per_change") @map("app_change_issues")
@@ -690,20 +742,11 @@ model InstallSettings {
   linearClientId              String?
   linearClientSecretCipher    String?
   linearWebhookSecretCipher   String?
-  // kiln, e2b, fly-sprites or local.
-  sandboxProvider             String?
-  // The Kiln host, the Sprites API base URL, or a self-hosted E2B URL. Null means the provider default.
-  sandboxUrl                  String?
-  sandboxApiKeyCipher         String?
-  // A sandbox image by digest. Null means the image the release pins.
+  // A sandbox image by digest. Null means the image the release pins. Every sandbox provider
+  // builds its template from it (docs/specs/sandbox-provider-spillover.md).
   sandboxImage                String?
   sandboxRegistryUsername     String?
   sandboxRegistryTokenCipher  String?
-  // The provider's limit of live sandboxes. The worker enforces it (DI-15.14). Null means no limit.
-  sandboxMaxLive              Int?
-  // docs/specs/kiln-sandbox-size.md. The size of each Kiln sandbox. Null means the default.
-  sandboxVcpus                Int?
-  sandboxMemoryMb             Int?
   gitAuthorName               String    @default("Factoree")
   gitAuthorEmail              String    @default("factoree@users.noreply.github.com")
   // The SHA-256 of the one-time setup token. The token itself is never stored.

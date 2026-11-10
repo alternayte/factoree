@@ -1,18 +1,9 @@
 import type { InstallSettings as InstallSettingsRow } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
-import {
-  SANDBOX_PROVIDERS,
-  type InstallSettings,
-  type InstallSettingsPatch,
-  type InstallSettingsStore,
-  type SandboxProvider,
-} from "~/domain/settings/install-settings.js";
+import type { InstallSettings, InstallSettingsPatch, InstallSettingsStore } from "~/domain/settings/install-settings.js";
 
 const ROW_ID = "install";
-
-const asProvider = (value: string | null): SandboxProvider | null =>
-  value !== null && (SANDBOX_PROVIDERS as readonly string[]).includes(value) ? (value as SandboxProvider) : null;
 
 /**
  * The install settings row. Every credential column holds AES-256-GCM cipher text under the
@@ -64,15 +55,9 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
         webhookSecret: this.open(row.linearWebhookSecretCipher),
       },
       sandbox: {
-        provider: asProvider(row.sandboxProvider),
-        url: row.sandboxUrl,
-        apiKey: this.open(row.sandboxApiKeyCipher),
         image: row.sandboxImage,
         registryUsername: row.sandboxRegistryUsername,
         registryToken: this.open(row.sandboxRegistryTokenCipher),
-        maxLive: row.sandboxMaxLive,
-        vcpus: row.sandboxVcpus,
-        memoryMb: row.sandboxMemoryMb,
       },
       gitAuthor: { name: row.gitAuthorName, email: row.gitAuthorEmail },
       operatorTenantId: row.operatorTenantId,
@@ -98,15 +83,9 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
       linearClientId: linear.clientId,
       linearClientSecretCipher: this.seal(linear.clientSecret),
       linearWebhookSecretCipher: this.seal(linear.webhookSecret),
-      sandboxProvider: sandbox.provider,
-      sandboxUrl: sandbox.url,
-      sandboxApiKeyCipher: this.seal(sandbox.apiKey),
       sandboxImage: sandbox.image,
       sandboxRegistryUsername: sandbox.registryUsername,
       sandboxRegistryTokenCipher: this.seal(sandbox.registryToken),
-      sandboxMaxLive: sandbox.maxLive,
-      sandboxVcpus: sandbox.vcpus,
-      sandboxMemoryMb: sandbox.memoryMb,
       gitAuthorName: gitAuthor.name,
       gitAuthorEmail: gitAuthor.email,
       operatorTenantId: patch.operatorTenantId,

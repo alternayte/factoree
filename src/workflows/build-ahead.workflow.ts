@@ -30,8 +30,10 @@ export const buildAheadWorkflow = async (request: BuildAheadRequest): Promise<vo
   while (pending) {
     pending = false;
     try {
-      const outcome = await activities.buildWarmSnapshotAhead(request);
-      log.info("build-ahead finished", { outcome: outcome.kind });
+      const outcomes = await activities.buildWarmSnapshotAhead(request);
+      // An activity result from before docs/specs/sandbox-provider-spillover.md is one outcome.
+      const kinds = (Array.isArray(outcomes) ? outcomes : [outcomes]).map((outcome) => outcome.kind);
+      log.info("build-ahead finished", { outcome: kinds.join(",") });
     } catch (error) {
       // A failed build-ahead costs the next run its warm start and nothing else.
       log.warn("the build-ahead failed after every retry", { error: String(error) });

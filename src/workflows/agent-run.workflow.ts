@@ -47,7 +47,7 @@ export type { AgentRunProductRepositoryInput };
 import { RUN_CONFIGURATION_ERROR_TYPE } from "../domain/runs/run-configuration-error.js";
 import { INTERNAL_ERROR_SENTENCE, withCauseText } from "../domain/runs/failure-cause.js";
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time.
-import { SANDBOX_SLOT_UNAVAILABLE_TYPE } from "../domain/runs/sandbox-slot-error.js";
+import { SANDBOX_PROVIDER_DOWN_TYPE, SANDBOX_SLOT_UNAVAILABLE_TYPE } from "../domain/runs/sandbox-slot-error.js";
 import { queuedMessage } from "../domain/runs/run-slots.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
@@ -223,6 +223,11 @@ const ISSUE_STATUS_PATCH = "issue-status";
 const PULL_REQUEST_LINK_PATCH = "pull-request-link";
 /** DI-21.56. A wait for a sandbox slot moves the deadline, as a wait in QUEUED already does. */
 const SANDBOX_SLOT_WAIT_PATCH = "sandbox-slot-wait";
+/**
+ * docs/specs/sandbox-provider-spillover.md. The run selects its sandbox provider and holds its slots
+ * there before the work sprite. An older history prepares on the default provider.
+ */
+const SANDBOX_PROVIDER_PATCH = "sandbox-provider-spillover";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -336,7 +341,7 @@ const buildSandboxActivities = (budgetMs: number) =>
       maximumAttempts: 3,
       initialInterval: "5 seconds",
       backoffCoefficient: 2,
-      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE, SANDBOX_SLOT_UNAVAILABLE_TYPE],
+      nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE, SANDBOX_SLOT_UNAVAILABLE_TYPE, SANDBOX_PROVIDER_DOWN_TYPE],
     },
   });
 
@@ -353,6 +358,14 @@ const SANDBOX_SLOT_POLL_MS = 30_000;
 const isSandboxSlotUnavailable = (error: unknown): boolean => {
   for (let current: unknown = error; current instanceof Error; current = current.cause) {
     if (current instanceof ApplicationFailure && current.type === SANDBOX_SLOT_UNAVAILABLE_TYPE) return true;
+  }
+  return false;
+};
+
+/** docs/specs/sandbox-provider-spillover.md. The work sprite create failed at the provider of the run. */
+const isSandboxProviderDown = (error: unknown): boolean => {
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ApplicationFailure && current.type === SANDBOX_PROVIDER_DOWN_TYPE) return true;
   }
   return false;
 };
@@ -1283,8 +1296,8 @@ export async function agentRunWorkflow(
           activities.postProgress({
             sessionId: input.agentSessionId,
             message:
-              "The sandbox provider runs its limit of live sandboxes, and none of them is retained " +
-              "for inspection. Factoree waits for a free sandbox.",
+              "Every sandbox provider this run may use runs its limit of live sandboxes, and none of " +
+              "them is retained for inspection. Factoree waits for a free sandbox.",
           }),
         );
       }
@@ -1763,7 +1776,27 @@ export async function agentRunWorkflow(
       // closure.
       let preparedSandbox: PrepareSandboxActivityOutput;
       try {
-        const work = await withSandboxSlot((budgetMs) => buildSandboxActivities(budgetMs).prepareSandbox(prepareInput));
+        const work = await withSandboxSlot(async (budgetMs) => {
+          if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(prepareInput);
+          // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
+          // there, then prepares the work sprite on it. A provider that fails the create is marked
+          // down, the run gives its slots back, and it selects again. With no provider that has
+          // room, the selection throws the slot error, and `withSandboxSlot` waits.
+          for (;;) {
+            const budget = Math.max(1, Math.min(budgetMs, remainingMs()));
+            await buildSandboxActivities(budget).selectSandboxProvider({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              repositoryUrl: sandbox.primary.url,
+            });
+            try {
+              return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(prepareInput);
+            } catch (error) {
+              if (!isSandboxProviderDown(error)) throw error;
+            }
+          }
+        });
         if (work === null) {
           if (stopRequested) return await cancelRun();
           return await failRun("RUN_TIMEOUT", timeoutMessage);

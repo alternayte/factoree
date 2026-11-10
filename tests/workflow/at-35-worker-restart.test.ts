@@ -96,6 +96,7 @@ const activities = {
     summary: "Factoree froze the Validation Contract with 1 assertion.",
     manualAssertionIds: [],
   }),
+  selectSandboxProvider: () => Promise.resolve({ providerId: null }),
   prepareSandbox: async (input: { runId: string }) => ({
     spriteId: `sprite-${input.runId}`,
     adapter: "fake",

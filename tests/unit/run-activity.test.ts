@@ -24,6 +24,7 @@ const record = (status: RunStatus, repairCount: number): RunRecord => ({
   reviewerRunner: null,
   spriteId: null,
   spriteAdapter: null,
+  sandboxProviderId: null,
   spriteRetainUntil: null,
   baseSha: null,
   patchSha256: null,

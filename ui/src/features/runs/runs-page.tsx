@@ -139,16 +139,22 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                     >
                       {run.workItemTitle ?? "Untitled run"}
                     </Link>
-                    <div className="font-mono text-xs text-mute">{issueIdentifier(run.workItemUrl) ?? run.id.slice(0, 8)}</div>
+                    <div className="font-mono text-xs text-mute">
+                      {issueIdentifier(run.workItemUrl) ?? run.id.slice(0, 8)}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap">{run.productName}</td>
                   <td>
                     <Badge tone={statusTone(run.status)}>{run.status}</Badge>
-                    {run.failureReason ? <div className="mt-1 font-mono text-xs text-mute">{run.failureReason}</div> : null}
+                    {run.failureReason ? (
+                      <div className="mt-1 font-mono text-xs text-mute">{run.failureReason}</div>
+                    ) : null}
                   </td>
                   <td className="t-value text-right">
                     {formatDuration(run.durationMs)}
-                    {run.waitedMs > 0 ? <div className="mt-1 text-xs text-mute">waited {formatDuration(run.waitedMs)}</div> : null}
+                    {run.waitedMs > 0 ? (
+                      <div className="mt-1 text-xs text-mute">waited {formatDuration(run.waitedMs)}</div>
+                    ) : null}
                   </td>
                   <td className="t-value text-right">{formatCost(run.costUsd)}</td>
                   <td className="t-value text-right">

@@ -127,3 +127,32 @@ describe("the sandbox provider limit", () => {
     ]);
   });
 });
+
+// docs/specs/sandbox-provider-spillover.md. The run selects its provider before the work sprite.
+describe("the sandbox provider selection", () => {
+  const { selectionWaits, providerDowns, providerSelections } = harness;
+
+  it("waits while no provider has room for the run, then selects and prepares", async () => {
+    const runId = "run-select-wait";
+    selectionWaits.set(runId, 2);
+
+    const result = await runWorker(async () => (await start("select-wait")).result());
+
+    expect(providerSelections.filter((entry) => entry === runId)).toHaveLength(3);
+    expect(prepared.filter((entry) => entry.runId === runId)).toHaveLength(1);
+    expect(postedProgress.filter((message) => message.includes("waits for a free sandbox")).length).toBeGreaterThan(0);
+    expect(result.status).toBe("READY_FOR_HUMAN");
+  });
+
+  it("selects again at once when the provider fails the work sprite create", async () => {
+    const runId = "run-select-down";
+    providerDowns.set(runId, 1);
+
+    const result = await runWorker(async () => (await start("select-down")).result());
+
+    // The failed create moved the run: a second selection, a second preparation, and no failure.
+    expect(providerSelections.filter((entry) => entry === runId)).toHaveLength(2);
+    expect(prepared.filter((entry) => entry.runId === runId)).toHaveLength(2);
+    expect(result.status).toBe("READY_FOR_HUMAN");
+  });
+});

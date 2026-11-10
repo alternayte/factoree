@@ -84,6 +84,8 @@ describe("AT-33 tenant isolation", () => {
         "AgentExecution",
         // docs/specs/agent-session-usage-and-hangs.md. One row per agent session of one tenant.
         "AgentSession",
+        // docs/specs/sandbox-provider-spillover.md. A failed build-ahead names one tenant's repository.
+        "BuildAheadFailure",
         // SDD section 21 and SDD section 52. Phase 4 added the Context Contract tables, and each
         // one is tenant-owned.
         "ContextConflict",
@@ -156,6 +158,8 @@ describe("AT-33 tenant isolation", () => {
     // DI-15.14. sandboxMaxLive is the limit of one provider account, shared by every tenant, so a
     // lease counts sandboxes across tenants. It names the Run, and no API reads it.
     "SandboxLease",
+    // docs/specs/sandbox-provider-spillover.md. A sandbox provider serves every tenant of the install.
+    "SandboxProvider",
     "auth_account",
     "auth_apikey",
     "auth_session",

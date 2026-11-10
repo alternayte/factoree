@@ -149,7 +149,9 @@ function SecretForm({
 }) {
   const [name, setName] = useState(existing?.name ?? preset ?? "");
   const [value, setValue] = useState("");
-  const [kind, setKind] = useState<Kind>(existing?.kind === "runner_credential" || preset ? "runner_credential" : "test");
+  const [kind, setKind] = useState<Kind>(
+    existing?.kind === "runner_credential" || preset ? "runner_credential" : "test",
+  );
   const [inject, setInject] = useState(existing?.injectIntoImplementer ?? false);
 
   const put = useMutation({

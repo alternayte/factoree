@@ -36,7 +36,15 @@ function sessionKind(entry: Entry): string {
  * docs/specs/setup-speed-and-history.md. Every setup of one repository, newest first, with its
  * time, cost and report, so a cold setup, a warm one and a skipped one compare side by side.
  */
-export function SetupHistoryPage({ productId, ws, repository }: { productId: string; ws?: string; repository: string }) {
+export function SetupHistoryPage({
+  productId,
+  ws,
+  repository,
+}: {
+  productId: string;
+  ws?: string;
+  repository: string;
+}) {
   const me = useMe();
   const workspace = pickWorkspace(me.data?.memberships ?? [], ws);
   const linearWorkspaceId = workspace?.linearWorkspaceId ?? "";
@@ -53,7 +61,11 @@ export function SetupHistoryPage({ productId, ws, repository }: { productId: str
   const entries = history.data ?? [];
   return (
     <div>
-      <PageHeader crumb={crumb} title={repository || "Setup history"} description="Every setup run of this repository, newest first." />
+      <PageHeader
+        crumb={crumb}
+        title={repository || "Setup history"}
+        description="Every setup run of this repository, newest first."
+      />
       {!workspace ? <Alert tone="info">You are a member of no workspace where Factoree is installed.</Alert> : null}
       <Section title="Setup history" flush={entries.length > 0}>
         {history.isPending && workspace ? <SkeletonRows label="Loading the setup history" /> : null}
@@ -92,7 +104,9 @@ export function SetupHistoryPage({ productId, ws, repository }: { productId: str
                         </td>
                         <td className="whitespace-nowrap text-body">
                           <span className="block">{sessionKind(entry)}</span>
-                          {session ? <span className="block text-xs text-mute">{session.model ?? session.runner}</span> : null}
+                          {session ? (
+                            <span className="block text-xs text-mute">{session.model ?? session.runner}</span>
+                          ) : null}
                         </td>
                         <td className="t-value text-right">{formatDuration(totalMs(entry))}</td>
                         <td className="t-value text-right">{formatDuration(session?.durationMs ?? null)}</td>
@@ -143,12 +157,14 @@ export function SetupHistoryPage({ productId, ws, repository }: { productId: str
 }
 
 function SetupDetail({ entry, entries }: { entry: Entry; entries: Entry[] }) {
-  const source = entry.skippedFromSetupId === null ? null : entries.find((other) => other.id === entry.skippedFromSetupId);
+  const source =
+    entry.skippedFromSetupId === null ? null : entries.find((other) => other.id === entry.skippedFromSetupId);
   return (
     <div className="space-y-3">
       {entry.skippedFromSetupId !== null ? (
         <p className="text-body">
-          The inputs matched the setup of {source ? formatDate(source.createdAt) : entry.skippedFromSetupId}, so this setup ran no session and copied its report.
+          The inputs matched the setup of {source ? formatDate(source.createdAt) : entry.skippedFromSetupId}, so this
+          setup ran no session and copied its report.
         </p>
       ) : null}
       {entry.failureMessage ? <p className="text-body">{entry.failureMessage}</p> : null}
@@ -165,14 +181,18 @@ function SetupDetail({ entry, entries }: { entry: Entry; entries: Entry[] }) {
                 ) : (
                   <span className="text-ink">{issue.identifier}</span>
                 )}{" "}
-                <span className="text-mute">{issue.outcome === null ? "open" : issue.outcome === "merged" ? "merged" : "ended, not merged"}</span>
+                <span className="text-mute">
+                  {issue.outcome === null ? "open" : issue.outcome === "merged" ? "merged" : "ended, not merged"}
+                </span>
                 <span className="block">{issue.changes.join(" ")}</span>
               </li>
             ))}
           </ul>
         </div>
       ) : null}
-      {entry.report ? <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap text-body">{entry.report}</pre> : null}
+      {entry.report ? (
+        <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap text-body">{entry.report}</pre>
+      ) : null}
     </div>
   );
 }

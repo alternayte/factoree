@@ -118,14 +118,23 @@ function RunDetail({
             items={[
               { label: "Duration", value: formatDuration(run.durationMs) },
               { label: "Waited", value: run.waitedMs > 0 ? formatDuration(run.waitedMs) : "—" },
+              { label: "Sandbox provider", value: run.sandboxProvider ?? "—" },
               { label: "Cost", value: formatCost(run.costUsd) },
-              { label: "Repairs", value: `${run.repairCount}${run.repairLimit === null ? "" : ` of ${run.repairLimit}`}` },
+              {
+                label: "Repairs",
+                value: `${run.repairCount}${run.repairLimit === null ? "" : ` of ${run.repairLimit}`}`,
+              },
               { label: "Autonomy", value: run.autonomyLevel },
               { label: "Started", value: formatDate(run.createdAt) },
               { label: "Ended", value: run.completedAt ? formatDate(run.completedAt) : "—" },
               { label: "Base", value: run.baseSha ? <code>{run.baseSha.slice(0, 12)}</code> : "—" },
               ...(run.skillResolutionId
-                ? [{ label: "Skills", value: <code>{`${run.skillRegistrySet ?? "all"} @ ${run.skillResolutionId.slice(0, 12)}`}</code> }]
+                ? [
+                    {
+                      label: "Skills",
+                      value: <code>{`${run.skillRegistrySet ?? "all"} @ ${run.skillResolutionId.slice(0, 12)}`}</code>,
+                    },
+                  ]
                 : []),
             ]}
           />
@@ -147,7 +156,11 @@ function RunDetail({
             ) : null}
           </div>
         </Section>
-        <Section title="Stages" description="Each stage of the run, in order, with the attempt it served." className="lg:col-span-2">
+        <Section
+          title="Stages"
+          description="Each stage of the run, in order, with the attempt it served."
+          className="lg:col-span-2"
+        >
           <StageTimeline run={run} />
         </Section>
       </div>
@@ -182,7 +195,10 @@ function StageTimeline({ run }: { run: Run }) {
         const from = Date.parse(stage.startedAt);
         const length = Date.parse(stage.endedAt) - from;
         return (
-          <li key={`${stage.stage}-${stage.attempt}-${index}`} className="grid grid-cols-[150px_minmax(0,1fr)_64px] items-center gap-3 text-sm">
+          <li
+            key={`${stage.stage}-${stage.attempt}-${index}`}
+            className="grid grid-cols-[150px_minmax(0,1fr)_64px] items-center gap-3 text-sm"
+          >
             <span className="truncate font-mono text-xs">
               {stage.stage}
               {stage.attempt > 1 ? ` #${stage.attempt}` : ""}
@@ -276,7 +292,9 @@ function Assertions({ run }: { run: Run }) {
             </span>
           </div>
           <p className="mt-1">{assertion.statement}</p>
-          {assertion.result !== "PASS" && assertion.reason ? <p className="mt-1 text-mute">{assertion.reason}</p> : null}
+          {assertion.result !== "PASS" && assertion.reason ? (
+            <p className="mt-1 text-mute">{assertion.reason}</p>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -290,7 +308,9 @@ function Findings({ run }: { run: Run }) {
       {run.findings.map((finding) => (
         <li key={`${finding.attempt}-${finding.key}`} className="text-sm">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={finding.blocking ? "warning" : "neutral"}>{finding.blocking ? "blocking" : finding.severity}</Badge>
+            <Badge tone={finding.blocking ? "warning" : "neutral"}>
+              {finding.blocking ? "blocking" : finding.severity}
+            </Badge>
             <span className="font-mono text-xs">{finding.key}</span>
             <span className="text-mute">
               attempt {finding.attempt} · {finding.category}

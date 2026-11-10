@@ -77,6 +77,7 @@ type ProductRow = {
   effortSetup: string | null;
   silenceMinutes: number;
   sandboxRetentionHours: number;
+  sandboxProviderIds: string[];
   maxConcurrentRuns: number;
   appChangeIssues: string;
   createdAt: Date;
@@ -359,6 +360,7 @@ export class PrismaProductRegistry implements ProductRegistry {
         effortSetup: settings.effort?.setup,
         silenceMinutes: settings.silenceMinutes,
         sandboxRetentionHours: settings.sandboxRetentionHours,
+        sandboxProviderIds: settings.sandboxProviderIds,
         maxConcurrentRuns: settings.maxConcurrentRuns,
         appChangeIssues: settings.appChangeIssues,
       }).filter(([, value]) => value !== undefined),

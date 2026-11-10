@@ -193,6 +193,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "recordRunTargetFacts",
       "claimRunSlot",
       "setRunStatus",
+      // docs/specs/sandbox-provider-spillover.md. The run picks its provider before the work sprite.
+      "selectSandboxProvider",
       "prepareSandbox",
       "setRunStatus",
       "proposeRefinement",
@@ -256,6 +258,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "recordRunTargetFacts",
       "claimRunSlot",
       "setRunStatus",
+      // docs/specs/sandbox-provider-spillover.md. The run picks its provider before the work sprite.
+      "selectSandboxProvider",
       "prepareSandbox",
       "setRunStatus",
       "proposeRefinement",

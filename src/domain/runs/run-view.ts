@@ -28,6 +28,11 @@ export interface RunListItem {
   durationMs: number | null;
   /** DI-21.56. The time the run waited for a run slot or a sandbox slot. */
   waitedMs: number;
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to: its name,
+   * or its id when the provider is gone. Null before the selection.
+   */
+  sandboxProvider: string | null;
 }
 
 export interface RunStageView {

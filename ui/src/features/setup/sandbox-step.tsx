@@ -62,7 +62,7 @@ export function SandboxStep() {
       step="sandbox"
       title="Sandbox provider"
       done={status.sandbox.done}
-      description="Agents run in sandboxes of this provider. One provider serves the whole install."
+      description="Agents run in sandboxes of this provider. Add more providers later in Settings > Install, for runs that the first provider has no room for."
     >
       {current ? (
         <Alert tone="success">

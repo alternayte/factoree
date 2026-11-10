@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createSandboxActivities } from "~/activities/sandbox.activities.js";
+import { createSandboxActivities, type ProviderFailover } from "~/activities/sandbox.activities.js";
+import { SandboxCreateError } from "~/domain/runs/sandbox.js";
+import { SandboxProviderDownError } from "~/domain/runs/sandbox-slot-error.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
@@ -74,6 +76,7 @@ const build = (
   tokens: { tokenForInstallation: (id: string, scope?: Record<string, string>) => Promise<string> } = {
     tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
   },
+  failover?: ProviderFailover,
 ) => {
   const runs = {
     setSandbox: vi.fn().mockResolvedValue(superseded),
@@ -114,6 +117,7 @@ const build = (
     setDeliveredContext: vi.fn().mockResolvedValue(undefined),
     setIssueState: vi.fn().mockResolvedValue(undefined),
     closePullRequest: vi.fn().mockResolvedValue(null),
+    setSandboxProvider: vi.fn().mockResolvedValue(undefined),
   };
   const redactor = new Redactor();
   const activities = createSandboxActivities({
@@ -126,6 +130,7 @@ const build = (
     runners,
     logger: createLogger({ level: "error", redactor, sink: () => undefined }),
     tokens,
+    ...(failover === undefined ? {} : { failover }),
   });
   return { activities, sandbox, runs, redactor };
 };
@@ -442,5 +447,43 @@ describe("the prepareCheckSandbox activity", () => {
     });
 
     expect(sandbox.destroyed).toEqual(["check-old"]);
+  });
+});
+
+// docs/specs/sandbox-provider-spillover.md. A work sprite create that fails at the provider moves
+// the run: the provider is down for a while, the held slots go back, and the run is unpinned.
+describe("the prepareSandbox activity when the provider fails the create", () => {
+  it("marks the provider down, gives back the held slots, unpins the run, and asks for a new selection", async () => {
+    const failover = { markDown: vi.fn().mockResolvedValue(undefined), releaseHolds: vi.fn().mockResolvedValue(undefined) };
+    const { activities, sandbox, runs } = build(
+      { spriteId: null, adapter: null },
+      {},
+      sandboxWithConfig(DEFAULT_CONFIG_YAML),
+      undefined,
+      undefined,
+      failover,
+    );
+    vi.spyOn(sandbox, "create").mockRejectedValueOnce(new SandboxCreateError("kiln", new Error("connection refused")));
+
+    await expect(activities.prepareSandbox(input)).rejects.toBeInstanceOf(SandboxProviderDownError);
+    expect(failover.markDown).toHaveBeenCalledWith("kiln", expect.any(Date), expect.stringContaining("connection refused"));
+    expect(failover.releaseHolds).toHaveBeenCalledWith("run-1");
+    expect(runs.setSandboxProvider).toHaveBeenCalledWith("tenant-1", "run-1", null);
+  });
+
+  it("leaves any other preparation fault as it is", async () => {
+    const failover = { markDown: vi.fn().mockResolvedValue(undefined), releaseHolds: vi.fn().mockResolvedValue(undefined) };
+    const { activities, sandbox } = build(
+      { spriteId: null, adapter: null },
+      {},
+      sandboxWithConfig(DEFAULT_CONFIG_YAML),
+      undefined,
+      undefined,
+      failover,
+    );
+    vi.spyOn(sandbox, "create").mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(activities.prepareSandbox(input)).rejects.toThrow("disk full");
+    expect(failover.markDown).not.toHaveBeenCalled();
   });
 });

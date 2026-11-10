@@ -151,8 +151,7 @@ export function LinearStep({ linearError }: { linearError?: string }) {
           ) : null}
           {!install.done && install.existing.length > 0 ? (
             <Alert tone="info" title="The app is already installed">
-              Linear stops at "already installed" for a workspace that has the app. Use the stored installation
-              instead.
+              Linear stops at "already installed" for a workspace that has the app. Use the stored installation instead.
             </Alert>
           ) : null}
           <ErrorAlert error={adopt.error} />

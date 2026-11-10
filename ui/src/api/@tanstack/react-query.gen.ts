@@ -18,10 +18,12 @@ import {
   createApiKey,
   createGitHubAppManifest,
   createProduct,
+  createSandboxProvider,
   createSetupProduct,
   deleteContextSource,
   deleteProduct,
   deleteProductSecret,
+  deleteSandboxProvider,
   getInstallSettings,
   getMe,
   getModelCatalog,
@@ -38,6 +40,7 @@ import {
   listRepositorySetupHistory,
   listRepositorySetups,
   listRuns,
+  listSandboxProviders,
   listSetupLinearTeams,
   listWorkspaces,
   type Options,
@@ -52,6 +55,7 @@ import {
   testContextSource,
   updateInstallSettings,
   updateProduct,
+  updateSandboxProvider,
 } from "../sdk.gen";
 import type {
   ActivateProductData,
@@ -78,6 +82,9 @@ import type {
   CreateProductData,
   CreateProductError,
   CreateProductResponse,
+  CreateSandboxProviderData,
+  CreateSandboxProviderError,
+  CreateSandboxProviderResponse,
   CreateSetupProductData,
   CreateSetupProductError,
   CreateSetupProductResponse,
@@ -90,6 +97,9 @@ import type {
   DeleteProductSecretData,
   DeleteProductSecretError,
   DeleteProductSecretResponse,
+  DeleteSandboxProviderData,
+  DeleteSandboxProviderError,
+  DeleteSandboxProviderResponse,
   GetInstallSettingsData,
   GetInstallSettingsResponse,
   GetMeData,
@@ -134,6 +144,8 @@ import type {
   ListRunsData,
   ListRunsError,
   ListRunsResponse,
+  ListSandboxProvidersData,
+  ListSandboxProvidersResponse,
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsError,
   ListSetupLinearTeamsResponse,
@@ -172,6 +184,9 @@ import type {
   UpdateProductData,
   UpdateProductError,
   UpdateProductResponse,
+  UpdateSandboxProviderData,
+  UpdateSandboxProviderError,
+  UpdateSandboxProviderResponse,
 } from "../types.gen";
 
 export type QueryKey<TOptions extends Options> = [
@@ -909,6 +924,100 @@ export const deleteContextSourceMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await deleteContextSource({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const listSandboxProvidersQueryKey = (options?: Options<ListSandboxProvidersData>) =>
+  createQueryKey("listSandboxProviders", options);
+
+export const listSandboxProvidersOptions = (options?: Options<ListSandboxProvidersData>) =>
+  queryOptions<
+    ListSandboxProvidersResponse,
+    DefaultError,
+    ListSandboxProvidersResponse,
+    ReturnType<typeof listSandboxProvidersQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listSandboxProviders({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listSandboxProvidersQueryKey(options),
+  });
+
+export const createSandboxProviderMutation = (
+  options?: Partial<Options<CreateSandboxProviderData>>,
+): UseMutationOptions<
+  CreateSandboxProviderResponse,
+  CreateSandboxProviderError,
+  Options<CreateSandboxProviderData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    CreateSandboxProviderResponse,
+    CreateSandboxProviderError,
+    Options<CreateSandboxProviderData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await createSandboxProvider({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const deleteSandboxProviderMutation = (
+  options?: Partial<Options<DeleteSandboxProviderData>>,
+): UseMutationOptions<
+  DeleteSandboxProviderResponse,
+  DeleteSandboxProviderError,
+  Options<DeleteSandboxProviderData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteSandboxProviderResponse,
+    DeleteSandboxProviderError,
+    Options<DeleteSandboxProviderData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteSandboxProvider({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const updateSandboxProviderMutation = (
+  options?: Partial<Options<UpdateSandboxProviderData>>,
+): UseMutationOptions<
+  UpdateSandboxProviderResponse,
+  UpdateSandboxProviderError,
+  Options<UpdateSandboxProviderData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    UpdateSandboxProviderResponse,
+    UpdateSandboxProviderError,
+    Options<UpdateSandboxProviderData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await updateSandboxProvider({
         ...options,
         ...fnOptions,
         throwOnError: true,

@@ -16,6 +16,8 @@ import {
 import type { GitHubAppCredentials } from "~/adapters/github/app-token-provider.js";
 import { linearInstallUrl, type LinearAppGrant } from "~/adapters/linear/linear-app-flows.js";
 import type { Logger } from "~/telemetry/logger.js";
+import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
+import { PROVIDER_TYPE_LABELS, type SandboxProviderStore } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { errorSchema, schemaOf, SETUP_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
@@ -26,6 +28,8 @@ import {
   linearSignInCallbackUrl,
   linearTeamSchema,
   productSchema,
+  sandboxProviderProblem,
+  sandboxProviderUpdateSchema,
   sandboxSettingsProblem,
 } from "../admin/schemas.js";
 import { checkSetupToken, readFlowState, signFlowState } from "./setup-token.js";
@@ -40,6 +44,10 @@ export interface SetupRouteDependencies {
   publicUrl: string;
   masterKey: string;
   localSandboxAllowed: boolean;
+  /** docs/specs/sandbox-provider-spillover.md. The setup step stores the first sandbox provider. */
+  sandboxProviders: SandboxProviderStore;
+  /** A new provider needs the warm snapshots of every repository. */
+  buildAhead?: Pick<BuildAheadTrigger, "afterTemplateChange"> | undefined;
   logger: Logger;
   github: {
     convertManifest: (input: { apiBaseUrl: string; code: string }) => Promise<ConvertedGitHubApp>;
@@ -114,9 +122,23 @@ const adoptSchema = z.object({ tenantId: z.string().uuid() }).strict();
 
 const installationSchema = z.object({ installationId: z.string().regex(/^\d+$/) }).strict();
 
-const sandboxSchema = installSettingsUpdateSchema.shape.sandbox.unwrap().extend({
-  provider: installSettingsUpdateSchema.shape.sandbox.unwrap().shape.provider.unwrap(),
-});
+/**
+ * docs/specs/sandbox-provider-spillover.md. The setup step names the first sandbox provider and the
+ * image settings of the install. More providers are added in Settings > Install.
+ */
+const sandboxSchema = installSettingsUpdateSchema.shape.sandbox
+  .unwrap()
+  .extend({
+    provider: sandboxProviderUpdateSchema.shape.type.unwrap(),
+    url: sandboxProviderUpdateSchema.shape.url.unwrap(),
+    apiKey: z.string().min(1),
+    maxLive: sandboxProviderUpdateSchema.shape.maxLive.unwrap(),
+    vcpus: sandboxProviderUpdateSchema.shape.vcpus.unwrap(),
+    memoryMb: sandboxProviderUpdateSchema.shape.memoryMb.unwrap(),
+  })
+  .partial()
+  .required({ provider: true })
+  .strict();
 
 const productBodySchema = z
   .object({
@@ -167,6 +189,8 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
 
   const status = async (): Promise<SetupStatus> => {
     const settings = await dependencies.settings.read();
+    // docs/specs/sandbox-provider-spillover.md. The step shows the first provider of the list.
+    const first = (await dependencies.sandboxProviders.list())[0];
     const tenant = await operatorTenant(settings);
     const githubAccounts =
       tenant === null
@@ -213,9 +237,10 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
       githubInstall: { done: githubAccounts.length > 0, accounts: githubAccounts.map((github) => github.accountLogin) },
       sandbox: {
         done:
-          settings.sandbox.provider !== null &&
-          sandboxSettingsProblem(settings.sandbox, dependencies.localSandboxAllowed) === null,
-        provider: settings.sandbox.provider,
+          first !== undefined &&
+          sandboxSettingsProblem(settings.sandbox) === null &&
+          sandboxProviderProblem(first, settings.sandbox.image, dependencies.localSandboxAllowed) === null,
+        provider: first?.type ?? null,
         localAllowed: dependencies.localSandboxAllowed,
         pinnedImage: buildInfo.sandboxImageDefault,
         defaultSize: DEFAULT_KILN_SANDBOX_SIZE,
@@ -539,10 +564,33 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
       async (request, reply) => {
         const body = sandboxSchema.safeParse(request.body);
         if (!body.success) return reply.code(422).send({ error: body.error.flatten() });
+        const { provider: type, url, apiKey, maxLive, vcpus, memoryMb, ...image } = body.data;
         const current = await dependencies.settings.read();
-        const problem = sandboxSettingsProblem(applyPatch(current.sandbox, body.data), dependencies.localSandboxAllowed);
+        const sandbox = applyPatch(current.sandbox, image);
+        const imageProblem = sandboxSettingsProblem(sandbox);
+        if (imageProblem !== null) return reply.code(422).send({ error: imageProblem });
+        // The first provider of the list, when it has the type the step names, takes the change.
+        // Another type adds a new first provider. Empty fields keep the stored values.
+        const first = (await dependencies.sandboxProviders.list())[0];
+        const same = first !== undefined && first.type === type ? first : undefined;
+        const local = type === "local";
+        const next = {
+          name: same?.name ?? PROVIDER_TYPE_LABELS[type],
+          type,
+          url: local ? null : url === undefined ? (same?.url ?? null) : url,
+          apiKey: local ? null : (apiKey ?? same?.apiKey ?? null),
+          maxLive: maxLive === undefined ? (same?.maxLive ?? null) : maxLive,
+          vcpus: vcpus === undefined ? (same?.vcpus ?? null) : vcpus,
+          memoryMb: memoryMb === undefined ? (same?.memoryMb ?? null) : memoryMb,
+          priority: first?.priority ?? 1,
+          enabled: true,
+        };
+        const problem = sandboxProviderProblem(next, sandbox.image, dependencies.localSandboxAllowed);
         if (problem !== null) return reply.code(422).send({ error: problem });
-        await dependencies.settings.update({ sandbox: body.data });
+        await dependencies.settings.update({ sandbox: image });
+        if (same === undefined) await dependencies.sandboxProviders.create(next);
+        else await dependencies.sandboxProviders.update(same.id, next);
+        await dependencies.buildAhead?.afterTemplateChange();
         return status();
       },
     );

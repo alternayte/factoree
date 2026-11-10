@@ -36,9 +36,12 @@ export interface SettingsRouteDependencies {
   buildAhead?: Pick<BuildAheadTrigger, "afterTemplateChange">;
 }
 
-/** docs/specs/run-speed.md. The sandbox settings that decide the template a warm snapshot belongs to. */
-const templateOf = (sandbox: SandboxSettings): string =>
-  JSON.stringify([sandbox.provider, sandbox.url, sandbox.image, sandbox.vcpus, sandbox.memoryMb]);
+/**
+ * docs/specs/run-speed.md. The install sandbox settings that decide the template a warm snapshot
+ * belongs to. docs/specs/sandbox-provider-spillover.md: the provider and the size belong to each
+ * provider, and its own routes request the build-ahead.
+ */
+const templateOf = (sandbox: SandboxSettings): string => JSON.stringify([sandbox.image]);
 
 const createKeySchema = z
   .object({
@@ -107,7 +110,7 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       if (!body.success) return reply.code(422).send({ error: body.error.flatten() });
       const current = await dependencies.settings.read();
       const sandbox = applyPatch(current.sandbox, body.data.sandbox);
-      const problem = sandboxSettingsProblem(sandbox, dependencies.localSandboxAllowed);
+      const problem = sandboxSettingsProblem(sandbox);
       if (problem !== null) return reply.code(422).send({ error: problem });
       const updated = await dependencies.settings.update(body.data);
       if (templateOf(current.sandbox) !== templateOf(updated.sandbox)) await dependencies.buildAhead?.afterTemplateChange();

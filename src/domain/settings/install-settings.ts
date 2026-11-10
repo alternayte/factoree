@@ -33,24 +33,16 @@ export interface LinearAppSettings {
   webhookSecret: string | null;
 }
 
+/**
+ * The sandbox settings of the whole install. docs/specs/sandbox-provider-spillover.md: the
+ * providers live in their own list (`SandboxProviderStore`), and every provider builds its
+ * template from this one image.
+ */
 export interface SandboxSettings {
-  provider: SandboxProvider | null;
-  /**
-   * The Kiln host, the Sprites API base URL, or the URL of a self-hosted E2B, whose host name is the
-   * E2B domain. Null means the provider default.
-   */
-  url: string | null;
-  apiKey: string | null;
   /** A sandbox image by digest, over the image the release pins. */
   image: string | null;
   registryUsername: string | null;
   registryToken: string | null;
-  /** The provider's limit of live sandboxes. The worker enforces it (DI-15.14). */
-  maxLive: number | null;
-  /** docs/specs/kiln-sandbox-size.md. The vCPUs of each Kiln sandbox. Null means the default. */
-  vcpus: number | null;
-  /** docs/specs/kiln-sandbox-size.md. The memory of each Kiln sandbox in MB. Null means the default. */
-  memoryMb: number | null;
 }
 
 /** docs/specs/kiln-sandbox-size.md. The vCPUs and the memory of a Kiln sandbox, fixed by its template. */
@@ -61,8 +53,8 @@ export interface KilnSandboxSize {
 
 export const DEFAULT_KILN_SANDBOX_SIZE: KilnSandboxSize = { vcpus: 4, memoryMb: 4096 };
 
-/** The size of each Kiln sandbox: the stored values, or the default. */
-export const kilnSandboxSize = (settings: SandboxSettings): KilnSandboxSize => ({
+/** The size of each sandbox of a provider: the stored values, or the default. */
+export const kilnSandboxSize = (settings: { vcpus: number | null; memoryMb: number | null }): KilnSandboxSize => ({
   vcpus: settings.vcpus ?? DEFAULT_KILN_SANDBOX_SIZE.vcpus,
   memoryMb: settings.memoryMb ?? DEFAULT_KILN_SANDBOX_SIZE.memoryMb,
 });

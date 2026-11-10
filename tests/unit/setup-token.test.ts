@@ -74,6 +74,7 @@ const server = (settings: InstallSettingsStore) => {
     publicUrl: "https://factoree.example.com",
     masterKey: MASTER_KEY,
     localSandboxAllowed: false,
+    sandboxProviders: { list: () => Promise.resolve([]) } as never,
     logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
     github: unused,
     linear: unused,

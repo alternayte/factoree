@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { encryptSecret } from "~/domain/policy/crypto.js";
+import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
 import { PrismaInstallSettingsStore } from "~/persistence/prisma/install-settings.prisma.js";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
 
@@ -37,13 +38,9 @@ describe("the redactor of the API and the worker", () => {
       linearClientId: "linear-client",
       linearClientSecretCipher: encryptSecret("linear-secret-value", KEY),
       linearWebhookSecretCipher: encryptSecret("linear-webhook-value", KEY),
-      sandboxProvider: "kiln",
-      sandboxUrl: "https://kiln.example.test",
-      sandboxApiKeyCipher: encryptSecret("kiln-key-value", KEY),
       sandboxImage: null,
-      sandboxRegistryUsername: null,
-      sandboxRegistryTokenCipher: null,
-      sandboxMaxLive: null,
+      sandboxRegistryUsername: "robot",
+      sandboxRegistryTokenCipher: encryptSecret("registry-token-value", KEY),
       gitAuthorName: "Factoree",
       gitAuthorEmail: "factoree@users.noreply.github.com",
       setupTokenHash: null,
@@ -62,9 +59,37 @@ describe("the redactor of the API and the worker", () => {
         "github-webhook-value",
         "linear-secret-value",
         "linear-webhook-value",
-        "kiln-key-value",
+        "registry-token-value",
       ].sort(),
     );
-    expect(settings.sandbox.apiKey).toBe("kiln-key-value");
+    expect(settings.sandbox.registryToken).toBe("registry-token-value");
+  });
+
+  // docs/specs/sandbox-provider-spillover.md. The key of each sandbox provider reaches the redactor too.
+  it("hands each decrypted sandbox provider key to the redactor hook", async () => {
+    expect(readFileSync("src/bin/worker.ts", "utf8")).toMatch(
+      /new PrismaSandboxProviderStore\(prisma, env\.FACTOREE_MASTER_KEY, \(value\) => redactor\.addSecret\(value\)\)/,
+    );
+    const row = {
+      id: "kiln",
+      name: "Kiln",
+      type: "kiln",
+      url: "https://kiln.example.test",
+      apiKeyCipher: encryptSecret("kiln-key-value", KEY),
+      maxLive: 6,
+      vcpus: null,
+      memoryMb: null,
+      priority: 1,
+      enabled: true,
+      downUntil: null,
+      downReason: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const prisma = { sandboxProvider: { findMany: () => Promise.resolve([row]) } } as unknown as FactoreePrismaClient;
+    const learned: string[] = [];
+    const providers = await new PrismaSandboxProviderStore(prisma, KEY, (value) => learned.push(value)).list();
+    expect(learned).toEqual(["kiln-key-value"]);
+    expect(providers[0]?.apiKey).toBe("kiln-key-value");
   });
 });

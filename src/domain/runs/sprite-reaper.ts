@@ -10,7 +10,11 @@ export interface SpriteReaperRuns {
 }
 
 export interface SpriteReaperOptions {
-  sandboxes: Record<string, Sandbox>;
+  /**
+   * The sandbox of each provider, by the id a ref names, or a function that finds it.
+   * docs/specs/sandbox-provider-spillover.md: the provider ids are not fixed names.
+   */
+  sandboxes: Record<string, Sandbox> | ((adapter: string) => Promise<Sandbox | undefined>);
   runs: SpriteReaperRuns;
   batchSize?: number;
   /**
@@ -40,6 +44,12 @@ const DEFAULT_BATCH_SIZE = 50;
 export class SpriteReaper {
   constructor(private readonly options: SpriteReaperOptions) {}
 
+  private async sandboxOf(adapter: string): Promise<Sandbox | undefined> {
+    const sandboxes = this.options.sandboxes;
+    if (typeof sandboxes === "function") return sandboxes(adapter).catch(() => undefined);
+    return sandboxes[adapter];
+  }
+
   async reap(now: Date): Promise<number> {
     const expired = await this.options.runs.listExpiredSandboxes(
       now,
@@ -48,7 +58,7 @@ export class SpriteReaper {
     const workspacePath = this.options.workspacePath ?? DEFAULT_WORKSPACE_PATH;
     let destroyed = 0;
     for (const entry of expired) {
-      const sandbox = this.options.sandboxes[entry.adapter];
+      const sandbox = await this.sandboxOf(entry.adapter);
       // An unknown adapter stays as it is. A cleared reference loses the only record of the
       // sandbox, so an operator could never delete it.
       if (sandbox === undefined) continue;
@@ -71,7 +81,7 @@ export class SpriteReaper {
     const store = this.options.retiredSnapshots;
     if (store === undefined) return;
     for (const retired of await store.listRetired(this.options.batchSize ?? DEFAULT_BATCH_SIZE)) {
-      const snapshots = this.options.sandboxes[retired.adapter]?.warmSnapshots;
+      const snapshots = (await this.sandboxOf(retired.adapter))?.warmSnapshots;
       if (snapshots === undefined) continue;
       try {
         // False: a live sandbox still reads it. The next pass tries again.

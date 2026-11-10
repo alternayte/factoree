@@ -35,6 +35,9 @@ import type { ReadinessProbe } from "~/domain/runs/preview.js";
 import { KILN_RUNNER_BIN } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
 import { SettingsSandbox } from "~/adapters/sandbox/settings-sandbox.js";
 import { PrismaSandboxLeaseStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
+import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
+import { PrismaBuildAheadFailureStore } from "~/persistence/prisma/build-ahead-failure.prisma.js";
+import { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
 import { PrismaRunSlots } from "~/persistence/prisma/run-slots.prisma.js";
 import { PrismaInstallSettingsStore } from "~/persistence/prisma/install-settings.prisma.js";
 import type { AgentSessionSettings } from "~/adapters/runners/cli-agent-runner.js";
@@ -122,15 +125,37 @@ const runs = new PrismaRunRepository(prisma);
 // adapter cannot enforce an egress policy, so SandboxManager accepts it only under the opt in of
 // FACTOREE_UNSAFE_LOCAL_SANDBOX, which the settings check as well.
 const localSandboxAllowed = env.FACTOREE_UNSAFE_LOCAL_SANDBOX === "1";
-// DI-15.14. Every create takes a slot of the install setting sandboxMaxLive, across all workers.
+// DI-15.14. Every create takes a slot of the maxLive of its provider, across all workers.
+// docs/specs/sandbox-provider-spillover.md. The install lists several providers. A run is pinned to
+// one, and holds its slots there from start to end.
+const sandboxProviders = new PrismaSandboxProviderStore(prisma, env.FACTOREE_MASTER_KEY, (value) => redactor.addSecret(value));
+const leases = new PrismaSandboxLeaseStore(prisma);
+const buildAheadFailures = new PrismaBuildAheadFailureStore(prisma);
 const sandbox = new SettingsSandbox({
-  settings: async () => (await settings.read()).sandbox,
+  settings: async () => ({ ...(await settings.read()).sandbox, providers: await sandboxProviders.list() }),
   allowLocal: localSandboxAllowed,
   localRoot: env.FACTOREE_SANDBOX_LOCAL_ROOT,
-  leases: new PrismaSandboxLeaseStore(prisma),
+  leases,
   logger,
   onEvicted: (victim) => metrics.sandboxesDestroyed.inc({ adapter: victim.adapter, reason: "LIMIT" }),
 });
+const providerSelector = new SandboxProviderSelector({
+  refresh: () => sandbox.refresh(),
+  providers: () => sandbox.providerSettings(),
+  capabilities: (providerId) => sandbox.adapterOf(providerId)?.capabilities ?? null,
+  usage: () => leases.usage(),
+  hold: (providerId, runId, count) => sandbox.hold(providerId, runId, count),
+  heldProviderOf: (runId) => leases.heldProviderOf(runId),
+  failedBuildAheads: (tenantId, repositoryUrl) => buildAheadFailures.failedProviders(tenantId, repositoryUrl),
+});
+/** The enabled providers whose adapter builds. A build-ahead builds a warm snapshot on each. */
+const usableProviderIds = async (): Promise<string[]> => {
+  await sandbox.refresh();
+  return sandbox
+    .providerSettings()
+    .filter((provider) => provider.enabled && sandbox.adapterOf(provider.id) !== null)
+    .map((provider) => provider.id);
+};
 try {
   await sandbox.refresh();
 } catch (error) {
@@ -147,7 +172,9 @@ const sandboxManager = new SandboxManager({
   warmSnapshots,
   stages,
   // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
-  installBrowserTools: (sandboxName) => sandboxName === "fly-sprites",
+  // The sandbox name is the provider id, so the type of the provider decides.
+  installBrowserTools: (sandboxName) =>
+    (sandbox.providerSettings().find((provider) => provider.id === sandboxName)?.type ?? sandboxName) === "fly-sprites",
   ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
 });
 
@@ -185,8 +212,8 @@ const sessionSettings = async (input: AgentRunInput, runner: string): Promise<Ag
 // selects one of them for each role.
 const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings });
 const reaper = new SpriteReaper({
-  // The adapter routes each sandbox to the provider its ref names.
-  sandboxes: { kiln: sandbox, e2b: sandbox, "fly-sprites": sandbox, local: sandbox },
+  // docs/specs/sandbox-provider-spillover.md. The view of the provider each ref names.
+  sandboxes: (providerId) => sandbox.forProvider(providerId),
   runs,
   onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
   retiredSnapshots: warmSnapshots,
@@ -419,6 +446,14 @@ const worker = await Worker.create({
     workItems,
     sandboxManager,
     sandbox,
+    providerSelector,
+    failover: {
+      markDown: (providerId, until, reason) => sandboxProviders.markDown(providerId, until, reason),
+      releaseHolds: (runId) => leases.releaseHolds(runId),
+    },
+    sandboxProviderIds: usableProviderIds,
+    buildAheadFailures,
+    sandboxProviderName: async (providerId) => (await sandboxProviders.find(providerId))?.name ?? null,
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),
     sessions: new PrismaAgentSessionStore(prisma),
@@ -516,23 +551,26 @@ reapTimer.unref();
 // worker requests a build-ahead for every repository. The build-ahead workflow of a repository
 // joins the request of a second worker.
 try {
-  const template = sandbox.warmSnapshots?.template;
-  if (template !== undefined) {
-    const stale = (await warmSnapshots.templatesOf(sandbox.name)).some((stored) => stored !== template);
-    if (stale) {
-      const temporal = await createTemporalClient(env);
-      await new BuildAheadTrigger({
-        request: createBuildAheadRequester(temporal, env.FACTOREE_TEMPORAL_TASK_QUEUE),
-        products,
-        repositories,
-        snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
-        readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
-        listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
-        repositoryBaseUrl: githubBaseUrl(settings),
-        logger,
-      }).afterTemplateChange();
-      await temporal.connection.close();
-    }
+  // docs/specs/sandbox-provider-spillover.md. Each provider has its own template.
+  let stale = false;
+  for (const providerId of await usableProviderIds()) {
+    const template = (await sandbox.forProvider(providerId)).warmSnapshots?.template;
+    if (template === undefined) continue;
+    if ((await warmSnapshots.templatesOf(providerId)).some((stored) => stored !== template)) stale = true;
+  }
+  if (stale) {
+    const temporal = await createTemporalClient(env);
+    await new BuildAheadTrigger({
+      request: createBuildAheadRequester(temporal, env.FACTOREE_TEMPORAL_TASK_QUEUE),
+      products,
+      repositories,
+      snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
+      readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
+      listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
+      repositoryBaseUrl: githubBaseUrl(settings),
+      logger,
+    }).afterTemplateChange();
+    await temporal.connection.close();
   }
 } catch (error) {
   // The sandbox provider is not configured yet, or the request failed. The next run still works.

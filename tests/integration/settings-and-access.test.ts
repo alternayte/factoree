@@ -106,12 +106,12 @@ describe("the install settings", () => {
     await settings.update({
       github: { appId: "123", privateKey: "-----BEGIN PRIVATE KEY-----\nkey\n", webhookSecret: "gh-hook-secret" },
       linear: { clientId: "linear-client", clientSecret: "linear-client-secret", webhookSecret: "linear-hook-secret" },
-      sandbox: { provider: "kiln", url: "https://kiln.example.test", apiKey: "kiln-api-key" },
+      sandbox: { registryUsername: "robot", registryToken: "registry-token" },
     });
 
     const row = await prisma.installSettings.findUniqueOrThrow({ where: { id: "install" } });
     const stored = JSON.stringify(row);
-    for (const plain of ["gh-hook-secret", "linear-client-secret", "linear-hook-secret", "kiln-api-key", "BEGIN PRIVATE KEY"]) {
+    for (const plain of ["gh-hook-secret", "linear-client-secret", "linear-hook-secret", "registry-token", "BEGIN PRIVATE KEY"]) {
       expect(stored).not.toContain(plain);
     }
 
@@ -119,17 +119,17 @@ describe("the install settings", () => {
     expect(read.github.webhookSecret).toBe("gh-hook-secret");
     expect(read.github.privateKey).toBe("-----BEGIN PRIVATE KEY-----\nkey\n");
     expect(read.linear.clientSecret).toBe("linear-client-secret");
-    expect(read.sandbox.apiKey).toBe("kiln-api-key");
+    expect(read.sandbox.registryToken).toBe("registry-token");
 
     // Another master key cannot read the credentials.
     await expect(new PrismaInstallSettingsStore(prisma, "d".repeat(64)).read()).rejects.toThrow();
   });
 
   it("keeps a field the patch leaves out and clears one the patch sets to null", async () => {
-    await settings.update({ sandbox: { url: null } });
+    await settings.update({ sandbox: { registryUsername: null } });
     const read = await settings.read();
-    expect(read.sandbox.url).toBeNull();
-    expect(read.sandbox.apiKey).toBe("kiln-api-key");
+    expect(read.sandbox.registryUsername).toBeNull();
+    expect(read.sandbox.registryToken).toBe("registry-token");
   });
 });
 

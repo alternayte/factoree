@@ -42,7 +42,13 @@ const OUTCOME_TONE = { finished: "success", hung: "danger", failed: "danger" } a
 const SHOWN = 10;
 
 /** Issue 6. The models and the efforts the newest sessions of the product really ran with. */
-export function RecentSessionsSection({ productId, linearWorkspaceId }: { productId: string; linearWorkspaceId: string }) {
+export function RecentSessionsSection({
+  productId,
+  linearWorkspaceId,
+}: {
+  productId: string;
+  linearWorkspaceId: string;
+}) {
   const sessions = useQuery(
     listProductAgentSessionsOptions({ path: { id: productId }, query: { linearWorkspaceId, limit: SHOWN } }),
   );
@@ -76,10 +82,18 @@ export function RecentSessionsSection({ productId, linearWorkspaceId }: { produc
                     <span className="block text-mute">{session.runner}</span>
                   </td>
                   <td className="t-value whitespace-nowrap">
-                    {session.model ? <span className="text-ink">{session.model}</span> : <span className="text-mute">not reported</span>}
+                    {session.model ? (
+                      <span className="text-ink">{session.model}</span>
+                    ) : (
+                      <span className="text-mute">not reported</span>
+                    )}
                   </td>
                   <td className="t-value">
-                    {session.effort ? <span className="text-ink">{session.effort}</span> : <span className="text-mute">default</span>}
+                    {session.effort ? (
+                      <span className="text-ink">{session.effort}</span>
+                    ) : (
+                      <span className="text-mute">default</span>
+                    )}
                   </td>
                   <td>
                     <Badge tone={OUTCOME_TONE[session.outcome]}>{session.outcome}</Badge>
