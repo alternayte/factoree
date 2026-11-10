@@ -37,6 +37,9 @@ export interface E2BSandboxOptions {
 // sandbox/Dockerfile creates this user. Every command and file write runs as it, and the runner
 // CLIs in /opt/factoree/bin stay root-owned (B-2).
 const SANDBOX_USER = "agent";
+/** Only the device chmod after a create runs as root (DI-21.29). */
+const ROOT_USER = "root";
+const DEVICE_CHMOD_TIMEOUT_MS = 30_000;
 const DEFAULT_WORKSPACE = "/home/agent/workspace";
 /** Outside the workspace, so no checkout and no diff ever holds a process file. */
 const PROCESS_ROOT = "/home/agent/.factoree/proc";
@@ -237,7 +240,23 @@ export class E2BSandbox implements Sandbox {
     });
     this.attached.set(id, { ...(input.environment ?? {}) });
     this.lastKeepAlive.set(id, this.now());
+    await this.openDevices(id);
     return { id, adapter: this.name, workspacePath: DEFAULT_WORKSPACE };
+  }
+
+  /**
+   * DI-21.29. The E2B guest kernel makes /dev/net/tun and /dev/fuse root-only at boot, and no udev
+   * opens them, so rootless Docker cannot create the TAP device of slirp4netns. Kiln opens both in
+   * its guest init (DI-21.12). A guest without a device still serves a run without Docker, so a
+   * failed chmod is no fault here; `factoree-docker-start` reports it when Docker needs the device.
+   */
+  private async openDevices(id: string): Promise<void> {
+    await this.options.gateway.run(id, "chmod 0666 /dev/net/tun /dev/fuse 2>/dev/null || true", {
+      cwd: "/",
+      envs: {},
+      user: ROOT_USER,
+      timeoutMs: DEVICE_CHMOD_TIMEOUT_MS,
+    });
   }
 
   private async keepAlive(ref: SandboxRef): Promise<void> {

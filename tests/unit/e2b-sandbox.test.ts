@@ -91,6 +91,17 @@ describe("E2BSandbox (docs/specs/e2b-sandbox-provider.md)", () => {
     expect(first).toEqual({ id: "sb1", adapter: "e2b", workspacePath: "/home/agent/workspace" });
   });
 
+  it("opens /dev/net/tun and /dev/fuse as root after each create and restore, for rootless Docker (DI-21.29)", async () => {
+    const { gateway, recorded } = fakeGateway();
+    const sandbox = new E2BSandbox({ gateway, image: IMAGE });
+    await sandbox.create(input);
+    await sandbox.warmSnapshots.restore(input, "snap1");
+    const chmods = recorded.runs.filter((run) => run.options.user === "root");
+    expect(chmods).toHaveLength(2);
+    expect(chmods[0]?.command).toContain("chmod 0666 /dev/net/tun /dev/fuse");
+    expect(chmods[0]?.options.envs).toEqual({});
+  });
+
   it("builds the template again after a failed build", async () => {
     let calls = 0;
     const { gateway } = fakeGateway({
@@ -130,9 +141,10 @@ describe("E2BSandbox (docs/specs/e2b-sandbox-provider.md)", () => {
     const ref = await sandbox.create(input);
     await sandbox.exec(ref, { file: "npm", args: ["test"], cwd: "repo", isolated: true });
     await sandbox.exec(ref, { file: "npm", args: ["test"] });
-    expect(recorded.runs[0]?.options.envs.RUNNER_TOKEN).toBeUndefined();
-    expect(recorded.runs[0]?.options).toMatchObject({ cwd: "/home/agent/workspace/repo", user: "agent", timeoutMs: 0 });
-    expect(recorded.runs[1]?.options.envs.RUNNER_TOKEN).toBe("secret");
+    // runs[0] is the root device chmod of the create (DI-21.29).
+    expect(recorded.runs[1]?.options.envs.RUNNER_TOKEN).toBeUndefined();
+    expect(recorded.runs[1]?.options).toMatchObject({ cwd: "/home/agent/workspace/repo", user: "agent", timeoutMs: 0 });
+    expect(recorded.runs[2]?.options.envs.RUNNER_TOKEN).toBe("secret");
   });
 
   it("reports a command that reached its limit with exit code 124", async () => {
