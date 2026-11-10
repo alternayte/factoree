@@ -118,6 +118,16 @@ describe("classifyLink", () => {
   });
 });
 
+describe("the webhook form of an issue image (DI-21.53)", () => {
+  it("reads a <linear-image> tag with a signed src as an image and not as a link", () => {
+    const src = "https://uploads.linear.app/org/a/b?signature=eyJ.abc-_x";
+    const text = `Add the section in the screenshot.\n\n<linear-image>{"type":"image","attrs":{"src":"${src}","alt":"readme section"}}</linear-image>\n\nSee <issue id="1" label="FAC-101" href="https://linear.app/acme/issue/FAC-101" />.`;
+    const texts = [{ origin: "the description", text }];
+    expect(imageReferencesIn(texts)).toEqual([{ url: src, caption: "Add the section in the screenshot.", origin: "the description" }]);
+    expect(linkUrlsIn(texts)).toEqual(["https://linear.app/acme/issue/FAC-101"]);
+  });
+});
+
 describe("readLinks", () => {
   it("lists unknown hosts as not read, stops at 10 followed links, and lets a failed read use no place", async () => {
     const urls = linkUrlsIn([

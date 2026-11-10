@@ -1,3 +1,4 @@
+import { WORK_ITEM_COMMENTS_REF } from "./work-item-content.js";
 import type { AuthorityClass, AuthorityDomain } from "./authority.js";
 import { authorityDomainOf, compareAuthority } from "./authority.js";
 import type { ContextClassification, ContextReference } from "./context-source.js";
@@ -76,6 +77,16 @@ const DECISION_REASON = "a recorded human decision settles this subject";
  */
 const COMBINED_EVIDENCE_DOMAINS = new Set(["current_implementation", "system_topology"]);
 
+/**
+ * docs/specs/work-item-images-and-links.md, DI-21.39. The description, the kept comments and the
+ * images are one author's Work Item text. A later sentence supersedes an earlier one on the same
+ * point, and the comments item says so, so two of them never pair as a conflict. The resolver adds
+ * content topics to every required item, so the empty topic list of the comments item alone does
+ * not keep it out of a pair.
+ */
+const isWorkItemText = (ref: string): boolean =>
+  ref.startsWith("linear:issue:") || ref === WORK_ITEM_COMMENTS_REF || ref.startsWith("linear:image:");
+
 export interface DetectConflictsOptions {
   /**
    * SDD section 23. The stable reference of every recorded human decision of this Run. A recorded
@@ -146,6 +157,7 @@ export const detectConflicts = (
       const right = candidates[j];
       if (left === undefined || right === undefined) continue;
       if (left.reference.ref === right.reference.ref) continue;
+      if (isWorkItemText(left.reference.ref) && isWorkItemText(right.reference.ref)) continue;
       const authorityDomain = authorityDomainOf(left.authority);
       if (authorityDomain !== authorityDomainOf(right.authority)) continue;
       // SDD section 22 joins the members of these two domains with `+`. They are combined

@@ -24,6 +24,15 @@ const item = (
 });
 
 describe("detectConflicts", () => {
+  it("never pairs the description, the comments and the images of the work item, as FAC-102 did on heading (DI-21.53)", () => {
+    const conflicts = detectConflicts([
+      item("linear:issue:run-102", "work_item_decision", ["heading"], "required"),
+      item("linear:comments", "work_item_decision", ["heading"], "required"),
+      item("linear:image:1", "work_item_decision", ["heading"], "required"),
+    ]);
+    expect(conflicts).toEqual([]);
+  });
+
   it("resolves a README against an accepted ADR in favour of the ADR", () => {
     const conflicts = detectConflicts([
       item("docs/ADR-031.md", "accepted_adr", ["notification"]),

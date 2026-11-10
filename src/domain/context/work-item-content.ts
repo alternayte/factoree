@@ -117,6 +117,27 @@ export interface ImageReference {
 }
 
 const IMAGE = /!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+
+/**
+ * DI-21.53. The agent session webhook renders an issue image as
+ * `<linear-image>{"type":"image","attrs":{"src":"…","alt":"…"}}</linear-image>`, not as markdown,
+ * and its `src` carries a signature. Factoree rewrites each one to a markdown image first, so the
+ * image rules and the link rules see one form.
+ */
+const LINEAR_IMAGE = /<linear-image>([\s\S]*?)<\/linear-image>/g;
+
+export const normalizeLinearMarkup = (text: string): string =>
+  text.replace(LINEAR_IMAGE, (whole, json: string) => {
+    try {
+      const node = JSON.parse(json) as { attrs?: { src?: unknown; alt?: unknown } };
+      const src = typeof node.attrs?.src === "string" ? node.attrs.src.trim() : "";
+      if (!/^https?:\/\//i.test(src) || /[\s()<>]/.test(src)) return whole;
+      const alt = typeof node.attrs?.alt === "string" ? node.attrs.alt.replace(/[[\]\n]/g, " ") : "";
+      return `![${alt}](${src})`;
+    } catch {
+      return whole;
+    }
+  });
 const MARKDOWN_NOISE = /[*_`>#]+/g;
 
 const withoutImages = (line: string): string =>
@@ -145,7 +166,7 @@ export const imageReferencesIn = (texts: WorkItemText[]): ImageReference[] => {
   const seen = new Set<string>();
   const references: ImageReference[] = [];
   for (const { origin, text } of texts) {
-    const lines = text.split("\n");
+    const lines = normalizeLinearMarkup(text).split("\n");
     lines.forEach((line, index) => {
       for (const match of line.matchAll(IMAGE)) {
         const url = match[2] ?? "";
@@ -275,7 +296,8 @@ export const linkUrlsIn = (texts: WorkItemText[]): string[] => {
     seen.add(url);
     urls.push(url);
   };
-  for (const { text } of texts) {
+  for (const { text: raw } of texts) {
+    const text = normalizeLinearMarkup(raw);
     const images = new Set<string>();
     let rest = text;
     for (const match of text.matchAll(MARKDOWN_LINK)) {
