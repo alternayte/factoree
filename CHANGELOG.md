@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-10
+
+### Fixed
+
+- Docker uses overlay2 in an E2B sandbox, whose root is ext4. vfs filled the 13 GB disk with the images of one compose stack (DI-21.31).
+
+### Changed
+
+- A reply after a configuration failure starts a follow-up run. The failure post asks for the repair of the configuration or the sandbox first (DI-21.32).
+
 ## [0.7.2] - 2026-11-10
 
 ### Fixed
