@@ -7411,7 +7411,8 @@
                     "type": "string",
                     "enum": [
                       "backstage",
-                      "mcp"
+                      "mcp",
+                      "llms_txt"
                     ]
                   },
                   "endpoint": {
@@ -7529,6 +7530,53 @@
                           "fetchTool"
                         ],
                         "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "default": "llms_txt",
+                            "type": "string",
+                            "enum": [
+                              "llms_txt"
+                            ]
+                          },
+                          "authority": {
+                            "default": "prose_documentation",
+                            "type": "string",
+                            "enum": [
+                              "work_item_decision",
+                              "approved_product_specification",
+                              "product_documentation",
+                              "accepted_adr",
+                              "approved_architecture_specification",
+                              "architecture_documentation",
+                              "repository_readme",
+                              "machine_readable_contract",
+                              "contract_tests",
+                              "api_documentation",
+                              "prose_documentation",
+                              "source_code",
+                              "executable_tests",
+                              "runtime_behavior",
+                              "declarative_catalog",
+                              "repository_configuration"
+                            ]
+                          },
+                          "maxPages": {
+                            "default": 5,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20
+                          },
+                          "maxPageBytes": {
+                            "default": 262144,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1048576
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     ]
                   }
@@ -7594,7 +7642,8 @@
                       "type": "string",
                       "enum": [
                         "backstage",
-                        "mcp"
+                        "mcp",
+                        "llms_txt"
                       ]
                     },
                     "enabled": {
@@ -7705,6 +7754,53 @@
                             "discoverTool",
                             "fetchTool"
                           ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "default": "llms_txt",
+                              "type": "string",
+                              "enum": [
+                                "llms_txt"
+                              ]
+                            },
+                            "authority": {
+                              "default": "prose_documentation",
+                              "type": "string",
+                              "enum": [
+                                "work_item_decision",
+                                "approved_product_specification",
+                                "product_documentation",
+                                "accepted_adr",
+                                "approved_architecture_specification",
+                                "architecture_documentation",
+                                "repository_readme",
+                                "machine_readable_contract",
+                                "contract_tests",
+                                "api_documentation",
+                                "prose_documentation",
+                                "source_code",
+                                "executable_tests",
+                                "runtime_behavior",
+                                "declarative_catalog",
+                                "repository_configuration"
+                              ]
+                            },
+                            "maxPages": {
+                              "default": 5,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 20
+                            },
+                            "maxPageBytes": {
+                              "default": 262144,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1048576
+                            }
+                          },
                           "additionalProperties": false
                         }
                       ]
@@ -7825,7 +7921,8 @@
                         "type": "string",
                         "enum": [
                           "backstage",
-                          "mcp"
+                          "mcp",
+                          "llms_txt"
                         ]
                       },
                       "enabled": {
@@ -7937,6 +8034,53 @@
                               "fetchTool"
                             ],
                             "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "default": "llms_txt",
+                                "type": "string",
+                                "enum": [
+                                  "llms_txt"
+                                ]
+                              },
+                              "authority": {
+                                "default": "prose_documentation",
+                                "type": "string",
+                                "enum": [
+                                  "work_item_decision",
+                                  "approved_product_specification",
+                                  "product_documentation",
+                                  "accepted_adr",
+                                  "approved_architecture_specification",
+                                  "architecture_documentation",
+                                  "repository_readme",
+                                  "machine_readable_contract",
+                                  "contract_tests",
+                                  "api_documentation",
+                                  "prose_documentation",
+                                  "source_code",
+                                  "executable_tests",
+                                  "runtime_behavior",
+                                  "declarative_catalog",
+                                  "repository_configuration"
+                                ]
+                              },
+                              "maxPages": {
+                                "default": 5,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20
+                              },
+                              "maxPageBytes": {
+                                "default": 262144,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 1048576
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         ]
                       },
@@ -8028,7 +8172,8 @@
                     "type": "string",
                     "enum": [
                       "backstage",
-                      "mcp"
+                      "mcp",
+                      "llms_txt"
                     ]
                   },
                   "endpoint": {
@@ -8142,6 +8287,53 @@
                           "discoverTool",
                           "fetchTool"
                         ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "default": "llms_txt",
+                            "type": "string",
+                            "enum": [
+                              "llms_txt"
+                            ]
+                          },
+                          "authority": {
+                            "default": "prose_documentation",
+                            "type": "string",
+                            "enum": [
+                              "work_item_decision",
+                              "approved_product_specification",
+                              "product_documentation",
+                              "accepted_adr",
+                              "approved_architecture_specification",
+                              "architecture_documentation",
+                              "repository_readme",
+                              "machine_readable_contract",
+                              "contract_tests",
+                              "api_documentation",
+                              "prose_documentation",
+                              "source_code",
+                              "executable_tests",
+                              "runtime_behavior",
+                              "declarative_catalog",
+                              "repository_configuration"
+                            ]
+                          },
+                          "maxPages": {
+                            "default": 5,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20
+                          },
+                          "maxPageBytes": {
+                            "default": 262144,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1048576
+                          }
+                        },
                         "additionalProperties": false
                       }
                     ]

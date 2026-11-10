@@ -18,7 +18,7 @@ import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js"
 import type { ContextResolver } from "~/domain/context/context-resolver.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
-import type { ContextSourceProvider } from "~/domain/context/context-source-provider.js";
+import type { ContextDeliverySourceProvider, ContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
@@ -81,6 +81,8 @@ export interface ActivityDependencies {
   contextResolver: ContextResolver;
   contextContracts: ContextContractStore;
   contextSources: ContextSourceProvider;
+  /** docs/specs/external-context-delivery.md. The configured sources the work sprite delivery reads. */
+  contextDelivery?: ContextDeliverySourceProvider | undefined;
   validationContracts: ValidationContractStore;
   repositoryReader: RepositoryReader;
   browser: BrowserDriver;
@@ -172,6 +174,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     skills: dependencies.skills,
     registries: dependencies.skillRegistries,
     products: dependencies.products,
+    contextContracts: dependencies.contextContracts,
+    contextDelivery: dependencies.contextDelivery,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,

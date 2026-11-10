@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ActionPolicy } from "~/domain/policy/action-policy.js";
 import type { McpToolPort } from "~/adapters/mcp/mcp-json-rpc-client.js";
 import type { McpSourceSettings } from "./context-source-configuration.js";
@@ -110,20 +111,28 @@ export class McpContextSource implements ContextSource {
     return candidates;
   }
 
+  /**
+   * docs/specs/external-context-delivery.md and DI-21.37. Works on a new instance without an
+   * earlier `discover`: the reference is `<source id>:<item ref>`, so the fetch tool receives the
+   * item ref. A new instance does not know the version the server reported, so the version is
+   * then the SHA-256 of the content, which names that exact content.
+   */
   async fetch(reference: ContextReference): Promise<ContextDocument> {
-    const document = this.documents.get(reference.ref);
-    if (document === undefined) {
-      throw new Error(`The MCP context source "${this.id()}" never offered "${reference.ref}".`);
+    const prefix = `${this.id()}:`;
+    const known = this.documents.get(reference.ref);
+    if (known === undefined && !reference.ref.startsWith(prefix)) {
+      throw new Error(`The MCP context source "${this.id()}" never offers "${reference.ref}".`);
     }
+    const itemRef = known?.itemRef ?? reference.ref.slice(prefix.length);
 
     this.options.policy.assertMcpTool(this.options.settings.fetchTool);
     const content = await this.options.tools.callTool(this.options.settings.fetchTool, {
-      ref: document.itemRef,
+      ref: itemRef,
     });
 
     return {
       reference,
-      sourceVersion: document.sourceVersion,
+      sourceVersion: known?.sourceVersion ?? createHash("sha256").update(content, "utf8").digest("hex"),
       content,
     };
   }

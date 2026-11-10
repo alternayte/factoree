@@ -53,9 +53,12 @@ import { BackstageContextSource } from "~/domain/context/backstage-source.js";
 import { BackstageCatalogClient } from "~/adapters/backstage/backstage-catalog-client.js";
 import { McpContextSource } from "~/domain/context/mcp-source.js";
 import { McpJsonRpcClient } from "~/adapters/mcp/mcp-json-rpc-client.js";
+import { LlmsTxtClient } from "~/adapters/llms-txt/llms-txt-client.js";
+import { LlmsTxtContextSource } from "~/domain/context/llms-txt-source.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import type {
   BackstageSourceSettings,
+  LlmsTxtSourceSettings,
   McpSourceSettings,
 } from "~/domain/context/context-source-configuration.js";
 import { ConfiguredContextSourceProvider } from "~/domain/context/context-source-provider.js";
@@ -297,6 +300,14 @@ const contextSources = new ConfiguredContextSourceProvider({
         tools: new McpJsonRpcClient({ endpoint: record.endpoint, token: credential, fetch }),
       });
     },
+    // docs/specs/external-context-delivery.md. The endpoint is the URL of the llms.txt file.
+    llms_txt: (record, credential) =>
+      new LlmsTxtContextSource({
+        sourceId: record.sourceId,
+        endpoint: record.endpoint,
+        settings: record.settings as LlmsTxtSourceSettings,
+        pages: new LlmsTxtClient({ endpoint: record.endpoint, token: credential }),
+      }),
   },
 });
 
@@ -372,6 +383,7 @@ const worker = await Worker.create({
     contextResolver: new ContextResolver(),
     contextContracts: new PrismaContextContractStore(prisma),
     contextSources,
+    contextDelivery: contextSources,
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),

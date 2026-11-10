@@ -1,3 +1,4 @@
+import type { DeliveredContextEntry } from "~/domain/context/context-delivery.js";
 import type { FactoreeDecision } from "./factoree-decision.js";
 import type { RunFailureReason, RunStatus } from "./run-status.js";
 import type { RunFailureCategory } from "./failure-category.js";
@@ -162,6 +163,11 @@ export interface RunRepository {
    * they replaced the same one.
    */
   setSandbox(tenantId: string, runId: string, sandbox: RunSandboxPatch): Promise<SupersededSandbox>;
+  /**
+   * docs/specs/external-context-delivery.md. Records the context files of the work sprite: one
+   * entry per item, with no content. A retried preparation replaces the record.
+   */
+  setDeliveredContext(tenantId: string, runId: string, entries: DeliveredContextEntry[]): Promise<void>;
   /** Removes the sandbox reference after the sandbox is deleted. The evidence stays. */
   clearSandbox(tenantId: string, runId: string): Promise<void>;
   /**

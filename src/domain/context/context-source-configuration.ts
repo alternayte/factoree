@@ -4,9 +4,10 @@ import { AUTHORITY_CLASSES, type AuthorityClass } from "./authority.js";
 /**
  * SDD section 53 requires a `ContextSourceConfiguration` entity. SDD section 17 fixes the source
  * list of Version 1. Linear and the GitHub repositories are always present and need no row, so a
- * row configures a Backstage catalog or a generic MCP server only.
+ * row configures a Backstage catalog, a generic MCP server, or an llms.txt file
+ * (docs/specs/external-context-delivery.md).
  */
-export const CONTEXT_SOURCE_KINDS = ["backstage", "mcp"] as const;
+export const CONTEXT_SOURCE_KINDS = ["backstage", "mcp", "llms_txt"] as const;
 
 export type ContextSourceKind = (typeof CONTEXT_SOURCE_KINDS)[number];
 
@@ -71,7 +72,33 @@ export const mcpSettingsSchema = z
   })
   .strict();
 
+/** docs/specs/external-context-delivery.md. The page caps a configuration can never raise past. */
+export const LLMS_TXT_MAX_PAGES = 20;
+export const LLMS_TXT_MAX_PAGE_BYTES = 1024 * 1024;
+
+/**
+ * docs/specs/external-context-delivery.md. An llms.txt source. The endpoint is the URL of the
+ * llms.txt file itself. DI-5.11 gives prose documentation as the default authority.
+ */
+export const llmsTxtSettingsSchema = z
+  .object({
+    kind: z.literal("llms_txt").default("llms_txt"),
+    authority: z.enum(AUTHORITY_CLASSES as unknown as [string, ...string[]]).default(
+      "prose_documentation",
+    ),
+    maxPages: z.number().int().min(1).max(LLMS_TXT_MAX_PAGES).default(5),
+    maxPageBytes: z.number().int().min(1).max(LLMS_TXT_MAX_PAGE_BYTES).default(256 * 1024),
+  })
+  .strict();
+
 export type BackstageSourceSettings = z.infer<typeof backstageSettingsSchema>;
+
+export interface LlmsTxtSourceSettings {
+  kind: "llms_txt";
+  authority: AuthorityClass;
+  maxPages: number;
+  maxPageBytes: number;
+}
 
 export interface McpSourceSettings {
   kind: "mcp";
@@ -82,7 +109,7 @@ export interface McpSourceSettings {
   maxCandidates: number;
 }
 
-export type ContextSourceSettings = BackstageSourceSettings | McpSourceSettings;
+export type ContextSourceSettings = BackstageSourceSettings | McpSourceSettings | LlmsTxtSourceSettings;
 
 const describeIssue = (issue: z.core.$ZodIssue): string => {
   const path = issue.path.length === 0 ? "settings" : issue.path.join(".");
@@ -98,7 +125,8 @@ export const parseContextSourceSettings = (
   kind: ContextSourceKind,
   settings: unknown,
 ): ContextSourceSettings => {
-  const schema = kind === "backstage" ? backstageSettingsSchema : mcpSettingsSchema;
+  const schema =
+    kind === "backstage" ? backstageSettingsSchema : kind === "mcp" ? mcpSettingsSchema : llmsTxtSettingsSchema;
   const parsed = schema.safeParse(settings ?? {});
   if (!parsed.success) {
     const detail = parsed.error.issues.map(describeIssue).join("; ");
@@ -107,6 +135,14 @@ export const parseContextSourceSettings = (
     );
   }
   if (parsed.data.kind === "backstage") return parsed.data;
+  if (parsed.data.kind === "llms_txt") {
+    return {
+      kind: "llms_txt",
+      authority: parsed.data.authority as AuthorityClass,
+      maxPages: parsed.data.maxPages,
+      maxPageBytes: parsed.data.maxPageBytes,
+    };
+  }
   const data = parsed.data;
   return {
     kind: "mcp",
@@ -157,7 +193,7 @@ export interface ContextSourceConfigurationRecord {
   sourceId: string;
   kind: ContextSourceKind;
   enabled: boolean;
-  /** The base URL of the catalog or of the MCP server. */
+  /** The base URL of the catalog, the MCP server URL, or the URL of the llms.txt file. */
   endpoint: string;
   /**
    * SDD section 30. A credential never lives in this row. The column names one `ProductSecret`

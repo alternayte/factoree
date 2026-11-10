@@ -108,6 +108,9 @@ model Run {
   // and the resolution id that pins each version. Both stay null without a registry.
   skillRegistrySet         String?   @map("skill_registry_set")
   skillResolutionId        String?   @map("skill_resolution_id")
+  // docs/specs/external-context-delivery.md. One entry per context file of the work sprite: ref,
+  // path, SHA-256, verified and the skip reason. It holds no content (SDD section 55).
+  deliveredContext         Json?     @map("delivered_context")
   // Specification section 8. The SHA-256 of .factoree/config.yaml, read from the target
   // repository at the Run's base commit. Null until context resolution pins that commit.
   configSha                 String?

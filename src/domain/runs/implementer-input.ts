@@ -8,6 +8,8 @@ export interface BuildImplementerInput {
   validationContract: string | null;
   contextContract: string | null;
   requiredContext: string[];
+  /** docs/specs/external-context-delivery.md. One line per context file of the work sprite. */
+  contextFiles?: string[];
   primaryRepositoryPath: string;
   referenceRepositoryPaths: string[];
   repositoryInstructions: string;
@@ -180,6 +182,7 @@ export const buildImplementerInput = (input: BuildImplementerInput): Implementer
       validationContract: input.validationContract,
       contextContract: input.contextContract,
       requiredContext: input.requiredContext,
+      contextFiles: input.contextFiles ?? [],
       primaryRepositoryPath: input.primaryRepositoryPath,
       referenceRepositoryPaths: input.referenceRepositoryPaths,
       repositoryInstructions: input.repositoryInstructions,

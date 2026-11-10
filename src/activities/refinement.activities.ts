@@ -102,6 +102,11 @@ export interface ProposeRefinementActivityInput {
   goal: string;
   statedCriteria: string[];
   contextContract: string;
+  /**
+   * docs/specs/external-context-delivery.md. One line per context file of the work sprite. Absent
+   * in a history recorded before the delivery existed.
+   */
+  contextFiles?: string[];
   skills: string[];
   /** docs/specs/proof-pack-and-visual-evidence.md. True when the repository has an enabled preview. */
   previewConfigured: boolean;
@@ -243,6 +248,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       goal: input.goal,
       statedCriteria: input.statedCriteria,
       contextContract: input.contextContract,
+      contextFiles: input.contextFiles ?? [],
       primaryRepositoryPath: input.primaryPath,
       proposalPath,
       proposalSchema: REFINER_PROPOSAL_SCHEMA,

@@ -1,6 +1,7 @@
+import { contextFilesBody } from "./context-files.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/8";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/9";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -8,6 +9,8 @@ export interface ImplementerPromptFields {
   validationContract: string | null;
   contextContract: string | null;
   requiredContext: string[];
+  /** docs/specs/external-context-delivery.md. One line per context file of the work sprite. */
+  contextFiles?: string[];
   primaryRepositoryPath: string;
   referenceRepositoryPaths: string[];
   repositoryInstructions: string;
@@ -45,6 +48,7 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
     section("Validation Contract", fields.validationContract ?? "No Validation Contract exists yet."),
     section("Context Contract", fields.contextContract ?? "No Context Contract exists yet."),
     section("Required context", list(fields.requiredContext, "None supplied.")),
+    section("Context files", contextFilesBody(fields.contextFiles ?? [])),
     section("Primary repository", `The writable worktree is at ${fields.primaryRepositoryPath}.`),
     section(
       "Reference repositories",

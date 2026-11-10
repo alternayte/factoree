@@ -32,6 +32,14 @@ import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { SkillRegistrySettings, SkillResolution } from "~/domain/runs/skill-registry.js";
 import { asRunFault, registryOf, type SkillRegistryFactory } from "./skill-registry.activities.js";
+import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
+import type { ContextDeliverySourceProvider } from "~/domain/context/context-source-provider.js";
+import {
+  CONTEXT_DELIVERY_DIRECTORY,
+  deliverableItems,
+  deliverContext,
+  inContractOrder,
+} from "~/domain/context/context-delivery.js";
 
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
@@ -54,6 +62,12 @@ export interface SandboxActivityDependencies {
    * every role runs on opencode, which is what a test of another concern does.
    */
   products?: Pick<ProductRegistry, "findById"> | undefined;
+  /**
+   * docs/specs/external-context-delivery.md. The frozen contract and the configured sources the
+   * work sprite delivery reads. Without them the work sprite gets no context files.
+   */
+  contextContracts?: Pick<ContextContractStore, "findByRun"> | undefined;
+  contextDelivery?: ContextDeliverySourceProvider | undefined;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -73,6 +87,11 @@ export interface PrepareSandboxActivityInput {
    * recorded before the registry existed.
    */
   skillRegistry?: SkillRegistrySettings | null;
+  /**
+   * docs/specs/external-context-delivery.md. The refs the delivery fetches, in contract order.
+   * Absent in an older history, and then the stored order applies.
+   */
+  contextRefs?: string[];
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -102,6 +121,11 @@ export interface PrepareSandboxActivityOutput {
    * Absent in a history recorded before the self-check existed.
    */
   selfCheckReady?: boolean;
+  /**
+   * docs/specs/external-context-delivery.md. One prompt line per context file of the work sprite.
+   * A check sprite gets none. Absent in a history recorded before the delivery existed.
+   */
+  contextFiles?: string[];
 }
 
 /** The work sprite of the Run, where the Implementer wrote the change. */
@@ -319,6 +343,70 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
     : { organizationSkillsSha: prepared.organizationSkillsSha }),
 });
 
+/**
+ * docs/specs/external-context-delivery.md. Fetches each required and reference item of an
+ * llms.txt, MCP or Backstage source again and writes it to `$HOME/.factoree/context` in the work
+ * sprite, outside the checkout, so no captured patch holds it. `Run.deliveredContext` records
+ * every item. A source fault, a hash mismatch or a sandbox write fault skips the item (DI-5.13);
+ * a fault of the control plane store fails the activity, and a retry prepares a new sandbox.
+ */
+const deliverWorkSpriteContext = async (
+  dependencies: SandboxActivityDependencies,
+  input: PrepareSandboxActivityInput,
+  prepared: PreparedSandbox,
+): Promise<string[]> => {
+  if (dependencies.contextContracts === undefined || dependencies.contextDelivery === undefined) return [];
+  const stored = await dependencies.contextContracts.findByRun(input.tenantId, input.runId);
+  if (stored === null) return [];
+  const items = inContractOrder(stored.items, input.contextRefs);
+  if (deliverableItems(items).length === 0) {
+    await dependencies.runs.setDeliveredContext(input.tenantId, input.runId, []);
+    return [];
+  }
+
+  const { sources, kinds } = await dependencies.contextDelivery.configuredSourcesFor(input.tenantId, input.productId);
+  // The agent's home is known only inside the sandbox, so the shell makes the directory and
+  // prints its absolute path.
+  let directory = "";
+  let unavailable: string | null = null;
+  try {
+    const made = await dependencies.sandbox.exec(prepared.ref, {
+      file: "sh",
+      args: ["-c", 'mkdir -p -- "$HOME/$0" && cd -- "$HOME/$0" && pwd', CONTEXT_DELIVERY_DIRECTORY],
+      cwd: "/",
+    });
+    directory = made.stdout.trim();
+    if (made.exitCode !== 0 || !directory.startsWith("/")) {
+      unavailable = `The context directory could not be made: exit code ${made.exitCode}, ${made.stderr.trim()}`;
+    }
+  } catch (error) {
+    unavailable = `The context directory could not be made: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  const delivery = await deliverContext({
+    items,
+    sources,
+    kinds,
+    directory,
+    unavailable,
+    write: (path, content) => dependencies.sandbox.writeFile(prepared.ref, path, content),
+  });
+  // SDD section 60. A reason can hold a server message, and the record is external persistence.
+  const entries = delivery.entries.map((entry) =>
+    entry.skipReason === null ? entry : { ...entry, skipReason: dependencies.redactor.redactText(entry.skipReason) },
+  );
+  await dependencies.runs.setDeliveredContext(input.tenantId, input.runId, entries);
+  dependencies.logger.info("context delivered to the work sprite", {
+    tenant_id: input.tenantId,
+    run_id: input.runId,
+    sprite_id: prepared.ref.id,
+    delivered: delivery.lines.length,
+    skipped: entries.length - delivery.lines.length,
+    step: "prepare",
+  });
+  return delivery.lines;
+};
+
 const prepare = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
@@ -361,6 +449,10 @@ const prepare = async (
   // the resolution that pins the registry versions. A retried preparation replaces the record.
   await dependencies.skills?.replace(input.tenantId, input.runId, prepared.skillRecords, prepared.skillResolution);
 
+  // docs/specs/external-context-delivery.md. Only the work sprite gets context files: the user
+  // validator and the reviewer start fresh in a check sprite and judge the artefacts.
+  const contextFiles = await deliverWorkSpriteContext(dependencies, input, prepared);
+
   if (superseded.spriteId !== null && superseded.spriteId !== prepared.ref.id) {
     const staleId = superseded.spriteId;
     const staleAdapter = superseded.adapter ?? dependencies.sandbox.name;
@@ -391,7 +483,7 @@ const prepare = async (
     step: "prepare",
   });
 
-  return toOutput(prepared);
+  return { ...toOutput(prepared), contextFiles };
 };
 
 export const createSandboxActivities = (dependencies: SandboxActivityDependencies) => ({

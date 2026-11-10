@@ -1,5 +1,6 @@
 import { safeUrlForMessage } from "~/domain/runs/checkout.js";
 import { readTextWithCap } from "~/adapters/http/capped-response-body.js";
+import { readEventStreamAnswer } from "./event-stream.js";
 
 /**
  * SDD section 17 and SDD section 10. One MCP server, reached over JSON-RPC 2.0 on HTTP.
@@ -19,7 +20,11 @@ export class McpError extends Error {
   }
 }
 
-/** The longest one MCP request may take. A slow MCP server must not hold a Run. */
+/**
+ * The longest one MCP request may take. A slow MCP server must not hold a Run. The signal also
+ * covers the read of the body, so it bounds a whole event stream too
+ * (docs/specs/external-context-delivery.md).
+ */
 export const MCP_TIMEOUT_MS = 15_000;
 
 /**
@@ -176,6 +181,32 @@ export class McpJsonRpcClient implements McpToolPort {
 
     if (!response.ok) {
       throw new McpError(`The MCP request "${method}" received an unexpected status ${response.status}.`);
+    }
+
+    // docs/specs/external-context-delivery.md and DI-21.34. The Streamable HTTP transport answers a POST with
+    // either one JSON body or a server-sent event stream that carries the JSON-RPC answer. The
+    // stream is read until the answer with this request id arrives; a notification or a server
+    // request in it is ignored.
+    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+    if (contentType.startsWith("text/event-stream")) {
+      let outcome;
+      try {
+        outcome = await readEventStreamAnswer(response, id, MCP_MAX_RESPONSE_BYTES);
+      } catch (cause) {
+        throw new McpError(`The MCP request "${method}" returned a stream that could not be read.`, { cause });
+      }
+      if (outcome.kind === "too_large") {
+        throw new McpError(
+          `The MCP server at ${this.safeEndpoint} answered "${method}" with a stream larger than ` +
+            `${MCP_MAX_RESPONSE_BYTES} bytes.`,
+        );
+      }
+      if (outcome.kind === "ended") {
+        throw new McpError(
+          `The MCP server at ${this.safeEndpoint} ended the stream of "${method}" without the answer.`,
+        );
+      }
+      return { body: outcome.message, headers: response.headers };
     }
 
     let text: string | null;

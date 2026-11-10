@@ -19,6 +19,7 @@ type Source = ListContextSourcesResponse[number];
 type Kind = Source["kind"];
 type Settings = NonNullable<PutContextSourceData["body"]["settings"]>;
 type McpSettings = Extract<Settings, { discoverTool: string }>;
+type LlmsTxtSettings = Extract<Settings, { kind?: "llms_txt" }>;
 type Authority = NonNullable<McpSettings["authority"]>;
 
 /** SDD §22. The authority classes, highest first inside each domain. */
@@ -41,20 +42,27 @@ const AUTHORITIES: { value: Authority; domain: string }[] = [
   { value: "repository_configuration", domain: "system topology" },
 ];
 
-const KIND_LABEL: Record<Kind, string> = { mcp: "MCP server", backstage: "Backstage" };
+const KIND_LABEL: Record<Kind, string> = { mcp: "MCP server", backstage: "Backstage", llms_txt: "llms.txt" };
+
+/** docs/specs/external-context-delivery.md. The page caps a configuration cannot raise past. */
+const LLMS_MAX_PAGES = 20;
+const LLMS_MAX_PAGE_KIB = 1024;
 
 const SOURCE_ID_PATTERN = "[a-z0-9][a-z0-9._:\\-]*";
 
 const isMcp = (settings: Settings): settings is McpSettings => "discoverTool" in settings;
+const isLlmsTxt = (settings: Settings): settings is LlmsTxtSettings => settings.kind === "llms_txt";
 
 /** The authority of a source. A Backstage catalog is always declarative topology. */
 const authorityOf = (source: Source): string =>
-  isMcp(source.settings) ? (source.settings.authority ?? "prose_documentation") : "declarative_catalog";
+  isMcp(source.settings) || isLlmsTxt(source.settings)
+    ? (source.settings.authority ?? "prose_documentation")
+    : "declarative_catalog";
 
 const secretNameFor = (sourceId: string) =>
   `${sourceId.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "CONTEXT_SOURCE"}_TOKEN`;
 
-/** Issue 8. The Backstage catalogs and MCP servers a run of this product reads context from. */
+/** Issue 8. The Backstage catalogs, MCP servers and llms.txt files a run of this product reads context from. */
 export function ContextSourcesSection({
   productId,
   linearWorkspaceId,
@@ -83,12 +91,15 @@ export function ContextSourcesSection({
   return (
     <Section
       title="Context sources"
-      description="Backstage catalogs and MCP servers that a run reads context from. Linear and the repositories need no entry."
+      description="Backstage catalogs, MCP servers and llms.txt files that a run reads context from. Linear and the repositories need no entry."
       actions={
         canEdit && adding === null ? (
           <>
             <Button size="sm" onClick={() => setAdding("mcp")}>
               Add MCP server
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setAdding("llms_txt")}>
+              Add llms.txt
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setAdding("backstage")}>
               Add Backstage
@@ -138,6 +149,14 @@ export function ContextSourcesSection({
                     <dt className="t-label text-mute">Tools</dt>
                     <dd className="t-value min-w-0 break-all text-body">
                       {source.settings.discoverTool}, {source.settings.fetchTool}
+                    </dd>
+                  </>
+                ) : null}
+                {isLlmsTxt(source.settings) ? (
+                  <>
+                    <dt className="t-label text-mute">Pages</dt>
+                    <dd className="t-value min-w-0 break-all text-body">
+                      at most {source.settings.maxPages ?? 5}, {Math.round((source.settings.maxPageBytes ?? 262144) / 1024)} KiB each
                     </dd>
                   </>
                 ) : null}
@@ -196,6 +215,8 @@ function SourceForm({
   const [fetchTool, setFetchTool] = useState("");
   const [authority, setAuthority] = useState<Authority>("prose_documentation");
   const [primaryComponent, setPrimaryComponent] = useState("");
+  const [maxPages, setMaxPages] = useState("5");
+  const [maxPageKib, setMaxPageKib] = useState("256");
   const [credential, setCredential] = useState("");
   const [secretName, setSecretName] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -206,7 +227,9 @@ function SourceForm({
   const settings = (): Settings =>
     kind === "mcp"
       ? { kind: "mcp", discoverTool: discoverTool.trim(), fetchTool: fetchTool.trim(), authority }
-      : { kind: "backstage", primaryComponent: primaryComponent.trim() || null };
+      : kind === "llms_txt"
+        ? { kind: "llms_txt", authority, maxPages: Number(maxPages), maxPageBytes: Number(maxPageKib) * 1024 }
+        : { kind: "backstage", primaryComponent: primaryComponent.trim() || null };
 
   const test = useMutation({
     mutationFn: async () => {
@@ -267,8 +290,26 @@ function SourceForm({
       ? `The source uses the stored secret ${name}.`
       : "Optional. Without a value and with no stored secret of this name, Factoree sends no credential.";
 
+  const authorityField = (
+    <Field
+      label="Authority"
+      hint="SDD §22. A higher class of the same domain wins a context conflict."
+      className="sm:col-span-2"
+    >
+      {(props) => (
+        <Select {...props} mono value={authority} onChange={(e) => change(setAuthority)(e.target.value as Authority)}>
+          {AUTHORITIES.map((a) => (
+            <option key={a.value} value={a.value}>
+              {a.value} · {a.domain}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
+  );
+
   const ready =
-    Boolean(sourceId.trim() && endpoint.trim()) && (kind === "backstage" || Boolean(discoverTool.trim() && fetchTool.trim()));
+    Boolean(sourceId.trim() && endpoint.trim()) && (kind !== "mcp" || Boolean(discoverTool.trim() && fetchTool.trim()));
 
   return (
     <form
@@ -287,7 +328,9 @@ function SourceForm({
         save.mutate();
       }}
     >
-      <p className="t-section">{kind === "mcp" ? "New MCP server" : "New Backstage catalog"}</p>
+      <p className="t-section">
+        {kind === "mcp" ? "New MCP server" : kind === "llms_txt" ? "New llms.txt" : "New Backstage catalog"}
+      </p>
       <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
         <Field label="Source id" hint="Lower case letters, digits, dot, colon, underscore and dash." errors={fieldErrors.sourceId}>
           {(props) => (
@@ -297,7 +340,7 @@ function SourceForm({
               required
               autoComplete="off"
               pattern={SOURCE_ID_PATTERN}
-              placeholder={kind === "mcp" ? "docs" : "backstage"}
+              placeholder={kind === "backstage" ? "backstage" : "docs"}
               value={sourceId}
               onChange={(e) => change(setSourceId)(e.target.value)}
             />
@@ -305,7 +348,13 @@ function SourceForm({
         </Field>
         <Field
           label="URL"
-          hint={kind === "mcp" ? "The MCP endpoint, for example https://mcp.example.com/mcp." : "The base URL of the Backstage backend."}
+          hint={
+            kind === "mcp"
+              ? "The MCP endpoint, for example https://mcp.example.com/mcp."
+              : kind === "llms_txt"
+                ? "The URL of the llms.txt file, for example https://docs.example.com/llms.txt."
+                : "The base URL of the Backstage backend."
+          }
           errors={fieldErrors.endpoint}
         >
           {(props) => (
@@ -325,9 +374,10 @@ function SourceForm({
           <>
             <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
               <span className="t-label">Transport</span>
-              <p className="t-value text-ink">Streamable HTTP · JSON</p>
+              <p className="t-value text-ink">Streamable HTTP · JSON or SSE</p>
               <p className="t-hint">
-                Factoree sends JSON-RPC in an HTTP POST and reads a JSON answer. It supports no other MCP transport.
+                Factoree sends JSON-RPC in an HTTP POST and reads the answer as JSON or as a server-sent event stream. It
+                supports no other MCP transport.
               </p>
             </div>
             <Field label="Discover tool" hint="Factoree calls it with the goal, the topics and the repository.">
@@ -356,21 +406,45 @@ function SourceForm({
                 />
               )}
             </Field>
+            {authorityField}
+          </>
+        ) : kind === "llms_txt" ? (
+          <>
             <Field
-              label="Authority"
-              hint="SDD §22. A higher class of the same domain wins a context conflict."
-              className="sm:col-span-2"
+              label="Pages per run"
+              hint={`A run reads at most this many linked pages that match its topics. At most ${LLMS_MAX_PAGES}.`}
             >
               {(props) => (
-                <Select {...props} mono value={authority} onChange={(e) => change(setAuthority)(e.target.value as Authority)}>
-                  {AUTHORITIES.map((a) => (
-                    <option key={a.value} value={a.value}>
-                      {a.value} · {a.domain}
-                    </option>
-                  ))}
-                </Select>
+                <Input
+                  {...props}
+                  mono
+                  required
+                  type="number"
+                  min={1}
+                  max={LLMS_MAX_PAGES}
+                  value={maxPages}
+                  onChange={(e) => change(setMaxPages)(e.target.value)}
+                />
               )}
             </Field>
+            <Field
+              label="Page cap (KiB)"
+              hint={`A run skips a page larger than this. At most ${LLMS_MAX_PAGE_KIB} KiB.`}
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  mono
+                  required
+                  type="number"
+                  min={1}
+                  max={LLMS_MAX_PAGE_KIB}
+                  value={maxPageKib}
+                  onChange={(e) => change(setMaxPageKib)(e.target.value)}
+                />
+              )}
+            </Field>
+            {authorityField}
           </>
         ) : (
           <Field

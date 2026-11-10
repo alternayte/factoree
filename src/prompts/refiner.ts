@@ -1,11 +1,15 @@
+import { contextFilesBody } from "./context-files.js";
+
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@4";
+export const REFINER_PROMPT_VERSION = "refiner@5";
 
 export interface RefinerPromptFields {
   workItem: string;
   goal: string;
   statedCriteria: string[];
   contextContract: string;
+  /** docs/specs/external-context-delivery.md. One line per context file of the work sprite. */
+  contextFiles: string[];
   primaryRepositoryPath: string;
   proposalPath: string;
   proposalSchema: string;
@@ -34,6 +38,7 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
     section("Goal", fields.goal),
     section("Criteria the Work Item states", list(fields.statedCriteria, "None.")),
     section("Context Contract", fields.contextContract),
+    section("Context files", contextFilesBody(fields.contextFiles)),
     section(
       "Primary repository",
       `The repository is at ${fields.primaryRepositoryPath}. Read it. You must not change any file in it.`,

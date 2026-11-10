@@ -11,6 +11,7 @@ import {
   backstageSettingsSchema,
   CONTEXT_SOURCE_KINDS,
   ContextSourceConfigurationError,
+  llmsTxtSettingsSchema,
   mcpSettingsSchema,
   parseContextSourceSettings,
 } from "~/domain/context/context-source-configuration.js";
@@ -31,8 +32,8 @@ const createSchema = z
   .strict();
 
 // Documentation only: the route validates `settings` with `parseContextSourceSettings`, which
-// names the bad key. The document gives the UI client the two shapes. DI-14.52.
-const settingsDocumentation = z.union([backstageSettingsSchema, mcpSettingsSchema]);
+// names the bad key. The document gives the UI client the three shapes. DI-14.52.
+const settingsDocumentation = z.union([backstageSettingsSchema, mcpSettingsSchema, llmsTxtSettingsSchema]);
 const createDocumentation = createSchema.extend({ settings: settingsDocumentation.optional() });
 
 /**
