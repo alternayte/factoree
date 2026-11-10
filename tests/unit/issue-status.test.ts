@@ -46,8 +46,12 @@ describe("the issue status of a run (DI-21.49, DI-21.50)", () => {
     expect(startMoveOf({ state: byId("Todo"), teamStates: STATES })?.to.id).toBe("In Progress");
   });
 
-  it("leaves an issue in triage, started, completed or canceled", () => {
-    for (const id of ["Triage", "In Review", "Done", "Duplicate"]) {
+  it("adopts a started issue without a move, so a merge still completes it", () => {
+    expect(startMoveOf({ state: byId("In Review"), teamStates: STATES })).toEqual({ from: byId("In Review"), to: byId("In Review") });
+  });
+
+  it("leaves an issue in triage, completed or canceled", () => {
+    for (const id of ["Triage", "Done", "Duplicate"]) {
       expect(startMoveOf({ state: byId(id), teamStates: STATES })).toBeNull();
     }
   });

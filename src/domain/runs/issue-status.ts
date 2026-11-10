@@ -36,7 +36,7 @@ export interface IssueStateRecord {
 }
 
 /** The Linear state types a run never moves out of at its start (DI-21.49). */
-const UNTOUCHED_AT_START = new Set(["triage", "started", "completed", "canceled"]);
+const UNTOUCHED_AT_START = new Set(["triage", "completed", "canceled"]);
 
 /** The first state of a type by position, as the Linear board orders it, or null. */
 export const firstStateOfType = (states: readonly IssueWorkflowState[], type: string): IssueWorkflowState | null =>
@@ -44,11 +44,14 @@ export const firstStateOfType = (states: readonly IssueWorkflowState[], type: st
 
 /**
  * The move a starting run makes: from the current state to the team's first `started` state. An
- * issue in triage, started, completed or canceled stays where it is, and so does an issue of a
- * team with no started state.
+ * issue in triage, completed or canceled stays where it is, and so does an issue of a
+ * team with no started state. A started issue is adopted where it is.
  */
 export const startMoveOf = (snapshot: IssueStateSnapshot): { from: IssueWorkflowState; to: IssueWorkflowState } | null => {
   if (UNTOUCHED_AT_START.has(snapshot.state.type)) return null;
+  // DI-21.49. A run adopts an issue a human already started: it records that state as both its
+  // previous and its set state, moves nothing at the start, and a merge still completes it.
+  if (snapshot.state.type === "started") return { from: snapshot.state, to: snapshot.state };
   const to = firstStateOfType(snapshot.teamStates, "started");
   return to === null ? null : { from: snapshot.state, to };
 };
