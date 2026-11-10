@@ -81,6 +81,10 @@ import { isAgentRunnerName, resolveRole } from "~/domain/products/agent-settings
 import { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
 import { opencodeModelsFileOf } from "~/domain/products/model-catalog.js";
 import { PrismaModelCatalogStore } from "~/persistence/prisma/model-catalog.prisma.js";
+import { renderVisionFailure, roleModelsOf, visionGaps } from "~/domain/products/model-vision.js";
+import type { WorkItemContentPort } from "~/domain/context/work-item-content.js";
+import { createLinearWorkItemReader } from "~/adapters/linear/linear-work-item-content.js";
+import { GitHubWorkItemLinks } from "~/adapters/github/github-work-item-links.js";
 import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
 
 // docs/specs/release-0-1-0.md. `factoree --version` answers before the environment loads, so it
@@ -279,8 +283,9 @@ const contextSecrets: ContextSourceSecretReader = {
 };
 
 // DI-5.1. The Backstage and MCP sources are built per Run from the Product configuration.
+const contextConfigurations = new PrismaContextSourceConfigurationStore(prisma);
 const contextSources = new ConfiguredContextSourceProvider({
-  configurations: new PrismaContextSourceConfigurationStore(prisma),
+  configurations: contextConfigurations,
   secrets: contextSecrets,
   fixedSources: () => [new LinearContextSource(), new RepositoryContextSource({ reader: repositoryReader })],
   factories: {
@@ -310,6 +315,35 @@ const contextSources = new ConfiguredContextSourceProvider({
       }),
   },
 });
+
+// docs/specs/work-item-images-and-links.md. The comments, the images and the linked issues are read
+// with the Linear token of the tenant's workspace, and a GitHub link with a read-only App token of
+// the one repository. Neither token reaches a sandbox.
+const linearWorkspaceOf = async (tenantId: string): Promise<string> => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { linearWorkspaceId: true } });
+  if (!tenant) throw new Error(`no tenant ${tenantId} for the work item read`);
+  return tenant.linearWorkspaceId;
+};
+const githubWorkItemLinks = new GitHubWorkItemLinks({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens });
+const workItemContent: WorkItemContentPort = {
+  comments: async (tenantId, issueId) =>
+    await withLinearToken(await linearWorkspaceOf(tenantId), (token) => createLinearWorkItemReader(token).comments(issueId)),
+  downloadImage: async (tenantId, url, maxBytes) =>
+    await withLinearToken(await linearWorkspaceOf(tenantId), (token) => createLinearWorkItemReader(token).downloadImage(url, maxBytes)),
+  linearIssue: async (tenantId, identifier) =>
+    await withLinearToken(await linearWorkspaceOf(tenantId), (token) => createLinearWorkItemReader(token).issue(identifier)),
+  github: (target) => githubWorkItemLinks.read(target),
+};
+
+// docs/specs/work-item-images-and-links.md. The input types of each role model, from the stored
+// models.dev catalog. A product the worker cannot read is not checked here: preparation fails it.
+const vision = async (tenantId: string, productId: string, imageCount: number): Promise<string | null> => {
+  const record = await products.findById(tenantId, productId);
+  if (record === null) return null;
+  const raw = (await modelCatalog.current())?.raw ?? null;
+  const gaps = visionGaps(raw, roleModelsOf(record));
+  return gaps.length === 0 ? null : renderVisionFailure(raw, gaps, imageCount);
+};
 
 // SDD section 39. A readiness probe and a validation fetch, both built on the platform `fetch`.
 // A caught network error reports no answer rather than throwing, so the caller can keep polling
@@ -384,6 +418,9 @@ const worker = await Worker.create({
     contextContracts: new PrismaContextContractStore(prisma),
     contextSources,
     contextDelivery: contextSources,
+    workItemContent,
+    contextConfigurations,
+    vision,
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),

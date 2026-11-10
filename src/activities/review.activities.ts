@@ -65,6 +65,11 @@ export interface ReviewActivityInput {
    * hung one in the same pass. It writes its own report file and its own rows.
    */
   afterHang?: boolean;
+  /**
+   * docs/specs/work-item-images-and-links.md. One line per image file of the sandbox. Absent in a
+   * history recorded before the images existed.
+   */
+  imageFiles?: string[];
 }
 
 export interface ReviewActivityOutput {
@@ -265,6 +270,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         reportPath,
         actionPolicy,
         projectTestSecrets,
+        imageFiles: input.imageFiles ?? [],
       });
 
       // Step 9. SDD section 49. An unregistered reviewer runner is a fault in

@@ -7,6 +7,8 @@ import type {
 } from "./context-source.js";
 import { DISCOVERY_PRIORITY } from "./context-source.js";
 import { linearDecisionRef } from "./decision-ref.js";
+import { topicsIn } from "./topics.js";
+import { imageFileName, WORK_ITEM_COMMENTS_REF, workItemImageRef } from "./work-item-content.js";
 
 /**
  * SDD section 17 requires a Linear context source. The Work Item is the product intent of the
@@ -80,6 +82,60 @@ export class LinearContextSource implements ContextSource {
         suggestedClassification: "discoverable",
       });
     });
+
+    // docs/specs/work-item-images-and-links.md. The kept human comments are one item, next to the
+    // description. A later sentence supersedes an earlier one on the same point, so the item
+    // carries no topic and never pairs with the description as a conflict (DI-21.39).
+    const content = request.workItemContent;
+    if (content !== undefined && content.comments !== null) {
+      this.documents.set(WORK_ITEM_COMMENTS_REF, content.comments);
+      candidates.push({
+        reference: this.reference(WORK_ITEM_COMMENTS_REF),
+        sourceVersion: request.runId,
+        authority: "work_item_decision",
+        reason: "the human comments of the Work Item add to its intent",
+        priority: DISCOVERY_PRIORITY.work_item_reference,
+        topics: [],
+        sizeBytes: Buffer.byteLength(content.comments, "utf8"),
+        suggestedClassification: "required",
+      });
+    }
+
+    // docs/specs/work-item-images-and-links.md. An image is the author's own intent, often the
+    // spec itself. Its version is the SHA-256 of its bytes, and it reaches the agent as a file.
+    for (const image of content?.images ?? []) {
+      const ref = workItemImageRef(image.n);
+      this.documents.set(ref, `${imageFileName(image)}: ${image.caption}`);
+      candidates.push({
+        reference: this.reference(ref),
+        sourceVersion: image.sha256,
+        authority: "work_item_decision",
+        reason: `${image.origin} shows this image (${imageFileName(image)}): "${image.caption}"`,
+        priority: DISCOVERY_PRIORITY.work_item_reference,
+        topics: [],
+        sizeBytes: image.byteLength,
+        suggestedClassification: "required",
+        contentSha256: image.sha256,
+        outsideBudget: true,
+      });
+    }
+
+    // docs/specs/work-item-images-and-links.md. A followed link carries the source and the
+    // authority of what it reads, and the hash of the content Factoree read. Its topics come
+    // from its title, because the content stays out of the control plane (DI-21.43).
+    for (const link of content?.links ?? []) {
+      candidates.push({
+        reference: { sourceId: link.sourceId, ref: link.ref, repository: null, sha: null, path: null },
+        sourceVersion: link.sha256,
+        authority: link.authority,
+        reason: `the Work Item links ${link.url}${link.title === "" ? "" : ` (${link.title})`}`,
+        priority: DISCOVERY_PRIORITY.work_item_reference,
+        topics: topicsIn(link.title, request.topics),
+        sizeBytes: link.sizeBytes,
+        suggestedClassification: "required",
+        contentSha256: link.sha256,
+      });
+    }
 
     return Promise.resolve(candidates);
   }

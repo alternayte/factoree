@@ -1,6 +1,18 @@
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { AuthorityClass } from "./authority.js";
 import type { RepositoryContextConfiguration } from "./repository-context-configuration.js";
+import type { WorkItemImage, WorkItemLink } from "./work-item-content.js";
+
+/**
+ * docs/specs/work-item-images-and-links.md. What Factoree read of the issue at delegation besides
+ * its description: the kept human comments, the kept images and the followed links. Only the
+ * comments carry their text. An image and a link carry their hash.
+ */
+export interface WorkItemContextContent {
+  comments: string | null;
+  images: WorkItemImage[];
+  links: WorkItemLink[];
+}
 
 /** SDD section 21. Required items can enter initial role context. */
 export const CONTEXT_CLASSIFICATIONS = ["required", "reference", "discoverable"] as const;
@@ -43,6 +55,8 @@ export interface ContextDiscoveryRequest {
   decisions: RecordedDecision[];
   /** SDD section 15. The `context` block of the primary repository, at the pinned SHA. */
   contextConfiguration: RepositoryContextConfiguration;
+  /** docs/specs/work-item-images-and-links.md. Absent for a run that read none. */
+  workItemContent?: WorkItemContextContent;
 }
 
 /**
@@ -77,6 +91,17 @@ export interface ContextCandidate {
    * here. The resolver decides whether it becomes a reference repository of the Run.
    */
   discoveredRepository?: { slug: string; url: string };
+  /**
+   * docs/specs/work-item-images-and-links.md. The SHA-256 of content the source already read and
+   * does not hold, such as the bytes of an image or a followed link. The resolver freezes it and
+   * fetches nothing (DI-21.43).
+   */
+  contentSha256?: string;
+  /**
+   * DI-21.43. A required item that reaches the agent as a file, not as prompt text. It stays
+   * required and does not count against the preload budget of SDD section 21.
+   */
+  outsideBudget?: boolean;
 }
 
 export interface ContextDocument {

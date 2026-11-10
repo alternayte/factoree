@@ -1,5 +1,7 @@
+import { imageFilesBody } from "./context-files.js";
+
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REVIEWER_PROMPT_VERSION = "reviewer@4";
+export const REVIEWER_PROMPT_VERSION = "reviewer@5";
 
 export interface ReviewerPromptFields {
   goal: string;
@@ -14,6 +16,11 @@ export interface ReviewerPromptFields {
   reportPath: string;
   actionPolicy: string[];
   reportSchema: string;
+  /**
+   * docs/specs/work-item-images-and-links.md. One line per image file of the check sprite. The
+   * reviewer must see the mockup to judge a match.
+   */
+  imageFiles?: string[];
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -39,6 +46,7 @@ export const renderReviewerPrompt = (fields: ReviewerPromptFields): string =>
     section("Goal", fields.goal),
     section("Validation Contract", fields.validationContract),
     section("Context Contract", fields.contextContract ?? "No Context Contract exists for this Run."),
+    section("Images of the Work Item", imageFilesBody(fields.imageFiles ?? [])),
     section("Constraints", list(fields.constraints, "None recorded.")),
     section("Repository rules", fields.repositoryInstructions),
     section("Changed files", list(fields.changedFiles, "The change touched no file.")),

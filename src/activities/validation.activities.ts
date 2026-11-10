@@ -129,6 +129,11 @@ export interface UserValidateActivityInput {
   accounts?: AccountConfig[];
   /** docs/specs/repository-setup-and-services.md. The compose stack. Absent in an old history. */
   services?: ServicesConfig | null;
+  /**
+   * docs/specs/work-item-images-and-links.md. One line per image file of the sandbox. Absent in a
+   * history recorded before the images existed.
+   */
+  imageFiles?: string[];
 }
 
 export interface UserValidateActivityOutput {
@@ -463,6 +468,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         projectTestSecrets,
         accounts: accountNames,
         fakes,
+        imageFiles: input.imageFiles ?? [],
       });
 
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the

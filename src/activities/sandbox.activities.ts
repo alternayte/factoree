@@ -38,8 +38,23 @@ import {
   CONTEXT_DELIVERY_DIRECTORY,
   deliverableItems,
   deliverContext,
+  deliverImages,
   inContractOrder,
+  type ContextDelivery,
+  type DeliveredContextEntry,
 } from "~/domain/context/context-delivery.js";
+import type { SelectedContextItem } from "~/domain/context/conflicts.js";
+import type { ContextSource } from "~/domain/context/context-source.js";
+import {
+  readLinkTarget,
+  WORK_ITEM_COMMENTS_REF,
+  WORK_ITEM_MAX_IMAGE_BYTES,
+  type WorkItemContentPort,
+  type WorkItemImage,
+  type WorkItemLink,
+} from "~/domain/context/work-item-content.js";
+import { linkReadersFor } from "./work-item.activities.js";
+import { createHash } from "node:crypto";
 
 export interface SandboxActivityDependencies {
   sandboxManager: SandboxManager;
@@ -68,6 +83,11 @@ export interface SandboxActivityDependencies {
    */
   contextContracts?: Pick<ContextContractStore, "findByRun"> | undefined;
   contextDelivery?: ContextDeliverySourceProvider | undefined;
+  /**
+   * docs/specs/work-item-images-and-links.md. Reads an image and a followed link again for the
+   * delivery. Without it an image or a Linear or GitHub link is skipped with the reason.
+   */
+  workItemContent?: WorkItemContentPort | undefined;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -92,6 +112,15 @@ export interface PrepareSandboxActivityInput {
    * Absent in an older history, and then the stored order applies.
    */
   contextRefs?: string[];
+  /**
+   * docs/specs/work-item-images-and-links.md. The frozen images of the work item. The work sprite
+   * and every check sprite receive them. Absent in an older history and for a run with none.
+   */
+  workItemImages?: WorkItemImage[];
+  /** The text of the frozen comments item, which the work sprite receives as a context file. */
+  workItemComments?: string | null;
+  /** The followed links of the work item, which the work sprite delivery reads again. */
+  workItemLinks?: WorkItemLink[];
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -126,6 +155,11 @@ export interface PrepareSandboxActivityOutput {
    * A check sprite gets none. Absent in a history recorded before the delivery existed.
    */
   contextFiles?: string[];
+  /**
+   * docs/specs/work-item-images-and-links.md. One prompt line per image file of this sandbox, the
+   * work sprite or a check sprite. Absent in a history recorded before the images existed.
+   */
+  imageFiles?: string[];
 }
 
 /** The work sprite of the Run, where the Implementer wrote the change. */
@@ -344,55 +378,144 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
 });
 
 /**
+ * The context directory of a sandbox. The agent's home is known only inside the sandbox, so the
+ * shell makes the directory and prints its absolute path. A fault gives the reason every file is
+ * then skipped with.
+ */
+const contextDirectory = async (
+  dependencies: SandboxActivityDependencies,
+  ref: SandboxRef,
+): Promise<{ directory: string; unavailable: string | null }> => {
+  try {
+    const made = await dependencies.sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", 'mkdir -p -- "$HOME/$0" && cd -- "$HOME/$0" && pwd', CONTEXT_DELIVERY_DIRECTORY],
+      cwd: "/",
+    });
+    const directory = made.stdout.trim();
+    if (made.exitCode !== 0 || !directory.startsWith("/")) {
+      return { directory, unavailable: `The context directory could not be made: exit code ${made.exitCode}, ${made.stderr.trim()}` };
+    }
+    return { directory, unavailable: null };
+  } catch (error) {
+    return { directory: "", unavailable: `The context directory could not be made: ${error instanceof Error ? error.message : String(error)}` };
+  }
+};
+
+/**
+ * DI-21.44. `Sandbox.writeFile` writes text, so the bytes of an image travel as base64 to a file
+ * beside the target, the sandbox decodes them, and `sha256sum` reports the hash of the file the
+ * agent will open.
+ */
+const writeBinaryFile = async (
+  dependencies: SandboxActivityDependencies,
+  ref: SandboxRef,
+  path: string,
+  bytes: Uint8Array,
+): Promise<string> => {
+  await dependencies.sandbox.writeFile(ref, `${path}.base64`, Buffer.from(bytes).toString("base64"));
+  const decoded = await dependencies.sandbox.exec(ref, {
+    file: "sh",
+    args: ["-c", 'base64 -d < "$0.base64" > "$0" && rm -f -- "$0.base64" && sha256sum -- "$0"', path],
+    cwd: "/",
+  });
+  if (decoded.exitCode !== 0) throw new Error(`exit code ${decoded.exitCode}, ${decoded.stderr.trim()}`);
+  return decoded.stdout.trim().split(/\s+/)[0] ?? "";
+};
+
+/** Delivers the frozen images of the run to one sandbox (DI-21.44). */
+const deliverRunImages = (
+  dependencies: SandboxActivityDependencies,
+  input: PrepareSandboxActivityInput,
+  ref: SandboxRef,
+  place: { directory: string; unavailable: string | null },
+): Promise<ContextDelivery> =>
+  deliverImages({
+    images: input.workItemImages ?? [],
+    directory: place.directory,
+    unavailable: place.unavailable,
+    download: (image) => {
+      if (dependencies.workItemContent === undefined) return Promise.reject(new Error("this worker holds no Linear image reader"));
+      return dependencies.workItemContent.downloadImage(input.tenantId, image.url, WORK_ITEM_MAX_IMAGE_BYTES);
+    },
+    write: (path, bytes) => writeBinaryFile(dependencies, ref, path, bytes),
+  });
+
+/**
+ * docs/specs/work-item-images-and-links.md. The Linear source of the delivery: the comments item
+ * from the text the run froze, and a followed Linear or GitHub link read again through the same
+ * reader. Delivery compares each with its frozen hash.
+ */
+const workItemDeliverySource = (dependencies: SandboxActivityDependencies, input: PrepareSandboxActivityInput): ContextSource => ({
+  id: () => "linear",
+  discover: () => Promise.resolve([]),
+  fetch: async (reference) => {
+    if (reference.ref === WORK_ITEM_COMMENTS_REF) {
+      const comments = input.workItemComments ?? null;
+      if (comments === null) throw new Error("the run froze no comment text");
+      return { reference, sourceVersion: reference.ref, content: comments };
+    }
+    const link = (input.workItemLinks ?? []).find((candidate) => candidate.ref === reference.ref);
+    if (link === undefined) throw new Error(`the run followed no link "${reference.ref}"`);
+    if (dependencies.workItemContent === undefined || dependencies.contextDelivery === undefined) {
+      throw new Error("this worker holds no link reader");
+    }
+    const read = await readLinkTarget(
+      link.target,
+      linkReadersFor({ content: dependencies.workItemContent, sources: dependencies.contextDelivery }, input.tenantId, input.productId),
+    );
+    return { reference, sourceVersion: createHash("sha256").update(read.content, "utf8").digest("hex"), content: read.content };
+  },
+});
+
+/**
  * docs/specs/external-context-delivery.md. Fetches each required and reference item of an
- * llms.txt, MCP or Backstage source again and writes it to `$HOME/.factoree/context` in the work
- * sprite, outside the checkout, so no captured patch holds it. `Run.deliveredContext` records
- * every item. A source fault, a hash mismatch or a sandbox write fault skips the item (DI-5.13);
- * a fault of the control plane store fails the activity, and a retry prepares a new sandbox.
+ * llms.txt, MCP or Backstage source again, and the comments and followed links of the work item
+ * (docs/specs/work-item-images-and-links.md), and writes each to `$HOME/.factoree/context` in the
+ * work sprite, outside the checkout, so no captured patch holds it. The frozen images go to the
+ * same directory. `Run.deliveredContext` records every item. A source fault, a hash mismatch or a
+ * sandbox write fault skips the item (DI-5.13); a fault of the control plane store fails the
+ * activity, and a retry prepares a new sandbox.
  */
 const deliverWorkSpriteContext = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
   prepared: PreparedSandbox,
-): Promise<string[]> => {
-  if (dependencies.contextContracts === undefined || dependencies.contextDelivery === undefined) return [];
-  const stored = await dependencies.contextContracts.findByRun(input.tenantId, input.runId);
-  if (stored === null) return [];
-  const items = inContractOrder(stored.items, input.contextRefs);
-  if (deliverableItems(items).length === 0) {
-    await dependencies.runs.setDeliveredContext(input.tenantId, input.runId, []);
-    return [];
-  }
-
-  const { sources, kinds } = await dependencies.contextDelivery.configuredSourcesFor(input.tenantId, input.productId);
-  // The agent's home is known only inside the sandbox, so the shell makes the directory and
-  // prints its absolute path.
-  let directory = "";
-  let unavailable: string | null = null;
-  try {
-    const made = await dependencies.sandbox.exec(prepared.ref, {
-      file: "sh",
-      args: ["-c", 'mkdir -p -- "$HOME/$0" && cd -- "$HOME/$0" && pwd', CONTEXT_DELIVERY_DIRECTORY],
-      cwd: "/",
-    });
-    directory = made.stdout.trim();
-    if (made.exitCode !== 0 || !directory.startsWith("/")) {
-      unavailable = `The context directory could not be made: exit code ${made.exitCode}, ${made.stderr.trim()}`;
+): Promise<{ contextFiles: string[]; imageFiles: string[] }> => {
+  const images = input.workItemImages ?? [];
+  let items: SelectedContextItem[] = [];
+  let stored = false;
+  if (dependencies.contextContracts !== undefined && dependencies.contextDelivery !== undefined) {
+    const contract = await dependencies.contextContracts.findByRun(input.tenantId, input.runId);
+    if (contract !== null) {
+      stored = true;
+      items = inContractOrder(contract.items, input.contextRefs);
     }
-  } catch (error) {
-    unavailable = `The context directory could not be made: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const deliverable = deliverableItems(items);
+  if (deliverable.length === 0 && images.length === 0) {
+    if (stored) await dependencies.runs.setDeliveredContext(input.tenantId, input.runId, []);
+    return { contextFiles: [], imageFiles: [] };
   }
 
-  const delivery = await deliverContext({
-    items,
-    sources,
-    kinds,
-    directory,
-    unavailable,
-    write: (path, content) => dependencies.sandbox.writeFile(prepared.ref, path, content),
-  });
+  const place = await contextDirectory(dependencies, prepared.ref);
+  let delivery: ContextDelivery = { entries: [], lines: [] };
+  if (deliverable.length > 0 && dependencies.contextDelivery !== undefined) {
+    const { sources, kinds } = await dependencies.contextDelivery.configuredSourcesFor(input.tenantId, input.productId);
+    sources.register(workItemDeliverySource(dependencies, input));
+    delivery = await deliverContext({
+      items,
+      sources,
+      kinds,
+      directory: place.directory,
+      unavailable: place.unavailable,
+      write: (path, content) => dependencies.sandbox.writeFile(prepared.ref, path, content),
+    });
+  }
+  const imageDelivery = await deliverRunImages(dependencies, input, prepared.ref, place);
+
   // SDD section 60. A reason can hold a server message, and the record is external persistence.
-  const entries = delivery.entries.map((entry) =>
+  const entries: DeliveredContextEntry[] = [...delivery.entries, ...imageDelivery.entries].map((entry) =>
     entry.skipReason === null ? entry : { ...entry, skipReason: dependencies.redactor.redactText(entry.skipReason) },
   );
   await dependencies.runs.setDeliveredContext(input.tenantId, input.runId, entries);
@@ -400,9 +523,37 @@ const deliverWorkSpriteContext = async (
     tenant_id: input.tenantId,
     run_id: input.runId,
     sprite_id: prepared.ref.id,
-    delivered: delivery.lines.length,
-    skipped: entries.length - delivery.lines.length,
+    delivered: delivery.lines.length + imageDelivery.lines.length,
+    skipped: entries.length - delivery.lines.length - imageDelivery.lines.length,
     step: "prepare",
+  });
+  return { contextFiles: delivery.lines, imageFiles: imageDelivery.lines };
+};
+
+/**
+ * docs/specs/work-item-images-and-links.md. A check sprite receives the frozen images only: the
+ * user validator and the reviewer must see the mockup to judge a match. Other context files stay
+ * in the work sprite. A check sprite keeps no delivery record, so a skip is logged.
+ */
+const deliverCheckSpriteImages = async (
+  dependencies: SandboxActivityDependencies,
+  input: PrepareCheckSandboxActivityInput,
+  ref: SandboxRef,
+): Promise<string[]> => {
+  if ((input.workItemImages ?? []).length === 0) return [];
+  const delivery = await deliverRunImages(dependencies, input, ref, await contextDirectory(dependencies, ref));
+  const skipped = delivery.entries.filter((entry) => entry.skipReason !== null);
+  dependencies.logger.info("images delivered to the check sprite", {
+    tenant_id: input.tenantId,
+    run_id: input.runId,
+    sprite_id: ref.id,
+    attempt: input.attempt,
+    delivered: delivery.lines.length,
+    skipped: skipped.length,
+    ...(skipped.length === 0
+      ? {}
+      : { skip_reasons: skipped.map((entry) => `${entry.ref}: ${dependencies.redactor.redactText(entry.skipReason ?? "")}`).join("; ") }),
+    step: "prepare_check",
   });
   return delivery.lines;
 };
@@ -450,8 +601,9 @@ const prepare = async (
   await dependencies.skills?.replace(input.tenantId, input.runId, prepared.skillRecords, prepared.skillResolution);
 
   // docs/specs/external-context-delivery.md. Only the work sprite gets context files: the user
-  // validator and the reviewer start fresh in a check sprite and judge the artefacts.
-  const contextFiles = await deliverWorkSpriteContext(dependencies, input, prepared);
+  // validator and the reviewer start fresh in a check sprite and judge the artefacts. The images
+  // of the work item go to every sandbox (docs/specs/work-item-images-and-links.md).
+  const { contextFiles, imageFiles } = await deliverWorkSpriteContext(dependencies, input, prepared);
 
   if (superseded.spriteId !== null && superseded.spriteId !== prepared.ref.id) {
     const staleId = superseded.spriteId;
@@ -483,7 +635,7 @@ const prepare = async (
     step: "prepare",
   });
 
-  return { ...toOutput(prepared), contextFiles };
+  return { ...toOutput(prepared), contextFiles, imageFiles };
 };
 
 export const createSandboxActivities = (dependencies: SandboxActivityDependencies) => ({
@@ -620,8 +772,12 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
             step: "prepare_check",
           });
 
+          // docs/specs/work-item-images-and-links.md. The images reach every check sprite.
+          const imageFiles = await deliverCheckSpriteImages(dependencies, input, prepared.ref);
+
           return {
             ...toOutput(prepared),
+            imageFiles,
             patchSha256: captured.patchSha256,
             treeSha: recaptured.treeSha,
             changedFiles: captured.changedFiles,

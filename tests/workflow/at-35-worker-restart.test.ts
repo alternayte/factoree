@@ -44,6 +44,16 @@ const activities = {
   postFinalResponse: async () => undefined,
   postError: async () => undefined,
   fetchWorkItemFacts: async () => ({ labels: [], project: null }),
+  // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
+  readWorkItemContent: async () => ({
+    comments: null,
+    commentCount: 0,
+    images: [],
+    links: [],
+    skippedImages: [],
+    linksNotRead: [],
+    visionFailure: null,
+  }),
   // Phase 4 puts refinement and context resolution before preparation, so this Run reaches
   // every activity below. Each double returns at once, and none of them holds state.
   refine: async (input: { project: { primaryRepository: string; referenceRepositories: string[] } }) => ({

@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { SelectedContextItem } from "~/domain/context/conflicts.js";
-import { CONTEXT_DELIVERY_MAX_BYTES, CONTEXT_DELIVERY_MAX_FILES, deliverContext } from "~/domain/context/context-delivery.js";
+import {
+  CONTEXT_DELIVERY_MAX_BYTES,
+  CONTEXT_DELIVERY_MAX_FILES,
+  deliverableItems,
+  deliverContext,
+  deliverImages,
+} from "~/domain/context/context-delivery.js";
 import type { ContextSourceKind } from "~/domain/context/context-source-configuration.js";
 import { ContextSourceRegistry } from "~/domain/context/context-source-registry.js";
 
@@ -94,5 +100,37 @@ describe("deliverContext", () => {
       { docs: "mcp" },
     );
     expect(bytes.delivery.entries.map((entry) => entry.path === null)).toEqual([false, true, true]);
+  });
+});
+
+describe("work item delivery", () => {
+  it("delivers the comments and a followed link of the Linear source, and no other Linear item", () => {
+    const linear = (ref: string): SelectedContextItem => ({ ...item("linear", "x", "required", { contentSha256: "h" }), reference: { sourceId: "linear", ref, repository: null, sha: null, path: null } });
+    const refs = deliverableItems([
+      linear("linear:issue:run-1"),
+      linear("linear:comments"),
+      linear("linear:link:https://linear.app/acme/issue/FAC-1"),
+      linear("linear:image:1"),
+    ]).map((entry) => entry.reference.ref);
+    expect(refs).toEqual(["linear:comments", "linear:link:https://linear.app/acme/issue/FAC-1"]);
+  });
+
+  it("writes no image whose bytes differ from the frozen hash, and no image the sandbox wrote differently", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const frozen = createHash("sha256").update(bytes).digest("hex");
+    const image = (n: number) => ({ n, url: `https://uploads.linear.app/o/${n}`, sha256: frozen, contentType: "image/png", extension: "png", byteLength: 3, caption: "the header", origin: "the description" });
+    const written: string[] = [];
+    const delivery = await deliverImages({
+      images: [image(1), image(2), image(3)],
+      directory: "/home/agent/.factoree/context",
+      download: (entry) => Promise.resolve(entry.n === 2 ? new Uint8Array([9]) : bytes),
+      write: (path) => {
+        written.push(path);
+        return Promise.resolve(path.endsWith("image-3.png") ? "0".repeat(64) : frozen);
+      },
+    });
+    expect(written).toEqual(["/home/agent/.factoree/context/image-1.png", "/home/agent/.factoree/context/image-3.png"]);
+    expect(delivery.lines).toEqual([`image-1.png — file /home/agent/.factoree/context/image-1.png, sha256 ${frozen}. From the description: "the header"`]);
+    expect(delivery.entries.map((entry) => entry.skipReason === null)).toEqual([true, false, false]);
   });
 });

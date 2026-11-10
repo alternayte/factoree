@@ -3,7 +3,7 @@ import { signGitHubAppJwt, type GitHubAppCredentials } from "./app-token-provide
 /**
  * docs/specs/release-0-1-0.md. The GitHub App manifest flow of setup. The permissions and the
  * events are the ones docs/quickstart.md granted by hand before 0.1.0, plus Workflows
- * (DI-21.33): five repository permissions and two events. GitHub delivers `installation` and `installation_repositories` to
+ * (DI-21.33) and Issues read (DI-21.41): six repository permissions and two events. GitHub delivers `installation` and `installation_repositories` to
  * every App, so the manifest does not name them.
  */
 export const GITHUB_APP_PERMISSIONS = {
@@ -11,6 +11,8 @@ export const GITHUB_APP_PERMISSIONS = {
   pull_requests: "write",
   // DI-21.33. GitHub refuses a push that creates or changes a file in .github/workflows without it.
   workflows: "write",
+  // DI-21.41. A work item link to a GitHub issue of the product is read with an issues:read token.
+  issues: "read",
   deployments: "read",
   metadata: "read",
 } as const;

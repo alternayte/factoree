@@ -1,5 +1,7 @@
+import { imageFilesBody } from "./context-files.js";
+
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@7";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@8";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -13,6 +15,11 @@ export interface UserValidatorPromptFields {
   accounts?: string[];
   /** docs/specs/repository-setup-and-services.md. One line per fake: the API and the service. */
   fakes?: string[];
+  /**
+   * docs/specs/work-item-images-and-links.md. One line per image file of the check sprite. The
+   * images are the author's intent, not an Implementer artefact, so the fresh context may see them.
+   */
+  imageFiles?: string[];
 }
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
@@ -35,6 +42,7 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
     "",
     section("Goal", fields.goal),
     section("Validation Contract", fields.validationContract),
+    section("Images of the Work Item", imageFilesBody(fields.imageFiles ?? [])),
     section(
       "Primary repository",
       `The repository is at ${fields.primaryRepositoryPath}. You must not change a production ` +

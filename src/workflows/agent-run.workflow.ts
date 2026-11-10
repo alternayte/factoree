@@ -25,6 +25,7 @@ import type { VerifyActivityOutput } from "~/activities/verification.activities.
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
+import type { ReadWorkItemContentActivityOutput } from "~/activities/work-item.activities.js";
 import type {
   PublishActivityOutput,
 } from "~/activities/publishing.activities.js";
@@ -129,6 +130,16 @@ export interface AgentRunWorkflowInput {
    * freezes none, its proof pack says the reply replaced them and no visual evidence exists.
    */
   followUpBrowserAssertions?: string[];
+  /**
+   * docs/specs/work-item-images-and-links.md. The moment of the delegation, ISO 8601. A comment
+   * created later is not read. Absent in an older history.
+   */
+  delegatedAt?: string;
+  /**
+   * docs/specs/work-item-images-and-links.md. True when the reply that started this follow-up run
+   * said "ignore the images". The run freezes that decision and skips the image check.
+   */
+  ignoreImages?: boolean;
 }
 
 export interface AgentRunWorkflowResult {
@@ -176,6 +187,19 @@ const FAILURE_POST_PATCH = "failure-post";
 const CONFIGURATION_FAILURE_POST_PATCH = "configuration-failure-post";
 /** docs/specs/run-failure-detail.md. An internal error posts its cause to the agent session. */
 const INTERNAL_ERROR_POST_PATCH = "internal-error-post";
+
+/**
+ * docs/specs/work-item-images-and-links.md. The run reads the comments, the images and the links
+ * of the issue before refinement. A history that began before this change reads none.
+ */
+const WORK_ITEM_CONTENT_PATCH = "work-item-content";
+
+/** The question the "ignore the images" reply answers. Its ref is `linear:decision:work-item-images`. */
+const IGNORE_IMAGES_DECISION = {
+  questionId: "work-item-images",
+  question:
+    "The issue holds images, and a role model of this product cannot read an image. Must the run check that every agent can see the images?",
+} as const;
 
 /** docs/specs/skill-registry.md. Skill proposals and the run outcome reach the skill sources. */
 const SKILL_REGISTRY_PATCH = "skill-registry-signals";
@@ -241,6 +265,15 @@ const buildContextActivities = (budgetMs: number) =>
       nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE],
     },
   });
+
+/**
+ * docs/specs/work-item-images-and-links.md. The read downloads up to 10 images of 10 MiB and
+ * follows up to 10 links, so it gets more than the one minute of a Linear call.
+ */
+const workItemActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "10 minutes",
+  retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
+});
 
 /**
  * SDD section 8 and SDD section 23 put no bound on the elicitation loop. An unbounded loop is a
@@ -990,6 +1023,7 @@ export async function agentRunWorkflow(
         requiredContext: attemptInput.requiredContext,
         // docs/specs/external-context-delivery.md. Absent in a history from before the delivery.
         contextFiles: attemptInput.prepared.contextFiles ?? [],
+        imageFiles: attemptInput.prepared.imageFiles ?? [],
         // docs/specs/own-proposals-and-parallel-runs.md. The implementer follows Factoree's own
         // decisions as it follows a human answer.
         humanDecisions: [...humanInputs, ...factoreeDecisions.map(describeDecision)],
@@ -1056,6 +1090,8 @@ export async function agentRunWorkflow(
         // docs/specs/repository-setup-and-services.md. From the config at the base SHA.
         accounts: attemptInput.prepared.runtime.accounts ?? [],
         services: attemptInput.prepared.runtime.services ?? null,
+        // docs/specs/work-item-images-and-links.md. The images of the check sprite.
+        imageFiles: attemptInput.prepared.imageFiles ?? [],
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
       }),
     );
@@ -1096,6 +1132,8 @@ export async function agentRunWorkflow(
         verificationSummary: attemptInput.verificationSummary,
         ...(attemptInput.validationEvidence === undefined ? {} : { validationEvidence: attemptInput.validationEvidence }),
         repositoryInstructions: attemptInput.prepared.repositoryInstructions,
+        // docs/specs/work-item-images-and-links.md. The images of the reviewer's check sprite.
+        imageFiles: attemptInput.prepared.imageFiles ?? [],
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
@@ -1249,6 +1287,45 @@ export async function agentRunWorkflow(
                 "at most and opens a draft pull request.",
             }),
           );
+        }
+      }
+
+      // docs/specs/work-item-images-and-links.md. The human comments, the images and the links of
+      // the issue, read once at the start. A reply "ignore the images" freezes as a decision.
+      let workItemContent: ReadWorkItemContentActivityOutput | null = null;
+      if (input.ignoreImages === true) {
+        decisions.push({ ...IGNORE_IMAGES_DECISION, answer: "Ignore the images. A human chose to run without the image check." });
+      }
+      if (issueId !== null && patched(WORK_ITEM_CONTENT_PATCH)) {
+        try {
+          workItemContent = await workItemActivities.readWorkItemContent({
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runId: id,
+            issueId,
+            description: input.workItem.description,
+            delegatedAt: input.delegatedAt ?? null,
+            repositories: targetRepositories.map((repository) => ({
+              fullName: repository.fullName,
+              githubInstallationId: repository.githubInstallationId,
+            })),
+          });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          // DI-21.45. A Linear fault must not fail the Run, and the human must see what it lost.
+          await notify(() =>
+            activities.postProgress({
+              sessionId: input.agentSessionId,
+              message:
+                "Factoree could not read the comments, the images and the links of this issue, so this Run " +
+                "uses the description only.",
+            }),
+          );
+        }
+        // Before preparation: a role model that cannot read an image ends the Run, unless the
+        // human replied "ignore the images".
+        if (workItemContent !== null && workItemContent.visionFailure !== null && input.ignoreImages !== true) {
+          return await failRun("CONFIGURATION_INVALID", workItemContent.visionFailure);
         }
       }
 
@@ -1429,6 +1506,18 @@ export async function agentRunWorkflow(
             workItemReferences: refined.workItemReferences,
             decisions,
             githubInstallationId: primaryRepositoryInstallationId,
+            // docs/specs/work-item-images-and-links.md. An activity input adds no workflow command.
+            ...(workItemContent === null
+              ? {}
+              : {
+                  workItemContent: {
+                    comments: workItemContent.comments,
+                    images: workItemContent.images,
+                    links: workItemContent.links,
+                    skippedImages: workItemContent.skippedImages,
+                    linksNotRead: workItemContent.linksNotRead,
+                  },
+                }),
           });
         } catch (error) {
           // SDD section 49. A repository reference that resolves to nothing is a semantic
@@ -1591,6 +1680,15 @@ export async function agentRunWorkflow(
         // docs/specs/external-context-delivery.md. The work sprite delivery fetches the external
         // context items in contract order. An activity input adds no workflow command.
         ...(resolvedContext.deliveryRefs === undefined ? {} : { contextRefs: resolvedContext.deliveryRefs }),
+        // docs/specs/work-item-images-and-links.md. The work sprite and every check sprite receive
+        // the frozen images. The comments and the links go to the work sprite.
+        ...(workItemContent === null
+          ? {}
+          : {
+              workItemImages: workItemContent.images,
+              workItemComments: workItemContent.comments,
+              workItemLinks: workItemContent.links,
+            }),
       };
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
@@ -1667,6 +1765,7 @@ export async function agentRunWorkflow(
             contextContract: resolvedContext.document,
             // docs/specs/external-context-delivery.md. Absent in a history from before the delivery.
             contextFiles: preparedSandbox.contextFiles ?? [],
+            imageFiles: preparedSandbox.imageFiles ?? [],
             skills: preparedSandbox.skills,
             previewConfigured: preparedSandbox.preview !== null && preparedSandbox.preview.enabled,
             timeoutMs: remainingMs(),

@@ -3,7 +3,7 @@
  * holds only the names a caller in this codebase actually uses, so an unknown name fails at
  * compile time instead of reaching GitHub as a silently-accepted typo.
  */
-export type GitHubPermissionName = "contents" | "pull_requests" | "workflows";
+export type GitHubPermissionName = "contents" | "pull_requests" | "workflows" | "issues";
 
 /** The access level of one permission. GitHub also defines `admin`; Factoree asks for neither. */
 export type GitHubPermissionLevel = "read" | "write";

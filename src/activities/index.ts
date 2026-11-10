@@ -28,6 +28,9 @@ import type { ValidationResultStore } from "~/domain/validation/validation-resul
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
+import type { WorkItemContentPort } from "~/domain/context/work-item-content.js";
+import type { ContextSourceConfigurationStore } from "~/domain/context/context-source-configuration.js";
+import { createWorkItemActivities } from "./work-item.activities.js";
 import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters/github/repository-discovery-client.js";
 import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
@@ -123,7 +126,23 @@ export interface ActivityDependencies {
   appChangeIssues?: AppChangeIssueStore | undefined;
   linearIssues?: ((tenantId: string) => Promise<AppChangeIssuePort>) | undefined;
   pullRequestState?: ((slug: string, number: number, githubInstallationId: string) => Promise<"open" | "merged" | "closed" | null>) | undefined;
+  /**
+   * docs/specs/work-item-images-and-links.md. The Linear and GitHub reads of the comments, the
+   * images and the links of an issue, the hosts of the configured sources, and the vision check
+   * of the role models. A worker without them reads only the description.
+   */
+  workItemContent?: WorkItemContentPort | undefined;
+  contextConfigurations?: Pick<ContextSourceConfigurationStore, "list"> | undefined;
+  vision?: ((tenantId: string, productId: string, imageCount: number) => Promise<string | null>) | undefined;
 }
+
+/** A worker without the work item reads finds no comment, no image and no link. */
+const NO_WORK_ITEM_CONTENT: WorkItemContentPort = {
+  comments: () => Promise.resolve([]),
+  downloadImage: () => Promise.reject(new Error("this worker holds no Linear image reader")),
+  linearIssue: () => Promise.reject(new Error("this worker holds no Linear issue reader")),
+  github: () => Promise.reject(new Error("this worker holds no GitHub link reader")),
+};
 
 const NO_APP_CHANGE_STORE: AppChangeIssueStore = {
   create: () => Promise.reject(new Error("this worker holds no app-change issue store")),
@@ -176,6 +195,20 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     products: dependencies.products,
     contextContracts: dependencies.contextContracts,
     contextDelivery: dependencies.contextDelivery,
+    workItemContent: dependencies.workItemContent,
+  }),
+  ...createWorkItemActivities({
+    content: dependencies.workItemContent ?? NO_WORK_ITEM_CONTENT,
+    configurations: dependencies.contextConfigurations ?? { list: () => Promise.resolve([]) },
+    sources: dependencies.contextDelivery ?? {
+      configuredSourcesFor: () => Promise.reject(new Error("this worker holds no configured context source")),
+    },
+    githubWebUrl: dependencies.repositoryBaseUrl,
+    evidence: dependencies.evidence,
+    storage: dependencies.evidenceStorage,
+    vision: dependencies.vision ?? (() => Promise.resolve(null)),
+    logger: dependencies.logger,
+    redactor: dependencies.redactor,
   }),
   ...createAgentActivities({
     runners: dependencies.runners,

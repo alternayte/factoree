@@ -63,6 +63,11 @@ export interface ImplementActivityInput {
    * in a history recorded before the delivery existed.
    */
   contextFiles?: string[];
+  /**
+   * docs/specs/work-item-images-and-links.md. One line per image file of the sandbox. Absent in a
+   * history recorded before the images existed.
+   */
+  imageFiles?: string[];
   humanDecisions: string[];
   repositoryInstructions: string;
   /** SDD sections 16 and 34. The applicable skills, as prompt lines. */
@@ -185,6 +190,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       contextContract: input.contextContract,
       requiredContext: input.requiredContext,
       contextFiles: input.contextFiles ?? [],
+      imageFiles: input.imageFiles ?? [],
       primaryRepositoryPath: input.primaryPath,
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,
