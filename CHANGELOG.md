@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-10
+
+### Added
+
+- The install lists several sandbox providers, such as two Kiln hosts and E2B cloud, each with its own live sandbox limit, size, priority and enabled state. Settings > Install adds, edits, disables and deletes them. A run picks one provider when it starts, holds 3 slots there for its work sprite and check sprites, and keeps it to the end. It takes the best priority with room, spreads over providers of equal priority, and spills to a worse priority only when the better ones are full (DI-21.57 to DI-21.59).
+- A product can limit its runs to some providers. An empty choice allows every provider (DI-21.62).
+- Build-ahead keeps a warm snapshot of each repository on every provider its product allows. A failed build-ahead on a provider shows on the repository list, and runs of that repository prefer another provider (DI-21.61).
+- A work sprite create that fails at its provider marks the provider down for 5 minutes, and the run selects another one (DI-21.60).
+- The run page and the proof pack name the sandbox provider of the run.
+
+### Changed
+
+- The install settings keep only the sandbox image and its registry login. The migration moves the stored provider into the provider list, with its id as its type name, so running workflows and existing warm snapshots keep working.
+
 ## [0.8.3] - 2026-11-10
 
 ### Changed
