@@ -15,11 +15,16 @@ export const createRecoveryActivities = (dependencies: RecoveryActivityDependenc
    * what blocked the run from its recorded facts, and example replies. A read fault leaves the
    * message alone, because the post must still reach the human.
    */
-  async describeRunFailure(input: { tenantId: string; runId: string; message: string }): Promise<string> {
+  async describeRunFailure(input: {
+    tenantId: string;
+    runId: string;
+    message: string;
+    kind?: "run" | "configuration";
+  }): Promise<string> {
     try {
       const run = (await dependencies.runViews?.detail(input.tenantId, input.runId)) ?? null;
       if (run === null) return input.message;
-      return dependencies.redactor.redactText(renderFailurePost(input.message, run));
+      return dependencies.redactor.redactText(renderFailurePost(input.message, run, input.kind ?? "run"));
     } catch (error) {
       dependencies.logger.warn("the failure post was built without the run facts", {
         run_id: input.runId,

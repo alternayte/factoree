@@ -172,6 +172,8 @@ const UNSTABLE_ASSERTION_PATCH = "unstable-assertion";
 
 /** docs/specs/run-recovery.md. A failed run posts what blocked it and how to reply. */
 const FAILURE_POST_PATCH = "failure-post";
+/** DI-21.32. A configuration failure takes a follow-up, so its post says how to reply. */
+const CONFIGURATION_FAILURE_POST_PATCH = "configuration-failure-post";
 /** docs/specs/run-failure-detail.md. An internal error posts its cause to the agent session. */
 const INTERNAL_ERROR_POST_PATCH = "internal-error-post";
 
@@ -724,9 +726,17 @@ export async function agentRunWorkflow(
     // docs/specs/run-recovery.md. A run that can take a follow-up says what blocked it and how
     // to reply. The post falls back to the message when the facts cannot be read.
     let post = message;
-    if ((status === "FAILED" || status === "FAILED_REVIEW") && patched(FAILURE_POST_PATCH)) {
+    const kind =
+      status === "FAILED" || status === "FAILED_REVIEW"
+        ? patched(FAILURE_POST_PATCH)
+          ? "run"
+          : null
+        : status === "FAILED_CONFIGURATION" && patched(CONFIGURATION_FAILURE_POST_PATCH)
+          ? "configuration"
+          : null;
+    if (kind !== null) {
       try {
-        post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message });
+        post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message, kind });
       } catch (error) {
         if (isCancellation(error)) throw error;
       }

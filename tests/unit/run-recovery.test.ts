@@ -24,10 +24,16 @@ const fac73 = {
 };
 
 describe("run recovery (docs/specs/run-recovery.md)", () => {
-  it("takes a follow-up only after FAILED, FAILED_REVIEW or STALE_BASE", () => {
-    expect(["FAILED", "FAILED_REVIEW", "STALE_BASE"].every(takesFollowUp)).toBe(true);
-    expect(["READY_FOR_HUMAN", "CANCELLED", "FAILED_CONFIGURATION", "BLOCKED_ROUTING"].some(takesFollowUp)).toBe(false);
+  it("takes a follow-up only after FAILED, FAILED_REVIEW, STALE_BASE or FAILED_CONFIGURATION (DI-21.32)", () => {
+    expect(["FAILED", "FAILED_REVIEW", "STALE_BASE", "FAILED_CONFIGURATION"].every(takesFollowUp)).toBe(true);
+    expect(["READY_FOR_HUMAN", "CANCELLED", "BLOCKED_ROUTING"].some(takesFollowUp)).toBe(false);
     expect(noFollowUpLine("READY_FOR_HUMAN", "https://github.com/acme/shop/pull/7")).toContain("pull/7");
+  });
+
+  it("asks for the repair before the reply after a configuration failure (DI-21.32)", () => {
+    const post = renderFailurePost("Factoree could not prepare the sandbox.", fac73, "configuration");
+    expect(post).toContain("Repair the configuration or the sandbox, then reply here to start a follow-up run.");
+    expect(post).not.toContain("What blocked the run");
   });
 
   it("posts what blocked the run, newest attempt first, with example replies from the facts", () => {

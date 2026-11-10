@@ -5,8 +5,12 @@ import type { RunDetail } from "./run-view.js";
  * and a reply in the same agent session starts a follow-up run.
  */
 
-/** The run statuses a reply turns into a follow-up run. */
-export const FOLLOW_UP_STATUSES = ["FAILED", "FAILED_REVIEW", "STALE_BASE"] as const;
+/**
+ * The run statuses a reply turns into a follow-up run. DI-21.32: a configuration failure takes one
+ * too, because Factoree cannot tell a repository fault from a sandbox fault in a failed compose
+ * start or bootstrap, and the human repairs either one before the reply.
+ */
+export const FOLLOW_UP_STATUSES = ["FAILED", "FAILED_REVIEW", "STALE_BASE", "FAILED_CONFIGURATION"] as const;
 
 export const takesFollowUp = (status: string): boolean => (FOLLOW_UP_STATUSES as readonly string[]).includes(status);
 
@@ -21,7 +25,7 @@ export const noFollowUpLine = (status: string, pullRequestUrl: string | null): s
     );
   }
   if (status === "CANCELLED") return "This run was stopped, so Factoree starts no new run here. Delegate the issue again to start one.";
-  if (status === "FAILED_CONFIGURATION" || status.startsWith("BLOCKED")) {
+  if (status.startsWith("BLOCKED")) {
     return "This run failed on its configuration, so a new run would fail the same way. Repair the configuration, then delegate the issue again.";
   }
   return "Factoree starts no new run for this run.";
@@ -82,8 +86,24 @@ export const exampleReplies = (run: Pick<RunDetail, "assertions" | "findings">):
   return replies;
 };
 
-/** The failure post of a run that can take a follow-up: what blocked it, and how to reply. */
-export const renderFailurePost = (message: string, run: Pick<RunDetail, "assertions" | "findings">): string => {
+/**
+ * The failure post of a run that can take a follow-up: what blocked it, and how to reply. A
+ * configuration failure asks for the repair first, because a follow-up on the same configuration
+ * and the same sandbox fails the same way (DI-21.32).
+ */
+export const renderFailurePost = (
+  message: string,
+  run: Pick<RunDetail, "assertions" | "findings">,
+  kind: "run" | "configuration" = "run",
+): string => {
+  if (kind === "configuration") {
+    return [
+      message,
+      "",
+      "**Repair the configuration or the sandbox, then reply here to start a follow-up run.** " +
+        "The follow-up run starts a new sandbox and refines the issue again with your reply as a decision.",
+    ].join("\n");
+  }
   const facts = failureFacts(run);
   return [
     message,
