@@ -221,9 +221,8 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     } catch (error) {
       if (!(error instanceof UnknownAgentRunnerError)) throw error;
       throw new RunConfigurationError(
-        `The Project configures the validator runner "${input.runnerName}", which the refiner uses, ` +
-          `and it is not registered. Registered runners: ${agent.runners.names().join(", ")}. ` +
-          "Repair `validator_runner` in `.factoree/config.yaml`.",
+        `The Product selects the refiner runner "${input.runnerName}", and it is not registered. ` +
+          `Registered runners: ${agent.runners.names().join(", ")}. Repair the refiner runner on the product page.`,
       );
     }
 

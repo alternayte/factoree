@@ -44,6 +44,9 @@ import {
   listLinearTeams,
   readLinearOrganization,
 } from "~/adapters/linear/linear-app-flows.js";
+import { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
+import { PrismaModelCatalogStore } from "~/persistence/prisma/model-catalog.prisma.js";
+import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
 import {
   githubApiBaseUrl,
   githubAppCredentials,
@@ -190,6 +193,8 @@ const app = buildServer({
   setupAfterPush: createSetupAfterPushRequester(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
   temporalUiUrl: env.FACTOREE_TEMPORAL_UI_URL,
   // docs/specs/skill-registry.md. Skael is the one registry kind.
+  // docs/specs/model-picker.md. The product page picks models from the models.dev catalog.
+  modelCatalog: new ModelCatalogService({ store: new PrismaModelCatalogStore(prisma), source: createModelsDevSource(), logger }),
   checkSkillRegistry: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }).check(),
   recordPullRequestPreview,
   setup: {

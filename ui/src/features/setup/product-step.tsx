@@ -9,7 +9,8 @@ import { ApiError } from "@/lib/api";
 import { AutonomyHelp, AutonomyOptions } from "@/components/policy-help";
 import { levelHelp } from "@/lib/policy-help";
 import { type AutonomyLevel } from "@/lib/workspace";
-import { DEFAULT_MODEL } from "@/features/products/model-defaults";
+import { CLAUDE_MODELS, DEFAULT_MODEL } from "@/features/products/model-defaults";
+import type { Runner } from "@/features/products/product-form";
 import { Actions, FieldGrid, StepFrame } from "./step-frame";
 import { useSetup } from "./setup-context";
 
@@ -31,6 +32,7 @@ export function ProductStep() {
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [autonomy, setAutonomy] = useState<AutonomyLevel>("L2");
+  const [runner, setRunner] = useState<Runner>("opencode");
   const [model, setModel] = useState("");
   const [keyName, setKeyName] = useState("");
   const [keyValue, setKeyValue] = useState("");
@@ -67,6 +69,7 @@ export function ProductStep() {
       slug: slug.trim(),
       name: name.trim(),
       defaultAutonomy: autonomy,
+      runner,
       model: model.trim() || null,
     };
     if (keyName.trim()) {
@@ -149,18 +152,29 @@ export function ProductStep() {
             <Field label="Name" errors={fieldErrors.name}>
               {(props) => <Input {...props} required value={name} onChange={(e) => setName(e.target.value)} />}
             </Field>
+            <Field label="Runner" hint="The coding agent of every role. Change it per role later." errors={fieldErrors.runner}>
+              {(props) => (
+                <Select {...props} value={runner} onChange={(e) => setRunner(e.target.value as Runner)}>
+                  <option value="opencode">opencode</option>
+                  <option value="claude">Claude Code</option>
+                </Select>
+              )}
+            </Field>
             <Field
               label="Model (optional)"
-              hint={`provider/model, for example deepseek/deepseek-chat. Default: ${DEFAULT_MODEL}.`}
+              hint={
+                runner === "opencode"
+                  ? `provider/model, for example deepseek/deepseek-chat. Default: ${DEFAULT_MODEL.opencode}.`
+                  : `${CLAUDE_MODELS.join(", ")} or a full claude-* id. Default: ${DEFAULT_MODEL.claude}.`
+              }
               errors={fieldErrors.model}
-              className="sm:col-span-2"
             >
               {(props) => (
                 <Input
                   {...props}
                   mono
-                  pattern={MODEL_PATTERN}
-                  placeholder="provider/model"
+                  {...(runner === "opencode" ? { pattern: MODEL_PATTERN } : {})}
+                  placeholder={runner === "opencode" ? "provider/model" : "sonnet"}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                 />
@@ -168,7 +182,7 @@ export function ProductStep() {
             </Field>
             <Field
               label="Model key name (optional)"
-              hint="For example DEEPSEEK_API_KEY."
+              hint={runner === "opencode" ? "For example DEEPSEEK_API_KEY." : "ANTHROPIC_API_KEY."}
               errors={fieldErrors.modelKeyName}
             >
               {(props) => (

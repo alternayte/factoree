@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
 import { buildInfo } from "~/config/build-info.js";
+import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
 
 /**
  * docs/specs/release-0-1-0.md. The shapes of the settings API. The zod schemas validate the
@@ -15,6 +16,17 @@ export const effortSchema = z.object({
   validator: z.string().nullable(),
   reviewer: z.string().nullable(),
   setup: z.string().nullable(),
+});
+
+const agentRunner = z.enum(AGENT_RUNNERS);
+
+/** docs/specs/claude-code-runner.md. The runner of each role, or null for the default runner. */
+export const roleRunnersSchema = z.object({
+  implementer: agentRunner.nullable(),
+  refiner: agentRunner.nullable(),
+  validator: agentRunner.nullable(),
+  reviewer: agentRunner.nullable(),
+  setup: agentRunner.nullable(),
 });
 
 export const productSchema = z.object({
@@ -34,7 +46,11 @@ export const productSchema = z.object({
   skillRegistry: z.object({ kind: z.enum(["skael"]), url: z.string(), set: z.string().nullable() }).nullable(),
   /** docs/specs/skill-registry.md. Set by a save that changed the registry, when a run would drop skills. */
   skillRegistryWarning: z.string().nullable().optional(),
+  defaultRunner: agentRunner,
   model: z.string().nullable(),
+  runners: roleRunnersSchema,
+  /** The model of each role, or null for the default model. */
+  models: effortSchema,
   effort: effortSchema,
   silenceMinutes: z.number(),
   sandboxRetentionHours: z.number(),
@@ -57,10 +73,29 @@ export const linearTeamSchema = z.object({ id: z.string(), key: z.string(), name
 
 /** The Product settings of docs/specs/release-0-1-0.md, as `PUT /admin/products/:id` takes them. */
 export const productSettingsFields = {
-  model: z
-    .string()
-    .regex(/^[^\s/]+\/\S+$/, "must name a model as provider/model")
-    .nullable(),
+  // docs/specs/claude-code-runner.md. The save checks each model against the runner it resolves to.
+  defaultRunner: agentRunner,
+  model: z.string().trim().min(1).nullable(),
+  runners: z
+    .object({
+      implementer: agentRunner.nullable(),
+      refiner: agentRunner.nullable(),
+      validator: agentRunner.nullable(),
+      reviewer: agentRunner.nullable(),
+      setup: agentRunner.nullable(),
+    })
+    .partial()
+    .strict(),
+  models: z
+    .object({
+      implementer: z.string().trim().min(1).nullable(),
+      refiner: z.string().trim().min(1).nullable(),
+      validator: z.string().trim().min(1).nullable(),
+      reviewer: z.string().trim().min(1).nullable(),
+      setup: z.string().trim().min(1).nullable(),
+    })
+    .partial()
+    .strict(),
   effort: z
     .object({
       implementer: z.string().min(1).nullable(),

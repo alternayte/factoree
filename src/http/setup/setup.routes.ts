@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { AGENT_RUNNERS, modelProblem } from "~/domain/products/agent-settings.js";
 import { applyPatch, DEFAULT_KILN_SANDBOX_SIZE, type InstallSettings, type InstallSettingsStore } from "~/domain/settings/install-settings.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
@@ -123,7 +124,9 @@ const productBodySchema = z
     slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "must be lower case letters, digits and dashes"),
     name: z.string().min(1),
     defaultAutonomy: autonomyLevel,
-    model: z.string().regex(/^[^\s/]+\/\S+$/, "must name a model as provider/model").nullable(),
+    /** docs/specs/claude-code-runner.md. The default runner of the Product. */
+    runner: z.enum(AGENT_RUNNERS).default("opencode"),
+    model: z.string().trim().min(1).nullable(),
     /** The environment variable the coding agent reads, for example DEEPSEEK_API_KEY. */
     modelKeyName: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
     modelKeyValue: z.string().min(1).optional(),
@@ -132,6 +135,10 @@ const productBodySchema = z
   .refine((value) => (value.modelKeyName === undefined) === (value.modelKeyValue === undefined), {
     message: "the model key name and its value go together",
     path: ["modelKeyValue"],
+  })
+  .superRefine((value, context) => {
+    const problem = value.model === null ? null : modelProblem(value.runner, value.model);
+    if (problem !== null) context.addIssue({ code: "custom", message: problem, path: ["model"] });
   });
 
 const githubAppDone = (settings: InstallSettings): boolean =>
@@ -611,7 +618,10 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
             kind: "runner_credential",
           });
         }
-        await dependencies.products.updateSettings(tenant.id, product.id, { model: body.data.model });
+        await dependencies.products.updateSettings(tenant.id, product.id, {
+          defaultRunner: body.data.runner,
+          model: body.data.model,
+        });
         await dependencies.products.updatePolicy(tenant.id, product.id, { defaultAutonomy: body.data.defaultAutonomy });
         const activated = await dependencies.products.activate(tenant.id, product.id, body.data.defaultAutonomy);
         return reply.code(201).send(activated ?? product);

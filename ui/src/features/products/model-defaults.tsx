@@ -5,11 +5,17 @@ import { formatDate } from "@/lib/utils";
 
 /**
  * Issue 6. What an empty field means. With no model, the opencode runner passes no --model
- * (src/adapters/runners/opencode/opencode-runner.ts), so opencode picks its own default. With no
- * effort it passes no --variant, so the model uses its default effort. A Claude Code session
- * takes neither: the worker gives it no model and no effort.
+ * (src/adapters/runners/opencode/opencode-runner.ts), so opencode picks its own default, and the
+ * claude runner passes no --model, so Claude Code picks its own. With no effort neither runner
+ * passes one, so the model uses its default effort.
  */
-export const DEFAULT_MODEL = "opencode default, with no --model. Claude Code sessions use their CLI default";
+export const DEFAULT_MODEL = {
+  opencode: "opencode default, with no --model",
+  claude: "Claude Code default, with no --model",
+} as const;
+/** docs/specs/claude-code-runner.md, the same lists as src/domain/products/agent-settings.ts. */
+export const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"] as const;
 export const DEFAULT_EFFORT = "model default";
 
 export function ModelWarning({ hasRunnerCredential, className }: { hasRunnerCredential: boolean; className?: string }) {

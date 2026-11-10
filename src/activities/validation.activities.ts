@@ -468,7 +468,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the
       // Implementer summary, or a Reviewer finding, because this activity never receives them
       // either.
-      // SDD section 49. An unregistered validator runner is a fault in `.factoree/config.yaml`,
+      // SDD section 49. An unregistered validator runner is a fault in the Product settings,
       // not a fault in the infrastructure. `RunConfigurationError` routes the Run to
       // `FAILED_CONFIGURATION`, so an operator can repair the name.
       let runner: AgentRunner;
@@ -477,9 +477,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       } catch (error) {
         if (!(error instanceof UnknownAgentRunnerError)) throw error;
         throw new RunConfigurationError(
-          `The Project configures the validator runner "${input.runnerName}", which is not registered. ` +
-            `Registered runners: ${uv.runners.names().join(", ")}. ` +
-            "Repair `validator_runner` in `.factoree/config.yaml`.",
+          `The Product selects the validator runner "${input.runnerName}", which is not registered. ` +
+            `Registered runners: ${uv.runners.names().join(", ")}. Repair the validator runner on the product page.`,
         );
       }
       const context = Context.current();

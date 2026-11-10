@@ -276,9 +276,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       } catch (error) {
         if (!(error instanceof UnknownAgentRunnerError)) throw error;
         throw new RunConfigurationError(
-          `The Project configures the reviewer runner "${input.runnerName}", which is not registered. ` +
-            `Registered runners: ${dependencies.runners.names().join(", ")}. ` +
-            "Repair `reviewer_runner` in `.factoree/config.yaml`.",
+          `The Product selects the reviewer runner "${input.runnerName}", which is not registered. ` +
+            `Registered runners: ${dependencies.runners.names().join(", ")}. Repair the reviewer runner on the product page.`,
         );
       }
       const context = Context.current();

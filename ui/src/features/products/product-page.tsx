@@ -2,7 +2,7 @@ import { RepositorySetupSection } from "./repository-setup-section";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   getProductOptions,
   getProductQueryKey,
@@ -29,11 +29,12 @@ import {
 import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import { levelHelp } from "@/lib/policy-help";
-import { AUTONOMY_LEVELS, EFFORT_ROLES, EFFORT_SUGGESTIONS, pickWorkspace, type AutonomyLevel } from "@/lib/workspace";
+import { AUTONOMY_LEVELS, pickWorkspace, type AutonomyLevel } from "@/lib/workspace";
 import { ContextSourcesSection } from "./context-sources-section";
-import { DEFAULT_EFFORT, DEFAULT_MODEL, ModelWarning, RecentSessionsSection } from "./model-defaults";
+import { ModelWarning, RecentSessionsSection } from "./model-defaults";
 import { bodyOf, formOf, LIMITS, type Product, type ProductForm } from "./product-form";
-import { SecretsSection } from "./secrets-section";
+import { SecretsSection, type KeyRequest } from "./secrets-section";
+import { AgentsSection } from "./model-picker";
 
 /** docs/specs/skill-registry.md. The Product secret that holds the registry service key. */
 const SKILL_REGISTRY_KEY = "SKILL_REGISTRY_KEY";
@@ -114,6 +115,9 @@ function ProductEditor({
     listProductSecretsOptions({ path: { id: product.id }, query: { linearWorkspaceId } }),
   );
   const hasRunnerCredential = secrets.data?.some((secret) => secret.kind === "runner_credential");
+  // docs/specs/model-picker.md. Add key in the model picker opens the secrets form with the key name.
+  const [keyRequest, setKeyRequest] = useState<KeyRequest | null>(null);
+  const secretNames = useMemo(() => (secrets.data ? new Set(secrets.data.map((secret) => secret.name)) : null), [secrets.data]);
   const hasRegistryKey = secrets.data?.some((secret) => secret.name === SKILL_REGISTRY_KEY);
 
   const save = useMutation({
@@ -227,18 +231,6 @@ function ProductEditor({
                   />
                 )}
               </Field>
-              <Field label="Model" hint={form.model.trim() ? "provider/model." : `Default: ${DEFAULT_MODEL}.`}>
-                {(props) => (
-                  <Input
-                    {...props}
-                    mono
-                    disabled={disabled}
-                    placeholder="provider/model"
-                    value={form.model}
-                    onChange={(e) => set("model", e.target.value)}
-                  />
-                )}
-              </Field>
               <Field label="Organization skills repository" hint="owner/repository. Empty for none.">
                 {(props) => (
                   <Input
@@ -253,12 +245,18 @@ function ProductEditor({
               </Field>
             </div>
             {/* The warning follows the saved model, so it never flickers while the operator types. */}
-            {product.model === null && hasRunnerCredential !== undefined ? (
+            {product.defaultRunner === "opencode" && product.model === null && hasRunnerCredential !== undefined ? (
               <ModelWarning hasRunnerCredential={hasRunnerCredential} className="mt-4" />
             ) : null}
           </Section>
 
-          <EffortSection form={form} setForm={setForm} disabled={disabled} />
+          <AgentsSection
+            form={form}
+            setForm={setForm}
+            disabled={disabled}
+            secretNames={secretNames}
+            onAddKey={(name) => setKeyRequest({ name, nonce: Date.now() })}
+          />
 
           <Section
             title="Policy"
@@ -423,7 +421,7 @@ function ProductEditor({
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <div className="flex min-w-0 flex-col gap-4">
-          <SecretsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+          <SecretsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} keyRequest={keyRequest} />
           <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
         </div>
         <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
@@ -474,53 +472,6 @@ function ProductEditor({
         {remove.error ? <ErrorAlert error={remove.error} className="mt-3" /> : null}
       </Confirm>
     </>
-  );
-}
-
-function EffortSection({
-  form,
-  setForm,
-  disabled,
-}: {
-  form: ProductForm;
-  setForm: React.Dispatch<React.SetStateAction<ProductForm>>;
-  disabled: boolean;
-}) {
-  const listId = useId();
-  return (
-    <Section
-      title="Effort per role"
-      description="The reasoning effort each agent role asks of the model, as the opencode --variant. Claude Code sessions do not take it."
-    >
-      <datalist id={listId}>
-        {EFFORT_SUGGESTIONS.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3.5 sm:grid-cols-4">
-        {EFFORT_ROLES.map((role) => (
-          <Field
-            key={role}
-            label={role[0]!.toUpperCase() + role.slice(1)}
-            hint={form.effort[role].trim() ? undefined : `Default: ${DEFAULT_EFFORT}`}
-          >
-            {(props) => (
-              <Input
-                {...props}
-                list={listId}
-                disabled={disabled}
-                placeholder="low, high, max"
-                value={form.effort[role]}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setForm((f) => ({ ...f, effort: { ...f.effort, [role]: value } }));
-                }}
-              />
-            )}
-          </Field>
-        ))}
-      </div>
-    </Section>
   );
 }
 

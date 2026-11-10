@@ -5,6 +5,8 @@
 FROM node:24-bookworm-slim
 
 ARG OPENCODE_VERSION=1.19.5
+# docs/specs/claude-code-runner.md. A pinned Claude Code. DISABLE_UPDATES below keeps it pinned.
+ARG CLAUDE_CODE_VERSION=2.1.319
 ARG AGENT_BROWSER_VERSION=0.37.1
 ARG PUPPETEER_BROWSERS_VERSION=3.2.6
 
@@ -22,7 +24,9 @@ RUN apt-get update \
 # binary, so its script only links it.
 RUN npm install -g --prefix /opt/factoree --ignore-scripts --no-audit --no-fund \
       "opencode-ai@${OPENCODE_VERSION}" "agent-browser@${AGENT_BROWSER_VERSION}" \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && (cd /opt/factoree/lib/node_modules/opencode-ai && node postinstall.mjs) \
+ && (cd /opt/factoree/lib/node_modules/@anthropic-ai/claude-code && node install.cjs) \
  && (cd /opt/factoree/lib/node_modules/agent-browser && node scripts/postinstall.js) \
  && npx -y "@puppeteer/browsers@${PUPPETEER_BROWSERS_VERSION}" install chrome-headless-shell@stable --path /opt/factoree/browser \
  && shell="$(find /opt/factoree/browser -type f -name chrome-headless-shell | head -n 1)" \
@@ -63,3 +67,6 @@ RUN useradd --create-home --uid 1001 --shell /bin/bash agent \
  && (grep -q '^agent:' /etc/subgid || echo 'agent:165536:65536' >> /etc/subgid)
 
 ENV PATH=/opt/factoree/bin:/home/agent/.local/share/mise/shims:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# docs/specs/claude-code-runner.md. The root-owned CLI cannot update itself, and Claude Code sends
+# no telemetry: the agent phase allows the model host only.
+ENV DISABLE_UPDATES=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1

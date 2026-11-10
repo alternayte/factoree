@@ -18,13 +18,13 @@ import { FIXTURE_CONFIG, createFixtureRepository } from "./fixture-repository.js
  * reaches verification with either required runner. This module holds that single drive, so
  * AT-14, AT-15, and the Phase 11 exit test share exactly one code path.
  *
- * The runner comes from `.factoree/config.yaml` alone. The drive resolves it from
- * `prepared.runtime.implementerRunner`, so runner selection stays configuration driven, as SDD
- * section 14 requires.
+ * docs/specs/claude-code-runner.md. The runner comes from the Product defaults alone. The drive
+ * resolves it from `prepared.runtime.implementerRunner`, so runner selection stays configuration
+ * driven, as SDD section 14 requires.
  */
 
 export interface FixtureDriveOptions {
-  /** The runner name written into `agents.implementer` of the fixture configuration. */
+  /** The implementer runner the Product selects. */
   runnerName: string;
   /** True selects the honest stub of each runner. False selects the liar stub of each runner. */
   honest: boolean;
@@ -57,12 +57,6 @@ const stubFor = (runner: string, honest: boolean): string => {
   return honest ? pair.honest : pair.liar;
 };
 
-/** The fixture configuration, plus the one line that selects the runner under test. */
-const configFor = (runnerName: string): string => `${FIXTURE_CONFIG}
-agents:
-  implementer: ${runnerName}
-`;
-
 let counter = 0;
 
 /**
@@ -80,7 +74,7 @@ export const driveFixtureToVerification = async (
 
   try {
     // The fixture check passes only when the Implementer really replaced target.txt.
-    const repository = await createFixtureRepository(root, "app", configFor(options.runnerName));
+    const repository = await createFixtureRepository(root, "app", FIXTURE_CONFIG);
 
     const sandbox = new LocalProcessSandbox({ rootDirectory: sandboxRoot });
     const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
@@ -90,11 +84,14 @@ export const driveFixtureToVerification = async (
       productId: "project-1",
       primary: { url: repository, ref: "main" },
       references: [],
-      defaults: DEFAULT_PROJECT_DEFAULTS,
+      defaults: {
+        ...DEFAULT_PROJECT_DEFAULTS,
+        runners: { refiner: "opencode", implementer: options.runnerName, validator: "opencode", reviewer: "opencode" },
+      },
     });
 
     try {
-      // Both required adapters are registered. The configuration alone decides which one runs.
+      // Both required adapters are registered. The Product setting alone decides which one runs.
       const registry = new AgentRunnerRegistry([
         new OpenCodeRunner({
           executable: stubFor("opencode", options.honest),

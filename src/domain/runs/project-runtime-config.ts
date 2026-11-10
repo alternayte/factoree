@@ -31,6 +31,10 @@ export interface ProjectRuntimeConfig {
   implementerRunner: string;
   validatorRunner: string;
   reviewerRunner: string;
+  /** docs/specs/claude-code-runner.md. Absent in an old history, where the refiner took the validator runner. */
+  refinerRunner?: string;
+  /** docs/specs/claude-code-runner.md. True when `.factoree/config.yaml` holds an `agents` block Factoree ignored. */
+  agentsBlockIgnored?: boolean;
   repairMaxAttempts: number;
   stagingRead: boolean;
   /** SDD section 51. */
@@ -77,8 +81,9 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   warmCommand: null,
   allowedDomains: [],
   implementerRunner: "opencode",
-  validatorRunner: "claude",
-  reviewerRunner: "claude",
+  validatorRunner: "opencode",
+  reviewerRunner: "opencode",
+  refinerRunner: "opencode",
   repairMaxAttempts: 2,
   stagingRead: false,
   spriteRetentionHours: 24,
@@ -106,6 +111,19 @@ export interface ProjectDefaults {
   spriteRetentionHours: number;
   /** R-4. The egress ceiling of the Product. The repository file can only narrow it. */
   allowedDomains: string[];
+  /**
+   * docs/specs/claude-code-runner.md. The runner of each role of a run, as the Product resolves
+   * it. Absent means opencode for every role: a build-ahead or a setup proof starts no session.
+   */
+  runners?: RunRunners;
+}
+
+/** docs/specs/claude-code-runner.md. The runner of each role that a run starts. */
+export interface RunRunners {
+  refiner: string;
+  implementer: string;
+  validator: string;
+  reviewer: string;
 }
 
 export const DEFAULT_PROJECT_DEFAULTS: ProjectDefaults = {
@@ -133,8 +151,8 @@ export interface ResolvedProjectConfig {
 /**
  * SDD section 15 and section 57. Produces the runtime configuration of one Run from the
  * repository file and the Project defaults. The repository owns the bootstrap command, the
- * verification commands, the runner names, the repair limit, and the egress allow list. The
- * Project owns staging read and the sandbox retention window.
+ * verification commands, the repair limit, and the egress allow list. The Project owns staging
+ * read, the sandbox retention window and the runner of each role.
  */
 export const toProjectRuntimeConfig = (
   config: FactoreeConfig,
@@ -165,9 +183,11 @@ export const toProjectRuntimeConfig = (
       steps: account.steps,
       check: account.check,
     })),
-    implementerRunner: config.agents.implementer,
-    validatorRunner: config.agents.validator,
-    reviewerRunner: config.agents.reviewer,
+    implementerRunner: defaults.runners?.implementer ?? "opencode",
+    validatorRunner: defaults.runners?.validator ?? "opencode",
+    reviewerRunner: defaults.runners?.reviewer ?? "opencode",
+    refinerRunner: defaults.runners?.refiner ?? "opencode",
+    agentsBlockIgnored: config.agents !== undefined,
     repairMaxAttempts: config.repair.maxAttempts,
     stagingRead: defaults.stagingRead,
     spriteRetentionHours: defaults.spriteRetentionHours,

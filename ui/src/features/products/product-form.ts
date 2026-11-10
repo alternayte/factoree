@@ -3,10 +3,16 @@ import { AUTONOMY_LEVELS, EFFORT_ROLES, type AutonomyLevel } from "@/lib/workspa
 
 export type Product = GetProductResponse;
 type Role = (typeof EFFORT_ROLES)[number];
+export type Runner = Product["defaultRunner"];
 
 export type ProductForm = {
   name: string;
+  /** docs/specs/claude-code-runner.md. The runner and the model of every role that names none. */
+  defaultRunner: Runner;
   model: string;
+  /** An empty runner or model takes the default. */
+  runners: Record<Role, Runner | "">;
+  models: Record<Role, string>;
   organizationSkillsRepository: string;
   /** docs/specs/skill-registry.md. An empty URL means no registry. An empty set means every released skill. */
   skillRegistryUrl: string;
@@ -28,10 +34,28 @@ export type ProductForm = {
 const asLevel = (value: string): AutonomyLevel =>
   (AUTONOMY_LEVELS as readonly string[]).includes(value) ? (value as AutonomyLevel) : "L2";
 
+function roleValues<T>(of: (role: Role) => T): Record<Role, T> {
+  return Object.fromEntries(EFFORT_ROLES.map((role) => [role, of(role)])) as Record<Role, T>;
+}
+
+/**
+ * docs/specs/claude-code-runner.md, the same rule as src/domain/products/agent-settings.ts. A role
+ * that overrides the runner and not the model takes the default model only on the default runner.
+ */
+export function resolvedRole(form: ProductForm, role: Role): { runner: Runner; model: string; effort: string } {
+  const runner = form.runners[role] || form.defaultRunner;
+  const model = form.models[role].trim() || (runner === form.defaultRunner ? form.model.trim() : "");
+  const effort = form.effort[role].trim() || (role === "setup" ? form.effort.implementer.trim() : "");
+  return { runner, model, effort };
+}
+
 export function formOf(p: Product): ProductForm {
   return {
     name: p.name,
+    defaultRunner: p.defaultRunner,
     model: p.model ?? "",
+    runners: roleValues((role) => p.runners[role] ?? ""),
+    models: roleValues((role) => p.models[role] ?? ""),
     organizationSkillsRepository: p.organizationSkillsRepository ?? "",
     skillRegistryUrl: p.skillRegistry?.url ?? "",
     skillRegistrySet: p.skillRegistry?.set ?? "",
@@ -41,13 +65,7 @@ export function formOf(p: Product): ProductForm {
     sandboxRetentionHours: String(p.sandboxRetentionHours),
     maxConcurrentRuns: String(p.maxConcurrentRuns),
     appChangeIssues: p.appChangeIssues,
-    effort: {
-      implementer: p.effort.implementer ?? "",
-      refiner: p.effort.refiner ?? "",
-      validator: p.effort.validator ?? "",
-      reviewer: p.effort.reviewer ?? "",
-      setup: p.effort.setup ?? "",
-    },
+    effort: roleValues((role) => p.effort[role] ?? ""),
     defaultAutonomy: asLevel(p.defaultAutonomy),
     riskCaps: Object.entries(p.riskCaps ?? {}).map(([label, level]) => ({ label, level: asLevel(level) })),
     allowedDomains: p.allowedDomains.join("\n"),
@@ -90,8 +108,8 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
     if (label in riskCaps) problems.push(`The label “${label}” has two risk caps.`);
     riskCaps[label] = cap.level;
   }
+  // The API checks each model and effort against the runner its role resolves to.
   const model = form.model.trim();
-  if (model && !/^[^\s/]+\/\S+$/.test(model)) problems.push("The model must have the form provider/model.");
   const skills = form.organizationSkillsRepository.trim();
   if (skills && !/^[^/]+\/[^/]+$/.test(skills)) problems.push("The skills repository must have the form owner/repository.");
   const registryUrl = form.skillRegistryUrl.trim();
@@ -103,7 +121,10 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
   return {
     body: {
       name: form.name.trim(),
+      defaultRunner: form.defaultRunner,
       model: model || null,
+      runners: roleValues((role) => form.runners[role] || null),
+      models: roleValues((role) => form.models[role].trim() || null),
       organizationSkillsRepository: skills || null,
       skillRegistry: registryUrl ? { kind: "skael", url: registryUrl, set: form.skillRegistrySet.trim() || null } : null,
       maxRunMinutes,
@@ -111,13 +132,7 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       sandboxRetentionHours,
       maxConcurrentRuns,
       appChangeIssues: form.appChangeIssues,
-      effort: {
-        implementer: effort("implementer"),
-        refiner: effort("refiner"),
-        validator: effort("validator"),
-        reviewer: effort("reviewer"),
-        setup: effort("setup"),
-      },
+      effort: roleValues(effort),
       defaultAutonomy: form.defaultAutonomy,
       riskCaps,
       allowedDomains: form.allowedDomains

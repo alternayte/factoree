@@ -63,6 +63,11 @@ export interface PrepareSandboxInput {
    * saves the warm snapshot, and is deleted. `runId` then names the build-ahead, not a run.
    */
   buildAhead?: boolean;
+  /**
+   * docs/specs/claude-code-runner.md. The model hosts the agent sessions of this sandbox call, for
+   * example `api.anthropic.com` for a claude session. The agent phase adds them to the allow list.
+   */
+  agentHosts?: string[];
 }
 
 /** docs/specs/run-speed.md. What one build-ahead did. */
@@ -386,6 +391,13 @@ export class SandboxManager {
       // SDD section 15. The primary repository owns the configuration of the Run.
       const file = await readRepositoryConfig(sandbox, ref, primary.path);
       const { runtime, verifyCommands, preview } = toProjectRuntimeConfig(file, input.defaults);
+      // docs/specs/claude-code-runner.md. The Product selects the runners, and the run log says so.
+      if (runtime.agentsBlockIgnored === true) {
+        this.options.logger?.warn("Factoree ignores the agents block of .factoree/config.yaml: the Product selects the runner of each role", {
+          run_id: input.runId,
+          step: "prepare",
+        });
+      }
 
       // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
       // allow list. A change of any of them means the snapshot no longer fits, and the cold run
@@ -506,7 +518,7 @@ export class SandboxManager {
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.
       // SDD section 29.
-      await sandbox.applyNetworkPolicy(ref, { allowedDomains: runtime.allowedDomains });
+      await sandbox.applyNetworkPolicy(ref, { allowedDomains: [...new Set([...runtime.allowedDomains, ...(input.agentHosts ?? [])])] });
 
       // SDD section 16. Discovery runs on the checkouts, in precedence order. A repository skill
       // always precedes an organization skill of the same name. Discovery needs no egress, so it

@@ -9,4 +9,3 @@ export const AUTONOMY_LEVELS = ["L0", "L1", "L2", "L3"] as const;
 export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
 
 export const EFFORT_ROLES = ["implementer", "refiner", "validator", "reviewer", "setup"] as const;
-export const EFFORT_SUGGESTIONS = ["low", "high", "max"];

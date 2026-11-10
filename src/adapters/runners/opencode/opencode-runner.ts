@@ -9,6 +9,8 @@ import { CliAgentRunner, USAGE_READ_TIMEOUT_MS, type AgentSessionSettings } from
 import { parseOpenCodeOutput } from "./output-parser.js";
 import { readOpenCodeExport } from "./export-usage.js";
 import type { AgentRole } from "~/domain/runs/agent-runner.js";
+import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import { randomUUID } from "node:crypto";
 
 /**
  * The inline configuration of every opencode session Factoree starts.
@@ -25,6 +27,12 @@ import type { AgentRole } from "~/domain/runs/agent-runner.js";
  * therefore cannot choose the model either. The worker chooses it instead (B-3).
  */
 const OPENCODE_CONFIG = JSON.stringify({ permission: { external_directory: "allow" } });
+
+/** docs/specs/model-picker.md. opencode reads the catalog from the file and fetches none. */
+const modelsEnvironment = (path: string): Record<string, string> => ({
+  OPENCODE_MODELS_PATH: path,
+  OPENCODE_DISABLE_MODELS_FETCH: "1",
+});
 
 /**
  * The shell script that starts one non-interactive opencode session. `opencode run` reads the
@@ -166,6 +174,23 @@ export class OpenCodeRunner extends CliAgentRunner {
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       },
     };
+  }
+
+  /**
+   * docs/specs/model-picker.md. The picker offers models from the catalog Factoree stores, which
+   * can be newer than the snapshot inside opencode 1.19.5. The provider entry of the chosen model
+   * goes into a fresh file for each command, and opencode reads it instead of fetching models.dev.
+   */
+  protected override async withSessionFiles(
+    sandbox: Sandbox,
+    ref: SandboxRef,
+    settings: AgentSessionSettings,
+    command: CliAgentCommand,
+  ): Promise<CliAgentCommand> {
+    if (settings.modelsFile === undefined || settings.modelsFile === null) return command;
+    const path = `${ref.workspacePath}/.factoree/models/${randomUUID()}.json`;
+    await sandbox.writeFile(ref, path, settings.modelsFile);
+    return { ...command, env: { ...command.env, ...modelsEnvironment(path) } };
   }
 
   protected parseOutput(text: string): CliAgentParse {

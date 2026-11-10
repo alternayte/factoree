@@ -74,6 +74,11 @@ import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-di
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { buildInfo } from "~/config/build-info.js";
+import { isAgentRunnerName, resolveRole } from "~/domain/products/agent-settings.js";
+import { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
+import { opencodeModelsFileOf } from "~/domain/products/model-catalog.js";
+import { PrismaModelCatalogStore } from "~/persistence/prisma/model-catalog.prisma.js";
+import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
 
 // docs/specs/release-0-1-0.md. `factoree --version` answers before the environment loads, so it
 // works with no configuration.
@@ -137,36 +142,38 @@ const sandboxManager = new SandboxManager({
   ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
 });
 
-// docs/specs/release-0-1-0.md. The Product of the Run holds the model, the effort of each role
-// and the silence limit. The worker reads them when a session starts, so a change applies to the
-// next session with no restart. The Product settings name opencode models, so a Claude Code
-// session runs at its CLI defaults.
+// docs/specs/claude-code-runner.md. The Product of the Run holds the runner, the model and the
+// effort of each role, and the silence limit. The worker reads them when a session starts, so a
+// change applies to the next session with no restart. A session on a runner other than the one
+// its role resolves to, from a run that started before a change, runs at the CLI defaults: a
+// model of one runner means nothing to the other.
+const modelCatalog = new ModelCatalogService({ store: new PrismaModelCatalogStore(prisma), source: createModelsDevSource(), logger });
+
 const sessionSettings = async (input: AgentRunInput, runner: string): Promise<AgentSessionSettings> => {
   // docs/specs/repository-setup-and-services.md. A setup session belongs to a setup row, not a run.
   const product = input.runId.startsWith("setup:")
     ? (await prisma.repositorySetup.findUniqueOrThrow({ where: { id: input.runId.slice("setup:".length) }, include: { product: true } })).product
     : (await prisma.run.findUniqueOrThrow({ where: { id: input.runId }, include: { product: true } })).product;
-  const effort = {
-    implementer: product.effortImplementer,
-    refiner: product.effortRefiner,
-    validator: product.effortValidator,
-    reviewer: product.effortReviewer,
-    setup: product.effortSetup ?? product.effortImplementer,
-  }[input.role];
-  const opencode = runner === "opencode";
+  const record = await products.findById(product.tenantId, product.id);
+  const resolved = record === null ? null : resolveRole(record, input.role);
+  const matches = resolved !== null && resolved.runner === runner;
   // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
   const customImage = (await sandbox.forRef(input.ref)).capabilities.supportsCustomImage;
+  const model = matches ? resolved.model : null;
+  const effort = matches ? resolved.effort : null;
+  // docs/specs/model-picker.md. An opencode session reads its model from the catalog the picker offered.
+  const catalog = runner === "opencode" && model !== null ? await modelCatalog.current() : null;
   return {
-    model: opencode ? product.model : null,
-    effort: opencode ? effort : null,
+    model,
+    effort,
     silenceLimitMs: product.silenceMinutes * 60_000,
-    executable: opencode && customImage ? `${KILN_RUNNER_BIN}/opencode` : null,
+    executable: customImage && isAgentRunnerName(runner) ? `${KILN_RUNNER_BIN}/${runner}` : null,
+    modelsFile: catalog === null || model === null ? null : opencodeModelsFileOf(catalog.raw, model, effort),
   };
 };
 
-// SDD section 33 names two required adapters. A stock `.factoree/config.yaml` selects
-// `opencode` for the Implementer and `claude` for the User Validator and the Reviewer, so both
-// must be registered before a stock repository can run.
+// SDD section 33 names two required adapters. docs/specs/claude-code-runner.md: the Product
+// selects one of them for each role.
 const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings });
 const reaper = new SpriteReaper({
   // The adapter routes each sandbox to the provider its ref names.

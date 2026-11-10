@@ -26,6 +26,8 @@ import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.pris
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerSettingsRoutes } from "./admin/settings.routes.js";
+import { registerModelCatalogRoutes } from "./admin/model-catalog.routes.js";
+import type { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
 import { registerGitHubWebhookRoutes, type GitHubWebhookDependencies } from "./webhooks/github.routes.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
@@ -76,6 +78,8 @@ export interface ServerDependencies {
   repositorySetup?: Pick<RepositorySetupRouteDependencies, "listInstallationRepositories" | "startSetup">;
   /** docs/specs/run-visibility.md. The Temporal UI inside the stack, or absent for none. */
   temporalUiUrl?: string | undefined;
+  /** docs/specs/model-picker.md. The models.dev catalog. Absent in the OpenAPI build. */
+  modelCatalog?: ModelCatalogService;
   /** docs/specs/skill-registry.md. The save-time check of a Product skill registry. */
   checkSkillRegistry?: ProductRouteDependencies["checkSkillRegistry"];
   /** docs/specs/proof-pack-and-visual-evidence.md. Records a pull request preview. */
@@ -171,7 +175,9 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         runs: dependencies.runs,
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
         ...(dependencies.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: dependencies.checkSkillRegistry }),
+        ...(dependencies.modelCatalog === undefined ? {} : { modelCatalog: dependencies.modelCatalog }),
       });
+      registerModelCatalogRoutes(admin, { modelCatalog: dependencies.modelCatalog });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
       registerRunRoutes(admin, {
         tenants: dependencies.tenants,
