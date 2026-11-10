@@ -13,8 +13,11 @@ import type { ValidationEvidenceKind } from "~/domain/validation/validation-cont
  * `sibling_read` answers no Validation assertion either. It records that the agent session
  * cloned a sibling repository of the Run's Product, so the Reviewer can see which sibling the
  * Implementer read.
+ *
+ * `work_item_image` answers no Validation assertion. It is one image of the delegated issue, the
+ * bytes the Context Contract froze (docs/specs/work-item-images-and-links.md).
  */
-export type EvidenceKind = "deterministic_check" | "sibling_read" | ValidationEvidenceKind;
+export type EvidenceKind = "deterministic_check" | "sibling_read" | "work_item_image" | ValidationEvidenceKind;
 
 export interface EvidenceRecord {
   id: string;

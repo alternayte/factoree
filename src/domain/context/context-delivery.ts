@@ -3,6 +3,13 @@ import type { SelectedContextItem } from "./conflicts.js";
 import type { ContextSourceKind } from "./context-source-configuration.js";
 import { RESERVED_CONTEXT_SOURCE_IDS } from "./context-source-configuration.js";
 import type { ContextSourceRegistry } from "./context-source-registry.js";
+import {
+  imageFileName,
+  isWorkItemLinkRef,
+  WORK_ITEM_COMMENTS_REF,
+  workItemImageRef,
+  type WorkItemImage,
+} from "./work-item-content.js";
 
 /** docs/specs/external-context-delivery.md. Delivery stops at this many files. */
 export const CONTEXT_DELIVERY_MAX_FILES = 50;
@@ -79,15 +86,25 @@ export const inContractOrder = (items: SelectedContextItem[], order: string[] | 
 };
 
 /**
- * The items delivery considers: each required and reference item of a configured source, in
- * contract order. Linear and repository items are not external: the agent reads the repository in
- * the checkout, and the work item is in the prompt.
+ * docs/specs/work-item-images-and-links.md. The Linear items delivered as a file: the comments and
+ * each followed Linear or GitHub link. An image is delivered as its own file by `deliverImages`.
+ */
+const isDeliveredLinearItem = (item: SelectedContextItem): boolean =>
+  item.reference.sourceId === "linear" &&
+  (item.reference.ref === WORK_ITEM_COMMENTS_REF || isWorkItemLinkRef(item.reference.ref));
+
+/**
+ * The items delivery considers: each required and reference item of a configured source, and the
+ * comments and followed links of the work item, in contract order. Other Linear items and the
+ * repository items are not delivered: the agent reads the repository in the checkout, and the
+ * description is in the prompt.
  */
 export const deliverableItems = (items: SelectedContextItem[]): SelectedContextItem[] =>
   items.filter(
     (item) =>
       (item.classification === "required" || item.classification === "reference") &&
-      !(RESERVED_CONTEXT_SOURCE_IDS as readonly string[]).includes(item.reference.sourceId),
+      (isDeliveredLinearItem(item) ||
+        !(RESERVED_CONTEXT_SOURCE_IDS as readonly string[]).includes(item.reference.sourceId)),
   );
 
 /**
@@ -135,8 +152,9 @@ export const deliverContext = async (input: ContextDeliveryInput): Promise<Conte
 
     const hash = sha256(content);
     const kind = input.kinds.get(item.reference.sourceId);
-    const frozen =
-      kind === "llms_txt" ? item.sourceVersion : item.classification === "required" ? item.contentSha256 : null;
+    // DI-21.43. A followed link freezes its hash whatever its classification, so every item that
+    // carries a hash is compared with it.
+    const frozen = kind === "llms_txt" ? item.sourceVersion : item.contentSha256;
     if (frozen !== null && hash !== frozen) {
       skip(`The content changed after the freeze: it hashes to ${hash}, and the contract froze ${frozen}.`, hash);
       continue;
@@ -162,5 +180,70 @@ export const deliverContext = async (input: ContextDeliveryInput): Promise<Conte
     lines.push(`${ref} — authority ${item.authority}, file ${path}, sha256 ${hash}`);
   }
 
+  return { entries, lines };
+};
+
+export interface ImageDeliveryInput {
+  /** The frozen images of the run, in contract order. */
+  images: WorkItemImage[];
+  /** The absolute directory the files go to. */
+  directory: string;
+  /** Set when the directory could not be made. Every image is then skipped with this reason. */
+  unavailable?: string | null;
+  /** Reads the bytes of one image again. A throw skips the image and records the reason. */
+  download: (image: WorkItemImage) => Promise<Uint8Array>;
+  /** Writes the bytes to one file and answers the SHA-256 the sandbox computed of the file. */
+  write: (path: string, bytes: Uint8Array) => Promise<string>;
+}
+
+/** The prompt line of one delivered image: the file, its hash and the sentence around it. */
+export const imageLine = (image: WorkItemImage, path: string): string =>
+  `${imageFileName(image)} — file ${path}, sha256 ${image.sha256}. From ${image.origin}: "${image.caption}"`;
+
+/**
+ * docs/specs/work-item-images-and-links.md. Writes each frozen image to
+ * `<directory>/image-<n>.<ext>`. Factoree checks the SHA-256 of the bytes against the frozen hash
+ * before it writes, and checks the file the sandbox holds after it writes: the validator and the
+ * reviewer must see the mockup the contract names, and nothing else (DI-21.44).
+ */
+export const deliverImages = async (input: ImageDeliveryInput): Promise<ContextDelivery> => {
+  const entries: DeliveredContextEntry[] = [];
+  const lines: string[] = [];
+  for (const image of input.images) {
+    const ref = workItemImageRef(image.n);
+    const skip = (reason: string, sha: string | null = null): void => {
+      entries.push({ ref, path: null, sha256: sha, verified: false, skipReason: reason });
+    };
+    if (input.unavailable !== undefined && input.unavailable !== null) {
+      skip(input.unavailable);
+      continue;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await input.download(image);
+    } catch (error) {
+      skip(`The image could not be read: ${reasonOf(error)}`);
+      continue;
+    }
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (hash !== image.sha256) {
+      skip(`The image changed after the freeze: it hashes to ${hash}, and the contract froze ${image.sha256}.`, hash);
+      continue;
+    }
+    const path = `${input.directory}/${imageFileName(image)}`;
+    let written: string;
+    try {
+      written = await input.write(path, bytes);
+    } catch (error) {
+      skip(`The file could not be written: ${reasonOf(error)}`, hash);
+      continue;
+    }
+    if (written !== image.sha256) {
+      skip(`The written file hashes to ${written}, and the contract froze ${image.sha256}.`, hash);
+      continue;
+    }
+    entries.push({ ref, path, sha256: hash, verified: true, skipReason: null });
+    lines.push(imageLine(image, path));
+  }
   return { entries, lines };
 };

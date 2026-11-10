@@ -10,6 +10,8 @@ export interface BuildImplementerInput {
   requiredContext: string[];
   /** docs/specs/external-context-delivery.md. One line per context file of the work sprite. */
   contextFiles?: string[];
+  /** docs/specs/work-item-images-and-links.md. One line per image file of the work sprite. */
+  imageFiles?: string[];
   primaryRepositoryPath: string;
   referenceRepositoryPaths: string[];
   repositoryInstructions: string;
@@ -183,6 +185,7 @@ export const buildImplementerInput = (input: BuildImplementerInput): Implementer
       contextContract: input.contextContract,
       requiredContext: input.requiredContext,
       contextFiles: input.contextFiles ?? [],
+      imageFiles: input.imageFiles ?? [],
       primaryRepositoryPath: input.primaryRepositoryPath,
       referenceRepositoryPaths: input.referenceRepositoryPaths,
       repositoryInstructions: input.repositoryInstructions,

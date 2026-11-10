@@ -107,6 +107,11 @@ export interface ProposeRefinementActivityInput {
    * in a history recorded before the delivery existed.
    */
   contextFiles?: string[];
+  /**
+   * docs/specs/work-item-images-and-links.md. One line per image file of the sandbox. Absent in a
+   * history recorded before the images existed.
+   */
+  imageFiles?: string[];
   skills: string[];
   /** docs/specs/proof-pack-and-visual-evidence.md. True when the repository has an enabled preview. */
   previewConfigured: boolean;
@@ -249,6 +254,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       statedCriteria: input.statedCriteria,
       contextContract: input.contextContract,
       contextFiles: input.contextFiles ?? [],
+      imageFiles: input.imageFiles ?? [],
       primaryRepositoryPath: input.primaryPath,
       proposalPath,
       proposalSchema: REFINER_PROPOSAL_SCHEMA,

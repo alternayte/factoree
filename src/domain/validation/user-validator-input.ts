@@ -22,6 +22,8 @@ export interface BuildUserValidatorInput {
   accounts?: string[];
   /** docs/specs/repository-setup-and-services.md. The fakes of the running stack. */
   fakes?: ReadonlyArray<{ service: string; name: string }>;
+  /** docs/specs/work-item-images-and-links.md. One line per image file of the check sprite. */
+  imageFiles?: string[];
 }
 
 export interface UserValidatorInput {
@@ -90,6 +92,7 @@ export const buildUserValidatorInput = (input: BuildUserValidatorInput): UserVal
       planSchema: PLAN_SCHEMA,
       accounts: input.accounts ?? [],
       fakes: (input.fakes ?? []).map((fake) => `${fake.name}, answered by the compose service "${fake.service}"`),
+      imageFiles: input.imageFiles ?? [],
     }),
     promptVersion: USER_VALIDATOR_PROMPT_VERSION,
     environment: { ...input.projectTestSecrets },

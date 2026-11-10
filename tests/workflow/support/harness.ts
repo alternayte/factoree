@@ -528,6 +528,16 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         project: workItemProjects.get(activityInput.sessionId) ?? null,
       };
     },
+    // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
+    readWorkItemContent: async () => ({
+      comments: null,
+      commentCount: 0,
+      images: [],
+      links: [],
+      skippedImages: [],
+      linksNotRead: [],
+      visionFailure: null,
+    }),
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       activityOrder.push("prepareSandbox");
       prepared.push(activityInput);

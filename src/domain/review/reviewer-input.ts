@@ -22,6 +22,8 @@ export interface BuildReviewerInput {
   actionPolicy: ActionPolicy;
   /** Non-production Project test secrets only. See SDD section 30. */
   projectTestSecrets: Record<string, string>;
+  /** docs/specs/work-item-images-and-links.md. One line per image file of the check sprite. */
+  imageFiles?: string[];
 }
 
 export interface ReviewerInput {
@@ -47,6 +49,7 @@ export const buildReviewerInput = (input: BuildReviewerInput): ReviewerInput => 
       reportPath: input.reportPath,
       actionPolicy: input.actionPolicy.describe(),
       reportSchema: REVIEW_REPORT_SCHEMA_TEXT,
+      imageFiles: input.imageFiles ?? [],
     }),
     promptVersion: REVIEWER_PROMPT_VERSION,
     environment: { ...input.projectTestSecrets },

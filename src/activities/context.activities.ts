@@ -11,6 +11,13 @@ import type { AuthorityDomain } from "~/domain/context/authority.js";
 import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import { deliverableItems } from "~/domain/context/context-delivery.js";
+import {
+  unreadContentLines,
+  type LinkNotRead,
+  type SkippedImage,
+  type WorkItemImage,
+  type WorkItemLink,
+} from "~/domain/context/work-item-content.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { readCredential } from "~/activities/repository-credential.js";
@@ -32,6 +39,17 @@ export interface ResolveContextActivityInput {
   decisions: RecordedDecision[];
   /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
   githubInstallationId: string;
+  /**
+   * docs/specs/work-item-images-and-links.md. What Factoree read of the issue besides its
+   * description. Absent in an older history and when the read failed.
+   */
+  workItemContent?: {
+    comments: string | null;
+    images: WorkItemImage[];
+    links: WorkItemLink[];
+    skippedImages: SkippedImage[];
+    linksNotRead: LinkNotRead[];
+  };
 }
 
 export interface ResolveContextActivityOutput {
@@ -153,6 +171,15 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
             decisions: input.decisions,
             sources,
             contextConfiguration,
+            ...(input.workItemContent === undefined
+              ? {}
+              : {
+                  workItemContent: {
+                    comments: input.workItemContent.comments,
+                    images: input.workItemContent.images,
+                    links: input.workItemContent.links,
+                  },
+                }),
           });
           return resolved;
         },
@@ -229,6 +256,12 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
           "and did not freeze the context, because one conflict is unresolved."
         : `Factoree read ${count(resolved.contract.items.length, "context item", "context items")} from ${repositories}` +
           (conflicts === 0 ? "." : `, and recorded ${count(conflicts, "conflict", "conflicts")}.`);
+    // docs/specs/work-item-images-and-links.md. The post lists each image Factoree skipped and
+    // each link it did not read, so the human sees what the run missed.
+    const unread =
+      input.workItemContent === undefined
+        ? []
+        : unreadContentLines(input.workItemContent.skippedImages, input.workItemContent.linksNotRead);
 
     return {
       sha256,
@@ -247,7 +280,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
               question: conflictQuestion(resolved.unresolvedConflict),
             },
       conflictCount: resolved.contract.conflicts.length,
-      summary,
+      summary: [summary, ...unread].join("\n"),
     };
   },
 

@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { ContextConflictRecord, SelectedContextItem } from "./conflicts.js";
 import { detectConflicts, firstUnresolved } from "./conflicts.js";
-import type { ContextCandidate, ContextClassification, RepositoryRef } from "./context-source.js";
+import type {
+  ContextCandidate,
+  ContextClassification,
+  RepositoryRef,
+  WorkItemContextContent,
+} from "./context-source.js";
 import type { ContextSourceRegistry } from "./context-source-registry.js";
 import type { RepositoryContextConfiguration } from "./repository-context-configuration.js";
 import type { ContextContract } from "./context-contract.js";
@@ -29,6 +34,8 @@ export interface ResolveContextInput {
   /** The sources of this Run. SDD section 53 makes the list per Project. */
   sources: ContextSourceRegistry;
   contextConfiguration: RepositoryContextConfiguration;
+  /** docs/specs/work-item-images-and-links.md. Absent for a run that read none. */
+  workItemContent?: WorkItemContextContent;
 }
 
 export interface ResolvedContext {
@@ -92,6 +99,7 @@ export class ContextResolver {
       workItemReferences: input.workItemReferences,
       decisions: input.decisions,
       contextConfiguration: input.contextConfiguration,
+      ...(input.workItemContent === undefined ? {} : { workItemContent: input.workItemContent }),
     };
 
     const sources = input.sources.all();
@@ -195,6 +203,7 @@ export class ContextResolver {
         candidate.reference.path === null && candidate.reference.repository !== null;
       const competes =
         !isRepository &&
+        candidate.outsideBudget !== true &&
         (candidate.suggestedClassification === "required" ||
           candidate.suggestedClassification === "reference");
 
@@ -220,7 +229,8 @@ export class ContextResolver {
         reason: candidate.reason,
         classification,
         topics: candidate.topics,
-        contentSha256: null,
+        // DI-21.43. A hash the source already took is frozen as it is.
+        contentSha256: candidate.contentSha256 ?? null,
       };
     });
 
@@ -238,6 +248,8 @@ export class ContextResolver {
     // gives the prompt the path, the authority, and the hash, which is all the prompt needs.
     for (const item of items) {
       if (item.classification !== "required") continue;
+      // DI-21.43. The source read this content before resolution and holds only its hash.
+      if (item.contentSha256 !== null) continue;
       const source = input.sources.get(item.reference.sourceId);
       try {
         const document = await source.fetch(item.reference);

@@ -93,13 +93,16 @@ through the GitHub App manifest flow.
 GitHub creates the App with exactly these repository permissions. A publication
 asks for Workflows only when the change edits a file in `.github/workflows`. An
 App created before 0.7.4 lacks it: add it in the App settings, and accept the
-new permission on each installation.
+new permission on each installation. A run reads a GitHub issue that a Linear
+issue links only with Issues read. An App created before Issues read lacks it,
+and the run then lists the link under "Links not read".
 
 | Permission | Access |
 | --- | --- |
 | Contents | Read and write |
 | Pull requests | Read and write |
 | Workflows | Read and write |
+| Issues | Read |
 | Deployments | Read |
 | Metadata | Read |
 

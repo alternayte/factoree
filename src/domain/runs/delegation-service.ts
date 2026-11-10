@@ -39,6 +39,7 @@ import type {
 import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
+import { ignoresImages } from "~/domain/products/model-vision.js";
 
 export interface WorkflowStarter {
   start(input: { workflowId: string; args: [AgentRunWorkflowInput] }): Promise<void>;
@@ -275,6 +276,11 @@ export class DelegationService {
           ...(followUp === null
             ? {}
             : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
+          // docs/specs/work-item-images-and-links.md. The run reads the comments created up to this
+          // delegation, or up to the reply of a follow-up run (DI-21.39). A reply "ignore the
+          // images" skips the image check of the follow-up run.
+          delegatedAt: new Date(event.webhookTimestamp ?? Date.now()).toISOString(),
+          ...(followUp !== null && ignoresImages(followUp.reply) ? { ignoreImages: true } : {}),
         },
       ],
     });
