@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
+import type { DeliveredContextEntry } from "~/domain/context/context-delivery.js";
 import type {
   CreateRunInput,
   CreateRunTargetInput,
@@ -162,6 +163,17 @@ export class PrismaRunRepository implements RunRepository {
         adapter: previous?.spriteAdapter ?? null,
       };
     });
+  }
+
+  async setDeliveredContext(tenantId: string, runId: string, entries: DeliveredContextEntry[]): Promise<void> {
+    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+    const updated = await this.prisma.run.updateMany({
+      where: { id: runId, tenantId },
+      data: { deliveredContext: entries as unknown as Prisma.InputJsonValue },
+    });
+    if (updated.count === 0) {
+      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the delivered context`);
+    }
   }
 
   async clearSandbox(tenantId: string, runId: string): Promise<void> {

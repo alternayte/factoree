@@ -1964,7 +1964,7 @@ export type ListContextSourcesResponses = {
     tenantId: string;
     productId: string;
     sourceId: string;
-    kind: "backstage" | "mcp";
+    kind: "backstage" | "mcp" | "llms_txt";
     enabled: boolean;
     endpoint: string;
     secretName: string | null;
@@ -1998,6 +1998,28 @@ export type ListContextSourcesResponses = {
             | "declarative_catalog"
             | "repository_configuration";
           maxCandidates?: number;
+        }
+      | {
+          kind?: "llms_txt";
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxPages?: number;
+          maxPageBytes?: number;
         };
     createdAt: string;
     updatedAt: string;
@@ -2010,7 +2032,7 @@ export type ListContextSourcesResponse = ListContextSourcesResponses[keyof ListC
 export type PutContextSourceData = {
   body: {
     sourceId: string;
-    kind: "backstage" | "mcp";
+    kind: "backstage" | "mcp" | "llms_txt";
     endpoint: string;
     enabled?: boolean;
     secretName?: string | null;
@@ -2044,6 +2066,28 @@ export type PutContextSourceData = {
             | "declarative_catalog"
             | "repository_configuration";
           maxCandidates?: number;
+        }
+      | {
+          kind?: "llms_txt";
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxPages?: number;
+          maxPageBytes?: number;
         };
   };
   path: {
@@ -2081,7 +2125,7 @@ export type PutContextSourceResponses = {
     tenantId: string;
     productId: string;
     sourceId: string;
-    kind: "backstage" | "mcp";
+    kind: "backstage" | "mcp" | "llms_txt";
     enabled: boolean;
     endpoint: string;
     secretName: string | null;
@@ -2115,6 +2159,28 @@ export type PutContextSourceResponses = {
             | "declarative_catalog"
             | "repository_configuration";
           maxCandidates?: number;
+        }
+      | {
+          kind?: "llms_txt";
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxPages?: number;
+          maxPageBytes?: number;
         };
     createdAt: string;
     updatedAt: string;
@@ -2126,7 +2192,7 @@ export type PutContextSourceResponse = PutContextSourceResponses[keyof PutContex
 export type TestContextSourceData = {
   body: {
     sourceId: string;
-    kind: "backstage" | "mcp";
+    kind: "backstage" | "mcp" | "llms_txt";
     endpoint: string;
     secretName?: string | null;
     settings?:
@@ -2159,6 +2225,28 @@ export type TestContextSourceData = {
             | "declarative_catalog"
             | "repository_configuration";
           maxCandidates?: number;
+        }
+      | {
+          kind?: "llms_txt";
+          authority?:
+            | "work_item_decision"
+            | "approved_product_specification"
+            | "product_documentation"
+            | "accepted_adr"
+            | "approved_architecture_specification"
+            | "architecture_documentation"
+            | "repository_readme"
+            | "machine_readable_contract"
+            | "contract_tests"
+            | "api_documentation"
+            | "prose_documentation"
+            | "source_code"
+            | "executable_tests"
+            | "runtime_behavior"
+            | "declarative_catalog"
+            | "repository_configuration";
+          maxPages?: number;
+          maxPageBytes?: number;
         };
     credential?: string;
   };

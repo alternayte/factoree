@@ -2,6 +2,8 @@ import { BackstageCatalogClient } from "~/adapters/backstage/backstage-catalog-c
 import { McpJsonRpcClient } from "~/adapters/mcp/mcp-json-rpc-client.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { McpContextSource } from "~/domain/context/mcp-source.js";
+import { LlmsTxtClient } from "~/adapters/llms-txt/llms-txt-client.js";
+import { LLMS_TXT_INDEX_MAX_BYTES, parseLlmsTxt } from "~/domain/context/llms-txt-source.js";
 import type {
   BackstageSourceSettings,
   ContextSourceKind,
@@ -204,6 +206,42 @@ const probeBackstage = async (
 };
 
 /**
+ * docs/specs/external-context-delivery.md. Reads the llms.txt file and reports the links a run
+ * can read, with the first five titles, so the operator sees what a run can read. The count
+ * leaves out the Optional section and every link to another host (DI-21.37).
+ */
+const probeLlmsTxt = async (
+  input: ContextSourceProbeInput,
+  fetchImpl: typeof fetch,
+): Promise<ContextSourceProbeResult> => {
+  const client = new LlmsTxtClient({ endpoint: input.endpoint, token: input.credential, fetch: fetchImpl });
+  let text: string | null;
+  try {
+    text = await client.read(input.endpoint, LLMS_TXT_INDEX_MAX_BYTES);
+  } catch (error) {
+    return { ok: false, message: errorText(error), itemCount: 0, items: [] };
+  }
+  if (text === null) {
+    return {
+      ok: false,
+      message: `The llms.txt file is larger than ${LLMS_TXT_INDEX_MAX_BYTES} bytes. A run reads no page from it.`,
+      itemCount: 0,
+      items: [],
+    };
+  }
+  const links = parseLlmsTxt(text, input.endpoint);
+  return {
+    ok: links.length > 0,
+    message:
+      links.length === 0
+        ? "The llms.txt file answered, but it links no page on its host outside the Optional section. A run reads no page from it."
+        : `The llms.txt file links ${links.length} ${links.length === 1 ? "page" : "pages"} a run can read.`,
+    itemCount: links.length,
+    items: links.slice(0, MAX_LISTED_ITEMS).map((link) => ({ ref: link.url, title: link.title })),
+  };
+};
+
+/**
  * Issue 8. Tests one context source configuration before it is saved. SDD section 60: a server
  * can echo the credential back, so every text of the result passes a redactor that knows it.
  */
@@ -214,7 +252,9 @@ export const probeContextSource = async (
   const result =
     input.settings.kind === "mcp"
       ? await probeMcp(input, input.settings, fetchImpl)
-      : await probeBackstage(input, input.settings, fetchImpl);
+      : input.settings.kind === "llms_txt"
+        ? await probeLlmsTxt(input, fetchImpl)
+        : await probeBackstage(input, input.settings, fetchImpl);
   const redactor = new Redactor(input.credential === null ? [] : [input.credential]);
   return {
     ok: result.ok,

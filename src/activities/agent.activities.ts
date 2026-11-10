@@ -58,6 +58,11 @@ export interface ImplementActivityInput {
   validationContract: string;
   /** SDD section 21 and AT-09. The required-context lines. No file body travels with them. */
   requiredContext: string[];
+  /**
+   * docs/specs/external-context-delivery.md. One line per context file of the work sprite. Absent
+   * in a history recorded before the delivery existed.
+   */
+  contextFiles?: string[];
   humanDecisions: string[];
   repositoryInstructions: string;
   /** SDD sections 16 and 34. The applicable skills, as prompt lines. */
@@ -179,6 +184,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       validationContract: input.validationContract,
       contextContract: input.contextContract,
       requiredContext: input.requiredContext,
+      contextFiles: input.contextFiles ?? [],
       primaryRepositoryPath: input.primaryPath,
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,

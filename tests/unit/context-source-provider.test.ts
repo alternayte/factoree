@@ -53,6 +53,7 @@ const providerOf = (
     factories: {
       backstage: (row) => stub(row.sourceId),
       mcp: (row) => stub(row.sourceId),
+      llms_txt: (row) => stub(row.sourceId),
     },
   });
 

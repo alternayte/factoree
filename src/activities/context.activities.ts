@@ -10,6 +10,7 @@ import { readRepositoryContextConfiguration } from "~/domain/context/repository-
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 import { conflictQuestion } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
+import { deliverableItems } from "~/domain/context/context-delivery.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { readCredential } from "~/activities/repository-credential.js";
@@ -38,6 +39,11 @@ export interface ResolveContextActivityOutput {
   document: string;
   /** SDD section 21. Only a required item enters the initial role context. */
   requiredContext: string[];
+  /**
+   * docs/specs/external-context-delivery.md. The refs the work sprite delivery fetches, in
+   * contract order. The contract store keeps no order. Absent in an older history.
+   */
+  deliveryRefs?: string[];
   primary: { slug: string; sha: string };
   references: Array<{ slug: string; sha: string }>;
   /** SDD section 23. A non-null value means implementation must not start. */
@@ -228,6 +234,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       sha256,
       document,
       requiredContext: requiredContextLines(resolved.contract),
+      deliveryRefs: deliverableItems(resolved.contract.items).map((item) => item.reference.ref),
       primary: resolved.pinned.primary,
       references: resolved.pinned.references,
       unresolvedConflict:

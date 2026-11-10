@@ -191,17 +191,23 @@ export class BackstageContextSource implements ContextSource {
     return candidates;
   }
 
-  fetch(reference: ContextReference): Promise<ContextDocument> {
-    const document = this.documents.get(reference.ref);
-    if (document === undefined) {
-      return Promise.reject(
-        new Error(`The Backstage context source never offered "${reference.ref}".`),
-      );
+  /**
+   * docs/specs/external-context-delivery.md and DI-21.37. Works on a new instance without an
+   * earlier `discover`: the reference names the entity, so the catalog reads it by ref.
+   */
+  async fetch(reference: ContextReference): Promise<ContextDocument> {
+    const known = this.documents.get(reference.ref);
+    if (known !== undefined) {
+      return { reference, sourceVersion: known.sourceVersion, content: known.content };
     }
-    return Promise.resolve({
-      reference,
-      sourceVersion: document.sourceVersion,
-      content: document.content,
-    });
+    const prefix = backstageEntityRef("");
+    if (!reference.ref.startsWith(prefix)) {
+      throw new Error(`The Backstage context source never offers "${reference.ref}".`);
+    }
+    const entity = await this.options.catalog.getByRef(reference.ref.slice(prefix.length));
+    if (entity === null) {
+      throw new Error(`The Backstage catalog holds no entity "${reference.ref.slice(prefix.length)}" now.`);
+    }
+    return { reference, sourceVersion: entity.sourceVersion, content: renderEntity(entity) };
   }
 }

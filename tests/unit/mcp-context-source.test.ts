@@ -151,12 +151,26 @@ describe("McpContextSource", () => {
     expect(calls.map((call) => call.name)).toEqual(["search_docs"]);
   });
 
-  it("refuses a fetch for a reference it never offered", async () => {
+  it("fetches by ref on a new instance, because the work sprite is prepared in another activity", async () => {
+    // docs/specs/external-context-delivery.md and DI-21.37.
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const document = await sourceOf(calls, { read_doc: "the runbook" }).fetch({
+      sourceId: "docs",
+      ref: "docs:runbook/notification-retry",
+      repository: null,
+      sha: null,
+      path: null,
+    });
+    expect(calls).toEqual([{ name: "read_doc", args: { ref: "runbook/notification-retry" } }]);
+    expect(document.content).toBe("the runbook");
+    expect(document.sourceVersion).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("refuses a fetch for a reference of another source", async () => {
     const source = sourceOf([], { search_docs: ANSWER });
-    await source.discover(request);
     await expect(
-      source.fetch({ sourceId: "docs", ref: "docs:other", repository: null, sha: null, path: null }),
-    ).rejects.toThrow(/never offered/);
+      source.fetch({ sourceId: "other", ref: "other:runbook", repository: null, sha: null, path: null }),
+    ).rejects.toThrow(/never offers/);
   });
   it("drops a duplicate reference, so one MCP answer never fails a Run", async () => {
     // DI-5.13 and SDD section 21. Two items with one `ref` would make two

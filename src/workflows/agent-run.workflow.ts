@@ -988,6 +988,8 @@ export async function agentRunWorkflow(
         contextContract: attemptInput.contextContract,
         validationContract: attemptInput.validationContract,
         requiredContext: attemptInput.requiredContext,
+        // docs/specs/external-context-delivery.md. Absent in a history from before the delivery.
+        contextFiles: attemptInput.prepared.contextFiles ?? [],
         // docs/specs/own-proposals-and-parallel-runs.md. The implementer follows Factoree's own
         // decisions as it follows a human answer.
         humanDecisions: [...humanInputs, ...factoreeDecisions.map(describeDecision)],
@@ -1586,6 +1588,9 @@ export async function agentRunWorkflow(
         organizationSkills: sandbox.organizationSkills,
         githubInstallationId: primaryRepositoryInstallationId,
         skillRegistry: input.product.skillRegistry ?? null,
+        // docs/specs/external-context-delivery.md. The work sprite delivery fetches the external
+        // context items in contract order. An activity input adds no workflow command.
+        ...(resolvedContext.deliveryRefs === undefined ? {} : { contextRefs: resolvedContext.deliveryRefs }),
       };
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
@@ -1660,6 +1665,8 @@ export async function agentRunWorkflow(
             goal: refined.goal,
             statedCriteria: refined.acceptanceCriteria,
             contextContract: resolvedContext.document,
+            // docs/specs/external-context-delivery.md. Absent in a history from before the delivery.
+            contextFiles: preparedSandbox.contextFiles ?? [],
             skills: preparedSandbox.skills,
             previewConfigured: preparedSandbox.preview !== null && preparedSandbox.preview.enabled,
             timeoutMs: remainingMs(),

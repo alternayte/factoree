@@ -190,6 +190,9 @@ describe("AT-04 — Backstage discovery", () => {
         mcp: () => {
           throw new Error("unused");
         },
+        llms_txt: () => {
+          throw new Error("unused");
+        },
       },
     });
 
