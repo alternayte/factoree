@@ -53,6 +53,10 @@ RUN apt-get update \
       docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras docker-compose-plugin \
       uidmap slirp4netns iptables mise \
  && rm -rf /var/lib/apt/lists/*
+# DI-21.30. An E2B guest boots systemd, which would start the root daemons of these packages.
+RUN ln -sf /dev/null /etc/systemd/system/docker.service \
+ && ln -sf /dev/null /etc/systemd/system/docker.socket \
+ && ln -sf /dev/null /etc/systemd/system/containerd.service
 
 COPY factoree-docker-start /opt/factoree/bin/factoree-docker-start
 # DI-21.13. A container runtime bind-mounts /etc/hosts, so an image layer holds none, and a Kiln

@@ -24,7 +24,9 @@ else
 fi
 mkdir -p "$root"
 
-nohup dockerd-rootless.sh --data-root "$root" --storage-driver "$driver" >"$XDG_RUNTIME_DIR/dockerd.log" 2>&1 &
+# DI-21.30. An E2B guest boots systemd, so dockerd would pick the systemd cgroup driver and fail
+# on the missing user slice. With cgroupfs, rootless dockerd uses no cgroup, as on Kiln.
+nohup dockerd-rootless.sh --exec-opt native.cgroupdriver=cgroupfs --data-root "$root" --storage-driver "$driver" >"$XDG_RUNTIME_DIR/dockerd.log" 2>&1 &
 i=0
 while [ "$i" -lt 60 ]; do
   if docker info >/dev/null 2>&1; then exit 0; fi
