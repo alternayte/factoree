@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-11
+
+### Fixed
+
+- A sandbox delete that fails at the provider no longer counts as done. The sandbox keeps its lease with the failure time, and the reaper deletes it again on each pass, so E2B, Kiln and Sprites sandboxes no longer leak. A provider answer that the sandbox is already gone still counts as deleted (DI-21.63).
+
 ## [0.9.0] - 2026-11-10
 
 ### Added
