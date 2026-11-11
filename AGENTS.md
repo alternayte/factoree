@@ -87,3 +87,8 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - held slot: a live sandbox slot that a run reserves on its sandbox provider at start, for its peak of three sandboxes. Avoid: reservation, slot hold.
 - cloud runner: a runner whose agent runs outside Factoree's sandboxes, such as cursor-cloud, so Factoree takes its branch into the work sprite to capture the patch. Avoid: remote runner, hosted agent.
 - unenforced egress: the product switch that lets a cloud runner serve the implementer, whose egress Factoree cannot limit. Avoid: open egress, egress bypass.
+- change set: a run whose targets are two or more repositories of one product, published as linked pull requests. Avoid: multi-repo run, linked runs.
+- provider and consumer: in a change set, the target whose interface changes, and the target that calls it, linked by a cited edge. Avoid: upstream, downstream.
+- set snapshot: a warm snapshot that holds every target of one set, keyed by the sorted list of repository and bootstrap key. Avoid: combined snapshot, product snapshot.
+- wired pair: a provider and a consumer whose consumer fake names the provider repository, so they run together in the check sprite. Avoid: linked services, integration pair.
+- in-between check: the check of each consumer at its base against the provider patches, the state between the two merges. Avoid: compatibility check, partial-merge test.
