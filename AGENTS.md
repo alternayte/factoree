@@ -92,3 +92,12 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - set snapshot: a warm snapshot that holds every target of one set, keyed by the sorted list of repository and bootstrap key. Avoid: combined snapshot, product snapshot.
 - wired pair: a provider and a consumer whose consumer fake names the provider repository, so they run together in the check sprite. Avoid: linked services, integration pair.
 - in-between check: the check of each consumer at its base against the provider patches, the state between the two merges. Avoid: compatibility check, partial-merge test.
+- retro agent: the fresh agent role that reads the ended runs of a tenant's products on a schedule and proposes findings. Avoid: review agent, improvement agent, meta agent.
+- retro: one pass of the retro agent, run as its own workflow outside any run. Avoid: retrospective run, improvement pass, analysis run.
+- retro finding: one proposed improvement that targets one product and cites its runs, and that becomes a Linear issue only when a human creates it. Avoid: insight, recommendation, lesson.
+- retro goal: the optional product text that tells the retro agent what to improve first. Only the retro agent reads it. Avoid: product goal, factory goal, mandate.
+- kept transcript: the redacted, gzipped full output and tool inputs of one agent session, stored only when the product turns it on. Avoid: session log, trace, full log.
+- PR reviewer: an external review app that a product names by app slug and check name. Its check on the PR head gates an L4 merge, and its failure starts a PR follow-up run. Avoid: PR bot, review bot, external reviewer.
+- PR follow-up run: a follow-up run that targets an existing PR branch, started by a failed PR reviewer check, a human request-changes review or a base conflict, and that pushes a new verified commit. Avoid: PR repair, autofix, PR fix.
+- PR workflow: the workflow that publication starts per published PR, which takes the review, check, conflict, merge and deploy events after the run ends. Avoid: PR watcher, PR monitor.
+- finding triage: the fresh reviewer session that keeps only PR reviewer findings with a concrete defect, a rule and evidence, and answers each dropped finding on the PR. Avoid: finding filter, comment triage.
