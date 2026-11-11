@@ -359,9 +359,48 @@ export class SettingsSandbox implements Sandbox {
     return (await this.forRef(ref)).exposeService(ref, port);
   }
 
+  /**
+   * Deletes the sandbox at its provider, then drops its lease. A failed delete keeps the lease,
+   * because the sandbox still lives and takes a slot, and marks it so `retryFailedDestroys` deletes
+   * it again. Without the mark nothing would find it: no Run names a check sprite, a setup sandbox
+   * or a build-ahead sandbox, and a paused E2B sandbox stays until a kill.
+   */
   async destroy(ref: SandboxRef): Promise<void> {
-    await (await this.forRef(ref)).destroy(ref);
+    try {
+      await (await this.forRef(ref)).destroy(ref);
+    } catch (error) {
+      await this.slots?.destroyFailed(ref.adapter, ref.id).catch((markError: unknown) => {
+        this.options.logger?.error("the failed sandbox delete was not recorded, so nothing retries it", {
+          sprite_id: ref.id,
+          adapter: ref.adapter,
+          error: String(markError),
+          step: "retention",
+        });
+      });
+      throw error;
+    }
     await this.slots?.release(ref.adapter, ref.id);
+  }
+
+  /** Deletes again each sandbox whose delete failed. Answers how many are now gone. */
+  async retryFailedDestroys(limit = 50): Promise<number> {
+    if (this.slots === null) return 0;
+    let deleted = 0;
+    for (const entry of await this.slots.failedDestroys(limit)) {
+      try {
+        await this.destroy({ id: entry.sandboxId, adapter: entry.adapter, workspacePath: DEFAULT_WORKSPACE_PATH });
+        deleted += 1;
+      } catch (error) {
+        // The mark stays. The next pass tries again.
+        this.options.logger?.warn("a sandbox whose delete failed is still not deleted", {
+          sprite_id: entry.sandboxId,
+          adapter: entry.adapter,
+          error: String(error),
+          step: "retention",
+        });
+      }
+    }
+    return deleted;
   }
 }
 

@@ -8,6 +8,10 @@ import { TERMINAL_RUN_STATUSES } from "~/domain/runs/run-status.js";
 import { SandboxSlots } from "~/domain/runs/sandbox-slots.js";
 import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { SandboxRef } from "~/domain/runs/sandbox.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SettingsSandbox } from "~/adapters/sandbox/settings-sandbox.js";
 
 // docs/specs/release-0-1-0.md part 3, against PostgreSQL. DI-15.13: maxConcurrentRuns and the
 // queue. DI-15.14: sandboxMaxLive and the eviction of the oldest retained sandbox.
@@ -303,5 +307,63 @@ describe("held slots", () => {
     expect(await slots(deleted).hold(id, next, 3, 3)).toBe(true);
     expect(deleted.map((ref) => ref.id)).toEqual(["sbx-retained"]);
     expect(await store().usage()).toMatchObject({ [id]: { live: 3, retained: 0 } });
+  });
+});
+
+// A failed delete at the provider keeps the lease and marks it, and the reaper pass deletes the
+// sandbox again. No Run names a check sprite, so without the mark the sandbox would stay forever
+// (a paused E2B sandbox lives until a kill).
+describe("a failed sandbox delete", () => {
+  it("keeps the lease, marks it, and gives the slot back once a retry deletes the sandbox", async () => {
+    sequence += 1;
+    const id = `failing-${sequence}`;
+    const root = await mkdtemp(join(tmpdir(), "failed-delete-"));
+    try {
+      const sandbox = new SettingsSandbox({
+        settings: () =>
+          Promise.resolve({
+            image: null,
+            registryUsername: null,
+            registryToken: null,
+            providers: [
+              {
+                id,
+                name: id,
+                type: "local",
+                url: null,
+                apiKey: null,
+                maxLive: 5,
+                vcpus: null,
+                memoryMb: null,
+                priority: 1,
+                enabled: true,
+                downUntil: null,
+                downReason: null,
+              },
+            ],
+          }),
+        allowLocal: true,
+        localRoot: root,
+        leases: new PrismaSandboxLeaseStore(prisma),
+      });
+      const ref = await (await sandbox.forProvider(id)).create({ runId: "check-run", tenantId, productId: "p" });
+      const adapter = sandbox.adapterOf(id);
+      if (adapter === null) throw new Error("no adapter");
+      const destroy = adapter.destroy.bind(adapter);
+      adapter.destroy = () => Promise.reject(new Error("provider down"));
+
+      await expect(sandbox.destroy(ref)).rejects.toThrow("provider down");
+      const marked = await prisma.sandboxLease.findFirstOrThrow({ where: { adapter: id, sandboxId: ref.id } });
+      expect(marked.destroyFailedAt).not.toBeNull();
+      // A retry that fails again keeps the mark.
+      expect(await sandbox.retryFailedDestroys()).toBe(0);
+      expect(await prisma.sandboxLease.count({ where: { adapter: id } })).toBe(1);
+
+      adapter.destroy = destroy;
+      expect(await sandbox.retryFailedDestroys()).toBe(1);
+      expect(await prisma.sandboxLease.count({ where: { adapter: id } })).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

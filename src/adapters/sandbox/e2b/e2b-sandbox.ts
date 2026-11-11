@@ -222,11 +222,11 @@ export class E2BSandbox implements Sandbox {
   async destroy(ref: SandboxRef): Promise<void> {
     this.attached.delete(ref.id);
     this.lastKeepAlive.delete(ref.id);
-    try {
-      await this.options.gateway.kill(ref.id);
-    } catch {
-      // Destruction is idempotent. A sandbox that has gone is destroyed.
-    }
+    // The gateway answers false for a sandbox that E2B no longer has, so a repeated destroy is a
+    // no-op. Every other error reaches the caller: the lease stays, and the reaper or an eviction
+    // tries again. A swallowed error would clear the Run's reference and leave a paused sandbox on
+    // E2B that nothing deletes, because E2B keeps a paused sandbox until a kill.
+    await this.options.gateway.kill(ref.id);
   }
 
   /** A create and a restore send the same metadata: the run that owns the new sandbox (issue #5). */

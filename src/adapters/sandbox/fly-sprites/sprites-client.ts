@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Checkpoint, Sprite } from "@fly/sprites";
-import { SpritesClient } from "@fly/sprites";
+import { APIError, SpritesClient } from "@fly/sprites";
 
 /**
  * The narrow seam over `@fly/sprites`. Only this file knows the SDK. The adapter above it, the
@@ -254,7 +254,12 @@ export const wrapSprite = (sprite: Sprite, client: SpritesClient): SpritesSprite
     return { id: created.id };
   },
   updateNetworkPolicy: (policy) => sprite.updateNetworkPolicy(policy),
-  delete: () => sprite.delete(),
+  // A sprite that has already gone is deleted: the API answers 404.
+  delete: () =>
+    sprite.delete().catch((error: unknown) => {
+      if (error instanceof APIError && error.statusCode === 404) return;
+      throw error;
+    }),
 });
 
 export const createSpritesGateway = (options: SpritesGatewayOptions): SpritesGateway => {

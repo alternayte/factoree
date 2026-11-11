@@ -513,10 +513,14 @@ model SandboxLease {
   createdAt     DateTime  @default(now())
   // Set while a worker deletes this retained sandbox to free its slot.
   evictingSince DateTime?
+  // Set when a delete at the provider failed. The sandbox still lives, so the lease stays, and the
+  // reaper deletes it again on each pass until the provider confirms it.
+  destroyFailedAt DateTime? @map("destroy_failed_at")
 
   @@unique([adapter, sandboxId])
   @@index([adapter, createdAt])
   @@index([runId])
+  @@index([destroyFailedAt])
 }
 
 // docs/specs/sandbox-provider-spillover.md. One sandbox provider of the install: a Kiln host, an E2B

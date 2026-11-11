@@ -217,6 +217,7 @@ const reaper = new SpriteReaper({
   runs,
   onDestroyed: (entry) => metrics.sandboxesDestroyed.inc({ adapter: entry.adapter, reason: "RETENTION" }),
   retiredSnapshots: warmSnapshots,
+  retryFailedDestroys: () => sandbox.retryFailedDestroys(),
 });
 
 // The Linear access token belongs to the workspace of the Run. The session id carries the

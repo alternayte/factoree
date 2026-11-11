@@ -335,11 +335,9 @@ export class FlySpriteSandbox implements Sandbox {
 
   async destroy(ref: SandboxRef): Promise<void> {
     this.attached.delete(ref.id);
-    try {
-      await this.options.gateway.sprite(ref.id).delete();
-    } catch {
-      // Destruction is idempotent. A sprite that has already gone is destroyed.
-    }
+    // The gateway treats a sprite that has gone as deleted. Every other error reaches the caller,
+    // so the lease stays and the reaper or an eviction tries again.
+    await this.options.gateway.sprite(ref.id).delete();
   }
 
   private procDir(ref: SandboxRef, id: string): string {
