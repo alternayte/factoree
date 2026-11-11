@@ -43,6 +43,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: ./checks/migrations.sh
+      - run: ./checks/agents-md.sh
       - run: ./scripts/upgrade-test.sh
   chart:
     runs-on: ubuntu-latest

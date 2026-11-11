@@ -245,8 +245,10 @@ export class KilnSandbox implements Sandbox {
     for (const key of this.outputs.keys()) if (key.startsWith(`${ref.id}/`)) this.outputs.delete(key);
     try {
       await this.options.client.deleteSandbox(ref.id);
-    } catch {
-      // Destruction is idempotent. A sandbox that has gone is destroyed.
+    } catch (error) {
+      // Destruction is idempotent: a sandbox that has gone is destroyed. Every other error reaches
+      // the caller, so the lease stays and the reaper or an eviction tries again.
+      if (!isKilnNotFound(error)) throw error;
     }
   }
 

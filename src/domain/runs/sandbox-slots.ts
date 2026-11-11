@@ -53,6 +53,10 @@ export interface SandboxLeaseStore {
   evicted(victim: RetainedSandbox): Promise<void>;
   /** The delete failed: the sandbox stays live and can be chosen again. */
   evictionFailed(victim: RetainedSandbox): Promise<void>;
+  /** Marks the lease of a sandbox whose delete at the provider failed. */
+  destroyFailed(adapter: string, sandboxId: string): Promise<void>;
+  /** The sandboxes whose delete failed, oldest mark first. */
+  failedDestroys(limit: number): Promise<Array<{ adapter: string; sandboxId: string }>>;
 }
 
 export interface SandboxSlotsOptions {
@@ -151,5 +155,13 @@ export class SandboxSlots {
 
   release(adapter: string, sandboxId: string): Promise<void> {
     return this.options.store.release(adapter, sandboxId);
+  }
+
+  destroyFailed(adapter: string, sandboxId: string): Promise<void> {
+    return this.options.store.destroyFailed(adapter, sandboxId);
+  }
+
+  failedDestroys(limit: number): Promise<Array<{ adapter: string; sandboxId: string }>> {
+    return this.options.store.failedDestroys(limit);
   }
 }

@@ -156,4 +156,18 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
   async evictionFailed(victim: RetainedSandbox): Promise<void> {
     await this.prisma.sandboxLease.updateMany({ where: { id: victim.leaseId }, data: { evictingSince: null } });
   }
+
+  async destroyFailed(adapter: string, sandboxId: string): Promise<void> {
+    await this.prisma.sandboxLease.updateMany({ where: { adapter, sandboxId }, data: { destroyFailedAt: new Date() } });
+  }
+
+  async failedDestroys(limit: number): Promise<Array<{ adapter: string; sandboxId: string }>> {
+    const rows = await this.prisma.sandboxLease.findMany({
+      where: { destroyFailedAt: { not: null }, sandboxId: { not: null } },
+      orderBy: { destroyFailedAt: "asc" },
+      take: limit,
+      select: { adapter: true, sandboxId: true },
+    });
+    return rows.flatMap((row) => (row.sandboxId === null ? [] : [{ adapter: row.adapter, sandboxId: row.sandboxId }]));
+  }
 }

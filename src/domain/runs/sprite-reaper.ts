@@ -30,6 +30,12 @@ export interface SpriteReaperOptions {
   onDestroyed?: (entry: ExpiredSandbox) => void;
   /** The warm snapshots that no row names any more. The reaper removes each one it can. */
   retiredSnapshots?: Pick<WarmSnapshotStore, "listRetired" | "dropRetired">;
+  /**
+   * Deletes again each sandbox whose earlier delete failed, and answers how many are gone. A
+   * check sprite, a setup sandbox and a build-ahead sandbox have no Run reference, so only this
+   * pass finds them.
+   */
+  retryFailedDestroys?: () => Promise<number>;
 }
 
 /** The one workspace path every adapter uses. A delete needs a complete `SandboxRef`. */
@@ -72,6 +78,7 @@ export class SpriteReaper {
       this.options.onDestroyed?.(entry);
       destroyed += 1;
     }
+    destroyed += (await this.options.retryFailedDestroys?.()) ?? 0;
     // After the sandboxes: a deleted sandbox no longer reads the snapshot it started from.
     await this.removeRetiredSnapshots();
     return destroyed;

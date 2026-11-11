@@ -149,6 +149,7 @@ verify:
     }
 
     run_stage migrations ./checks/migrations.sh
+    run_stage agents-md ./checks/agents-md.sh
     run_stage lint npm run lint
     run_stage typecheck npm run typecheck
     run_stage unit npm test

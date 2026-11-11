@@ -201,6 +201,16 @@ describe("KilnSandbox (docs/specs/kiln-sandbox-provider.md)", () => {
   });
 });
 
+describe("KilnSandbox destroy", () => {
+  it("treats a sandbox Kiln no longer has as deleted, and passes any other failure to the caller", async () => {
+    const gone = fakeKiln(() => undefined);
+    await expect(new KilnSandbox({ client: gone.client, image: IMAGE }).destroy(ref)).resolves.toBeUndefined();
+
+    const refused = fakeKiln(() => ({ status: 400, body: { error: { code: "bad_request", message: "no" } } }));
+    await expect(new KilnSandbox({ client: refused.client, image: IMAGE }).destroy(ref)).rejects.toThrow("bad_request");
+  });
+});
+
 describe("KilnClient retries (a Kiln restart answers 502 for a while)", () => {
   const flaky = (failures: number, status: number | "network") => {
     const calls: string[] = [];

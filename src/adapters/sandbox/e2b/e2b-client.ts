@@ -36,6 +36,7 @@ export interface E2BGateway {
   snapshot(sandboxId: string): Promise<string>;
   /** False when E2B has no such snapshot. */
   deleteSnapshot(snapshotId: string): Promise<boolean>;
+  /** Deletes a sandbox, also a paused one. A sandbox E2B no longer has is a no-op; any other error throws. */
   kill(sandboxId: string): Promise<void>;
 }
 

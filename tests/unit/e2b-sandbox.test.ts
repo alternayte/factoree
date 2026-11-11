@@ -186,6 +186,13 @@ describe("E2BSandbox (docs/specs/e2b-sandbox-provider.md)", () => {
     expect(recorded.keepAlives).toBe(1);
   });
 
+  it("passes a failed kill to the caller, because E2B keeps a paused sandbox until a kill", async () => {
+    const { gateway } = fakeGateway({ kill: () => Promise.reject(new Error("e2b: 503")) });
+    const sandbox = new E2BSandbox({ gateway, image: IMAGE });
+    const ref = await sandbox.create(input);
+    await expect(sandbox.destroy(ref)).rejects.toThrow("e2b: 503");
+  });
+
   it("exposes a port at the https URL of its E2B host", async () => {
     const { gateway } = fakeGateway();
     const sandbox = new E2BSandbox({ gateway, image: IMAGE });

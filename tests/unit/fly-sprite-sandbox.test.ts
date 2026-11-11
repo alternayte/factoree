@@ -251,11 +251,12 @@ describe("FlySpriteSandbox", () => {
     expect(killScripts).toHaveLength(0);
   });
 
-  it("does not throw when it destroys a sprite that has already gone", async () => {
-    const sprite = handle({ delete: vi.fn().mockRejectedValue(new Error("404 not found")) });
+  it("passes a failed delete to the caller, so the lease stays and the reaper tries again", async () => {
+    // The gateway answers a sprite that has gone as deleted. Any other failure is a live sprite.
+    const sprite = handle({ delete: vi.fn().mockRejectedValue(new Error("500 internal")) });
     const sandbox = new FlySpriteSandbox({ gateway: gateway(sprite) });
     const ref = await sandbox.create({ runId: "run-a", tenantId: "t", productId: "p" });
-    await expect(sandbox.destroy(ref)).resolves.toBeUndefined();
+    await expect(sandbox.destroy(ref)).rejects.toThrow("500 internal");
   });
 
   it("creates a named checkpoint", async () => {
