@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-12
+
+### Fixed
+
+- The Temporal UI links of the run page and the setup history page use the namespace in `FACTOREE_TEMPORAL_NAMESPACE`, not `default`. Set it on the API as well as on the worker.
+- A run on a private repository no longer stops at context discovery. The tree and blob reads of the `blob:none` mirror fetch missing blobs from GitHub with the read-only credential (GitHub issue 38).
+- An opencode session on an `azure/claude-*` model gets `AZURE_API_KEY`. opencode 1.19.5 asked for `ANTHROPIC_API_KEY`, because Azure names two environment variables (GitHub issue 37).
+- A setup whose agent session failed names the redacted agent error after "The setup agent wrote no .factoree/config.yaml." (GitHub issue 37).
+
 ## [0.9.1] - 2026-11-11
 
 ### Fixed
