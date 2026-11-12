@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { getRunOptions } from "@/api/@tanstack/react-query.gen";
+import { useState } from "react";
+import { getRunOptions, getRunQueryKey } from "@/api/@tanstack/react-query.gen";
+import { stopRun } from "@/api/sdk.gen";
 import type { GetRunResponse } from "@/api/types.gen";
+import { Button } from "@/components/button";
+import { Confirm } from "@/components/confirm";
 import {
   Alert,
   Badge,
@@ -33,9 +37,16 @@ type Run = GetRunResponse;
 export function RunPage({ runId, ws }: { runId: string; ws?: string }) {
   const me = useMe();
   const workspace = pickWorkspace(me.data?.memberships ?? [], ws);
+  // Issue #45. True once this page sent a stop, so it polls even when the stop record is late.
+  const [stopSent, setStopSent] = useState(false);
   const run = useQuery({
     ...getRunOptions({ path: { id: runId }, query: { linearWorkspaceId: workspace?.linearWorkspaceId ?? "" } }),
     enabled: Boolean(workspace),
+    // A stopped run polls until it ends, so a stop that takes time to reach the activity shows.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data && !data.terminal && (stopSent || data.stopRequestedAt !== null) ? 3000 : false;
+    },
   });
   const back = (
     <Link to="/runs" search={ws ? { ws } : {}} className="hover:text-body">
@@ -74,6 +85,8 @@ export function RunPage({ runId, ws }: { runId: string; ws?: string }) {
       admin={workspace.admin}
       workspaceId={workspace.linearWorkspaceId}
       temporalNamespace={me.data?.temporalNamespace ?? "default"}
+      stopping={!run.data.terminal && (stopSent || run.data.stopRequestedAt !== null)}
+      onStopped={() => setStopSent(true)}
     />
   );
 }
@@ -84,17 +97,43 @@ function RunDetail({
   admin,
   workspaceId,
   temporalNamespace,
+  stopping,
+  onStopped,
 }: {
   run: Run;
   crumb: React.ReactNode;
   admin: boolean;
   workspaceId: string;
   temporalNamespace: string;
+  stopping: boolean;
+  onStopped: () => void;
 }) {
   const identifier = issueIdentifier(run.workItemUrl);
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const stop = useMutation({
+    mutationFn: async () =>
+      stopRun({ path: { id: run.id }, body: { linearWorkspaceId: workspaceId }, throwOnError: true }),
+    onSuccess: () => {
+      setConfirming(false);
+      onStopped();
+      void qc.invalidateQueries({
+        queryKey: getRunQueryKey({ path: { id: run.id }, query: { linearWorkspaceId: workspaceId } }),
+      });
+    },
+  });
+  const hours = run.sandboxRetentionHours;
   return (
     <>
       <PageHeader
+        actions={
+          // Issue #45. A workspace admin stops a run that has not ended. The badge shows the stop until the run ends.
+          admin && !run.terminal && !stopping ? (
+            <Button variant="danger" onClick={() => setConfirming(true)}>
+              Stop run
+            </Button>
+          ) : null
+        }
         crumb={
           <>
             {crumb} / {identifier ?? run.id.slice(0, 8)}
@@ -104,6 +143,7 @@ function RunDetail({
         description={
           <span className="flex flex-wrap items-center gap-2">
             <Badge tone={statusTone(run.status)}>{run.status}</Badge>
+            {stopping ? <Badge tone="neutral">Stopping…</Badge> : null}
             {run.failureReason ? <span className="font-mono text-xs">{run.failureReason}</span> : null}
             <span>{run.productName}</span>
           </span>
@@ -137,6 +177,17 @@ function RunDetail({
               { label: "Autonomy", value: run.autonomyLevel },
               { label: "Started", value: formatDate(run.createdAt) },
               { label: "Ended", value: run.completedAt ? formatDate(run.completedAt) : "—" },
+              ...(run.stopSource
+                ? [
+                    {
+                      label: "Stopped from",
+                      value:
+                        run.stopSource === "factoree_ui"
+                          ? `Factoree UI${run.stopRequestedBy ? ` by ${run.stopRequestedBy}` : ""}`
+                          : "Linear",
+                    },
+                  ]
+                : []),
               { label: "Base", value: run.baseSha ? <code>{run.baseSha.slice(0, 12)}</code> : "—" },
               ...(run.skillResolutionId
                 ? [
@@ -190,6 +241,24 @@ function RunDetail({
           <Skills run={run} />
         </Section>
       ) : null}
+      <Confirm
+        open={confirming}
+        title="Stop this run?"
+        confirmLabel="Stop run"
+        mutation={stop}
+        onCancel={() => {
+          setConfirming(false);
+          stop.reset();
+        }}
+        onConfirm={() => stop.mutate()}
+      >
+        <p>
+          Factoree stops the agents and the checks, and the Run ends as Cancelled. A cancelled run takes no reply;
+          delegate the issue again to start a new one. Work so far stays in the retained sandbox for {hours}{" "}
+          {hours === 1 ? "hour" : "hours"}.
+        </p>
+        <ErrorAlert error={stop.error} className="mt-3" />
+      </Confirm>
     </>
   );
 }

@@ -8,6 +8,7 @@ import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
+import type { RunStopLog, StopRequest } from "~/domain/runs/run-stop.js";
 
 /**
  * Specification section 9. Posts a refusal reason on the agent session that raised it, so a
@@ -44,7 +45,7 @@ import { ignoresImages } from "~/domain/products/model-vision.js";
 export interface WorkflowStarter {
   start(input: { workflowId: string; args: [AgentRunWorkflowInput] }): Promise<void>;
   // Both signal methods report false if the workflow is not running.
-  signalStop(workflowId: string): Promise<boolean>;
+  signalStop(workflowId: string, request?: StopRequest): Promise<boolean>;
   signalHumanInput(workflowId: string, body: string): Promise<boolean>;
 }
 
@@ -77,6 +78,8 @@ export interface DelegationDependencies {
    * operator sets up a repository.
    */
   productPageUrl?: ((productId: string) => string) | undefined;
+  /** Issue #45. Records who stopped a Run and from where. */
+  stops?: RunStopLog | undefined;
 }
 
 export class DelegationService {
@@ -134,8 +137,12 @@ export class DelegationService {
     const latest = (await this.dependencies.sessionRuns?.findByAgentSession(tenantId, event.agentSession.id)) ?? null;
     if (command.kind === "stop") {
       const target = latest?.temporalWorkflowId ?? workflowId;
-      const signalled = await this.dependencies.starter.signalStop(target);
-      metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
+      const signalled = await this.stopRun({
+        tenantId,
+        runId: latest !== null && !isTerminalRunStatus(latest.status) ? latest.id : null,
+        workflowId: target,
+        request: { source: "linear" },
+      });
       return signalled ? { kind: "stopped", workflowId: target } : { kind: "not_running", workflowId: target };
     }
     let followUp: { failedRunId: string; reply: string; browserAssertions: string[] } | null = null;
@@ -288,6 +295,28 @@ export class DelegationService {
     });
 
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId: runWorkflowId };
+  }
+
+  /**
+   * SDD section 50, issue #45. The one stop path of a Run, for a Linear stop and for a Factoree UI
+   * stop. It reports false when the workflow is not running. A Run that took the signal records
+   * who stopped it and from where. A failed record never undoes a stop that reached the workflow.
+   */
+  async stopRun(input: { tenantId: string; runId: string | null; workflowId: string; request: StopRequest }): Promise<boolean> {
+    const signalled = await this.dependencies.starter.signalStop(input.workflowId, input.request);
+    metrics.humanInterventions.inc({ tenant_id: input.tenantId, product_id: "" });
+    if (signalled && input.runId !== null && this.dependencies.stops !== undefined) {
+      try {
+        await this.dependencies.stops.record(input.tenantId, input.runId, input.request, new Date());
+      } catch (error) {
+        this.dependencies.logger.error("the stop of a run was not recorded", {
+          tenant_id: input.tenantId,
+          run_id: input.runId,
+          error: String(error),
+        });
+      }
+    }
+    return signalled;
   }
 
   /** docs/specs/run-recovery.md. The issue text plus the reply and the facts of the failed run. */

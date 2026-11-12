@@ -1647,6 +1647,11 @@ export type GetRunResponses = {
     waitedMs: number;
     sandboxProvider: string | null;
     temporalWorkflowId: string;
+    terminal: boolean;
+    stopRequestedAt: string | null;
+    stopSource: string | null;
+    stopRequestedBy: string | null;
+    sandboxRetentionHours: number;
     autonomyLevel: string;
     followUpOfRunId: string | null;
     baseSha: string | null;
@@ -1717,6 +1722,51 @@ export type GetRunResponses = {
 };
 
 export type GetRunResponse = GetRunResponses[keyof GetRunResponses];
+
+export type StopRunData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/runs/{id}/stop";
+};
+
+export type StopRunErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type StopRunError = StopRunErrors[keyof StopRunErrors];
+
+export type StopRunResponses = {
+  /**
+   * Default Response
+   */
+  202: {
+    stopRequestedBy: string | null;
+  };
+};
+
+export type StopRunResponse = StopRunResponses[keyof StopRunResponses];
 
 export type ListProductAgentSessionsData = {
   body?: never;

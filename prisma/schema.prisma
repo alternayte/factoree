@@ -143,6 +143,11 @@ model Run {
   // issue from, and the state it set. Both null when the run moved nothing.
   issueStateFromId         String?   @map("issue_state_from_id")
   issueStateSetId          String?   @map("issue_state_set_id")
+  // Issue #45, DI-21.65. The first stop that reached the workflow: when, from where ("linear" or
+  // "factoree_ui"), and the admin who sent a Factoree UI stop. Null when nobody stopped the run.
+  stopRequestedAt          DateTime? @map("stop_requested_at")
+  stopSource               String?   @map("stop_source")
+  stopRequestedBy          String?   @map("stop_requested_by")
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   stages                   RunStage[]

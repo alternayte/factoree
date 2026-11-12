@@ -9,6 +9,7 @@ import {
   type RunListQuery,
   type RunViewReader,
 } from "~/domain/runs/run-view.js";
+import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -140,6 +141,10 @@ export class PrismaRunViewReader implements RunViewReader {
         skillRegistrySet: true,
         skillResolutionId: true,
         proofPackPostedAt: true,
+        stopRequestedAt: true,
+        stopSource: true,
+        stopRequestedBy: true,
+        product: { select: { slug: true, name: true, sandboxRetentionHours: true } },
       },
     });
     if (row === null) return null;
@@ -160,6 +165,11 @@ export class PrismaRunViewReader implements RunViewReader {
     return {
       ...toListItem(row, costs.get(runId) ?? null, await this.providerNames()),
       temporalWorkflowId: row.temporalWorkflowId,
+      terminal: isTerminalRunStatus(row.status as RunStatus),
+      stopRequestedAt: row.stopRequestedAt,
+      stopSource: row.stopSource,
+      stopRequestedBy: row.stopRequestedBy,
+      sandboxRetentionHours: row.product.sandboxRetentionHours,
       autonomyLevel: row.autonomyLevel,
       followUpOfRunId: row.followUpOfRunId,
       baseSha: row.baseSha,

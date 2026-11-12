@@ -191,7 +191,7 @@ describe("DelegationService", () => {
     const { service, starter } = build();
     const outcome = await service.handleAgentSessionEvent(event("agent-session-prompted-stop"), "delivery-2");
     expect(outcome).toEqual({ kind: "stopped", workflowId: "linear:workspace-123:session-1" });
-    expect(starter.signalStop).toHaveBeenCalledWith("linear:workspace-123:session-1");
+    expect(starter.signalStop).toHaveBeenCalledWith("linear:workspace-123:session-1", { source: "linear" });
   });
 
   it("releases the delivery marker when the workflow start fails", async () => {

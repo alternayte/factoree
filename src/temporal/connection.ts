@@ -49,8 +49,13 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
       if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
     }
   },
-  async signalStop(workflowId) {
-    return signalIfRunning(() => client.workflow.getHandle(workflowId).signal(stopSignal));
+  async signalStop(workflowId, request) {
+    // Issue #45. The payload names where the stop came from. A stop with none still works.
+    return signalIfRunning(() =>
+      request === undefined
+        ? client.workflow.getHandle(workflowId).signal(stopSignal)
+        : client.workflow.getHandle(workflowId).signal(stopSignal, request),
+    );
   },
   async signalHumanInput(workflowId, body) {
     return signalIfRunning(() => client.workflow.getHandle(workflowId).signal(humanInputSignal, body));

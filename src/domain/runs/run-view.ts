@@ -100,6 +100,16 @@ export interface RunSkillProposalView {
 
 export interface RunDetail extends RunListItem {
   temporalWorkflowId: string;
+  /** Issue #45. True when the status is terminal, so the run takes no stop. */
+  terminal: boolean;
+  /** Issue #45, DI-21.65. The first stop that reached the workflow, or null. */
+  stopRequestedAt: Date | null;
+  /** "linear" or "factoree_ui", or null when nobody stopped the run. */
+  stopSource: string | null;
+  /** The admin who stopped the run from the Factoree UI, or null. */
+  stopRequestedBy: string | null;
+  /** The sandbox retention of the product, in hours. A stopped run keeps its work sprite this long. */
+  sandboxRetentionHours: number;
   autonomyLevel: string;
   /** docs/specs/run-recovery.md. The failed run this run follows up, or null. */
   followUpOfRunId: string | null;

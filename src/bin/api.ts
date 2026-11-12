@@ -1,4 +1,5 @@
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
+import { PrismaRunStopLog } from "~/persistence/prisma/run-stop.prisma.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "~/config/env.js";
@@ -108,6 +109,8 @@ const delegation = new DelegationService({
   logger,
   repositoryBaseUrl: githubBaseUrl(settings),
   productPageUrl: (productId) => `${env.FACTOREE_PUBLIC_URL.replace(/\/+$/, "")}/products/${productId}`,
+  // Issue #45. Records who stopped a run and from where.
+  stops: new PrismaRunStopLog(prisma),
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`

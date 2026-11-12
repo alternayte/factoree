@@ -120,6 +120,9 @@ import type {
   StartSetupLinearInstallData,
   StartSetupLinearInstallErrors,
   StartSetupLinearInstallResponses,
+  StopRunData,
+  StopRunErrors,
+  StopRunResponses,
   TestContextSourceData,
   TestContextSourceErrors,
   TestContextSourceResponses,
@@ -607,6 +610,30 @@ export const getRun = <ThrowOnError extends boolean = false>(
     ],
     url: "/admin/runs/{id}",
     ...options,
+  });
+
+export const stopRun = <ThrowOnError extends boolean = false>(
+  options: Options<StopRunData, ThrowOnError>,
+): RequestResult<StopRunResponses, StopRunErrors, ThrowOnError> =>
+  (options.client ?? client).post<StopRunResponses, StopRunErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/runs/{id}/stop",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 export const listProductAgentSessions = <ThrowOnError extends boolean = false>(

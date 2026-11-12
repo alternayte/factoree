@@ -6294,6 +6294,30 @@
                     "temporalWorkflowId": {
                       "type": "string"
                     },
+                    "terminal": {
+                      "type": "boolean"
+                    },
+                    "stopRequestedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "stopSource": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "stopRequestedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sandboxRetentionHours": {
+                      "type": "number"
+                    },
                     "autonomyLevel": {
                       "type": "string"
                     },
@@ -6643,6 +6667,11 @@
                     "waitedMs",
                     "sandboxProvider",
                     "temporalWorkflowId",
+                    "terminal",
+                    "stopRequestedAt",
+                    "stopSource",
+                    "stopRequestedBy",
+                    "sandboxRetentionHours",
                     "autonomyLevel",
                     "followUpOfRunId",
                     "baseSha",
@@ -6680,6 +6709,122 @@
             }
           },
           "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/runs/{id}/stop": {
+      "post": {
+        "operationId": "stopRun",
+        "tags": [
+          "runs"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stopRequestedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "stopRequestedBy"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
             "description": "Default Response",
             "content": {
               "application/json": {

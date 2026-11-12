@@ -14,6 +14,7 @@ import {
   workflowInfo,
 } from "@temporalio/workflow";
 import type { RunStatus } from "~/domain/runs/run-status.js";
+import { readStopRequest, stopResponse, type StopRequest } from "../domain/runs/run-stop.js";
 import type { Activities } from "~/activities/index.js";
 import type {
   PrepareCheckSandboxActivityOutput,
@@ -256,7 +257,13 @@ type ReviewBranchOutcome =
   | { kind: "unavailable" }
   | { kind: "error"; error: unknown };
 
-export const stopSignal = defineSignal("stop");
+/**
+ * SDD section 50, issue #45. The payload names where the stop came from. It is optional, so a
+ * signal with no argument, from an older client or the Temporal CLI, still stops the Run and
+ * reads as a Linear stop. Only the text of the final response depends on it, so a replay of a
+ * workflow that took the old signal gives the same commands (DI-21.64).
+ */
+export const stopSignal = defineSignal<[StopRequest?]>("stop");
 export const humanInputSignal = defineSignal<[string]>("humanInput");
 export const runStatusQuery = defineQuery<RunSnapshot>("runStatus");
 
@@ -582,6 +589,8 @@ export async function agentRunWorkflow(
   let status: RunStatus = "RECEIVED";
   const humanInputs: string[] = [];
   let stopRequested = false;
+  /** Issue #45. Where the first stop came from, or null for a stop with no payload. */
+  let stopRequest: StopRequest | null = null;
   let sprite: PrepareSandboxActivityOutput | null = null;
   // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
   // validation, review and publication run there, never in the sprite the Implementer used.
@@ -639,7 +648,8 @@ export async function agentRunWorkflow(
   const defaultBranchForSlug = (slug: string) =>
     targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
 
-  setHandler(stopSignal, () => {
+  setHandler(stopSignal, (request?: StopRequest) => {
+    if (!stopRequested) stopRequest = readStopRequest(request);
     stopRequested = true;
   });
   setHandler(humanInputSignal, (body: string) => {
@@ -1234,11 +1244,7 @@ export async function agentRunWorkflow(
     await notify(() =>
       activities.postFinalResponse({
         sessionId: input.agentSessionId,
-        body:
-          publishedPullRequestUrl === null
-            ? "Factoree stopped this Run at your request. No change was published."
-            : "Factoree stopped this Run at your request. The verified change is already " +
-              `published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
+        body: stopResponse(stopRequest, publishedPullRequestUrl),
       }),
     );
     return { runId: id, status };
