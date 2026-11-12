@@ -30,6 +30,8 @@ export interface SettingsRouteDependencies {
   publicUrl: string;
   masterKey: string;
   localSandboxAllowed: boolean;
+  /** The Temporal namespace of the install. The UI links into the Temporal UI under it. */
+  temporalNamespace: string;
   /** The teams of a set-up workspace, read with the Linear app token of that workspace. */
   listLinearTeams: (linearWorkspaceId: string) => Promise<Array<{ id: string; key: string; name: string }>>;
   /** docs/specs/run-speed.md. A new provider, image or size makes every warm snapshot stale. */
@@ -71,6 +73,7 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
         apiKeyId: principal.apiKeyId,
         memberships: principal.memberships,
         operatorAdmin: principal.operatorAdmin,
+        temporalNamespace: dependencies.temporalNamespace,
       };
     },
   );

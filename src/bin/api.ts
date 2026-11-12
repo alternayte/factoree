@@ -209,6 +209,7 @@ const app = buildServer({
   buildAhead,
   setupAfterPush: createSetupAfterPushRequester(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
   temporalUiUrl: env.FACTOREE_TEMPORAL_UI_URL,
+  temporalNamespace: env.FACTOREE_TEMPORAL_NAMESPACE,
   // docs/specs/skill-registry.md. Skael is the one registry kind.
   // docs/specs/model-picker.md. The product page picks models from the models.dev catalog.
   modelCatalog: new ModelCatalogService({ store: new PrismaModelCatalogStore(prisma), source: createModelsDevSource(), logger }),

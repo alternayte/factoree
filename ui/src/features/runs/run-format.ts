@@ -51,6 +51,6 @@ export const STATUS_FILTERS = [
 ] as const;
 
 /** The Temporal UI page of one workflow, through the proxy at /temporal. */
-export function temporalWorkflowUrl(workflowId: string): string {
-  return `/temporal/namespaces/default/workflows/${encodeURIComponent(workflowId)}`;
+export function temporalWorkflowUrl(namespace: string, workflowId: string): string {
+  return `/temporal/namespaces/${encodeURIComponent(namespace)}/workflows/${encodeURIComponent(workflowId)}`;
 }

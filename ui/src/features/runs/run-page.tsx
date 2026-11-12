@@ -67,7 +67,15 @@ export function RunPage({ runId, ws }: { runId: string; ws?: string }) {
       </>
     );
   }
-  return <RunDetail run={run.data} crumb={back} admin={workspace.admin} workspaceId={workspace.linearWorkspaceId} />;
+  return (
+    <RunDetail
+      run={run.data}
+      crumb={back}
+      admin={workspace.admin}
+      workspaceId={workspace.linearWorkspaceId}
+      temporalNamespace={me.data?.temporalNamespace ?? "default"}
+    />
+  );
 }
 
 function RunDetail({
@@ -75,11 +83,13 @@ function RunDetail({
   crumb,
   admin,
   workspaceId,
+  temporalNamespace,
 }: {
   run: Run;
   crumb: React.ReactNode;
   admin: boolean;
   workspaceId: string;
+  temporalNamespace: string;
 }) {
   const identifier = issueIdentifier(run.workItemUrl);
   return (
@@ -150,7 +160,7 @@ function RunDetail({
               </a>
             ) : null}
             {admin ? (
-              <a className="link" href={temporalWorkflowUrl(run.temporalWorkflowId)} target="_blank" rel="noreferrer">
+              <a className="link" href={temporalWorkflowUrl(temporalNamespace, run.temporalWorkflowId)} target="_blank" rel="noreferrer">
                 Workflow in Temporal
               </a>
             ) : null}

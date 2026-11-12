@@ -2567,6 +2567,7 @@ export type GetMeResponses = {
       admin: boolean;
     }>;
     operatorAdmin: boolean;
+    temporalNamespace: string;
   };
 };
 

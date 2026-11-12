@@ -88,6 +88,8 @@ export interface ServerDependencies {
   repositorySetup?: Pick<RepositorySetupRouteDependencies, "listInstallationRepositories" | "startSetup">;
   /** docs/specs/run-visibility.md. The Temporal UI inside the stack, or absent for none. */
   temporalUiUrl?: string | undefined;
+  /** The Temporal namespace of the install. Absent means `default`. */
+  temporalNamespace?: string;
   /** docs/specs/model-picker.md. The models.dev catalog. Absent in the OpenAPI build. */
   modelCatalog?: ModelCatalogService;
   /** docs/specs/skill-registry.md. The save-time check of a Product skill registry. */
@@ -257,6 +259,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         publicUrl,
         masterKey,
         localSandboxAllowed,
+        temporalNamespace: dependencies.temporalNamespace ?? "default",
         listLinearTeams: dependencies.setup.linear.listTeams,
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       });

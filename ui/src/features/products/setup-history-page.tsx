@@ -5,7 +5,7 @@ import { listRepositorySetupHistoryOptions } from "@/api/@tanstack/react-query.g
 import type { ListRepositorySetupHistoryResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Alert, Badge, Empty, ErrorAlert, PageHeader, Section, SkeletonRows } from "@/components/layout";
-import { formatCost, formatDuration, formatTokens } from "@/features/runs/run-format";
+import { formatCost, formatDuration, formatTokens, temporalWorkflowUrl } from "@/features/runs/run-format";
 import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import { pickWorkspace } from "@/lib/workspace";
@@ -14,10 +14,10 @@ import { setupStatus } from "./repository-setup-section";
 type Entry = ListRepositorySetupHistoryResponse[number];
 
 /** The Temporal UI page of one setup run. Every setup of a repository shares the workflow id. */
-function temporalRunUrl(entry: Entry): string | null {
+function temporalRunUrl(namespace: string, entry: Entry): string | null {
   return entry.temporalRunId === null
     ? null
-    : `/temporal/namespaces/default/workflows/${encodeURIComponent(entry.workflowId)}/${encodeURIComponent(entry.temporalRunId)}/history`;
+    : `${temporalWorkflowUrl(namespace, entry.workflowId)}/${encodeURIComponent(entry.temporalRunId)}/history`;
 }
 
 function totalMs(entry: Entry): number | null {
@@ -93,7 +93,7 @@ export function SetupHistoryPage({
               <tbody>
                 {entries.map((entry) => {
                   const status = setupStatus(entry);
-                  const temporal = temporalRunUrl(entry);
+                  const temporal = temporalRunUrl(me.data?.temporalNamespace ?? "default", entry);
                   const session = entry.session;
                   return (
                     <Fragment key={entry.id}>
