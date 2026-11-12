@@ -89,7 +89,7 @@ export const LIMITS: Limits[] = [
   { key: "silenceMinutes", label: "Silence limit (minutes)", min: 1, max: 240 },
   { key: "sandboxRetentionHours", label: "Sandbox retention (hours)", min: 0, max: 720 },
   { key: "refinerCriteriaLimit", label: "Refiner criteria limit", min: 1, max: 50 },
-  { key: "repairMaxAttempts", label: "Repair budget", min: 0, max: 10 },
+  { key: "repairMaxAttempts", label: "Repair budget (attempts)", min: 0, max: 10 },
 ];
 
 /** bodyOf builds the full update body, or the problems that stop a save. */
