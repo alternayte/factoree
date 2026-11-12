@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
+import { CancelledFailure } from "@temporalio/common";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import {
@@ -64,6 +65,24 @@ describe("the userValidate activity", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("ends as cancelled when a stop arrives during the browser checks (issue #44, DI-21.71)", async () => {
+    // A stop reached only the agent sessions, so the checks ran on for 87 minutes and the run
+    // ended as INTERNAL_ERROR after a worker restart.
+    const runner = new FakeRunner();
+    const { activities, browser } = build(runner);
+    const environment = new MockActivityEnvironment();
+    browser.during = () => {
+      environment.cancel();
+      return Promise.resolve();
+    };
+
+    await expect(
+      environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input),
+    ).rejects.toBeInstanceOf(CancelledFailure);
+    expect(browser.calls).toHaveLength(1);
+    expect(browser.calls[0]!.signal?.aborted).toBe(true);
   });
 
   it("never gives the validator an Implementer transcript", async () => {

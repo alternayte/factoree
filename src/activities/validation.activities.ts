@@ -34,6 +34,7 @@ import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import { startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
+import type { BrowserLimits } from "~/domain/validation/browser-limits.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildPlanCorrection, buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
@@ -128,6 +129,8 @@ export interface UserValidateActivityInput {
   afterHang?: boolean;
   /** docs/specs/repository-setup-and-services.md. The accounts of the config. Absent in an old history. */
   accounts?: AccountConfig[];
+  /** Issue #44, DI-21.68. The browser check limits of the config. Absent in an old history. */
+  browserLimits?: BrowserLimits;
   /** docs/specs/repository-setup-and-services.md. The compose stack. Absent in an old history. */
   services?: ServicesConfig | null;
   /**
@@ -879,6 +882,10 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               ...(handedOver === undefined ? {} : { earlyPreview: handedOver }),
               ...(rejectedPlanReason === undefined ? {} : { rejectedPlanReason }),
               accounts: input.accounts ?? [],
+              ...(input.browserLimits === undefined ? {} : { browserLimits: input.browserLimits }),
+              // Issue #44, DI-21.71. A stop reaches the check loop and the browser, so the
+              // activity ends as cancelled within seconds instead of after its checks.
+              signal: context.cancellationSignal,
             },
           ),
       );

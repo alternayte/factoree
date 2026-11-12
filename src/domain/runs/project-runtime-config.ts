@@ -47,6 +47,11 @@ export interface ProjectRuntimeConfig {
    * setting. Absent in a history recorded before the Product setting existed.
    */
   repairBudgetSource?: RepairBudgetSource;
+  /**
+   * Issue #44, DI-21.68. The browser check limits from `validation.browser`. Absent in a history
+   * recorded before they existed, which takes the defaults.
+   */
+  browserLimits?: BrowserLimits;
   stagingRead: boolean;
   /** SDD section 51. */
   spriteRetentionHours: number;
@@ -104,6 +109,7 @@ import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { BrowserStep } from "~/domain/validation/validation-plan.js";
 import { narrowAllowList } from "./sandbox.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
+import type { BrowserLimits } from "~/domain/validation/browser-limits.js";
 import { effectiveRepairBudget, type RepairBudgetSource } from "./repair-budget.js";
 
 /** SDD section 35. One configured deterministic verification command. */
@@ -157,6 +163,8 @@ export interface PreviewConfig {
   /** The URL the readiness poll requests. Its port is the port Factoree exposes. */
   readyUrl: string;
   timeoutSeconds: number;
+  /** Issue #44, DI-21.69. A selector that shows once the page takes input. Absent waits for none. */
+  readySelector?: string;
 }
 
 export interface ResolvedProjectConfig {
@@ -211,6 +219,10 @@ export const toProjectRuntimeConfig = (
       agentsBlockIgnored: config.agents !== undefined,
       repairMaxAttempts: repair.maxAttempts,
       repairBudgetSource: repair.source,
+      browserLimits: {
+        stepTimeoutMs: config.validation.browser.stepTimeoutSeconds * 1000,
+        scenarioTimeoutMs: config.validation.browser.scenarioTimeoutSeconds * 1000,
+      },
       stagingRead: defaults.stagingRead,
       spriteRetentionHours: defaults.spriteRetentionHours,
     },
@@ -223,6 +235,7 @@ export const toProjectRuntimeConfig = (
             command: config.preview.command,
             readyUrl: config.preview.readyUrl,
             timeoutSeconds: config.preview.timeoutSeconds,
+            ...(config.preview.readySelector === undefined ? {} : { readySelector: config.preview.readySelector }),
           },
   };
 };

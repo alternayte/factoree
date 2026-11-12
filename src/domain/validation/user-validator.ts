@@ -22,7 +22,12 @@ import type {
 import { summarizeUserValidation } from "~/domain/validation/validation-result.js";
 import { executeHttpAssertion, type HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import { resolvePreviewUrl } from "~/domain/validation/preview-url.js";
-import type { BrowserDriver, BrowserSignInResult } from "~/domain/validation/browser-driver.js";
+import type { BrowserDriver, BrowserSignInResult, BrowserStepEvent } from "~/domain/validation/browser-driver.js";
+import {
+  DEFAULT_BROWSER_LIMITS,
+  effectiveBrowserLimits,
+  type BrowserLimits,
+} from "~/domain/validation/browser-limits.js";
 import type { ValidationAssertion, ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -70,6 +75,25 @@ export interface UserValidationInput {
    * `as` starts signed in as one of them.
    */
   accounts?: readonly AccountConfig[];
+  /** Issue #44, DI-21.68. The browser check limits of the repository. Absent takes the defaults. */
+  browserLimits?: BrowserLimits;
+  /**
+   * Issue #44, DI-21.71. The cancellation signal of the activity. When it fires, the pass starts
+   * no further assertion, closes a running browser, and rejects with the abort reason.
+   */
+  signal?: AbortSignal;
+}
+
+/** Issue #44. How one browser assertion runs. */
+export interface BrowserAssertionRun {
+  runId: string;
+  /** The effective limits of this scenario, `effectiveBrowserLimits` of the remaining pass budget. */
+  limits: BrowserLimits;
+  /** Issue #44, DI-21.69. `preview.readySelector`. */
+  readySelector?: string | undefined;
+  signal?: AbortSignal | undefined;
+  /** docs/specs/repository-setup-and-services.md. The browser state of a signed-in account. */
+  storageState?: string | undefined;
 }
 
 /** docs/specs/repository-setup-and-services.md. The longest one sign-in may take. */
@@ -192,8 +216,7 @@ export const executeBrowserAssertion = async (
   assertion: ValidationAssertion,
   entry: Extract<ValidationPlanEntry, { kind: "browser" }>,
   handle: PreviewHandle,
-  timeoutMs: number,
-  storageState?: string,
+  options: BrowserAssertionRun,
 ): Promise<AssertionOutcome> => {
   // Defence in depth. The plan parser already rejects a goto path that can leave the preview
   // origin. This control repeats the check, because it must not trust the parser. A refusal is
@@ -221,13 +244,32 @@ export const executeBrowserAssertion = async (
   const interactionSteps = entry.steps.filter((step) => step.action === "click" || step.action === "fill").length;
   const captureVideo = assertion.evidence.includes("video") || interactionSteps > 1;
   const captureTrace = assertion.evidence.includes("trace");
+  // Issue #44, DI-21.70. Each step reaches the worker log as it starts, and a timed-out step as a
+  // warning, so an operator sees a slow check while it runs.
+  const onStep = (event: BrowserStepEvent): void => {
+    const fields = {
+      run_id: options.runId,
+      step: "user_validate",
+      assertion_id: assertion.id,
+      step_index: event.index,
+      action: event.action,
+      selector: event.selector === null ? null : dependencies.redactor.redactText(event.selector),
+      limit_ms: event.limitMs,
+    };
+    if (event.kind === "started") dependencies.logger.info("browser step started", fields);
+    else dependencies.logger.warn("browser step timed out", fields);
+  };
   const run = await dependencies.browser.run({
     baseUrl: handle.baseUrl,
     steps: entry.steps,
     captureVideo,
     captureTrace,
-    timeoutMs,
-    ...(storageState === undefined ? {} : { storageState }),
+    timeoutMs: options.limits.scenarioTimeoutMs,
+    stepTimeoutMs: options.limits.stepTimeoutMs,
+    onStep,
+    ...(options.readySelector === undefined ? {} : { readySelector: options.readySelector }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.storageState === undefined ? {} : { storageState: options.storageState }),
   });
 
   const artifacts: EvidenceArtifact[] = [];
@@ -365,6 +407,8 @@ const validate = async (
   early: { preview: Promise<PreviewHandle>; adoption: { adopted: boolean } } | null,
 ): Promise<UserValidationOutcome> => {
   const { contract } = input;
+  // Issue #44, DI-21.68. The pass budget runs from here, so a later scenario gets what is left.
+  const passDeadline = Date.now() + input.timeoutMs;
 
   // Rule 1. A manual or a code_review assertion needs a human. It runs nothing.
   const manualIds = new Set<string>();
@@ -504,6 +548,8 @@ const validate = async (
           baseUrl: handle!.baseUrl,
           steps: signInStepsOf(account),
           timeoutMs: Math.min(input.timeoutMs, SIGN_IN_TIMEOUT_MS),
+          ...(input.preview?.readySelector === undefined ? {} : { readySelector: input.preview.readySelector }),
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
         });
         signIns.set(name, pending);
       }
@@ -512,6 +558,9 @@ const validate = async (
 
     // Rule 6. Execute the entries in contract order.
     for (const assertion of remainingAssertions) {
+      // Issue #44, DI-21.71. A stop starts no further assertion. The rejection ends the pass, and
+      // the `finally` below stops the preview.
+      input.signal?.throwIfAborted();
       if (outcomesById.has(assertion.id)) continue;
       const entry = planEntries.get(assertion.id)!;
 
@@ -539,16 +588,26 @@ const validate = async (
         // Rule 8.
         const signedIn = entry.as === undefined ? undefined : await signInAs(entry.as);
         const storageState = signedIn?.signedIn === true ? signedIn.storageState : undefined;
+        // Issue #44, DI-21.68. The fixed limits, or what is left of the pass budget when less. The
+        // rerun takes its own limits, so it too fails in about the step limit.
+        const browserRun = (): BrowserAssertionRun => ({
+          runId: input.runId,
+          limits: effectiveBrowserLimits(input.browserLimits ?? DEFAULT_BROWSER_LIMITS, passDeadline - Date.now()),
+          readySelector: input.preview?.readySelector,
+          signal: input.signal,
+          storageState,
+        });
         outcome = enforceRequiredEvidence(
           assertion,
-          await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs, storageState),
+          await executeBrowserAssertion(dependencies, assertion, entry, handle!, browserRun()),
         );
         // docs/specs/run-recovery.md. A failed browser assertion runs once more in the same check
         // sprite. A different result makes it unstable: not proven, and not worth a repair.
         if (outcome.result === "FAIL") {
+          input.signal?.throwIfAborted();
           const rerun = enforceRequiredEvidence(
             assertion,
-            await executeBrowserAssertion(dependencies, assertion, entry, handle!, input.timeoutMs, storageState),
+            await executeBrowserAssertion(dependencies, assertion, entry, handle!, browserRun()),
           );
           if (rerun.result === "PASS") {
             outcome = {

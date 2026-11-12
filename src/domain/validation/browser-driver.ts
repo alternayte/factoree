@@ -12,7 +12,19 @@ export interface BrowserScenario {
   /** SDD section 37. The driver records these only when the frozen assertion requires them. */
   captureVideo: boolean;
   captureTrace: boolean;
+  /** Issue #44, DI-21.68. The limit of the whole scenario. A step never runs past it. */
   timeoutMs: number;
+  /** Issue #44, DI-21.68. The limit of one step. */
+  stepTimeoutMs: number;
+  /**
+   * Issue #44, DI-21.69. `preview.readySelector` of the repository. After a page load, the first
+   * click or fill waits until it is visible, for an app whose handlers attach after the markup.
+   */
+  readySelector?: string | undefined;
+  /** Issue #44, DI-21.71. A stop closes the browser, and `run` rejects with the abort reason. */
+  signal?: AbortSignal | undefined;
+  /** Issue #44, DI-21.70. Called when a step starts and when a step times out, for the worker log. */
+  onStep?: ((event: BrowserStepEvent) => void) | undefined;
   /**
    * docs/specs/repository-setup-and-services.md. The browser state of a signed-in account, as the
    * driver's `signIn` returned it. The scenario then starts signed in. Absent starts anonymous.
@@ -24,7 +36,24 @@ export interface BrowserScenario {
 export interface BrowserSignIn {
   baseUrl: string;
   steps: BrowserStep[];
+  /** DI-21.16. One deadline for every step, not a share per step. */
   timeoutMs: number;
+  /** Issue #44, DI-21.69. As in `BrowserScenario`. */
+  readySelector?: string | undefined;
+  /** Issue #44, DI-21.71. As in `BrowserScenario`. */
+  signal?: AbortSignal | undefined;
+}
+
+/** Issue #44, DI-21.70. One step event of a running scenario. */
+export interface BrowserStepEvent {
+  kind: "started" | "timed_out";
+  /** Counts from 0, as `BrowserStepResult.index`. */
+  index: number;
+  action: string;
+  /** The selector of a click, fill, expectText or expectVisible step, or the ready selector. Null otherwise. */
+  selector: string | null;
+  /** The time the step had, in milliseconds. */
+  limitMs: number;
 }
 
 export type BrowserSignInResult =

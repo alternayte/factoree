@@ -41,10 +41,24 @@ describe("toProjectRuntimeConfig", () => {
       agentsBlockIgnored: true,
       repairMaxAttempts: 1,
       repairBudgetSource: "repository",
+      browserLimits: { stepTimeoutMs: 30_000, scenarioTimeoutMs: 180_000 },
       stagingRead: true,
       spriteRetentionHours: 48,
     });
     expect(resolved.verifyCommands).toEqual([{ name: "lint", run: "npm run lint" }]);
+  });
+
+  // Issue #44, DI-21.68, DI-21.69.
+  it("carries the browser limits in milliseconds and the ready selector of the preview", () => {
+    const resolved = toProjectRuntimeConfig(
+      parseFactoreeConfig(
+        `${minimum}validation:\n  browser:\n    stepTimeoutSeconds: 60\n    scenarioTimeoutSeconds: 600\n` +
+          "preview:\n  enabled: true\n  command: npm start\n  readyUrl: http://localhost:3000/\n  timeoutSeconds: 60\n  readySelector: '#app[data-ready]'\n",
+      ),
+      DEFAULT_PROJECT_DEFAULTS,
+    );
+    expect(resolved.runtime.browserLimits).toEqual({ stepTimeoutMs: 60_000, scenarioTimeoutMs: 600_000 });
+    expect(resolved.preview?.readySelector).toBe("#app[data-ready]");
   });
 
   // Issue #43, DI-21.67.

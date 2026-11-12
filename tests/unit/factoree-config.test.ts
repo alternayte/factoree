@@ -205,4 +205,37 @@ secrets:
 `),
     ).toThrowError(/secrets.values/);
   });
+
+  describe("browser limits and the ready selector (issue #44, DI-21.68, DI-21.69)", () => {
+    it("takes 30 s per step and 3 min per scenario when the file sets no validation block", () => {
+      expect(parseFactoreeConfig(minimum).validation.browser).toEqual({ stepTimeoutSeconds: 30, scenarioTimeoutSeconds: 180 });
+    });
+
+    it("reads a raised limit, and keeps the default of the other one", () => {
+      const config = parseFactoreeConfig(`${minimum}validation:\n  browser:\n    stepTimeoutSeconds: 90\n`);
+      expect(config.validation.browser).toEqual({ stepTimeoutSeconds: 90, scenarioTimeoutSeconds: 180 });
+    });
+
+    it.each([
+      ["stepTimeoutSeconds", 4],
+      ["stepTimeoutSeconds", 301],
+      ["scenarioTimeoutSeconds", 29],
+      ["scenarioTimeoutSeconds", 1801],
+    ])("rejects %s: %i, which is outside its bounds", (key, value) => {
+      expect(() => parseFactoreeConfig(`${minimum}validation:\n  browser:\n    ${key}: ${value}\n`)).toThrow(
+        new RegExp(`validation.browser.${key}`),
+      );
+    });
+
+    it("rejects an unknown key in validation.browser", () => {
+      expect(() => parseFactoreeConfig(`${minimum}validation:\n  browser:\n    stepTimeout: 30\n`)).toThrow(/stepTimeout/);
+    });
+
+    it("reads preview.readySelector", () => {
+      const config = parseFactoreeConfig(
+        complete.replace("  timeoutSeconds: 60\n", '  timeoutSeconds: 60\n  readySelector: "[data-ready]"\n'),
+      );
+      expect(config.preview?.readySelector).toBe("[data-ready]");
+    });
+  });
 });

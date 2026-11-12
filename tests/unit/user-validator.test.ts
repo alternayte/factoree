@@ -12,6 +12,7 @@ import type { ValidationContract, ValidationAssertion } from "~/domain/validatio
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import type { BrowserDriver, BrowserRunResult, BrowserScenario } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
+import { DEFAULT_BROWSER_LIMITS } from "~/domain/validation/browser-limits.js";
 import type { PreviewHandle, ReadinessProbe } from "~/domain/runs/preview.js";
 
 const ref = { id: "sandbox-1", adapter: "fake", workspacePath: "/workspace" };
@@ -474,7 +475,7 @@ describe("executeBrowserAssertion", () => {
           ],
         },
         handle,
-        5_000,
+        { runId: "run-1", limits: DEFAULT_BROWSER_LIMITS },
       );
 
       expect(outcome.result).toBe("BLOCKED");
@@ -505,11 +506,100 @@ describe("executeBrowserAssertion", () => {
         startedAt: "1970-01-01T00:00:00.000Z",
         startupLog: "",
       },
-      5_000,
+      { runId: "run-1", limits: DEFAULT_BROWSER_LIMITS },
     );
 
     expect(outcome.result).toBe("PASS");
     expect(browser.calls).toHaveLength(1);
+  });
+});
+
+describe("browser limits and a stop (issue #44)", () => {
+  const secondBrowser: ValidationAssertion = { ...browserAssertion, id: "VAL-UI-002" };
+  const twoBrowserContract: ValidationContract = { ...contract, assertions: [browserAssertion, secondBrowser] };
+  const twoBrowserPlan = JSON.stringify({
+    version: 1,
+    entries: [browserAssertion, secondBrowser].map((assertion) => ({
+      assertionId: assertion.id,
+      kind: "browser",
+      steps: [
+        { action: "goto", path: "/" },
+        { action: "expectVisible", selector: "h1" },
+      ],
+    })),
+  });
+
+  it("gives the driver the fixed step and scenario limits, not a share of the Run budget (DI-21.68)", async () => {
+    const deps = buildDeps();
+    await runUserValidation(
+      deps,
+      buildInput({ contract: twoBrowserContract, planText: twoBrowserPlan, timeoutMs: 4_951_181 }),
+    );
+    expect(deps.browser.calls.map((call) => [call.stepTimeoutMs, call.timeoutMs])).toEqual([
+      [30_000, 180_000],
+      [30_000, 180_000],
+    ]);
+  });
+
+  it("passes the repository limits and the ready selector to the driver", async () => {
+    const deps = buildDeps();
+    await runUserValidation(
+      deps,
+      buildInput({
+        contract: twoBrowserContract,
+        planText: twoBrowserPlan,
+        timeoutMs: 4_951_181,
+        browserLimits: { stepTimeoutMs: 60_000, scenarioTimeoutMs: 600_000 },
+        preview: { ...previewConfig, readySelector: "[data-ready]" },
+      }),
+    );
+    expect(deps.browser.calls[0]).toMatchObject({ stepTimeoutMs: 60_000, timeoutMs: 600_000, readySelector: "[data-ready]" });
+  });
+
+  it("starts no further assertion after a stop, and rejects with the abort reason (DI-21.71)", async () => {
+    const stop = new AbortController();
+    const reason = new Error("cancelled by the stop");
+    const browser = new FakeBrowserDriver();
+    browser.run = (scenario: BrowserScenario): Promise<BrowserRunResult> => {
+      browser.calls.push(scenario);
+      // The stop arrives while the first check runs. The driver closes its browser and rejects.
+      stop.abort(reason);
+      return Promise.reject(scenario.signal!.reason as Error);
+    };
+    const deps = buildDeps({ browser });
+    await expect(
+      runUserValidation(deps, buildInput({ contract: twoBrowserContract, planText: twoBrowserPlan, signal: stop.signal })),
+    ).rejects.toBe(reason);
+    expect(browser.calls).toHaveLength(1);
+    expect(browser.calls[0]!.signal).toBe(stop.signal);
+  });
+
+  it("runs no assertion when the stop came before the checks", async () => {
+    const stop = new AbortController();
+    stop.abort(new Error("stopped"));
+    const deps = buildDeps();
+    await expect(
+      runUserValidation(deps, buildInput({ contract: twoBrowserContract, planText: twoBrowserPlan, signal: stop.signal })),
+    ).rejects.toThrow("stopped");
+    expect(deps.browser.calls).toHaveLength(0);
+  });
+
+  it("logs each step event of the driver, and a timed-out step as a warning (DI-21.70)", async () => {
+    const lines: string[] = [];
+    const browser = new FakeBrowserDriver();
+    browser.run = (scenario: BrowserScenario): Promise<BrowserRunResult> => {
+      scenario.onStep?.({ kind: "started", index: 0, action: "click", selector: "#apply", limitMs: 30_000 });
+      scenario.onStep?.({ kind: "timed_out", index: 0, action: "click", selector: "#apply", limitMs: 30_000 });
+      return Promise.resolve(passingBrowserResult);
+    };
+    const deps = buildDeps({
+      browser,
+      logger: createLogger({ level: "info", redactor: new Redactor(), sink: (line) => lines.push(line) }),
+    });
+    await runUserValidation(deps, buildInput({ contract: twoBrowserContract, planText: twoBrowserPlan }));
+    const timedOut = lines.map((line) => JSON.parse(line) as Record<string, unknown>).find((line) => line.message === "browser step timed out");
+    expect(timedOut).toMatchObject({ level: "warn", assertion_id: "VAL-UI-001", step_index: 0, action: "click", selector: "#apply", limit_ms: 30_000 });
+    expect(lines.some((line) => line.includes("browser step started"))).toBe(true);
   });
 });
 

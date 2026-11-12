@@ -40,6 +40,17 @@ preview:
   command: npm run dev -- --host 0.0.0.0 --port 5173
   readyUrl: http://127.0.0.1:5173/
   timeoutSeconds: 120
+  # Set it when the app shows its markup before it attaches its handlers, as Blazor Server,
+  # Phoenix LiveView and Hotwire do. After each page load, the first click or fill waits until it
+  # is visible. Factoree always waits for the load event and network idle.
+  # readySelector: "body[data-ready]"
+
+# Each browser step fails after stepTimeoutSeconds (5 to 300, default 30), and each browser check
+# after scenarioTimeoutSeconds (30 to 1800, default 180), or sooner when the run has less time left.
+# validation:
+#   browser:
+#     stepTimeoutSeconds: 30
+#     scenarioTimeoutSeconds: 180
 
 # The sandbox image ships opencode, so every role runs on it. claude needs a sandbox with Claude Code.
 agents:

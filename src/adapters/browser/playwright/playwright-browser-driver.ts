@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
+import { chromium, errors, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import type {
   BrowserArtifact,
   BrowserControlledRequest,
@@ -19,10 +19,42 @@ import {
   type FailRequestStatus,
 } from "../../../domain/validation/validation-plan.js";
 import { resolvePreviewUrl } from "../../../domain/validation/preview-url.js";
+import { describeLimit } from "../../../domain/validation/browser-limits.js";
 
 const MIN_STEP_TIMEOUT_MS = 1000;
 
 type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
+
+/**
+ * Issue #44, DI-21.69. Whether the next click or fill waits for the page to take input. A goto or
+ * a reload sets it, and the first click or fill after it clears it.
+ */
+interface ReadyState {
+  pending: boolean;
+  selector: string | undefined;
+}
+
+/** Issue #44, DI-21.68. A step that ran out of its limit. Its message is the readable reason. */
+class StepTimeoutError extends Error {
+  constructor(
+    message: string,
+    readonly limitMs: number,
+    readonly selector: string | null,
+  ) {
+    super(message);
+    this.name = "StepTimeoutError";
+  }
+}
+
+/** A wait of at most `limitMs` that ends by `deadline`, and never less than the floor. */
+const capped = (limitMs: number, deadline: number): number =>
+  Math.max(MIN_STEP_TIMEOUT_MS, Math.min(limitMs, deadline - Date.now()));
+
+/** The selector a step acts on, or null. */
+const selectorOf = (step: BrowserStep): string | null =>
+  step.action === "click" || step.action === "fill" || step.action === "expectText" || step.action === "expectVisible"
+    ? step.selector
+    : null;
 
 /** Keep only the first line of a Playwright error. It drops stack noise from the assertion log. */
 const redact = (error: unknown): string => {
@@ -147,11 +179,20 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
   constructor(private readonly holdLimitMs: number = HOLD_LIMIT_MS) {}
 
   async run(scenario: BrowserScenario): Promise<BrowserRunResult> {
+    const { signal } = scenario;
+    // A function, not a narrowed property: the signal can fire during any await below.
+    const aborted = (): boolean => signal?.aborted === true;
+    // Issue #44, DI-21.71. A stop before the launch starts no browser.
+    signal?.throwIfAborted();
     const tempDir = await mkdtemp(path.join(tmpdir(), "factoree-browser-"));
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     let contextClosed = false;
     let control: NetworkControl | undefined;
+    // Issue #44, DI-21.71. A stop closes the browser, so the pending Playwright call rejects at once.
+    const onAbort = (): void => {
+      void browser?.close().catch(() => undefined);
+    };
 
     const consoleLines: string[] = [];
     const network: BrowserNetworkEntry[] = [];
@@ -161,6 +202,8 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
 
     try {
       browser = await chromium.launch({ headless: true });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      signal?.throwIfAborted();
       context = await browser.newContext({
         ...(scenario.captureVideo ? { recordVideo: { dir: tempDir } } : {}),
         // docs/specs/repository-setup-and-services.md. The cookies and the local storage of the
@@ -192,19 +235,28 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       control = new NetworkControl(page, this.holdLimitMs);
       const controlledSteps: Array<{ result: BrowserStepResult; url: string }> = [];
 
-      const stepCount = scenario.steps.length;
-      const perStepTimeoutMs = Math.max(
-        MIN_STEP_TIMEOUT_MS,
-        Math.floor(scenario.timeoutMs / Math.max(stepCount, 1)),
-      );
+      // Issue #44, DI-21.68. Each step gets the fixed step limit, and no step runs past the
+      // scenario limit. A share of the Run budget per step gave one step 8 minutes.
+      const deadline = Date.now() + scenario.timeoutMs;
+      const ready: ReadyState = { pending: false, selector: scenario.readySelector };
 
       let stopped = false;
       for (let index = 0; index < scenario.steps.length; index += 1) {
         const step = scenario.steps[index]!;
-        if (stopped) {
+        if (stopped || aborted()) {
           steps.push({ index, action: step.action, passed: false, detail: "not run" });
           continue;
         }
+        const leftMs = deadline - Date.now();
+        if (leftMs <= 0) {
+          const message = `The scenario reached its limit of ${describeLimit(scenario.timeoutMs)} before this step.`;
+          steps.push({ index, action: step.action, passed: false, detail: message });
+          failureReason = message;
+          stopped = true;
+          continue;
+        }
+        const stepTimeoutMs = capped(scenario.stepTimeoutMs, deadline);
+        scenario.onStep?.({ kind: "started", index, action: step.action, selector: selectorOf(step), limitMs: stepTimeoutMs });
         try {
           if (step.action === "holdRequest" || step.action === "failRequest") {
             const requests =
@@ -226,21 +278,20 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
             });
             continue;
           }
-          const detail = await this.runStep(
-            page,
-            step,
-            scenario.baseUrl,
-            perStepTimeoutMs,
-            artifacts,
-          );
+          const detail = await this.runStep(page, step, scenario.baseUrl, stepTimeoutMs, artifacts, ready, deadline);
           steps.push({ index, action: step.action, passed: true, detail });
         } catch (error) {
           const message = redact(error);
           steps.push({ index, action: step.action, passed: false, detail: message });
           failureReason = message;
           stopped = true;
+          if (error instanceof StepTimeoutError && !aborted()) {
+            scenario.onStep?.({ kind: "timed_out", index, action: step.action, selector: error.selector, limitMs: error.limitMs });
+          }
         }
       }
+      // Issue #44, DI-21.71. A stopped scenario proves nothing, so it returns no result.
+      signal?.throwIfAborted();
 
       // Rule 7: a failure while capturing the final screenshot must not mask
       // the real failure reason. The scenario result still returns.
@@ -305,6 +356,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
           }
         }
       }
+      signal?.throwIfAborted();
 
       return {
         passed: steps.every((step) => step.passed),
@@ -315,6 +367,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         failureReason,
       };
     } finally {
+      signal?.removeEventListener("abort", onAbort);
       await control?.release();
       if (context && !contextClosed) {
         await context.close().catch(() => undefined);
@@ -327,25 +380,62 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
   }
 
   async signIn(input: BrowserSignIn): Promise<BrowserSignInResult> {
+    const { signal } = input;
+    signal?.throwIfAborted();
     const browser = await chromium.launch({ headless: true });
+    const onAbort = (): void => {
+      void browser.close().catch(() => undefined);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
+      signal?.throwIfAborted();
       const context = await browser.newContext();
       const page = await context.newPage();
       // DI-21.16. Each step gets what is left of the budget, not an equal share. The first fill on
       // a cold app waits for the first page load, and an equal share of 60 s over five steps gave
       // it 12 s: the anthology setup failed `fill #email` on a correct selector.
+      // DI-21.68. The step limit of a browser check does not cap a sign-in step: the 60 s deadline
+      // already bounds the whole sign-in, once per account per pass, and a cap brings back the
+      // DI-21.16 failure on a cold first page load.
       const deadline = Date.now() + input.timeoutMs;
+      const ready: ReadyState = { pending: false, selector: input.readySelector };
       for (let index = 0; index < input.steps.length; index += 1) {
         const remainingMs = Math.max(MIN_STEP_TIMEOUT_MS, deadline - Date.now());
         try {
-          await this.runStep(page, input.steps[index]!, input.baseUrl, remainingMs, []);
+          await this.runStep(page, input.steps[index]!, input.baseUrl, remainingMs, [], ready, deadline);
         } catch (error) {
+          signal?.throwIfAborted();
           return { signedIn: false, failedStep: index + 1, reason: redact(error) };
         }
       }
       return { signedIn: true, storageState: JSON.stringify(await context.storageState()) };
     } finally {
+      signal?.removeEventListener("abort", onAbort);
       await browser.close().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Issue #44, DI-21.69. Waits until a loaded page takes input: the `load` event and network idle,
+   * which only bound the wait, and the repository's ready selector, which fails the step.
+   */
+  private async waitUntilReady(page: Page, ready: ReadyState, stepTimeoutMs: number, deadline: number): Promise<void> {
+    const settled = Date.now() + stepTimeoutMs;
+    await page.waitForLoadState("load", { timeout: stepTimeoutMs }).catch(() => undefined);
+    await page
+      .waitForLoadState("networkidle", { timeout: Math.max(MIN_STEP_TIMEOUT_MS, settled - Date.now()) })
+      .catch(() => undefined);
+    if (ready.selector === undefined) return;
+    const timeoutMs = capped(stepTimeoutMs, deadline);
+    try {
+      await page.locator(ready.selector).first().waitFor({ state: "visible", timeout: timeoutMs });
+    } catch (error) {
+      if (!(error instanceof errors.TimeoutError)) throw error;
+      throw new StepTimeoutError(
+        `The page never became ready: the preview.readySelector \`${ready.selector}\` never became visible within ${describeLimit(timeoutMs)}.`,
+        timeoutMs,
+        ready.selector,
+      );
     }
   }
 
@@ -355,28 +445,62 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
     baseUrl: string,
     timeoutMs: number,
     artifacts: BrowserArtifact[],
+    ready: ReadyState,
+    /** The scenario deadline, or the sign-in deadline. No wait runs past it. */
+    deadline: number,
   ): Promise<string> {
+    if ((step.action === "click" || step.action === "fill") && ready.pending) {
+      await this.waitUntilReady(page, ready, timeoutMs, deadline);
+      ready.pending = false;
+      // The click or fill takes its own step limit, inside what is left of the deadline.
+      timeoutMs = capped(timeoutMs, deadline);
+    }
+    // Issue #44, DI-21.68. A timeout fails the step with a sentence the proof pack can show, not
+    // the Playwright call log.
+    const limit = describeLimit(timeoutMs);
+    const timed = async <T>(call: Promise<T>, sentence: string, selector: string | null): Promise<T> => {
+      try {
+        return await call;
+      } catch (error) {
+        if (error instanceof errors.TimeoutError) throw new StepTimeoutError(sentence, timeoutMs, selector);
+        throw error;
+      }
+    };
     switch (step.action) {
       case "goto": {
         const url = resolveGotoUrl(baseUrl, step.path);
-        await page.goto(url, { timeout: timeoutMs });
+        await timed(page.goto(url, { timeout: timeoutMs }), `The page \`${step.path}\` did not load within ${limit}.`, null);
+        ready.pending = true;
         return `Opened ${step.path}.`;
       }
       case "click": {
-        await page.locator(step.selector).click({ timeout: timeoutMs });
+        await timed(
+          page.locator(step.selector).click({ timeout: timeoutMs }),
+          `The selector \`${step.selector}\` never matched an element that takes a click within ${limit}.`,
+          step.selector,
+        );
         return `Clicked ${step.selector}.`;
       }
       case "fill": {
-        await page.locator(step.selector).fill(step.value, { timeout: timeoutMs });
+        await timed(
+          page.locator(step.selector).fill(step.value, { timeout: timeoutMs }),
+          `The selector \`${step.selector}\` never matched an editable element within ${limit}.`,
+          step.selector,
+        );
         return `Filled ${step.selector} with the given value.`;
       }
       case "reload": {
-        await page.reload({ timeout: timeoutMs });
+        await timed(page.reload({ timeout: timeoutMs }), `The page did not reload within ${limit}.`, null);
+        ready.pending = true;
         return "Reloaded the page.";
       }
       case "expectText": {
         const locator = page.locator(step.selector);
-        const actual = await locator.textContent({ timeout: timeoutMs });
+        const actual = await timed(
+          locator.textContent({ timeout: timeoutMs }),
+          `The selector \`${step.selector}\` never matched within ${limit}.`,
+          step.selector,
+        );
         // The element must contain the text. An exact match failed the FAC-47 footer, which
         // showed the version beside other text. A plan that needs exact text picks a selector
         // that holds only that text.
@@ -391,14 +515,23 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       }
       case "expectVisible": {
         try {
-          await page.locator(step.selector).waitFor({ state: "visible", timeout: timeoutMs });
-        } catch {
+          await timed(
+            page.locator(step.selector).waitFor({ state: "visible", timeout: timeoutMs }),
+            `The selector \`${step.selector}\` never became visible within ${limit}.`,
+            step.selector,
+          );
+        } catch (error) {
+          if (error instanceof StepTimeoutError) throw error;
           throw new Error(`Expected ${step.selector} to be visible, but it was not.`);
         }
         return `Confirmed ${step.selector} is visible.`;
       }
       case "screenshot": {
-        const bytes = await page.screenshot({ timeout: timeoutMs });
+        const bytes = await timed(
+          page.screenshot({ timeout: timeoutMs }),
+          `The screenshot "${step.name}" did not finish within ${limit}.`,
+          null,
+        );
         artifacts.push({
           kind: "screenshot",
           name: step.name,

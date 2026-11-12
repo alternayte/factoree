@@ -5,6 +5,7 @@ import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
 import { signedInCheckSchema, signInStepSchema } from "~/domain/validation/validation-plan.js";
 import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
+import { BROWSER_SCENARIO_TIMEOUT_SECONDS, BROWSER_STEP_TIMEOUT_SECONDS } from "~/domain/validation/browser-limits.js";
 
 /**
  * SDD section 15. The `.factoree/config.yaml` of the primary repository.
@@ -158,10 +159,44 @@ const schema = z
         command: z.string().min(1),
         readyUrl: z.string().url(),
         timeoutSeconds: z.number().int().positive().max(600),
+        // Issue #44, DI-21.69. A CSS selector that shows once the page takes input, for an app
+        // that renders its markup before it attaches its handlers: Blazor Server, LiveView, Hotwire.
+        readySelector: z.string().trim().min(1).max(500).optional(),
       })
       .strict()
       .nullable()
       .default(null),
+    // Issue #44, DI-21.68. The limits of one browser check, in seconds.
+    validation: z
+      .object({
+        browser: z
+          .object({
+            stepTimeoutSeconds: z
+              .number()
+              .int()
+              .min(BROWSER_STEP_TIMEOUT_SECONDS.min)
+              .max(BROWSER_STEP_TIMEOUT_SECONDS.max)
+              .default(BROWSER_STEP_TIMEOUT_SECONDS.default),
+            scenarioTimeoutSeconds: z
+              .number()
+              .int()
+              .min(BROWSER_SCENARIO_TIMEOUT_SECONDS.min)
+              .max(BROWSER_SCENARIO_TIMEOUT_SECONDS.max)
+              .default(BROWSER_SCENARIO_TIMEOUT_SECONDS.default),
+          })
+          .strict()
+          .default({
+            stepTimeoutSeconds: BROWSER_STEP_TIMEOUT_SECONDS.default,
+            scenarioTimeoutSeconds: BROWSER_SCENARIO_TIMEOUT_SECONDS.default,
+          }),
+      })
+      .strict()
+      .default({
+        browser: {
+          stepTimeoutSeconds: BROWSER_STEP_TIMEOUT_SECONDS.default,
+          scenarioTimeoutSeconds: BROWSER_SCENARIO_TIMEOUT_SECONDS.default,
+        },
+      }),
     // docs/specs/claude-code-runner.md. The Product selects the runner of each role. An `agents`
     // block parses so a repository that holds one still runs, and Factoree ignores it and says so.
     agents: z.record(z.string(), z.unknown()).optional(),

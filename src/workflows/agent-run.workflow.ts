@@ -1163,6 +1163,10 @@ export async function agentRunWorkflow(
         attempt: attemptInput.attempt,
         // docs/specs/repository-setup-and-services.md. From the config at the base SHA.
         accounts: attemptInput.prepared.runtime.accounts ?? [],
+        // Issue #44, DI-21.68. Absent in a history recorded before the limits existed.
+        ...(attemptInput.prepared.runtime.browserLimits === undefined
+          ? {}
+          : { browserLimits: attemptInput.prepared.runtime.browserLimits }),
         services: attemptInput.prepared.runtime.services ?? null,
         // docs/specs/work-item-images-and-links.md. The images of the check sprite.
         imageFiles: attemptInput.prepared.imageFiles ?? [],
