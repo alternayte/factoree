@@ -3,7 +3,7 @@ import { contextFilesBody, imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@7";
+export const REFINER_PROMPT_VERSION = "refiner@8";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -17,6 +17,10 @@ export interface RefinerPromptFields {
   primaryRepositoryPath: string;
   proposalPath: string;
   proposalSchema: string;
+  /** Issue #39, DI-21.66. The most criteria the proposal may hold, a Product setting. */
+  criteriaLimit: number;
+  /** Issue #39. The most questions the proposal may hold. */
+  questionsLimit: number;
   skills: string[];
   /**
    * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
@@ -80,10 +84,55 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "Give each criterion the check that proves it: `test` with a test file path, `command` with a shell command, `http` with \"METHOD /path\", or `browser` with a route that starts with \"/\".",
         "A criterion with no automated check does not freeze: Factoree drops it. Use `manual` or `code_review` only when no command, test, HTTP request or page can prove the criterion.",
         "Set `visible` to true when the criterion names a page, a screen or a UI element a user sees. Give a visible criterion the method `browser` and the route of the page, so Factoree captures a screenshot of it.",
+        `Propose at most ${String(fields.criteriaLimit)} criteria and at most ${String(fields.questionsLimit)} questions. ` +
+          "When the Work Item needs more, keep the criteria the Work Item states, merge related ones, and say in a question that the ticket should be split.",
         "Prefer an existing test or command of the repository. Name the files that show the pattern in `patterns`.",
         "Ask a question only for a decision the Work Item and the code leave open. Give your proposed answer and its reason. Factoree takes your answer without asking a human, and the reviewer reads the reason, so give a reason the code or the Work Item supports.",
         "You must not invent product behaviour the Work Item and the code do not imply.",
         "You must not propose a check that needs a host this sandbox does not reach. Name the host under `missingHosts` instead.",
       ].join("\n"),
     ),
+  ].join("\n");
+
+/** SDD section 56. Change this value whenever the correction template below changes. DI-21.66. */
+export const REFINER_LIMIT_CORRECTION_VERSION = "refiner-limit-correction@1";
+
+export interface RefinerLimitCorrectionFields {
+  /** The criteria count and cap, or null when the criteria are within the cap. */
+  criteria: { count: number; limit: number } | null;
+  /** The questions count and cap, or null when the questions are within the cap. */
+  questions: { count: number; limit: number } | null;
+  /** The file the corrected proposal goes to. It is a new file, so a missing write cannot pass. */
+  proposalPath: string;
+}
+
+/**
+ * Issue #39, DI-21.66. The one correction round after a proposal over its caps. It names the
+ * caps and the counts only, and asks for the whole proposal again.
+ */
+export const renderRefinerLimitCorrectionPrompt = (fields: RefinerLimitCorrectionFields): string =>
+  [
+    "# Proposal correction",
+    "",
+    "Factoree could not use your proposal, because it holds too many items:",
+    "",
+    list(
+      [
+        ...(fields.criteria === null
+          ? []
+          : [`${String(fields.criteria.count)} criteria. The limit is ${String(fields.criteria.limit)}.`]),
+        ...(fields.questions === null
+          ? []
+          : [`${String(fields.questions.count)} questions. The limit is ${String(fields.questions.limit)}.`]),
+      ],
+      "No list was over its limit.",
+    ),
+    "",
+    "Keep the criteria the Work Item states. Merge related criteria into one. Drop implied criteria " +
+      "before stated ones. When the Work Item still needs more, say in a question that the ticket " +
+      "should be split.",
+    "",
+    `Write the whole corrected proposal, as one JSON document, to ${fields.proposalPath}. Write ` +
+      "every list again, not only the lists that changed. Write the file and nothing else. " +
+      "Factoree asks for a correction only once.",
   ].join("\n");

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   gateRefinerProposal,
+  overLimitMessage,
   parseRefinerProposal,
+  proposalOverLimitOf,
   RefinerProposalError,
   refinementDecisions,
 } from "~/domain/refinement/refiner-proposal.js";
@@ -18,6 +20,50 @@ describe("parseRefinerProposal", () => {
     expect(() => parseRefinerProposal("not json")).toThrow(RefinerProposalError);
     expect(() => parseRefinerProposal(JSON.stringify({ criteria: [], questions: [], patterns: [], extra: 1 }))).toThrow(
       RefinerProposalError,
+    );
+  });
+
+  // Issue #39, DI-21.66. The Product sets the criteria cap, and only a cap fault is over-limit.
+  const criterion = (index: number) => ({
+    statement: `Criterion ${String(index)}.`,
+    origin: "stated",
+    quote: "A failed notification delivery is never retried.",
+    method: "test",
+    target: "tests/retry.test.ts",
+  });
+  const criteria = (count: number) => Array.from({ length: count }, (_, index) => criterion(index));
+  const question = { question: "Which?", proposal: "This.", reason: "Because." };
+
+  it("caps the criteria at the limit it is given, 20 by default", () => {
+    expect(parseRefinerProposal(proposal(criteria(20))).criteria).toHaveLength(20);
+    expect(() => parseRefinerProposal(proposal(criteria(21)))).toThrow(RefinerProposalError);
+    expect(parseRefinerProposal(proposal(criteria(30)), 30).criteria).toHaveLength(30);
+    expect(proposalOverLimitOf(proposal(criteria(31)), 30)).toEqual({ criteria: { count: 31, limit: 30 }, questions: null });
+  });
+
+  it("reports too many questions, and both lists together", () => {
+    const six = Array.from({ length: 6 }, () => question);
+    expect(proposalOverLimitOf(proposal(criteria(1), six), 20)).toEqual({ criteria: null, questions: { count: 6, limit: 5 } });
+    expect(proposalOverLimitOf(proposal(criteria(3), six), 2)).toEqual({
+      criteria: { count: 3, limit: 2 },
+      questions: { count: 6, limit: 5 },
+    });
+  });
+
+  it("is not over-limit when another schema fault comes with the cap, or when the proposal parses", () => {
+    // Zod checks an array's length before its items, so the sibling fault is the one that shows.
+    const extra = JSON.stringify({ criteria: criteria(3), questions: [], patterns: [], extra: 1 });
+    expect(proposalOverLimitOf(extra, 2)).toBeNull();
+    expect(proposalOverLimitOf(JSON.stringify({ criteria: criteria(1), questions: [], patterns: Array(21).fill("p") }), 20)).toBeNull();
+    expect(proposalOverLimitOf(proposal(criteria(2)), 20)).toBeNull();
+    expect(proposalOverLimitOf("not json", 20)).toBeNull();
+  });
+
+  it("names the limit and the way out, not the schema", () => {
+    const message = overLimitMessage({ criteria: { count: 24, limit: 20 }, questions: null });
+    expect(message).toBe(
+      "The Work Item needs more than 20 acceptance criteria, the limit of this product. Split it into smaller issues, " +
+        "or raise the refiner criteria limit on the product page. Factoree published nothing.",
     );
   });
 });

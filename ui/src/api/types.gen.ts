@@ -737,6 +737,7 @@ export type CreateSetupProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -900,6 +901,7 @@ export type ListProductsResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -998,6 +1000,7 @@ export type CreateProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1129,6 +1132,7 @@ export type GetProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1179,6 +1183,7 @@ export type UpdateProductData = {
       setup?: string | null;
     };
     silenceMinutes?: number;
+    refinerCriteriaLimit?: number;
     sandboxRetentionHours?: number;
     sandboxProviderIds?: Array<string>;
     maxConcurrentRuns?: number;
@@ -1271,6 +1276,7 @@ export type UpdateProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1367,6 +1373,7 @@ export type ActivateProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;

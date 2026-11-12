@@ -24,6 +24,7 @@ const product = (id: string, linearTeamId: string): ProductRecord => ({
   models: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   silenceMinutes: 10,
+  refinerCriteriaLimit: 20,
   sandboxRetentionHours: 24,
   sandboxProviderIds: [],
   maxConcurrentRuns: 2, appChangeIssues: "one_per_change",

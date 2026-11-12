@@ -32,6 +32,8 @@ export interface ProductRecord {
   effort: ProductEffort;
   /** The silence limit of an agent session, in minutes. */
   silenceMinutes: number;
+  /** Issue #39, DI-21.66. The most criteria a refiner proposal may hold. */
+  refinerCriteriaLimit: number;
   /** SDD section 51. The hours a finished sandbox stays before the reaper deletes it. */
   sandboxRetentionHours: number;
   /** docs/specs/sandbox-provider-spillover.md. The sandbox providers its runs may use. Empty allows all. */
@@ -64,6 +66,7 @@ export interface ProductSettingsUpdate {
   /** An absent role keeps its effort, and null clears it. */
   effort?: { [Role in keyof ProductEffort]?: string | null | undefined };
   silenceMinutes?: number;
+  refinerCriteriaLimit?: number;
   sandboxRetentionHours?: number;
   sandboxProviderIds?: string[];
   maxConcurrentRuns?: number;

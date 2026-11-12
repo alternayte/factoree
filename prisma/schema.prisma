@@ -609,6 +609,8 @@ model Product {
   effortSetup       String?  @map("effort_setup")
   // The silence limit: an agent session that writes no output for this many minutes is hung.
   silenceMinutes Int      @default(10)
+  // Issue #39, DI-21.66. The most criteria a refiner proposal may hold, 1 to 50.
+  refinerCriteriaLimit Int @default(20) @map("refiner_criteria_limit")
   // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
   sandboxRetentionHours Int @default(24)
   // docs/specs/sandbox-provider-spillover.md. The sandbox provider ids the runs of this product may

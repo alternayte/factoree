@@ -110,6 +110,11 @@ export interface AgentRunProductInput {
    * operator widens the allow list. Absent in an older history.
    */
   productPageUrl?: string;
+  /**
+   * Issue #39, DI-21.66. The most criteria a refiner proposal may hold. Absent in an older
+   * history, where the activity takes the default of 20.
+   */
+  refinerCriteriaLimit?: number;
 }
 
 /** SDD section 7. The Work Item text, exactly as the author wrote it. */
@@ -1896,6 +1901,7 @@ export async function agentRunWorkflow(
             egress: egressOf(preparedSandbox),
             timeoutMs: remainingMs(),
             ...(afterHang ? { afterHang: true } : {}),
+            ...(input.product.refinerCriteriaLimit === undefined ? {} : { criteriaLimit: input.product.refinerCriteriaLimit }),
           }),
         );
       try {
@@ -1932,9 +1938,11 @@ export async function agentRunWorkflow(
         return await failHung("refiner", refinerHang);
       }
       if (proposal.status !== "proposed") {
+        // Issue #39, DI-21.66. A proposal over the criteria limit carries a message for the human.
+        // A result from an older history holds none and takes the message from before.
         return await failRun(
           "REFINEMENT_UNAVAILABLE",
-          `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
+          proposal.message ?? `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
         );
       }
       // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. A host the work needs and the

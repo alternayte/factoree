@@ -10,67 +10,133 @@ import type { MissingHost } from "~/domain/runs/egress.js";
  */
 export const missingHostSchema = z.object({ host: z.string().min(1), reason: z.string() }).strict();
 
+/** Issue #39, DI-21.66. The criteria cap of a Product that sets none. */
+export const DEFAULT_REFINER_CRITERIA_LIMIT = 20;
+/** Issue #39. The bounds of the Product setting `refinerCriteriaLimit`. */
+export const REFINER_CRITERIA_LIMIT_MIN = 1;
+export const REFINER_CRITERIA_LIMIT_MAX = 50;
+/** The questions cap. No setting changes it. */
+export const REFINER_QUESTIONS_LIMIT = 5;
+
 /**
  * docs/specs/refiner-agent.md. The refiner writes one proposal file. It is data, never code, and
  * the gate below decides what of it reaches the Validation Contract. P-01: the refiner proposes,
- * Factoree decides.
+ * Factoree decides. Issue #39, DI-21.66: the Product sets the criteria cap.
  */
-const proposalSchema = z
-  .object({
-    criteria: z
-      .array(
-        z
-          .object({
-            statement: z.string().min(1),
-            // docs/specs/own-proposals-and-parallel-runs.md. "stated": the ticket says it. "implied":
-            // one ticket sentence directly implies it. "new": it adds behaviour no sentence implies.
-            origin: z.enum(["stated", "implied", "new"]),
-            // The exact ticket sentence the criterion restates or follows from, or null for a new one.
-            quote: z.string().nullable(),
-            method: z.enum(VALIDATION_METHODS),
-            // What runs the check: a command, a test path, "METHOD /path", or a browser route.
-            target: z.string().nullable(),
-            // docs/specs/proof-pack-and-visual-evidence.md. True when the ticket names a page, a
-            // screen or a UI element. An older proposal without the field is not visible.
-            visible: z.boolean().default(false),
-          })
-          .strict(),
-      )
-      .max(20),
-    // A decision the refiner needs that the ticket leaves open, with the answer it proposes and why.
-    // Factoree takes the proposal and records it. A human corrects it in the review.
-    questions: z
-      .array(z.object({ question: z.string().min(1), proposal: z.string().min(1), reason: z.string().min(1) }).strict())
-      .max(5),
-    patterns: z.array(z.string().min(1)).max(20),
-    // docs/specs/egress-honesty-and-issue-status.md. The hosts the work needs and the sandbox does
-    // not reach. An older proposal without the field names none.
-    missingHosts: z.array(missingHostSchema).max(20).default([]),
-  })
-  .strict();
+const proposalSchemaOf = (criteriaLimit: number) =>
+  z
+    .object({
+      criteria: z
+        .array(
+          z
+            .object({
+              statement: z.string().min(1),
+              // docs/specs/own-proposals-and-parallel-runs.md. "stated": the ticket says it. "implied":
+              // one ticket sentence directly implies it. "new": it adds behaviour no sentence implies.
+              origin: z.enum(["stated", "implied", "new"]),
+              // The exact ticket sentence the criterion restates or follows from, or null for a new one.
+              quote: z.string().nullable(),
+              method: z.enum(VALIDATION_METHODS),
+              // What runs the check: a command, a test path, "METHOD /path", or a browser route.
+              target: z.string().nullable(),
+              // docs/specs/proof-pack-and-visual-evidence.md. True when the ticket names a page, a
+              // screen or a UI element. An older proposal without the field is not visible.
+              visible: z.boolean().default(false),
+            })
+            .strict(),
+        )
+        .max(criteriaLimit),
+      // A decision the refiner needs that the ticket leaves open, with the answer it proposes and why.
+      // Factoree takes the proposal and records it. A human corrects it in the review.
+      questions: z
+        .array(z.object({ question: z.string().min(1), proposal: z.string().min(1), reason: z.string().min(1) }).strict())
+        .max(REFINER_QUESTIONS_LIMIT),
+      patterns: z.array(z.string().min(1)).max(20),
+      // docs/specs/egress-honesty-and-issue-status.md. The hosts the work needs and the sandbox does
+      // not reach. An older proposal without the field names none.
+      missingHosts: z.array(missingHostSchema).max(20).default([]),
+    })
+    .strict();
 
-export type RefinerProposal = z.infer<typeof proposalSchema>;
+export type RefinerProposal = z.infer<ReturnType<typeof proposalSchemaOf>>;
+
+/** One capped list of a proposal over its cap: how many items it holds, and the cap. */
+export interface ProposalCount {
+  count: number;
+  limit: number;
+}
+
+/**
+ * Issue #39, DI-21.66. A proposal whose only schema faults are too many criteria, too many
+ * questions, or both. Each field is null when that list is within its cap.
+ */
+export interface ProposalOverLimit {
+  criteria: ProposalCount | null;
+  questions: ProposalCount | null;
+}
 
 export class RefinerProposalError extends Error {
-  constructor(message: string) {
+  /** Set when the only schema faults are the criteria or questions caps. */
+  readonly overLimit: ProposalOverLimit | null;
+
+  constructor(message: string, overLimit: ProposalOverLimit | null = null) {
     super(message);
     this.name = "RefinerProposalError";
+    this.overLimit = overLimit;
   }
 }
 
-export const parseRefinerProposal = (text: string): RefinerProposal => {
+const CAPPED_LISTS = ["criteria", "questions"] as const;
+
+/** The over-limit lists, or null when any schema fault is something other than a capped list. */
+const overLimitOf = (json: unknown, issues: readonly z.core.$ZodIssue[]): ProposalOverLimit | null => {
+  const over: ProposalOverLimit = { criteria: null, questions: null };
+  for (const issue of issues) {
+    const list = issue.path.length === 1 ? CAPPED_LISTS.find((name) => name === issue.path[0]) : undefined;
+    if (issue.code !== "too_big" || issue.origin !== "array" || list === undefined) return null;
+    const value = (json as Record<string, unknown>)[list];
+    over[list] = { count: Array.isArray(value) ? value.length : 0, limit: Number(issue.maximum) };
+  }
+  return over.criteria === null && over.questions === null ? null : over;
+};
+
+export const parseRefinerProposal = (text: string, criteriaLimit = DEFAULT_REFINER_CRITERIA_LIMIT): RefinerProposal => {
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
     throw new RefinerProposalError("the refiner proposal is not JSON");
   }
-  const parsed = proposalSchema.safeParse(json);
+  const parsed = proposalSchemaOf(criteriaLimit).safeParse(json);
   if (!parsed.success) {
-    throw new RefinerProposalError(`the refiner proposal does not match the schema: ${parsed.error.message}`);
+    throw new RefinerProposalError(
+      `the refiner proposal does not match the schema: ${parsed.error.message}`,
+      overLimitOf(json, parsed.error.issues),
+    );
   }
   return parsed.data;
 };
+
+/** Issue #39. The over-limit lists of a proposal text, or null when it parses or fails otherwise. */
+export const proposalOverLimitOf = (text: string, criteriaLimit: number): ProposalOverLimit | null => {
+  try {
+    parseRefinerProposal(text, criteriaLimit);
+    return null;
+  } catch (error) {
+    return error instanceof RefinerProposalError ? error.overLimit : null;
+  }
+};
+
+/**
+ * Issue #39, DI-21.66. The failure message of a Run whose proposal stays over a cap after the one
+ * correction round. The human acts on it, so it names the cap and the way out, not the schema.
+ */
+export const overLimitMessage = (over: ProposalOverLimit): string =>
+  over.criteria !== null
+    ? `The Work Item needs more than ${String(over.criteria.limit)} acceptance criteria, the limit of this product. ` +
+      "Split it into smaller issues, or raise the refiner criteria limit on the product page. Factoree published nothing."
+    : `The Work Item leaves more than ${String(over.questions?.limit ?? REFINER_QUESTIONS_LIMIT)} decisions open, the limit of the Refiner. ` +
+      "Split it into smaller issues, or answer the open decisions in the issue. Factoree published nothing.";
 
 /** The schema text the refiner prompt shows, so the prompt and the parser cannot drift. */
 export const REFINER_PROPOSAL_SCHEMA = [

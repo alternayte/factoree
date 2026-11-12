@@ -241,6 +241,8 @@ export class DelegationService {
       organizationSkillsRepository: product.organizationSkillsRepository,
       // docs/specs/skill-registry.md. The key stays in the secret store. Only the settings travel.
       skillRegistry: product.skillRegistry,
+      // Issue #39, DI-21.66. The criteria cap of the refiner proposal is a Product setting.
+      refinerCriteriaLimit: product.refinerCriteriaLimit,
       // docs/specs/egress-honesty-and-issue-status.md. A missing-host post names the product page.
       ...(this.dependencies.productPageUrl === undefined ? {} : { productPageUrl: this.dependencies.productPageUrl(product.id) }),
     };

@@ -3,6 +3,7 @@ import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } fr
 import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
 import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
+import { REFINER_CRITERIA_LIMIT_MAX, REFINER_CRITERIA_LIMIT_MIN } from "~/domain/refinement/refiner-proposal.js";
 
 /**
  * docs/specs/release-0-1-0.md. The shapes of the settings API. The zod schemas validate the
@@ -54,6 +55,8 @@ export const productSchema = z.object({
   models: effortSchema,
   effort: effortSchema,
   silenceMinutes: z.number(),
+  /** Issue #39. The most criteria a refiner proposal may hold. */
+  refinerCriteriaLimit: z.number(),
   sandboxRetentionHours: z.number(),
   /** docs/specs/sandbox-provider-spillover.md. The sandbox providers the runs may use. Empty allows all. */
   sandboxProviderIds: z.array(z.string()),
@@ -110,6 +113,8 @@ export const productSettingsFields = {
     .partial()
     .strict(),
   silenceMinutes: z.number().int().positive().max(240),
+  // Issue #39, DI-21.66. The criteria cap of the refiner proposal.
+  refinerCriteriaLimit: z.number().int().min(REFINER_CRITERIA_LIMIT_MIN).max(REFINER_CRITERIA_LIMIT_MAX),
   sandboxRetentionHours: z.number().int().min(0).max(24 * 30),
   sandboxProviderIds: z.array(z.string().min(1)).max(50),
   maxConcurrentRuns: z.number().int().positive().max(100),

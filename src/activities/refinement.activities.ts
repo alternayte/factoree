@@ -3,9 +3,9 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import { agentSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import { agentSessionKey, refinerLimitCorrectionSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
 import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
-import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
+import { AgentSessionUnavailableError, UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
@@ -16,14 +16,24 @@ import { worktreeFingerprint } from "~/domain/review/source-diff.js";
 import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import {
+  DEFAULT_REFINER_CRITERIA_LIMIT,
   gateRefinerProposal,
+  overLimitMessage,
+  proposalOverLimitOf,
   refinementDecisions,
   type GatedRefinement,
   type GateRepository,
   parseRefinerProposal,
   REFINER_PROPOSAL_SCHEMA,
+  REFINER_QUESTIONS_LIMIT,
+  RefinerProposalError,
 } from "~/domain/refinement/refiner-proposal.js";
-import { REFINER_PROMPT_VERSION, renderRefinerPrompt } from "~/prompts/refiner.js";
+import {
+  REFINER_LIMIT_CORRECTION_VERSION,
+  REFINER_PROMPT_VERSION,
+  renderRefinerLimitCorrectionPrompt,
+  renderRefinerPrompt,
+} from "~/prompts/refiner.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type {
   RecordedDecision,
@@ -127,6 +137,11 @@ export interface ProposeRefinementActivityInput {
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
   egress?: EgressFacts | null;
+  /**
+   * Issue #39, DI-21.66. The most criteria the proposal may hold, the Product setting. Absent in
+   * a history recorded before the setting existed, where the cap was 20.
+   */
+  criteriaLimit?: number;
 }
 
 export interface ProposeRefinementActivityOutput {
@@ -145,6 +160,11 @@ export interface ProposeRefinementActivityOutput {
   /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap: string | null;
   reason: string;
+  /**
+   * Issue #39, DI-21.66. The whole failure message, when the human must act on it: the proposal
+   * stayed over a cap after the correction round. Absent otherwise, and in an older history.
+   */
+  message?: string;
   /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
   hang: AgentHang;
   /**
@@ -170,9 +190,10 @@ const gateOrNull = (
   text: string,
   workItemText: string,
   repository: GateRepository,
+  criteriaLimit: number,
 ): GatedRefinement | null => {
   try {
-    return gateRefinerProposal(parseRefinerProposal(text), workItemText, repository);
+    return gateRefinerProposal(parseRefinerProposal(text, criteriaLimit), workItemText, repository);
   } catch {
     return null;
   }
@@ -259,19 +280,24 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
 
     const repository = { previewConfigured: input.previewConfigured };
     const actionPolicy = buildActionPolicy({ role: "refiner" });
-    const prompt = renderRefinerPrompt({
-      workItem: input.workItemText,
-      goal: input.goal,
-      statedCriteria: input.statedCriteria,
-      contextContract: input.contextContract,
-      contextFiles: input.contextFiles ?? [],
-      imageFiles: input.imageFiles ?? [],
-      primaryRepositoryPath: input.primaryPath,
-      proposalPath,
-      proposalSchema: REFINER_PROPOSAL_SCHEMA,
-      skills: input.skills,
-      egress: input.egress ?? null,
-    });
+    const criteriaLimit = input.criteriaLimit ?? DEFAULT_REFINER_CRITERIA_LIMIT;
+    const promptFor = (path: string): string =>
+      renderRefinerPrompt({
+        workItem: input.workItemText,
+        goal: input.goal,
+        statedCriteria: input.statedCriteria,
+        contextContract: input.contextContract,
+        contextFiles: input.contextFiles ?? [],
+        imageFiles: input.imageFiles ?? [],
+        primaryRepositoryPath: input.primaryPath,
+        proposalPath: path,
+        proposalSchema: REFINER_PROPOSAL_SCHEMA,
+        criteriaLimit,
+        questionsLimit: REFINER_QUESTIONS_LIMIT,
+        skills: input.skills,
+        egress: input.egress ?? null,
+      });
+    const prompt = promptFor(proposalPath);
 
     const context = Context.current();
     const heartbeat = setInterval(() => context.heartbeat(), REFINER_HEARTBEAT_INTERVAL_MS);
@@ -283,6 +309,9 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
 
     const invocations: AgentRunResult[] = [];
+    // Issue #39. A fresh session that corrects an over-limit proposal writes its own rows.
+    const correctionInvocations: AgentRunResult[] = [];
+    const correctionKey = refinerLimitCorrectionSessionKey(input.runId, afterHang);
     try {
       const result = await runner.run({
         runId: input.runId,
@@ -312,23 +341,104 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         );
         read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
       }
+      // Issue #39, DI-21.66. A proposal whose only fault is too many criteria or questions gets
+      // one correction round: the same session when it resumes, one fresh session otherwise. The
+      // corrected proposal goes to a new file, so a session that writes nothing leaves the first.
+      let currentPath = proposalPath;
+      const over = read.exitCode === 0 && live() ? proposalOverLimitOf(read.stdout, criteriaLimit) : null;
+      if (over !== null) {
+        const correctedPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}-corrected.json`;
+        const correction = renderRefinerLimitCorrectionPrompt({ ...over, proposalPath: correctedPath });
+        dependencies.logger.warn("the refiner proposal is over its limits; asking the refiner to correct it", {
+          tenant_id: input.tenantId,
+          run_id: input.runId,
+          step: "propose_refinement",
+          criteria: over.criteria?.count ?? null,
+          questions: over.questions?.count ?? null,
+          criteria_limit: criteriaLimit,
+        });
+        // The last invocation is the live CLI session. A runner that never learned a CLI session
+        // identifier names the session by its process, and that cannot be resumed.
+        const last = invocations.at(-1)!.session;
+        let resumed: AgentRunResult | null = null;
+        if (last.sessionId !== last.processId) {
+          try {
+            resumed = await runner.resume(last, { prompt: correction, timeoutMs: input.timeoutMs });
+            invocations.push(resumed);
+          } catch (error) {
+            // Another worker holds the session, so this one cannot resume it.
+            if (!(error instanceof AgentSessionUnavailableError)) throw error;
+          }
+        }
+        let corrected = await agent.sandbox.exec(ref, { file: "cat", args: [correctedPath] });
+        const resumeFailed =
+          resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
+        if (resumeFailed && corrected.exitCode !== 0 && !context.cancellationSignal.aborted) {
+          dependencies.logger.warn("the refiner session cannot be resumed; starting one fresh session to correct the proposal", {
+            tenant_id: input.tenantId,
+            run_id: input.runId,
+            step: "propose_refinement",
+            resumed: resumed !== null,
+          });
+          // The fresh session reads the normal prompt, with the corrected proposal path, and then
+          // the same correction message.
+          const promptVersion = `${REFINER_PROMPT_VERSION}+${REFINER_LIMIT_CORRECTION_VERSION}`;
+          const fresh = await runner.run({
+            runId: input.runId,
+            tenantId: input.tenantId,
+            role: "refiner",
+            sandbox: agent.sandbox,
+            ref,
+            workingDirectory: directory,
+            repositoryPath: input.primaryPath,
+            prompt: `${promptFor(correctedPath)}\n\n${correction}`,
+            promptVersion,
+            environment: {},
+            actionPolicy,
+            timeoutMs: input.timeoutMs,
+          });
+          correctionInvocations.push(fresh);
+          await agent.executions.record({
+            tenantId: input.tenantId,
+            runId: input.runId,
+            role: "refiner",
+            runner: runner.name,
+            model: null,
+            sessionRef: fresh.session.sessionId,
+            promptVersion,
+            durationMs: fresh.durationMs,
+            finalResult: {
+              completed: fresh.completed,
+              exitCode: fresh.exitCode,
+              cancelled: fresh.cancelled,
+              summary: fresh.summary,
+            },
+            idempotencyKey: correctionKey,
+          });
+          corrected = await agent.sandbox.exec(ref, { file: "cat", args: [correctedPath] });
+        }
+        if (corrected.exitCode === 0) {
+          read = corrected;
+          currentPath = correctedPath;
+        }
+      }
       // docs/specs/proof-pack-and-visual-evidence.md. A visible criterion in a repository with a
       // preview needs a browser check. One reminder asks for it before the gap reaches a human.
       if (read.exitCode === 0 && input.previewConfigured && live()) {
-        const first = gateOrNull(read.stdout, input.workItemText, repository);
+        const first = gateOrNull(read.stdout, input.workItemText, repository, criteriaLimit);
         if (first !== null && first.visualEvidenceGap !== null) {
           const reminder = await runner.resume(result.session, {
             prompt:
               `${first.visualEvidenceGap} The repository has a preview, so give each visible criterion ` +
               'the method "browser" and a target route that starts with "/". Rewrite ' +
-              `${proposalPath} with the whole proposal. Write the file and nothing else.`,
+              `${currentPath} with the whole proposal. Write the file and nothing else.`,
             timeoutMs: input.timeoutMs,
           });
           invocations.push(reminder);
-          read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
+          read = await agent.sandbox.exec(ref, { file: "cat", args: [currentPath] });
         }
       }
-      const hang = hangOf(invocations);
+      const hang = hangOf([...invocations, ...correctionInvocations]);
 
       await agent.executions.record({
         tenantId: input.tenantId,
@@ -362,6 +472,22 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         },
         invocations,
       );
+      if (correctionInvocations.length > 0) {
+        await recordAgentSession(
+          { sessions: agent.sessions, logger: dependencies.logger, stages: agent.stages },
+          {
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runId: input.runId,
+            role: "refiner",
+            attempt: 1,
+            runner: runner.name,
+            idempotencyKey: correctionKey,
+            sandboxId: input.spriteId,
+          },
+          correctionInvocations,
+        );
+      }
 
       const after = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
       const empty = { accepted: [], decisions: [], visualEvidenceGap: null, hang: null };
@@ -382,8 +508,14 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       }
       let gated;
       try {
-        gated = gateRefinerProposal(parseRefinerProposal(read.stdout), input.workItemText, repository);
+        gated = gateRefinerProposal(parseRefinerProposal(read.stdout, criteriaLimit), input.workItemText, repository);
       } catch (error) {
+        // Issue #39. Still over a cap after the correction round: the human splits the Work Item
+        // or raises the limit, so the message names that and not the schema.
+        if (error instanceof RefinerProposalError && error.overLimit !== null) {
+          const message = overLimitMessage(error.overLimit);
+          return { status: "unavailable", ...empty, reason: message, message };
+        }
         return { status: "unavailable", ...empty, reason: agent.redactor.redactText(String(error)) };
       }
       // DI-21.48. A host the allow list already holds is a misread fault, not a missing host.
