@@ -1,7 +1,11 @@
 export interface AgentSessionPort {
   acknowledge(sessionId: string, message: string): Promise<void>;
   progress(sessionId: string, message: string): Promise<void>;
-  elicit(sessionId: string, question: string): Promise<void>;
+  /**
+   * A question to the human. docs/specs/draft-of-failed-run.md: options make Linear show each one
+   * as a choice, and the chosen value comes back as a prompt.
+   */
+  elicit(sessionId: string, question: string, options?: ReadonlyArray<{ label: string; value: string }>): Promise<void>;
   respond(sessionId: string, body: string): Promise<void>;
   fail(sessionId: string, message: string): Promise<void>;
   /**

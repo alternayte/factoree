@@ -5,6 +5,7 @@ import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.j
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
+import { PrismaRunDraftStore } from "~/persistence/prisma/run-draft.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
 import { OrganizationSkillsRegistry } from "~/adapters/github/organization-skills-registry.js";
 import { GitHubSkillProposals } from "~/adapters/github/github-skill-proposals.js";
@@ -226,7 +227,7 @@ const reaper = new SpriteReaper({
 const agentSession: AgentSessionPort = {
   acknowledge: (sessionId, message) => call(sessionId, (client) => client.acknowledge(sessionId, message)),
   progress: (sessionId, message) => call(sessionId, (client) => client.progress(sessionId, message)),
-  elicit: (sessionId, question) => call(sessionId, (client) => client.elicit(sessionId, question)),
+  elicit: (sessionId, question, options) => call(sessionId, (client) => client.elicit(sessionId, question, options)),
   respond: (sessionId, body) => call(sessionId, (client) => client.respond(sessionId, body)),
   fail: (sessionId, message) => call(sessionId, (client) => client.fail(sessionId, message)),
   addLink: (sessionId, label, url) => call(sessionId, (client) => client.addLink(sessionId, label, url)),
@@ -501,6 +502,8 @@ const worker = await Worker.create({
     // repository takes a skill proposal as a pull request.
     skills: new PrismaRunSkillStore(prisma),
     runViews: new PrismaRunViewReader(prisma),
+    // docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run.
+    drafts: new PrismaRunDraftStore(prisma),
     setups: new PrismaRepositorySetupStore(prisma),
     // docs/specs/setup-app-change-issues.md. The issues act as the Factoree app of the tenant's
     // workspace. The state read mints a pull-request token of the one repository.

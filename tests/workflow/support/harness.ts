@@ -883,6 +883,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       activityOrder.push("describeRunFailure");
       return Promise.resolve(activityInput.message);
     },
+    // docs/specs/draft-of-failed-run.md. The real activity reads the draft facts and may post the offer.
+    offerDraft: (): Promise<void> => {
+      activityOrder.push("offerDraft");
+      return Promise.resolve();
+    },
     submitSkillProposals: (activityInput: SubmitSkillProposalsInput): Promise<void> => {
       activityOrder.push("submitSkillProposals");
       skillProposalCalls.push(activityInput);

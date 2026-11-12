@@ -288,6 +288,8 @@ describe("AT-16 — a failing deterministic command blocks publication and trigg
       "restoreIssueStatus",
       // docs/specs/run-recovery.md. The failure post reads the recorded facts.
       "describeRunFailure",
+      // docs/specs/draft-of-failed-run.md. After the failure post, the offer of a draft.
+      "offerDraft",
     ]);
     expect(namesFor("run-ses-at16b").filter(isPublishingName)).toEqual([]);
     // docs/specs/early-review-sprite.md. Every failed verify deleted the reviewer's check sprite

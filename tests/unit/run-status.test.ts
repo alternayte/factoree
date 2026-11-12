@@ -32,6 +32,7 @@ describe("run status", () => {
       "BLOCKED_ROUTING",
       "BLOCKED_TARGET",
       "BLOCKED_STALE_SET",
+      "DRAFT_PUBLISHED",
     ]);
   });
 
@@ -47,6 +48,7 @@ describe("run status", () => {
         "STALE_BASE",
         "BLOCKED_ROUTING",
         "BLOCKED_STALE_SET",
+        "DRAFT_PUBLISHED",
       ].sort(),
     );
   });

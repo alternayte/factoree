@@ -108,6 +108,16 @@ export interface RunDetail extends RunListItem {
   stopSource: string | null;
   /** The admin who stopped the run from the Factoree UI, or null. */
   stopRequestedBy: string | null;
+  /**
+   * docs/specs/draft-of-failed-run.md. True when a draft request of the run would start the draft
+   * workflow now: a failed run with a patch that no refusal rule stops.
+   */
+  draftQualifies: boolean;
+  /** DI-21.79. The request that started the draft workflow: when, from where, and who. */
+  draftRequestedAt: Date | null;
+  /** "linear" or "factoree_ui", or null when nobody asked for a draft. */
+  draftSource: string | null;
+  draftRequestedBy: string | null;
   /** The sandbox retention of the product, in hours. A stopped run keeps its work sprite this long. */
   sandboxRetentionHours: number;
   autonomyLevel: string;

@@ -26,6 +26,9 @@ const agentSessionSchema = z.object({
 const agentActivitySchema = z.object({
   id: z.string().optional(),
   signal: z.string().nullable().optional(),
+  // docs/specs/draft-of-failed-run.md. The Linear user who wrote the prompt, for the draft record.
+  userId: z.string().nullable().optional(),
+  user: z.object({ id: z.string().optional(), name: z.string().nullable().optional(), email: z.string().nullable().optional() }).nullable().optional(),
   content: z
     .object({ type: z.string().optional(), body: z.string().optional() })
     .nullable()
@@ -49,7 +52,7 @@ export type AgentSessionEvent = z.infer<typeof agentSessionEventSchema>;
 
 export type AgentSessionCommand =
   | { kind: "delegation" }
-  | { kind: "prompt"; body: string }
+  | { kind: "prompt"; body: string; author: string | null }
   | { kind: "stop" }
   | { kind: "ignore"; reason: string };
 
@@ -57,5 +60,7 @@ export const classifyAgentSessionEvent = (event: AgentSessionEvent): AgentSessio
   if (event.action === "created") return { kind: "delegation" };
   if (event.action !== "prompted") return { kind: "ignore", reason: `unsupported action ${event.action}` };
   if (event.agentActivity?.signal === "stop") return { kind: "stop" };
-  return { kind: "prompt", body: event.agentActivity?.content?.body ?? "" };
+  const user = event.agentActivity?.user ?? null;
+  const author = user?.name?.trim() || user?.email?.trim() || event.agentActivity?.userId || null;
+  return { kind: "prompt", body: event.agentActivity?.content?.body ?? "", author };
 };

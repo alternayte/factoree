@@ -30,6 +30,13 @@ describe("run recovery (docs/specs/run-recovery.md)", () => {
     expect(noFollowUpLine("READY_FOR_HUMAN", "https://github.com/acme/shop/pull/7")).toContain("pull/7");
   });
 
+  it("answers a reply after DRAFT_PUBLISHED with the pull request, and starts nothing (draft-of-failed-run.md)", () => {
+    expect(takesFollowUp("DRAFT_PUBLISHED")).toBe(false);
+    expect(noFollowUpLine("DRAFT_PUBLISHED", "https://github.com/acme/shop/pull/9")).toBe(
+      "Comment on the pull request (https://github.com/acme/shop/pull/9) or put a further change in a new issue.",
+    );
+  });
+
   it("asks for the repair before the reply after a configuration failure (DI-21.32)", () => {
     const post = renderFailurePost("Factoree could not prepare the sandbox.", fac73, "configuration");
     expect(post).toContain("Repair the configuration or the sandbox, then reply here to start a follow-up run.");

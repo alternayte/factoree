@@ -29,10 +29,19 @@ export function formatTokens(value: number | null): string {
 
 export type StatusTone = "success" | "warning" | "neutral" | "accent";
 
-/** The badge tone of a run status: success, a failure, or still at work. */
+/**
+ * The badge tone of a run status: success, a failure, or still at work. DRAFT_PUBLISHED is a
+ * failure with a draft pull request, not a success (docs/specs/draft-of-failed-run.md).
+ */
 export function statusTone(status: string): StatusTone {
   if (status === "READY_FOR_HUMAN" || status === "REPORTED") return "success";
-  if (status.startsWith("FAILED") || status === "STALE_BASE" || status.startsWith("BLOCKED")) return "warning";
+  if (
+    status.startsWith("FAILED") ||
+    status === "STALE_BASE" ||
+    status.startsWith("BLOCKED") ||
+    status === "DRAFT_PUBLISHED"
+  )
+    return "warning";
   if (status === "CANCELLED") return "neutral";
   return "accent";
 }
@@ -44,6 +53,7 @@ export const STATUS_FILTERS = [
   "FAILED_REVIEW",
   "FAILED_CONFIGURATION",
   "STALE_BASE",
+  "DRAFT_PUBLISHED",
   "CANCELLED",
   "QUEUED",
   "IMPLEMENTING",

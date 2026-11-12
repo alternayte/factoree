@@ -7,6 +7,15 @@ export const buildWorkflowId = (workspaceId: string, agentSessionId: string): st
 export const buildFollowUpWorkflowId = (workspaceId: string, agentSessionId: string, failedRunId: string): string =>
   `${buildWorkflowId(workspaceId, agentSessionId)}:follow-up:${failedRunId}`;
 
+/**
+ * docs/specs/draft-of-failed-run.md. The one workflow that publishes the draft of one failed run.
+ * Temporal refuses a second start while it runs, so a second request finds it.
+ */
+export const buildDraftWorkflowId = (runId: string): string => {
+  if (!runId) throw new Error("runId is required");
+  return `draft-${runId}`;
+};
+
 export interface ParsedWorkflowId {
   workspaceId: string;
   agentSessionId: string;

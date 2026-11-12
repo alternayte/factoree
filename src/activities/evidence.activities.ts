@@ -1,4 +1,5 @@
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
+import { NOT_CHECKED_REASON } from "~/domain/runs/run-draft.js";
 import { ApplicationFailure } from "@temporalio/activity";
 import { canonicalEvidenceHash, type EvidenceStore } from "~/domain/evidence/evidence.js";
 import { forYourEyeSource, type ForYourEyeCapture, type ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
@@ -280,6 +281,13 @@ export interface PublishProofPackActivityInput {
   autonomyReasons: string[];
   /** docs/specs/check-isolation.md. Changed files that define a check. */
   checkDefiningFiles: string[];
+  /**
+   * docs/specs/draft-of-failed-run.md. The draft of a failed run: the attempt whose check sprite
+   * received the published patch, and whether a review of it finished. Only the results, the
+   * evidence and the checks of that attempt describe the patch, and every other assertion is not
+   * proven.
+   */
+  draft?: { attempt: number; reviewed: boolean };
 }
 
 export interface PublishProofPackActivityOutput {
@@ -348,8 +356,10 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
 
     // SDD section 42. The last attempt of one assertion is its outcome. An earlier repair
     // attempt is history, and it must not decide what the Proof Pack reports.
+    const draft = input.draft;
     const latest = new Map<string, (typeof resultRows)[number]>();
     for (const row of resultRows) {
+      if (draft !== undefined && row.attempt !== draft.attempt) continue;
       const held = latest.get(row.assertionKey);
       if (held === undefined || row.attempt >= held.attempt) latest.set(row.assertionKey, row);
     }
@@ -362,6 +372,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     for (const row of evidenceRows) {
       if (row.validationAssertionId === null) continue;
       const attempt = metadataNumber(row.metadata, "attempt");
+      if (draft !== undefined && attempt !== draft.attempt) continue;
       const held = lastAttemptByAssertion.get(row.validationAssertionId);
       if (held === undefined || attempt > held) {
         lastAttemptByAssertion.set(row.validationAssertionId, attempt);
@@ -393,7 +404,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     // docs/specs/by-eye-criteria-and-selector-recheck.md. The screenshot of the last validation
     // attempt, outside every assertion total. Every pass writes a result row, so the highest
     // result attempt is the last pass.
-    const lastValidationAttempt = resultRows.reduce((held, row) => Math.max(held, row.attempt), -1);
+    const lastValidationAttempt = draft?.attempt ?? resultRows.reduce((held, row) => Math.max(held, row.attempt), -1);
     const needsYourEye: ProofPackForYourEye[] = (input.forYourEye ?? []).map((item) => {
       const row = evidenceRows.find(
         (candidate) =>
@@ -425,7 +436,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         // An assertion with no result row proved nothing. BLOCKED is the honest report, and
         // SDD section 68 then refuses the completion.
         result: outcome?.result ?? "BLOCKED",
-        reason: outcome?.reason ?? "No result row exists for this assertion.",
+        reason: outcome?.reason ?? (draft === undefined ? "No result row exists for this assertion." : NOT_CHECKED_REASON),
         evidence: evidenceByAssertion.get(assertion.rowId) ?? [],
         injectedFailure: injectedFailure.has(assertion.rowId),
       };
@@ -436,10 +447,8 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     // describes the change Factoree published, and a stale failing row would tell the human
     // that a passing Run failed its own verification.
     const checkRows = evidenceRows.filter((row) => row.kind === "deterministic_check");
-    const lastCheckAttempt = checkRows.reduce(
-      (held, row) => Math.max(held, metadataNumber(row.metadata, "attempt")),
-      -1,
-    );
+    const lastCheckAttempt =
+      draft?.attempt ?? checkRows.reduce((held, row) => Math.max(held, metadataNumber(row.metadata, "attempt")), -1);
 
     // SDD section 47 forbids a raw log dump, so only the named fields travel. The `log` key of
     // the evidence metadata is never read here, and a spread would defeat the whole rule.
@@ -598,6 +607,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         url: proposal.url,
         reason: proposal.reason,
       })),
+      ...(draft === undefined ? {} : { draft: { reviewed: draft.reviewed } }),
     };
 
     // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.

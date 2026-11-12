@@ -174,8 +174,11 @@ export interface RunRepository {
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
   /** The newest run of the agent session. A follow-up run is newer than the run it follows. */
   findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null>;
-  /** docs/specs/run-recovery.md. Records the last patch a check sprite captured. */
-  recordLastPatch(tenantId: string, runId: string, patchBase64: string): Promise<void>;
+  /**
+   * docs/specs/run-recovery.md. Records the last patch a check sprite captured, and the attempt it
+   * served (docs/specs/draft-of-failed-run.md, DI-21.76).
+   */
+  recordLastPatch(tenantId: string, runId: string, patchBase64: string, attempt: number): Promise<void>;
   /** docs/specs/run-recovery.md. The last patch a check sprite captured, or null. */
   lastPatch(tenantId: string, runId: string): Promise<string | null>;
   updateStatus(id: string, status: RunStatus, patch?: RunStatusPatch): Promise<RunRecord>;

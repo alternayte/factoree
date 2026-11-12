@@ -24,6 +24,12 @@ export const noFollowUpLine = (status: string, pullRequestUrl: string | null): s
         : `Comment on the pull request (${pullRequestUrl}) or put a further change in a new issue.`)
     );
   }
+  // docs/specs/draft-of-failed-run.md. The draft pull request has its own review loop.
+  if (status === "DRAFT_PUBLISHED") {
+    return pullRequestUrl === null
+      ? "Put a further change in a new issue."
+      : `Comment on the pull request (${pullRequestUrl}) or put a further change in a new issue.`;
+  }
   if (status === "CANCELLED") return "This run was stopped, so Factoree starts no new run here. Delegate the issue again to start one.";
   if (status.startsWith("BLOCKED")) {
     return "This run failed on its configuration, so a new run would fail the same way. Repair the configuration, then delegate the issue again.";

@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
 import type { StopRequest } from "~/domain/runs/run-stop.js";
+import type { DraftRequest } from "~/domain/runs/run-draft.js";
+import type { DraftOutcome } from "~/domain/runs/delegation-service.js";
 import { principalOf } from "../auth/admin-guard.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 
@@ -54,6 +56,14 @@ export const runDetailSchema = runListItemSchema.extend({
   stopSource: z.string().nullable(),
   /** The admin who stopped the run from the Factoree UI, or null. */
   stopRequestedBy: z.string().nullable(),
+  /** docs/specs/draft-of-failed-run.md. True when a draft request would start the draft now. */
+  draftQualifies: z.boolean(),
+  /** DI-21.79. The request that started the draft workflow, or null. */
+  draftRequestedAt: z.string().nullable(),
+  /** "linear" or "factoree_ui", or null when nobody asked for a draft. */
+  draftSource: z.string().nullable(),
+  /** The Linear user or the admin who asked for the draft, or null. */
+  draftRequestedBy: z.string().nullable(),
   /** The sandbox retention of the product, in hours. */
   sandboxRetentionHours: z.number(),
   autonomyLevel: z.string(),
@@ -151,6 +161,8 @@ export const registerRunRoutes = (
     stopRun: (input: { tenantId: string; runId: string; workflowId: string; request: StopRequest }) => Promise<boolean>;
     /** The name, or else the email, of a user, for the stop message and the stop record. */
     userName: (userId: string) => Promise<string | null>;
+    /** docs/specs/draft-of-failed-run.md. The draft path of a Linear reply: DelegationService.requestDraft. */
+    requestDraft: (input: { tenantId: string; runId: string; request: DraftRequest }) => Promise<DraftOutcome>;
   },
 ): void => {
   useSchemasAsDocumentation(app);
@@ -244,6 +256,52 @@ export const registerRunRoutes = (
       // nothing can stop it from here.
       if (!signalled) return reply.code(409).send({ error: "the workflow of the run is not running" });
       return reply.code(202).send({ stopRequestedBy: by });
+    },
+  );
+  /**
+   * docs/specs/draft-of-failed-run.md. A workspace admin asks for the draft of a failed run, on the
+   * path of the Linear reply. 202 names the started or running draft workflow, or the pull request
+   * of a draft that is already open. 409 names why Factoree refuses it.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/admin/runs/:id/draft",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "publishRunDraft",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        body: schemaOf(stopBodySchema),
+        response: {
+          202: schemaOf(z.object({ workflowId: z.string().nullable(), pullRequestUrl: z.string().nullable() })),
+          400: errorSchema,
+          404: errorSchema,
+          409: errorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = stopBodySchema.safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(body.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const by = await dependencies.userName(principalOf(request).userId);
+      const outcome = await dependencies.requestDraft({
+        tenantId: tenant.id,
+        runId: request.params.id,
+        request: { source: "factoree_ui", by },
+      });
+      switch (outcome.kind) {
+        case "not_found":
+          return reply.code(404).send({ error: "run not found" });
+        case "refused":
+          return reply.code(409).send({ error: outcome.reason });
+        case "published":
+          return reply.code(202).send({ workflowId: null, pullRequestUrl: outcome.pullRequestUrl });
+        case "started":
+        case "in_progress":
+          return reply.code(202).send({ workflowId: outcome.workflowId, pullRequestUrl: null });
+      }
     },
   );
 };

@@ -101,6 +101,51 @@ export interface VerifiedPatch {
 export const sha256OfBase64 = (base64: string): string =>
   createHash("sha256").update(Buffer.from(base64, "base64")).digest("hex");
 
+/** Reads one C-quoted git path, as `core.quotePath=true` writes it, without its quotes. */
+const unquoteGitPath = (quoted: string): string => {
+  const bytes: number[] = [];
+  const escapes: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '"': 34, "\\": 92 };
+  for (let index = 0; index < quoted.length; index += 1) {
+    const char = quoted[index] ?? "";
+    if (char !== "\\") {
+      bytes.push(...Buffer.from(char, "utf8"));
+      continue;
+    }
+    const next = quoted[index + 1] ?? "";
+    const octal = /^[0-7]{3}$/.exec(quoted.slice(index + 1, index + 4));
+    if (octal !== null) {
+      bytes.push(parseInt(octal[0], 8));
+      index += 3;
+    } else {
+      bytes.push(escapes[next] ?? next.charCodeAt(0));
+      index += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+};
+
+/**
+ * docs/specs/draft-of-failed-run.md. The files a stored patch changes, read from its `diff --git`
+ * lines. The patch has no rename (PATCH_DIFF_ARGS), so both paths of a line are the same path.
+ */
+export const changedFilesOfPatch = (patch: string): string[] => {
+  const files = new Set<string>();
+  for (const line of patch.split("\n")) {
+    if (!line.startsWith("diff --git ")) continue;
+    const rest = line.slice("diff --git ".length);
+    if (rest.startsWith('"')) {
+      // `"a/<path>" "b/<path>"`, with the same quoted path twice.
+      const length = (rest.length - 9) / 2;
+      if (Number.isInteger(length) && length > 0) files.add(unquoteGitPath(rest.slice(3, 3 + length)));
+      continue;
+    }
+    // `a/<path> b/<path>`, with the same path twice.
+    const length = (rest.length - 5) / 2;
+    if (Number.isInteger(length) && length > 0) files.add(rest.slice(2, 2 + length));
+  }
+  return [...files].sort();
+};
+
 export interface PatchDependencies {
   sandbox: Sandbox;
   redactor: Redactor;

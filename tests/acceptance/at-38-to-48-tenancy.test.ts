@@ -89,6 +89,7 @@ const buildDelegationService = (options: { products: ProductRecord[]; repositori
       },
       signalStop: () => Promise.resolve(true),
       signalHumanInput: () => Promise.resolve(true),
+      startDraft: () => Promise.resolve(true),
     },
     refusalNotifier: {
       postFailure: (workspaceId: string, sessionId: string, message: string) => {

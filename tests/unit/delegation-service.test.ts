@@ -7,6 +7,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
+import { DRAFT_STARTED_LINE, type DraftFacts, type DraftRequest } from "~/domain/runs/run-draft.js";
 
 const event = (name: string) =>
   agentSessionEventSchema.parse(JSON.parse(readFileSync(`tests/fixtures/linear/${name}.json`, "utf8")));
@@ -76,7 +77,9 @@ const build = (
     products: ProductRecord[];
     repositories: RepositoryRecord[];
     startFails: boolean;
-    latest: { id: string; status: "FAILED" | "READY_FOR_HUMAN" | "IMPLEMENTING"; temporalWorkflowId: string; pullRequestUrl: string | null } | null;
+    latest: { id: string; status: "FAILED" | "READY_FOR_HUMAN" | "IMPLEMENTING" | "DRAFT_PUBLISHED"; temporalWorkflowId: string; pullRequestUrl: string | null } | null;
+    draftFacts: Partial<DraftFacts>;
+    draftRunning: boolean;
   }> = {},
 ) => {
   const postedResponses: string[] = [];
@@ -90,7 +93,9 @@ const build = (
     ),
     signalStop: vi.fn(() => Promise.resolve(true)),
     signalHumanInput: vi.fn(() => Promise.resolve(true)),
+    startDraft: vi.fn(() => Promise.resolve(overrides.draftRunning !== true)),
   };
+  const draftRequests: DraftRequest[] = [];
   const service = new DelegationService({
     tenants: {
       findByWorkspace: () =>
@@ -146,8 +151,31 @@ const build = (
           findings: [],
         } as never),
     },
+    drafts: {
+      facts: (_tenantId: string, runId: string) =>
+        Promise.resolve({
+          runId,
+          status: overrides.latest?.status ?? "FAILED",
+          failureReason: "VALIDATION_FAILED",
+          failureMessage: "VAL-UI-001 failed.",
+          pullRequestUrl: overrides.latest?.pullRequestUrl ?? null,
+          hasPatch: true,
+          patchAttempt: 1,
+          targetCount: 1,
+          assertions: [],
+          findings: [],
+          reviewed: true,
+          ...overrides.draftFacts,
+        }),
+      subject: () => Promise.resolve(null),
+      recordRequest: (_tenantId: string, _runId: string, request: DraftRequest) => {
+        draftRequests.push(request);
+        return Promise.resolve();
+      },
+      markPublished: () => Promise.resolve(true),
+    },
   });
-  return { service, starter, postedFailures, postedResponses };
+  return { service, starter, postedFailures, postedResponses, draftRequests };
 };
 
 describe("DelegationService", () => {
@@ -424,6 +452,76 @@ describe("the delegation service and the organization skills repository", () => 
       expect(outcome).toEqual({ kind: "follow_up_refused", status: "READY_FOR_HUMAN" });
       expect(starter.start).not.toHaveBeenCalled();
       expect(postedResponses).toEqual([expect.stringContaining("pull/24")]);
+    });
+
+    // docs/specs/draft-of-failed-run.md. The typed reply and the chosen option take one matcher.
+    it("publishes a failed run as a draft for the reply `publish as draft`, and starts no follow-up run", async () => {
+      const { service, starter, postedResponses, draftRequests } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1", pullRequestUrl: null },
+      });
+      const prompted = JSON.parse(readFileSync("tests/fixtures/linear/agent-session-created.json", "utf8")) as Record<string, unknown>;
+      const outcome = await service.handleAgentSessionEvent(
+        agentSessionEventSchema.parse({
+          ...prompted,
+          action: "prompted",
+          agentActivity: { content: { type: "prompt", body: "  Publish as draft. " }, user: { id: "u-1", name: "Ada" } },
+        }),
+        "delivery-draft",
+      );
+
+      expect(outcome).toEqual({ kind: "draft", outcome: "started" });
+      expect(starter.startDraft).toHaveBeenCalledWith({ workflowId: "draft-run-73", tenantId: "tenant-1", runId: "run-73" });
+      expect(starter.start).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([DRAFT_STARTED_LINE]);
+      expect(draftRequests).toEqual([{ source: "linear", by: "Ada" }]);
+    });
+
+    it("still starts a follow-up run for any other reply on a failed run", async () => {
+      const { service, starter } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1", pullRequestUrl: null },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("fix the button colour"), "delivery-colour");
+
+      expect(outcome.kind).toBe("started");
+      expect(starter.startDraft).not.toHaveBeenCalled();
+      expect(starter.start.mock.calls[0]?.[0].workflowId).toMatch(/:follow-up:run-73$/);
+    });
+
+    it("answers a second request with the open draft pull request, and starts nothing", async () => {
+      const url = "https://github.com/acme/web/pull/31";
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-73", status: "DRAFT_PUBLISHED", temporalWorkflowId: "w", pullRequestUrl: url },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("publish as draft"), "delivery-draft-again");
+
+      expect(outcome).toEqual({ kind: "draft", outcome: "published" });
+      expect(starter.startDraft).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([`The draft pull request of this run is open: ${url}.`]);
+    });
+
+    it("answers a request while the draft workflow runs with that workflow, and records nothing", async () => {
+      const { service, draftRequests } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "w", pullRequestUrl: null },
+        draftRunning: true,
+      });
+      const outcome = await service.requestDraft({ tenantId: "tenant-1", runId: "run-73", request: { source: "factoree_ui", by: "Ada" } });
+
+      expect(outcome).toEqual({ kind: "in_progress", workflowId: "draft-run-73" });
+      expect(draftRequests).toEqual([]);
+    });
+
+    it("refuses the draft of a patch whose review found a blocker, names the finding, and opens nothing", async () => {
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "w", pullRequestUrl: null },
+        draftFacts: {
+          findings: [{ key: "RV-1", severity: "blocker", category: "security", evidence: "src/auth.ts:12", description: "The token reaches the log.", blocking: true }],
+        },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("Publish as draft"), "delivery-draft-blocker");
+
+      expect(outcome).toEqual({ kind: "draft", outcome: "refused" });
+      expect(starter.startDraft).not.toHaveBeenCalled();
+      expect(postedResponses[0]).toContain("RV-1 at src/auth.ts:12: The token reaches the log.");
     });
 
     it("forwards a reply to the newest run while it is active", async () => {

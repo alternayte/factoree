@@ -3,6 +3,7 @@ import { startDatabase, seedTenantProjectAndRun } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
+import { PrismaRunDraftStore } from "~/persistence/prisma/run-draft.prisma.js";
 
 let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
@@ -313,5 +314,45 @@ describe("PrismaWebhookLog", () => {
     const second = await log.recordIfNew({ tenantId: tenantA, deliveryId: "delivery-1", eventType: "AgentSessionEvent" });
     expect(first).toBe(true);
     expect(second).toBe(false);
+  });
+});
+
+// docs/specs/draft-of-failed-run.md, DI-21.76. The draft decides on the review of the patch it
+// publishes: a blocker of an earlier attempt reviewed another patch and does not stand.
+describe("PrismaRunDraftStore", () => {
+  const finding = (runId: string, attempt: number) => ({
+    tenantId: tenantA,
+    runId,
+    attempt,
+    verdict: "fail",
+    findingKey: `RV-${attempt}`,
+    severity: "blocker",
+    category: "correctness",
+    requirement: "AC-1",
+    evidence: "src/a.ts:1",
+    description: "It throws.",
+    blocking: true,
+    decisionReason: "a blocker",
+  });
+
+  it("reads the review of the last patch only, and keeps the failure when it writes DRAFT_PUBLISHED", async () => {
+    const repository = new PrismaRunRepository(prisma);
+    const drafts = new PrismaRunDraftStore(prisma);
+    const { run } = await repository.createIfAbsent(input("session-draft"));
+    await repository.updateStatus(run.id, "FAILED", { failureReason: "VALIDATION_FAILED", failureMessage: "AC-1 failed." });
+    await prisma.reviewFinding.create({ data: finding(run.id, 1) });
+    await repository.recordLastPatch(tenantA, run.id, Buffer.from("diff --git a/x b/x\n").toString("base64"), 2);
+
+    const facts = await drafts.facts(tenantA, run.id);
+    expect(facts).toMatchObject({ status: "FAILED", hasPatch: true, patchAttempt: 2, findings: [], reviewed: false });
+    expect(await drafts.facts(tenantB, run.id)).toBeNull();
+
+    await prisma.reviewFinding.create({ data: finding(run.id, 2) });
+    expect((await drafts.facts(tenantA, run.id))?.findings.map((row) => row.key)).toEqual(["RV-2"]);
+
+    expect(await drafts.markPublished(tenantA, run.id)).toBe(true);
+    const published = await repository.findById(tenantA, run.id);
+    expect(published?.status).toBe("DRAFT_PUBLISHED");
+    expect(published?.failureReason).toBe("VALIDATION_FAILED");
   });
 });

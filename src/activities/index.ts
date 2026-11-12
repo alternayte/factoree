@@ -57,6 +57,8 @@ import type { RepositorySetupMarks, RepositorySetupStore } from "~/domain/setup/
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
 import { createRecoveryActivities } from "./recovery.activities.js";
+import { createDraftActivities } from "./draft.activities.js";
+import type { RunDraftStore } from "~/domain/runs/run-draft.js";
 import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import {
@@ -135,6 +137,11 @@ export interface ActivityDependencies {
   organizationSkills?: OrganizationSkillsFactory | undefined;
   /** docs/specs/run-recovery.md. The facts of a failed run, for its failure post. */
   runViews?: RunViewReader | undefined;
+  /**
+   * docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run. A
+   * worker without it refuses every draft and offers none.
+   */
+  drafts?: RunDraftStore | undefined;
   /** docs/specs/repository-setup-and-services.md. The setup rows. */
   setups?: RepositorySetupStore | undefined;
   setupMarks?: RepositorySetupMarks | undefined;
@@ -170,6 +177,14 @@ const NO_APP_CHANGE_STORE: AppChangeIssueStore = {
   listForRepository: () => Promise.reject(new Error("this worker holds no app-change issue store")),
   setOutcome: () => Promise.reject(new Error("this worker holds no app-change issue store")),
   latestRun: () => Promise.reject(new Error("this worker holds no app-change issue store")),
+};
+
+/** A worker built without the draft store knows no run, so it refuses every draft and offers none. */
+const NO_DRAFT_STORE: RunDraftStore = {
+  facts: () => Promise.resolve(null),
+  subject: () => Promise.resolve(null),
+  recordRequest: () => Promise.reject(new Error("this worker holds no draft store")),
+  markPublished: () => Promise.reject(new Error("this worker holds no draft store")),
 };
 
 /** A worker built without the file reader refuses a setup, and runs every other activity. */
@@ -337,6 +352,14 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     runs: dependencies.runs,
     issues: dependencies.issueStatus ?? (() => Promise.reject(new Error("this worker holds no Linear issue status port"))),
     agentSession: dependencies.agentSession,
+    logger: dependencies.logger,
+  }),
+  ...createDraftActivities({
+    drafts: dependencies.drafts ?? NO_DRAFT_STORE,
+    runs: dependencies.runs,
+    agentSession: dependencies.agentSession,
+    repositoryBaseUrl: dependencies.repositoryBaseUrl,
+    redactor: dependencies.redactor,
     logger: dependencies.logger,
   }),
   ...createRecoveryActivities({

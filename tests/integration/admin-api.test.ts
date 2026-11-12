@@ -71,7 +71,7 @@ beforeAll(async () => {
       products: new PrismaProductRegistry(prisma),
       repositories: new PrismaRepositoryRegistry(prisma),
       webhookLog: new PrismaWebhookLog(prisma),
-      starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop, signalHumanInput: vi.fn(() => Promise.resolve(true)) },
+      starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop, signalHumanInput: vi.fn(() => Promise.resolve(true)), startDraft: vi.fn(() => Promise.resolve(true)) },
       stops: new PrismaRunStopLog(prisma),
       refusalNotifier: { postFailure: () => Promise.resolve(undefined), postResponse: () => Promise.resolve(undefined) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),

@@ -6373,6 +6373,27 @@
                         "null"
                       ]
                     },
+                    "draftQualifies": {
+                      "type": "boolean"
+                    },
+                    "draftRequestedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "draftSource": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "draftRequestedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
@@ -6729,6 +6750,10 @@
                     "stopRequestedAt",
                     "stopSource",
                     "stopRequestedBy",
+                    "draftQualifies",
+                    "draftRequestedAt",
+                    "draftSource",
+                    "draftRequestedBy",
                     "sandboxRetentionHours",
                     "autonomyLevel",
                     "followUpOfRunId",
@@ -6845,6 +6870,129 @@
                   },
                   "required": [
                     "stopRequestedBy"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/runs/{id}/draft": {
+      "post": {
+        "operationId": "publishRunDraft",
+        "tags": [
+          "runs"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workflowId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "pullRequestUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "workflowId",
+                    "pullRequestUrl"
                   ]
                 }
               }

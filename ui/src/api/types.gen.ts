@@ -1665,6 +1665,10 @@ export type GetRunResponses = {
     stopRequestedAt: string | null;
     stopSource: string | null;
     stopRequestedBy: string | null;
+    draftQualifies: boolean;
+    draftRequestedAt: string | null;
+    draftSource: string | null;
+    draftRequestedBy: string | null;
     sandboxRetentionHours: number;
     autonomyLevel: string;
     followUpOfRunId: string | null;
@@ -1781,6 +1785,52 @@ export type StopRunResponses = {
 };
 
 export type StopRunResponse = StopRunResponses[keyof StopRunResponses];
+
+export type PublishRunDraftData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/runs/{id}/draft";
+};
+
+export type PublishRunDraftErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type PublishRunDraftError = PublishRunDraftErrors[keyof PublishRunDraftErrors];
+
+export type PublishRunDraftResponses = {
+  /**
+   * Default Response
+   */
+  202: {
+    workflowId: string | null;
+    pullRequestUrl: string | null;
+  };
+};
+
+export type PublishRunDraftResponse = PublishRunDraftResponses[keyof PublishRunDraftResponses];
 
 export type ListProductAgentSessionsData = {
   body?: never;

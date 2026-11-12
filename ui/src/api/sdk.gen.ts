@@ -96,6 +96,9 @@ import type {
   ListSetupLinearTeamsResponses,
   ListWorkspacesData,
   ListWorkspacesResponses,
+  PublishRunDraftData,
+  PublishRunDraftErrors,
+  PublishRunDraftResponses,
   PutContextSourceData,
   PutContextSourceErrors,
   PutContextSourceResponses,
@@ -629,6 +632,30 @@ export const stopRun = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/runs/{id}/stop",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const publishRunDraft = <ThrowOnError extends boolean = false>(
+  options: Options<PublishRunDraftData, ThrowOnError>,
+): RequestResult<PublishRunDraftResponses, PublishRunDraftErrors, ThrowOnError> =>
+  (options.client ?? client).post<PublishRunDraftResponses, PublishRunDraftErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/runs/{id}/draft",
     ...options,
     headers: {
       "Content-Type": "application/json",

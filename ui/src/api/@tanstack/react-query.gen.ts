@@ -44,6 +44,7 @@ import {
   listSetupLinearTeams,
   listWorkspaces,
   type Options,
+  publishRunDraft,
   putContextSource,
   putLinearApp,
   putProductSecret,
@@ -152,6 +153,9 @@ import type {
   ListSetupLinearTeamsResponse,
   ListWorkspacesData,
   ListWorkspacesResponse,
+  PublishRunDraftData,
+  PublishRunDraftError,
+  PublishRunDraftResponse,
   PutContextSourceData,
   PutContextSourceError,
   PutContextSourceResponse,
@@ -772,6 +776,26 @@ export const stopRunMutation = (
   const mutationOptions: UseMutationOptions<StopRunResponse, StopRunError, Options<StopRunData>> = {
     mutationFn: async (fnOptions) => {
       const { data } = await stopRun({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const publishRunDraftMutation = (
+  options?: Partial<Options<PublishRunDraftData>>,
+): UseMutationOptions<PublishRunDraftResponse, PublishRunDraftError, Options<PublishRunDraftData>> => {
+  const mutationOptions: UseMutationOptions<
+    PublishRunDraftResponse,
+    PublishRunDraftError,
+    Options<PublishRunDraftData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await publishRunDraft({
         ...options,
         ...fnOptions,
         throwOnError: true,

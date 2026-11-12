@@ -12,6 +12,7 @@ import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
 import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
+import { draftRunWorkflow } from "~/workflows/draft-run.workflow.js";
 import { setupAfterPushWorkflow, setupAfterPushWorkflowId, setupPushedSignal } from "~/workflows/setup-after-push.workflow.js";
 
 const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
@@ -59,6 +60,21 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
   },
   async signalHumanInput(workflowId, body) {
     return signalIfRunning(() => client.workflow.getHandle(workflowId).signal(humanInputSignal, body));
+  },
+  async startDraft(input) {
+    // docs/specs/draft-of-failed-run.md. The default reuse policy lets a request start the draft
+    // again after a workflow that failed, and Temporal refuses a start while one runs.
+    try {
+      await client.workflow.start(draftRunWorkflow, {
+        taskQueue,
+        workflowId: input.workflowId,
+        args: [{ tenantId: input.tenantId, runId: input.runId }],
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError) return false;
+      throw error;
+    }
   },
 });
 

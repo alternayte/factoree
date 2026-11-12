@@ -26,6 +26,14 @@ export const metrics = {
     labelNames,
     registers: [registry],
   }),
+  // docs/specs/draft-of-failed-run.md. A draft keeps its failure, so a failed run counted once in
+  // runsFailed counts here too when a human asks for its draft.
+  runsDraftPublished: new Counter({
+    name: "factoree_runs_draft_published_total",
+    help: "Failed Runs whose last patch Factoree published as a draft pull request (DRAFT_PUBLISHED)",
+    labelNames,
+    registers: [registry],
+  }),
   runsFailed: new Counter({
     name: "factoree_runs_failed_total",
     help: "Runs that reached a failure state",

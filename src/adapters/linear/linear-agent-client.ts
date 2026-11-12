@@ -1,4 +1,4 @@
-import { LinearClient } from "@linear/sdk";
+import { AgentActivitySignal, LinearClient } from "@linear/sdk";
 import type { AgentSessionPort, WorkItemFacts } from "~/domain/runs/ports.js";
 
 export type AgentActivityContent =
@@ -23,6 +23,8 @@ export interface LinearApi {
   createAgentActivity(input: {
     agentSessionId: string;
     content: AgentActivityContent;
+    signal?: AgentActivitySignal;
+    signalMetadata?: Record<string, unknown>;
   }): Promise<unknown>;
   issue(issueId: string): Promise<LinearIssueWithLabels | null>;
   updateAgentSession(
@@ -46,8 +48,18 @@ export class LinearAgentClient implements AgentSessionPort {
     return this.emit(sessionId, { type: "thought", body: message });
   }
 
-  elicit(sessionId: string, question: string): Promise<void> {
-    return this.emit(sessionId, { type: "elicitation", body: question });
+  /**
+   * docs/specs/draft-of-failed-run.md. With options, the elicitation carries Linear's `select`
+   * signal, so Linear shows each option as a choice and sends the chosen value back as a prompt.
+   */
+  async elicit(sessionId: string, question: string, options?: ReadonlyArray<{ label: string; value: string }>): Promise<void> {
+    if (options === undefined || options.length === 0) return this.emit(sessionId, { type: "elicitation", body: question });
+    await this.client.createAgentActivity({
+      agentSessionId: sessionId,
+      content: { type: "elicitation", body: question },
+      signal: AgentActivitySignal.Select,
+      signalMetadata: { options: options.map((option) => ({ label: option.label, value: option.value })) },
+    });
   }
 
   respond(sessionId: string, body: string): Promise<void> {

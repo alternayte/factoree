@@ -10,6 +10,9 @@ import {
   type RunViewReader,
 } from "~/domain/runs/run-view.js";
 import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
+import { takesFollowUp } from "~/domain/runs/run-recovery.js";
+import { decideDraft } from "~/domain/runs/run-draft.js";
+import { PrismaRunDraftStore } from "./run-draft.prisma.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -127,6 +130,13 @@ export class PrismaRunViewReader implements RunViewReader {
     };
   }
 
+  /** docs/specs/draft-of-failed-run.md. Only a failed run can qualify, so only it reads the facts. */
+  private async draftQualifies(tenantId: string, runId: string, status: string): Promise<boolean> {
+    if (!takesFollowUp(status)) return false;
+    const facts = await new PrismaRunDraftStore(this.prisma).facts(tenantId, runId);
+    return facts !== null && decideDraft(facts).kind === "qualifies";
+  }
+
   async detail(tenantId: string, runId: string): Promise<RunDetail | null> {
     const row = await this.prisma.run.findFirst({
       where: { tenantId, id: runId },
@@ -144,6 +154,9 @@ export class PrismaRunViewReader implements RunViewReader {
         stopRequestedAt: true,
         stopSource: true,
         stopRequestedBy: true,
+        draftRequestedAt: true,
+        draftSource: true,
+        draftRequestedBy: true,
         product: { select: { slug: true, name: true, sandboxRetentionHours: true } },
       },
     });
@@ -169,6 +182,10 @@ export class PrismaRunViewReader implements RunViewReader {
       stopRequestedAt: row.stopRequestedAt,
       stopSource: row.stopSource,
       stopRequestedBy: row.stopRequestedBy,
+      draftQualifies: await this.draftQualifies(tenantId, runId, row.status),
+      draftRequestedAt: row.draftRequestedAt,
+      draftSource: row.draftSource,
+      draftRequestedBy: row.draftRequestedBy,
       sandboxRetentionHours: row.product.sandboxRetentionHours,
       autonomyLevel: row.autonomyLevel,
       followUpOfRunId: row.followUpOfRunId,

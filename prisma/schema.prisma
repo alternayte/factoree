@@ -87,6 +87,9 @@ model Run {
   // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured, so a
   // follow-up run can read what the failed run tried.
   lastPatchBase64          String?   @map("last_patch_base64")
+  // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
+  // patch, so a draft names the review of that same patch. Null on a run from before it.
+  lastPatchAttempt         Int?      @map("last_patch_attempt")
   temporalWorkflowId       String    @unique
   status                   String
   failureReason            String?
@@ -148,6 +151,11 @@ model Run {
   stopRequestedAt          DateTime? @map("stop_requested_at")
   stopSource               String?   @map("stop_source")
   stopRequestedBy          String?   @map("stop_requested_by")
+  // docs/specs/draft-of-failed-run.md, DI-21.79. The request that started the draft workflow: when,
+  // from where ("linear" or "factoree_ui"), and the Linear user or the admin who asked.
+  draftRequestedAt         DateTime? @map("draft_requested_at")
+  draftSource              String?   @map("draft_source")
+  draftRequestedBy         String?   @map("draft_requested_by")
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   stages                   RunStage[]

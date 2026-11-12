@@ -236,6 +236,11 @@ const SANDBOX_SLOT_WAIT_PATCH = "sandbox-slot-wait";
  * there before the work sprite. An older history prepares on the default provider.
  */
 const SANDBOX_PROVIDER_PATCH = "sandbox-provider-spillover";
+/**
+ * docs/specs/draft-of-failed-run.md. After the failure post of a qualifying run, Factoree offers its
+ * last patch as a draft pull request. An older history posts no offer.
+ */
+const DRAFT_OFFER_PATCH = "draft-offer";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -851,6 +856,9 @@ export async function agentRunWorkflow(
       }
     }
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
+    if (patched(DRAFT_OFFER_PATCH)) {
+      await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
+    }
     return { runId: id, status };
   };
 
@@ -3026,6 +3034,9 @@ export async function agentRunWorkflow(
           // The post falls back to the message when the facts cannot be read.
         }
         await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
+        if (patched(DRAFT_OFFER_PATCH)) {
+          await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
+        }
       });
     }
     // A plain error fails the workflow task, and Temporal retries that task for ever while the
