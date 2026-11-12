@@ -444,6 +444,10 @@ describe("PrismaWaitingRunStore", () => {
     const reordered = read.map((entry) => ({ state: entry.state, pullRequestUrl: null, url: null, identifier: entry.identifier, issueId: entry.issueId }));
     expect(await store.replaceBlockers(runId, reordered, [])).toBe(true);
     expect((await store.findWaiting(tenantA, runId))?.blockers).toEqual([]);
+    // DI-21.85. An issue Linear stops returning sets the row back to unread, once.
+    expect(await store.clearBlockers(runId, [])).toBe(true);
+    expect(await store.clearBlockers(runId, [])).toBe(false);
+    expect((await store.findWaiting(tenantA, runId))?.blockers).toBeNull();
   });
 
   it("names the pull request of the newest Factoree run of a blocker issue", async () => {

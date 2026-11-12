@@ -108,6 +108,14 @@ export class PrismaWaitingRunStore implements WaitingRunStore {
     return count === 1;
   }
 
+  async clearBlockers(runId: string, previous: Blocker[]): Promise<boolean> {
+    // DI-21.85. The same guard as replaceBlockers: the row still waits and still holds `previous`.
+    const count = await this.prisma.$executeRaw`
+      UPDATE "Run" SET "blockers" = NULL
+      WHERE "id" = ${runId} AND "status" = ${WAITING} AND "blockers" IS NOT DISTINCT FROM ${json(previous)}::jsonb`;
+    return count === 1;
+  }
+
   async cancel(tenantId: string, runId: string, request: StopRequest, at: Date): Promise<WaitingRun | null> {
     const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId, status: WAITING }, select: waitingSelect });
     if (row === null) return null;

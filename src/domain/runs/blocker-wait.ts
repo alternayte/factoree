@@ -98,6 +98,13 @@ export const waitingLine = (open: readonly Blocker[]): string =>
 export const UNREAD_LINE =
   "Factoree could not read the blockers of this issue in Linear, so it waits and reads them again within a minute.";
 
+/**
+ * DI-21.85. The elicitation of a waiting run whose own issue Linear no longer returns: it was
+ * deleted or archived, or the app lost access to its team.
+ */
+export const UNRETURNED_LINE =
+  "Factoree cannot read this issue in Linear, so it keeps waiting. Stop the run, or restore the app's access to the issue.";
+
 /** The fixed answer to a reply during the wait. No workflow exists yet to take it. */
 export const replyLine = (blockers: readonly Blocker[] | null): string => {
   const open = blockers === null ? [] : openBlockers(blockers);
@@ -151,6 +158,11 @@ export interface WaitingRunStore {
    * that read at the same time only one posts the change.
    */
   replaceBlockers(runId: string, previous: Blocker[] | null, next: Blocker[]): Promise<boolean>;
+  /**
+   * DI-21.85. Sets the blockers of a waiting run back to unread (null) while it still holds
+   * `previous`. It answers false when another sweep, a stop or the start took the run.
+   */
+  clearBlockers(runId: string, previous: Blocker[]): Promise<boolean>;
   /**
    * Ends a waiting run as CANCELLED with STOPPED_BY_HUMAN and records the stop. It answers null
    * when the run no longer waits, because a workflow adopted it.
@@ -261,12 +273,26 @@ export class BlockerWait {
     ]);
     let released = 0;
     for (const run of runs) {
+      const log = { tenant_id: tenantId, run_id: run.id, step: "blockers" };
+      // DI-21.85. A work item Linear does not return holds its run: Factoree cannot tell that its
+      // blockers completed, and a run on the wrong base is the defect this wait prevents. The line
+      // goes out once, when the row moves from read blockers to none.
+      if (run.linearIssueId !== null && !read.has(run.linearIssueId)) {
+        try {
+          if (run.blockers !== null && (await this.dependencies.store.clearBlockers(run.id, run.blockers))) {
+            await this.post(tenantId, run.linearAgentSessionId, "elicitation", UNRETURNED_LINE);
+          }
+          this.dependencies.logger.warn("Linear did not return the work item of a waiting run; the run keeps waiting", log);
+        } catch (error) {
+          this.dependencies.logger.warn("the blocker sweep of a run failed; the run keeps waiting", { ...log, error: String(error) });
+        }
+        continue;
+      }
       const next: Blocker[] = (run.linearIssueId === null ? [] : (read.get(run.linearIssueId) ?? [])).map((blocker) => ({
         ...blocker,
         pullRequestUrl: pullRequests.get(blocker.issueId) ?? null,
       }));
       const open = openBlockers(next);
-      const log = { tenant_id: tenantId, run_id: run.id, step: "blockers" };
       try {
         if (!sameBlockers(run.blockers, next)) {
           // Another sweep, a stop or the start took the run since this read.

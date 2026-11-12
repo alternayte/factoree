@@ -4,6 +4,7 @@ import {
   blockersOf,
   isOpenBlocker,
   UNREAD_LINE,
+  UNRETURNED_LINE,
   type Blocker,
   type CreateWaitingRunInput,
   type ReadBlocker,
@@ -71,6 +72,14 @@ const memoryStore = () => {
         return Promise.resolve(false);
       }
       run.blockers = next;
+      return Promise.resolve(true);
+    },
+    clearBlockers(runId, previous) {
+      const run = runs.get(runId);
+      if (run === undefined || run.status !== "WAITING_FOR_BLOCKERS" || JSON.stringify(run.blockers) !== JSON.stringify(previous)) {
+        return Promise.resolve(false);
+      }
+      run.blockers = null;
       return Promise.resolve(true);
     },
     cancel(tenantId, runId, request) {
@@ -245,6 +254,23 @@ describe("the sweep", () => {
     await harness.wait.sweep();
     expect(harness.starts).toEqual(["workflow-2"]);
     expect([...harness.runs.values()][0]?.blockers).toEqual([]);
+  });
+
+  it("holds a run whose issue Linear does not return, and posts the line once", async () => {
+    const harness = build();
+    harness.linear.set("issue-2", [read("issue-1", "FAC-1", "started")]);
+    await harness.hold();
+    // DI-21.85. The issue was deleted, or the app lost access to its team.
+    harness.linear.delete("issue-2");
+    await harness.wait.sweep();
+    await harness.wait.sweep();
+    expect(harness.starts).toEqual([]);
+    expect([...harness.runs.values()][0]?.blockers).toBeNull();
+    expect(harness.posts.map((post) => post.body).filter((body) => body === UNRETURNED_LINE)).toHaveLength(1);
+    // Access comes back and the blocker completed: the run starts.
+    harness.linear.set("issue-2", [read("issue-1", "FAC-1", "completed")]);
+    await harness.wait.sweep();
+    expect(harness.starts).toEqual(["workflow-2"]);
   });
 
   it("holds the run when a relation is added, and posts a line only when the open set changes", async () => {
