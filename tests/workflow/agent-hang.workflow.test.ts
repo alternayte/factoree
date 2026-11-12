@@ -97,7 +97,7 @@ describe("a hung agent session in the Run workflow", () => {
   });
 
   it("fails with AGENT_HUNG when the repair budget leaves no room to resume", async () => {
-    harness.runtimeOverrides.set("run-hang-no-budget", { repairMaxAttempts: 0 });
+    harness.runtimeOverrides.set("run-hang-no-budget", { repairMaxAttempts: 0, repairBudgetSource: "repository" });
     harness.implementHangs.set("run-hang-no-budget", () => hang);
 
     const result = await harness.runWorker(async () => (await harness.start("hang-no-budget")).result());
@@ -105,7 +105,11 @@ describe("a hung agent session in the Run workflow", () => {
     expect(failureOf("run-hang-no-budget")?.failureReason).toBe("AGENT_HUNG");
     expect(result.status).toBe("FAILED");
     expect(harness.implementCalls.filter((entry) => entry.runId === "run-hang-no-budget")).toHaveLength(1);
-    expect(harness.postedErrors.at(-1)).toContain("the repair budget is spent");
+    // Issue #43, DI-21.67. A repository budget names the file, and only the file raises it.
+    expect(harness.postedErrors.at(-1)).toContain(
+      "the repair budget (0, from repair.maxAttempts in .factoree/config.yaml) is spent, so Factoree cannot resume it",
+    );
+    expect(harness.postedErrors.at(-1)).toContain("Raise it with `repair.maxAttempts` in .factoree/config.yaml.");
   });
 
   it("starts one fresh Reviewer session after a hang, and fails with AGENT_HUNG on the second", async () => {

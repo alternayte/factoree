@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
 import { signedInCheckSchema, signInStepSchema } from "~/domain/validation/validation-plan.js";
 import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
@@ -164,11 +165,12 @@ const schema = z
     // docs/specs/claude-code-runner.md. The Product selects the runner of each role. An `agents`
     // block parses so a repository that holds one still runs, and Factoree ignores it and says so.
     agents: z.record(z.string(), z.unknown()).optional(),
-    // SDD section 42. The default total repair limit is 2.
+    // SDD section 42. Issue #43, DI-21.67: an absent `maxAttempts` takes the repair budget of the
+    // Product, so the file keeps "not set" apart from a value.
     repair: z
-      .object({ maxAttempts: z.number().int().min(0).max(10).default(2) })
+      .object({ maxAttempts: z.number().int().min(0).max(REPAIR_MAX_ATTEMPTS_MAX).optional() })
       .strict()
-      .default({ maxAttempts: 2 }),
+      .default({}),
     sandbox: z
       .object({
         allowedDomains: z.array(z.string().min(1).regex(HOST_NAME, "must be a host name")).default([]),

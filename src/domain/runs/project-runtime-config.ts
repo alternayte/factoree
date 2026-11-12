@@ -40,7 +40,13 @@ export interface ProjectRuntimeConfig {
   refinerRunner?: string;
   /** docs/specs/claude-code-runner.md. True when `.factoree/config.yaml` holds an `agents` block Factoree ignored. */
   agentsBlockIgnored?: boolean;
+  /** SDD section 42, DI-21.67. The effective repair budget of the run. */
   repairMaxAttempts: number;
+  /**
+   * Issue #43, DI-21.67. Where `repairMaxAttempts` comes from: the repository file or the Product
+   * setting. Absent in a history recorded before the Product setting existed.
+   */
+  repairBudgetSource?: RepairBudgetSource;
   stagingRead: boolean;
   /** SDD section 51. */
   spriteRetentionHours: number;
@@ -98,6 +104,7 @@ import type { FactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { BrowserStep } from "~/domain/validation/validation-plan.js";
 import { narrowAllowList } from "./sandbox.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
+import { effectiveRepairBudget, type RepairBudgetSource } from "./repair-budget.js";
 
 /** SDD section 35. One configured deterministic verification command. */
 export interface VerificationCommand {
@@ -121,6 +128,11 @@ export interface ProjectDefaults {
    * it. Absent means opencode for every role: a build-ahead or a setup proof starts no session.
    */
   runners?: RunRunners;
+  /**
+   * Issue #43, DI-21.67. The repair budget of the Product, which a repository that sets
+   * `repair.maxAttempts` replaces. Absent means the SDD default of 2.
+   */
+  repairMaxAttempts?: number;
 }
 
 /** docs/specs/claude-code-runner.md. The runner of each role that a run starts. */
@@ -156,56 +168,61 @@ export interface ResolvedProjectConfig {
 /**
  * SDD section 15 and section 57. Produces the runtime configuration of one Run from the
  * repository file and the Project defaults. The repository owns the bootstrap command, the
- * verification commands, the repair limit, and the egress allow list. The Project owns staging
- * read, the sandbox retention window and the runner of each role.
+ * verification commands and the egress allow list. The Project owns staging read, the sandbox
+ * retention window and the runner of each role. The repair budget is the repository's when the
+ * file sets one, and the Project's otherwise (DI-21.67).
  */
 export const toProjectRuntimeConfig = (
   config: FactoreeConfig,
   defaults: ProjectDefaults,
-): ResolvedProjectConfig => ({
-  runtime: {
-    bootstrapCommand: config.bootstrap?.command ?? null,
-    warmCommand: config.warm?.command ?? null,
-    // The same normalisation the sandbox applies, so the value carried on the Run and the value
-    // sent to the adapter can never differ.
-    allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),
-    sandboxAllowListDeclared: config.sandbox.allowedDomains.length > 0,
-    keyFiles: config.bootstrap?.keyFiles ?? [],
-    bootstrapAllowedDomains: ecosystemHostsOf(config.bootstrap?.allowedDomains ?? []),
-    services:
-      config.services === null
+): ResolvedProjectConfig => {
+  const repair = effectiveRepairBudget(config.repair.maxAttempts, defaults.repairMaxAttempts);
+  return {
+    runtime: {
+      bootstrapCommand: config.bootstrap?.command ?? null,
+      warmCommand: config.warm?.command ?? null,
+      // The same normalisation the sandbox applies, so the value carried on the Run and the value
+      // sent to the adapter can never differ.
+      allowedDomains: narrowAllowList(config.sandbox.allowedDomains, defaults.allowedDomains),
+      sandboxAllowListDeclared: config.sandbox.allowedDomains.length > 0,
+      keyFiles: config.bootstrap?.keyFiles ?? [],
+      bootstrapAllowedDomains: ecosystemHostsOf(config.bootstrap?.allowedDomains ?? []),
+      services:
+        config.services === null
+          ? null
+          : {
+              compose: config.services.compose,
+              profiles: config.services.profiles,
+              seed: config.services.seed,
+              waitTimeoutSeconds: config.services.waitTimeoutSeconds,
+            },
+      docker: config.docker || config.services !== null,
+      accounts: config.accounts.map((account) => ({
+        name: account.name,
+        username: account.username,
+        password: account.password,
+        steps: account.steps,
+        check: account.check,
+      })),
+      implementerRunner: defaults.runners?.implementer ?? "opencode",
+      validatorRunner: defaults.runners?.validator ?? "opencode",
+      reviewerRunner: defaults.runners?.reviewer ?? "opencode",
+      refinerRunner: defaults.runners?.refiner ?? "opencode",
+      agentsBlockIgnored: config.agents !== undefined,
+      repairMaxAttempts: repair.maxAttempts,
+      repairBudgetSource: repair.source,
+      stagingRead: defaults.stagingRead,
+      spriteRetentionHours: defaults.spriteRetentionHours,
+    },
+    verifyCommands: config.verify.commands.map((command) => ({ name: command.name, run: command.run })),
+    preview:
+      config.preview === null
         ? null
         : {
-            compose: config.services.compose,
-            profiles: config.services.profiles,
-            seed: config.services.seed,
-            waitTimeoutSeconds: config.services.waitTimeoutSeconds,
+            enabled: config.preview.enabled,
+            command: config.preview.command,
+            readyUrl: config.preview.readyUrl,
+            timeoutSeconds: config.preview.timeoutSeconds,
           },
-    docker: config.docker || config.services !== null,
-    accounts: config.accounts.map((account) => ({
-      name: account.name,
-      username: account.username,
-      password: account.password,
-      steps: account.steps,
-      check: account.check,
-    })),
-    implementerRunner: defaults.runners?.implementer ?? "opencode",
-    validatorRunner: defaults.runners?.validator ?? "opencode",
-    reviewerRunner: defaults.runners?.reviewer ?? "opencode",
-    refinerRunner: defaults.runners?.refiner ?? "opencode",
-    agentsBlockIgnored: config.agents !== undefined,
-    repairMaxAttempts: config.repair.maxAttempts,
-    stagingRead: defaults.stagingRead,
-    spriteRetentionHours: defaults.spriteRetentionHours,
-  },
-  verifyCommands: config.verify.commands.map((command) => ({ name: command.name, run: command.run })),
-  preview:
-    config.preview === null
-      ? null
-      : {
-          enabled: config.preview.enabled,
-          command: config.preview.command,
-          readyUrl: config.preview.readyUrl,
-          timeoutSeconds: config.preview.timeoutSeconds,
-        },
-});
+  };
+};

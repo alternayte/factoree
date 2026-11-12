@@ -83,7 +83,8 @@ describe("parseFactoreeConfig", () => {
     expect(config.preview).toBeNull();
     // docs/specs/claude-code-runner.md. The Product selects the runners, so a file needs no agents block.
     expect(config.agents).toBeUndefined();
-    expect(config.repair.maxAttempts).toBe(2);
+    // DI-21.67. An absent value stays absent, so the Product repair budget applies.
+    expect(config.repair.maxAttempts).toBeUndefined();
     expect(config.sandbox.allowedDomains).toEqual([]);
     expect(config.secrets).toEqual({ require: [] });
   });

@@ -2520,6 +2520,9 @@
                     "refinerCriteriaLimit": {
                       "type": "number"
                     },
+                    "repairMaxAttempts": {
+                      "type": "number"
+                    },
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
@@ -2567,6 +2570,7 @@
                     "effort",
                     "silenceMinutes",
                     "refinerCriteriaLimit",
+                    "repairMaxAttempts",
                     "sandboxRetentionHours",
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
@@ -3268,6 +3272,9 @@
                     "refinerCriteriaLimit": {
                       "type": "number"
                     },
+                    "repairMaxAttempts": {
+                      "type": "number"
+                    },
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
@@ -3315,6 +3322,7 @@
                     "effort",
                     "silenceMinutes",
                     "refinerCriteriaLimit",
+                    "repairMaxAttempts",
                     "sandboxRetentionHours",
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
@@ -3692,6 +3700,9 @@
                       "refinerCriteriaLimit": {
                         "type": "number"
                       },
+                      "repairMaxAttempts": {
+                        "type": "number"
+                      },
                       "sandboxRetentionHours": {
                         "type": "number"
                       },
@@ -3739,6 +3750,7 @@
                       "effort",
                       "silenceMinutes",
                       "refinerCriteriaLimit",
+                      "repairMaxAttempts",
                       "sandboxRetentionHours",
                       "sandboxProviderIds",
                       "maxConcurrentRuns",
@@ -4109,6 +4121,9 @@
                     "refinerCriteriaLimit": {
                       "type": "number"
                     },
+                    "repairMaxAttempts": {
+                      "type": "number"
+                    },
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
@@ -4156,6 +4171,7 @@
                     "effort",
                     "silenceMinutes",
                     "refinerCriteriaLimit",
+                    "repairMaxAttempts",
                     "sandboxRetentionHours",
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
@@ -4541,6 +4557,11 @@
                     "minimum": 1,
                     "maximum": 50
                   },
+                  "repairMaxAttempts": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10
+                  },
                   "sandboxRetentionHours": {
                     "type": "integer",
                     "minimum": 0,
@@ -4889,6 +4910,9 @@
                     "refinerCriteriaLimit": {
                       "type": "number"
                     },
+                    "repairMaxAttempts": {
+                      "type": "number"
+                    },
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
@@ -4936,6 +4960,7 @@
                     "effort",
                     "silenceMinutes",
                     "refinerCriteriaLimit",
+                    "repairMaxAttempts",
                     "sandboxRetentionHours",
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
@@ -5432,6 +5457,9 @@
                     "refinerCriteriaLimit": {
                       "type": "number"
                     },
+                    "repairMaxAttempts": {
+                      "type": "number"
+                    },
                     "sandboxRetentionHours": {
                       "type": "number"
                     },
@@ -5479,6 +5507,7 @@
                     "effort",
                     "silenceMinutes",
                     "refinerCriteriaLimit",
+                    "repairMaxAttempts",
                     "sandboxRetentionHours",
                     "sandboxProviderIds",
                     "maxConcurrentRuns",

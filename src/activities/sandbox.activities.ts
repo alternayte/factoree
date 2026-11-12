@@ -351,7 +351,8 @@ const build = async (
     productId: input.productId,
     primary: input.primary,
     references: input.references,
-    defaults: { ...input.defaults, runners },
+    // Issue #43, DI-21.67. The Product repair budget applies when the repository sets none.
+    defaults: { ...input.defaults, runners, ...(product === null ? {} : { repairMaxAttempts: product.repairMaxAttempts }) },
     environment: { ...input.environment, ...runnerEnvironment },
     agentHosts,
     ...(repositoryCredential === null ? {} : { repositoryCredential }),

@@ -34,6 +34,8 @@ export interface ProductRecord {
   silenceMinutes: number;
   /** Issue #39, DI-21.66. The most criteria a refiner proposal may hold. */
   refinerCriteriaLimit: number;
+  /** Issue #43, DI-21.67. The repair budget of a run whose repository sets none. */
+  repairMaxAttempts: number;
   /** SDD section 51. The hours a finished sandbox stays before the reaper deletes it. */
   sandboxRetentionHours: number;
   /** docs/specs/sandbox-provider-spillover.md. The sandbox providers its runs may use. Empty allows all. */
@@ -67,6 +69,7 @@ export interface ProductSettingsUpdate {
   effort?: { [Role in keyof ProductEffort]?: string | null | undefined };
   silenceMinutes?: number;
   refinerCriteriaLimit?: number;
+  repairMaxAttempts?: number;
   sandboxRetentionHours?: number;
   sandboxProviderIds?: string[];
   maxConcurrentRuns?: number;

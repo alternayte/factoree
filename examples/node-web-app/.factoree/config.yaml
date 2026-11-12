@@ -47,9 +47,10 @@ agents:
   validator: opencode
   reviewer: opencode
 
-# One budget of implementer repairs covers the whole run.
-repair:
-  maxAttempts: 2
+# One budget of implementer repairs covers the whole run. Without this block the run takes the
+# repair budget of the product page. A value here replaces it for this repository.
+# repair:
+#   maxAttempts: 2
 
 # The product sets the hosts an agent may reach. An empty list takes the whole product list. A
 # list here can only narrow it: a host the product does not allow is dropped.

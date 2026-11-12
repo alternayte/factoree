@@ -160,7 +160,7 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
 
   it("builds the failure post of a run that spent its repairs from the run facts", async () => {
     const runId = "run-ses-failure-post";
-    runtimeOverrides.set(runId, { repairMaxAttempts: 0 });
+    runtimeOverrides.set(runId, { repairMaxAttempts: 0, repairBudgetSource: "product" });
     verifyOutcomes.set(runId, () => true);
     userValidationOutcomes.set(runId, () => failing);
     const errorsBefore = postedErrors.length;
@@ -170,7 +170,12 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
 
     expect(result.status).toBe("FAILED");
     expect(activityOrder.slice(orderBefore)).toContain("describeRunFailure");
-    expect(postedErrors.slice(errorsBefore)).toEqual([expect.stringContaining("the repair budget is spent")]);
+    // Issue #43, DI-21.67. The message names the budget and where it comes from.
+    expect(postedErrors.slice(errorsBefore)).toEqual([
+      expect.stringContaining(
+        "the repair budget (0, from the product setting) is spent. Raise it on the product page or with `repair.maxAttempts` in .factoree/config.yaml.",
+      ),
+    ]);
   });
 
   // docs/specs/run-recovery.md. A follow-up run shares the session and makes a run of its own,

@@ -66,6 +66,7 @@ import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time but
 // `sandbox.js`, which imports nothing.
 import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from "../domain/runs/egress.js";
+import { describeSpentRepairBudget } from "../domain/runs/repair-budget.js";
 import { allowListCovers } from "../domain/runs/sandbox.js";
 import { endsWithoutPullRequest } from "../domain/runs/issue-status.js";
 // The workflow bundler resolves a relative path only. The module imports nothing.
@@ -897,11 +898,12 @@ export async function agentRunWorkflow(
     role: AgentSessionRole,
     hang: { silenceLimitMs: number },
     reason = "for the second time in the same step",
+    hint = "",
   ): Promise<AgentRunWorkflowResult> =>
     await failRun(
       "AGENT_HUNG",
       `The ${describeAgentRole(role)} session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)} ` +
-        `${reason}, so Factoree stopped it and ended the Run. Factoree published nothing.`,
+        `${reason}, so Factoree stopped it and ended the Run. ${hint === "" ? "" : `${hint} `}Factoree published nothing.`,
     );
 
   /**
@@ -2046,6 +2048,9 @@ export async function agentRunWorkflow(
       let repairFindings: string[] = [];
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
+      // Issue #43, DI-21.67. A spent budget names its size and where it comes from. Only the
+      // message text changes, so a running history replays the same commands.
+      const spentBudget = describeSpentRepairBudget(maxRepairs, preparedSandbox.runtime.repairBudgetSource);
       // docs/specs/agent-session-usage-and-hangs.md. The hung Implementer session the next attempt
       // resumes, and whether the current step already resumed one. One step allows one hang.
       let continueSession: AgentSessionRef | null = null;
@@ -2133,7 +2138,8 @@ export async function agentRunWorkflow(
             return await failHung(
               "implementer",
               implementerHang,
-              "and the repair budget is spent, so Factoree cannot resume it",
+              `and ${spentBudget.clause}, so Factoree cannot resume it`,
+              spentBudget.hint,
             );
           }
           await reportHang("implementer", implementerHang, "resumes it once");
@@ -2334,7 +2340,7 @@ export async function agentRunWorkflow(
           if (repairCount >= maxRepairs) {
             return await failRun(
               "VERIFICATION_FAILED",
-              "Deterministic verification did not pass, and the repair budget is spent. " +
+              `Deterministic verification did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
                 `${verification.summary} Factoree published nothing.`,
             );
           }
@@ -2506,7 +2512,7 @@ export async function agentRunWorkflow(
             if (repairCount >= maxRepairs) {
               return await failRun(
                 "VALIDATION_FAILED",
-                "User validation did not pass, and the repair budget is spent. " +
+                `User validation did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
                   `${userValidation.summary} Factoree published nothing.`,
               );
             }
@@ -2684,7 +2690,7 @@ export async function agentRunWorkflow(
         if (repairCount >= maxRepairs) {
           return await failRun(
             "REVIEW_BLOCKING_FINDINGS",
-            "The independent review rejected this change, and the repair budget is spent. " +
+            `The independent review rejected this change, and ${spentBudget.clause}. ${spentBudget.hint} ` +
               `${review.summary} Factoree published nothing.`,
           );
         }

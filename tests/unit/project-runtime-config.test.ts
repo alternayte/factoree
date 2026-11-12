@@ -40,10 +40,28 @@ describe("toProjectRuntimeConfig", () => {
       refinerRunner: "opencode",
       agentsBlockIgnored: true,
       repairMaxAttempts: 1,
+      repairBudgetSource: "repository",
       stagingRead: true,
       spriteRetentionHours: 48,
     });
     expect(resolved.verifyCommands).toEqual([{ name: "lint", run: "npm run lint" }]);
+  });
+
+  // Issue #43, DI-21.67.
+  it("takes the repository repair budget when the file sets one, and the Product budget otherwise", () => {
+    const product = { ...DEFAULT_PROJECT_DEFAULTS, repairMaxAttempts: 4 };
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(minimum), product).runtime).toMatchObject({
+      repairMaxAttempts: 4,
+      repairBudgetSource: "product",
+    });
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(`${minimum}repair:\n  maxAttempts: 0\n`), product).runtime).toMatchObject({
+      repairMaxAttempts: 0,
+      repairBudgetSource: "repository",
+    });
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(`${minimum}repair: {}\n`), DEFAULT_PROJECT_DEFAULTS).runtime).toMatchObject({
+      repairMaxAttempts: 2,
+      repairBudgetSource: "product",
+    });
   });
 
   it("maps the services block and turns Docker on for it (repository-setup-and-services.md)", () => {

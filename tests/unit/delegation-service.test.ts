@@ -34,6 +34,7 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   silenceMinutes: 10,
   refinerCriteriaLimit: 20,
+  repairMaxAttempts: 2,
   sandboxRetentionHours: 24,
   sandboxProviderIds: [],
   maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
