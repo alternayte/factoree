@@ -6,7 +6,7 @@ import {
 } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import type { Env } from "~/config/env.js";
-import { agentRunWorkflow, humanInputSignal, stopSignal } from "~/workflows/agent-run.workflow.js";
+import { agentRunWorkflow, humanInputSignal, stopSignal, type AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/workflows/sync-installation.workflow.js";
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
@@ -77,6 +77,28 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
     }
   },
 });
+
+/**
+ * docs/specs/blocked-by-wait.md, DI-21.89. The sweep starts a released run with the deterministic workflow
+ * id its delegation chose. REJECT_DUPLICATE refuses the id even after that workflow closed, so two
+ * workers or two sweeps cannot start one run twice.
+ */
+export const createReleasedRunStarter =
+  (client: Client, taskQueue: string) =>
+  async (workflowId: string, input: AgentRunWorkflowInput): Promise<"started" | "already_started"> => {
+    try {
+      await client.workflow.start(agentRunWorkflow, {
+        taskQueue,
+        workflowId,
+        args: [input],
+        workflowIdReusePolicy: "REJECT_DUPLICATE",
+      });
+      return "started";
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError) return "already_started";
+      throw error;
+    }
+  };
 
 /**
  * Starts `syncInstallationWorkflow`, keyed on the installation id. A repeated `installation`

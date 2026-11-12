@@ -3,7 +3,7 @@ import type { IssueStatusPort, IssueWorkflowState } from "~/domain/runs/issue-st
 const GRAPHQL_URL = "https://api.linear.app/graphql";
 const TIMEOUT_MS = 15_000;
 
-const graphql = async <T>(accessToken: string, query: string, variables: Record<string, unknown>, call: typeof fetch): Promise<T> => {
+export const graphql = async <T>(accessToken: string, query: string, variables: Record<string, unknown>, call: typeof fetch): Promise<T> => {
   const response = await call(GRAPHQL_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },

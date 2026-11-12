@@ -32,6 +32,7 @@ import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-t
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.js";
 import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
+import { createBlockerWait } from "./blocker-wait-wiring.js";
 import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
@@ -97,6 +98,16 @@ const refusalNotifier: RefusalNotifier = {
   },
 };
 
+// docs/specs/blocked-by-wait.md, DI-21.89. The API holds a blocked delegation, stops or answers a
+// waiting run, and sweeps the tenant at once when a Factoree pull request merges.
+const blockerWait = createBlockerWait({
+  prisma,
+  linearToken: (workspaceId) => linearTokens.tokenFor(workspaceId),
+  client,
+  taskQueue: env.FACTOREE_TEMPORAL_TASK_QUEUE,
+  logger,
+});
+
 const delegation = new DelegationService({
   tenants,
   products,
@@ -114,6 +125,7 @@ const delegation = new DelegationService({
   stops: new PrismaRunStopLog(prisma),
   // docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run.
   drafts: new PrismaRunDraftStore(prisma),
+  blockerWait,
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`
@@ -187,6 +199,20 @@ const pullRequestClose = new PullRequestCloseHandler({
   issues: async (tenantId) => createLinearIssueStatus(await linearTokenOfTenant(tenantId)),
   respond: async (tenantId, sessionId, body) => createLinearAgentClient(await linearTokenOfTenant(tenantId)).respond(sessionId, body),
   logger,
+  blockers: {
+    // The webhook answers GitHub at once. The sweep logs its own failure, and the next tick retries.
+    sweepSoon: (tenantId) => {
+      void blockerWait
+        .sweep(tenantId)
+        .then(({ released }) => {
+          if (released > 0) logger.info("blocked runs released after a merge", { tenant_id: tenantId, count: released, step: "blockers" });
+        })
+        .catch((error: unknown) => {
+          logger.error("the blocker sweep after a merge failed", { tenant_id: tenantId, error: String(error), step: "blockers" });
+        });
+    },
+    pullRequestClosedUnmerged: (tenantId, issueId, pullRequest) => blockerWait.pullRequestClosedUnmerged(tenantId, issueId, pullRequest),
+  },
 });
 
 const auth = new AuthHandle({ prisma, settings, publicUrl: env.FACTOREE_PUBLIC_URL, masterKey: env.FACTOREE_MASTER_KEY, logger });

@@ -9,6 +9,7 @@ import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
 import type { RunStopLog, StopRequest } from "~/domain/runs/run-stop.js";
+import type { BlockerWait } from "~/domain/runs/blocker-wait.js";
 import {
   decideDraft,
   DRAFT_IN_PROGRESS_LINE,
@@ -65,6 +66,7 @@ export interface WorkflowStarter {
 
 export type DelegationOutcome =
   | { kind: "started"; agentSessionId: string; workflowId: string }
+  | { kind: "waiting_for_blockers"; workflowId: string }
   | { kind: "duplicate" }
   | { kind: "stopped"; workflowId: string }
   | { kind: "prompt_forwarded"; workflowId: string }
@@ -121,6 +123,8 @@ export interface DelegationDependencies {
   stops?: RunStopLog | undefined;
   /** docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run. */
   drafts?: RunDraftStore | undefined;
+  /** docs/specs/blocked-by-wait.md. The hold of a blocked work item, its stop and its reply. */
+  blockerWait?: Pick<BlockerWait, "hold" | "stop" | "answerReply"> | undefined;
 }
 
 export class DelegationService {
@@ -188,6 +192,16 @@ export class DelegationService {
     }
     let followUp: { failedRunId: string; reply: string; browserAssertions: string[] } | null = null;
     if (command.kind === "prompt") {
+      // docs/specs/blocked-by-wait.md. No workflow exists yet to take the reply, so it gets one
+      // fixed answer. A run that left the wait since the read takes the reply as before.
+      if (
+        latest !== null &&
+        latest.status === "WAITING_FOR_BLOCKERS" &&
+        this.dependencies.blockerWait !== undefined &&
+        (await this.dependencies.blockerWait.answerReply(tenantId, latest.id))
+      ) {
+        return { kind: "waiting_for_blockers", workflowId: latest.temporalWorkflowId };
+      }
       if (latest === null || !isTerminalRunStatus(latest.status)) {
         const target = latest?.temporalWorkflowId ?? workflowId;
         const signalled = await this.dependencies.starter.signalHumanInput(target, command.body);
@@ -323,30 +337,45 @@ export class DelegationService {
 
     const runWorkflowId =
       followUp === null ? workflowId : buildFollowUpWorkflowId(event.organizationId, event.agentSession.id, followUp.failedRunId);
-    await this.dependencies.starter.start({
-      workflowId: runWorkflowId,
-      args: [
-        {
-          tenantId,
-          workspaceId: event.organizationId,
-          productId: product.id,
-          linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
-          agentSessionId: event.agentSession.id,
-          autonomyLevel: defaultAutonomy,
-          maxRunMinutes: product.maxRunMinutes,
-          workItem,
-          product: workflowProduct,
-          ...(followUp === null
-            ? {}
-            : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
-          // docs/specs/work-item-images-and-links.md. The run reads the comments created up to this
-          // delegation, or up to the reply of a follow-up run (DI-21.39). A reply "ignore the
-          // images" skips the image check of the follow-up run.
-          delegatedAt: new Date(event.webhookTimestamp ?? Date.now()).toISOString(),
-          ...(followUp !== null && ignoresImages(followUp.reply) ? { ignoreImages: true } : {}),
-        },
-      ],
-    });
+    const startInput: AgentRunWorkflowInput = {
+      tenantId,
+      workspaceId: event.organizationId,
+      productId: product.id,
+      linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
+      agentSessionId: event.agentSession.id,
+      autonomyLevel: defaultAutonomy,
+      maxRunMinutes: product.maxRunMinutes,
+      workItem,
+      product: workflowProduct,
+      ...(followUp === null
+        ? {}
+        : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
+      // docs/specs/work-item-images-and-links.md. The run reads the comments created up to this
+      // delegation, or up to the reply of a follow-up run (DI-21.39). A reply "ignore the
+      // images" skips the image check of the follow-up run.
+      delegatedAt: new Date(event.webhookTimestamp ?? Date.now()).toISOString(),
+      ...(followUp !== null && ignoresImages(followUp.reply) ? { ignoreImages: true } : {}),
+    };
+
+    // docs/specs/blocked-by-wait.md, DI-21.88. A delegation whose work item Linear marks as blocked
+    // by an open issue starts no workflow. The run waits as a row, and the sweep starts it with
+    // this input. A follow-up run answers a human reply, so it starts at once.
+    if (followUp === null && this.dependencies.blockerWait !== undefined) {
+      const held = await this.dependencies.blockerWait.hold({
+        tenantId,
+        productId: product.id,
+        linearIssueId: startInput.linearIssueId,
+        linearAgentSessionId: event.agentSession.id,
+        temporalWorkflowId: runWorkflowId,
+        autonomyLevel: defaultAutonomy,
+        workItemTitle: workItem.title,
+        workItemUrl: workItem.url,
+        startInput,
+      });
+      if (held) return { kind: "waiting_for_blockers", workflowId: runWorkflowId };
+    }
+
+    await this.dependencies.starter.start({ workflowId: runWorkflowId, args: [startInput] });
 
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId: runWorkflowId };
   }
@@ -359,6 +388,11 @@ export class DelegationService {
   async stopRun(input: { tenantId: string; runId: string | null; workflowId: string; request: StopRequest }): Promise<boolean> {
     const signalled = await this.dependencies.starter.signalStop(input.workflowId, input.request);
     metrics.humanInterventions.inc({ tenant_id: input.tenantId, product_id: "" });
+    // docs/specs/blocked-by-wait.md. A waiting run has no workflow to signal, so the stop reaches
+    // its row. The cancel records the stop and posts the stop message.
+    if (!signalled && input.runId !== null && this.dependencies.blockerWait !== undefined) {
+      return await this.dependencies.blockerWait.stop(input.tenantId, input.runId, input.request);
+    }
     if (signalled && input.runId !== null && this.dependencies.stops !== undefined) {
       try {
         await this.dependencies.stops.record(input.tenantId, input.runId, input.request, new Date());

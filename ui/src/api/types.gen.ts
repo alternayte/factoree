@@ -1602,6 +1602,12 @@ export type ListRunsResponses = {
       durationMs: number | null;
       waitedMs: number;
       sandboxProvider: string | null;
+      blockers: Array<{
+        identifier: string;
+        url: string | null;
+        state: string;
+        pullRequestUrl: string | null;
+      }> | null;
     }>;
     nextCursor: string | null;
   };
@@ -1660,6 +1666,12 @@ export type GetRunResponses = {
     durationMs: number | null;
     waitedMs: number;
     sandboxProvider: string | null;
+    blockers: Array<{
+      identifier: string;
+      url: string | null;
+      state: string;
+      pullRequestUrl: string | null;
+    }> | null;
     temporalWorkflowId: string;
     terminal: boolean;
     stopRequestedAt: string | null;

@@ -86,6 +86,7 @@ const build = (
     findById: vi.fn().mockResolvedValue(null),
     listExpiredSandboxes: vi.fn().mockResolvedValue([]),
     createIfAbsent: vi.fn(),
+    adoptWaiting: vi.fn(),
     findByAgentSession: vi.fn(),
     updateStatus: vi.fn(),
     // The real store throws when the write reaches no row. The fake must not be more permissive.

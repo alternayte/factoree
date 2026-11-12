@@ -22,8 +22,26 @@ export interface RunActivityDependencies {
 }
 
 export const createRunActivities = (dependencies: RunActivityDependencies) => ({
-  async createRun(input: CreateRunInput): Promise<{ runId: string; created: boolean }> {
-    const { run, created } = await dependencies.runs.createIfAbsent(input);
+  /**
+   * docs/specs/blocked-by-wait.md, DI-21.90. A released run adopts the row its delegation wrote, and counts
+   * as created, because its work starts now. A row that ended before this workflow started, as a
+   * waiting run a stop cancelled, answers `ended`, and the workflow ends with it.
+   */
+  async createRun(
+    input: CreateRunInput,
+  ): Promise<{ runId: string; created: boolean; adopted?: boolean; ended?: boolean; status?: RunStatus }> {
+    const adoptedRun = await dependencies.runs.adoptWaiting(input.temporalWorkflowId);
+    const { run, created } = adoptedRun === null ? await dependencies.runs.createIfAbsent(input) : { run: adoptedRun, created: true };
+    if (!created && isTerminalRunStatus(run.status)) {
+      dependencies.logger.info("run already ended before its workflow started", {
+        tenant_id: run.tenantId,
+        run_id: run.id,
+        workflow_id: run.temporalWorkflowId,
+        status: run.status,
+        step: "receive",
+      });
+      return { runId: run.id, created, ended: true, status: run.status };
+    }
     if (created) {
       metrics.runsStarted.inc({ tenant_id: input.tenantId, product_id: input.productId });
       metrics.activeRuns.inc({ tenant_id: input.tenantId, product_id: input.productId });
@@ -34,8 +52,9 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       run_id: run.id,
       workflow_id: run.temporalWorkflowId,
       step: "receive",
+      ...(adoptedRun === null ? {} : { adopted: "waiting_for_blockers" }),
     });
-    return { runId: run.id, created };
+    return { runId: run.id, created, ...(adoptedRun === null ? {} : { adopted: true }) };
   },
 
   async setRunStatus(input: {

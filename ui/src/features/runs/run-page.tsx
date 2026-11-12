@@ -28,6 +28,7 @@ import {
   formatTokens,
   issueIdentifier,
   statusTone,
+  isOpenBlocker,
   temporalWorkflowUrl,
 } from "./run-format";
 
@@ -185,6 +186,40 @@ function RunDetail({
           </Link>
         </Alert>
       ) : null}
+      {run.status === "WAITING_FOR_BLOCKERS" ? (
+        // docs/specs/blocked-by-wait.md. Factoree starts the run within a minute of the last open blocker completing.
+        <Alert tone="info" className="mb-4" title="Waiting for blockers">
+          {run.blockers === null ? (
+            <p>Factoree has not read the blockers of this issue from Linear yet. It reads them again every minute.</p>
+          ) : (
+            <>
+              <p>
+                Factoree starts this run when every blocker is completed or canceled. Remove the relation in Linear to
+                start now.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {run.blockers.map((blocker) => (
+                  <li key={blocker.identifier} className="flex flex-wrap items-center gap-2">
+                    {blocker.url ? (
+                      <a className="link font-mono" href={blocker.url} target="_blank" rel="noreferrer">
+                        {blocker.identifier}
+                      </a>
+                    ) : (
+                      <span className="font-mono">{blocker.identifier}</span>
+                    )}
+                    <Badge tone={isOpenBlocker(blocker) ? "accent" : "success"}>{blocker.state}</Badge>
+                    {blocker.pullRequestUrl ? (
+                      <a className="link" href={blocker.pullRequestUrl} target="_blank" rel="noreferrer">
+                        Pull request #{blocker.pullRequestUrl.split("/").at(-1)}
+                      </a>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Alert>
+      ) : null}
       {run.failureMessage ? (
         <Alert tone="warning" className="mb-4" title="Why the run ended">
           {run.failureMessage}
@@ -288,11 +323,18 @@ function RunDetail({
         }}
         onConfirm={() => stop.mutate()}
       >
-        <p>
-          Factoree stops the agents and the checks, and the Run ends as Cancelled. A cancelled run takes no reply;
-          delegate the issue again to start a new one. Work so far stays in the retained sandbox for {hours}{" "}
-          {hours === 1 ? "hour" : "hours"}.
-        </p>
+        {run.status === "WAITING_FOR_BLOCKERS" ? (
+          <p>
+            The run has not started, so no agent or sandbox exists. The Run ends as Cancelled, and Factoree does not start
+            it when its blockers complete. Delegate the issue again to start a new one.
+          </p>
+        ) : (
+          <p>
+            Factoree stops the agents and the checks, and the Run ends as Cancelled. A cancelled run takes no reply;
+            delegate the issue again to start a new one. Work so far stays in the retained sandbox for {hours}{" "}
+            {hours === 1 ? "hour" : "hours"}.
+          </p>
+        )}
         <ErrorAlert error={stop.error} className="mt-3" />
       </Confirm>
       <Confirm

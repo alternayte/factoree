@@ -13,6 +13,7 @@ import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js
 import { takesFollowUp } from "~/domain/runs/run-recovery.js";
 import { decideDraft } from "~/domain/runs/run-draft.js";
 import { PrismaRunDraftStore } from "./run-draft.prisma.js";
+import { blockersFromJson } from "./waiting-run.prisma.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -49,6 +50,7 @@ const runSelect = {
   completedAt: true,
   waitedMs: true,
   sandboxProviderId: true,
+  blockers: true,
   product: { select: { slug: true, name: true } },
 } satisfies Prisma.RunSelect;
 
@@ -76,6 +78,13 @@ const toListItem = (row: RunRow, costUsd: number | null, providerNames: Readonly
       : Math.max(0, row.completedAt.getTime() - (row.startedAt ?? row.createdAt).getTime() - row.waitedMs),
   waitedMs: row.waitedMs,
   sandboxProvider: row.sandboxProviderId === null ? null : (providerNames.get(row.sandboxProviderId) ?? row.sandboxProviderId),
+  blockers:
+    blockersFromJson(row.blockers)?.map((blocker) => ({
+      identifier: blocker.identifier,
+      url: blocker.url,
+      state: blocker.state,
+      pullRequestUrl: blocker.pullRequestUrl,
+    })) ?? null,
 });
 
 /** docs/specs/run-visibility.md. Every query carries the tenant. SDD section 52. */

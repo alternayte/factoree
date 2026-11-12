@@ -44,6 +44,20 @@ export const runListItemSchema = z.object({
   waitedMs: z.number(),
   /** docs/specs/sandbox-provider-spillover.md. The sandbox provider of the run, or null. */
   sandboxProvider: z.string().nullable(),
+  /**
+   * docs/specs/blocked-by-wait.md. Each blocker as the last read saw it, with its Linear state type
+   * and the pull request of its newest Factoree run. Null when the run never waited.
+   */
+  blockers: z
+    .array(
+      z.object({
+        identifier: z.string(),
+        url: z.string().nullable(),
+        state: z.string(),
+        pullRequestUrl: z.string().nullable(),
+      }),
+    )
+    .nullable(),
 });
 
 export const runDetailSchema = runListItemSchema.extend({

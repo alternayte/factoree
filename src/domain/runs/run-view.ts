@@ -33,6 +33,20 @@ export interface RunListItem {
    * or its id when the provider is gone. Null before the selection.
    */
   sandboxProvider: string | null;
+  /**
+   * docs/specs/blocked-by-wait.md. Each blocker as the last read saw it, or null when the run never
+   * waited or its blockers were never read.
+   */
+  blockers: RunBlockerView[] | null;
+}
+
+export interface RunBlockerView {
+  identifier: string;
+  url: string | null;
+  /** The Linear state type of the blocker issue. */
+  state: string;
+  /** The pull request of the newest Factoree run of the blocker issue, or null. */
+  pullRequestUrl: string | null;
 }
 
 export interface RunStageView {

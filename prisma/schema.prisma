@@ -156,6 +156,13 @@ model Run {
   draftRequestedAt         DateTime? @map("draft_requested_at")
   draftSource              String?   @map("draft_source")
   draftRequestedBy         String?   @map("draft_requested_by")
+  // docs/specs/blocked-by-wait.md. Each blocker of a WAITING_FOR_BLOCKERS run as the last read saw
+  // it: issue id, identifier, URL, state type and Factoree pull request URL. Null before the first
+  // read, and on a run that never waited.
+  blockers                 Json?     @map("blockers")
+  // docs/specs/blocked-by-wait.md, DI-21.83. The workflow input of a waiting run, built at the
+  // delegation, so the sweep starts the run with it. Null on a run that never waited.
+  waitingStartInput        Json?     @map("waiting_start_input")
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   stages                   RunStage[]
@@ -172,6 +179,8 @@ model Run {
   @@index([productId, status])
   @@index([spriteRetainUntil])
   @@index([linearAgentSessionId, createdAt])
+  // docs/specs/blocked-by-wait.md. The sweep reads every waiting run each minute.
+  @@index([status])
 }
 
 model AgentExecution {

@@ -696,6 +696,12 @@ export async function agentRunWorkflow(
     ...(input.followUpOfRunId === undefined ? {} : { followUpOfRunId: input.followUpOfRunId }),
   });
   runId = created.runId;
+  // docs/specs/blocked-by-wait.md. A stop cancelled the waiting run before this workflow started.
+  // The row is terminal and the stop posted its message, so the workflow ends with no write.
+  if (created.ended === true) {
+    status = created.status ?? "CANCELLED";
+    return { runId: created.runId, status };
+  }
   // A const holds the identifier, because narrowing of a let does not survive into a closure.
   const id = created.runId;
 

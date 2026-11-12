@@ -95,6 +95,17 @@ export class PrismaRunRepository implements RunRepository {
     }
   }
 
+  async adoptWaiting(temporalWorkflowId: string): Promise<RunRecord | null> {
+    // The status condition makes the adoption and the cancel of a stop exclude each other.
+    const { count } = await this.prisma.run.updateMany({
+      where: { temporalWorkflowId, status: "WAITING_FOR_BLOCKERS" },
+      data: { status: "RECEIVED" },
+    });
+    if (count === 0) return null;
+    const row = await this.prisma.run.findUnique({ where: { temporalWorkflowId } });
+    return row ? toRecord(row) : null;
+  }
+
   async findById(tenantId: string, id: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({ where: { id, tenantId } });
     return row ? toRecord(row) : null;

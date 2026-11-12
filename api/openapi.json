@@ -6150,6 +6150,45 @@
                               "string",
                               "null"
                             ]
+                          },
+                          "blockers": {
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "identifier": {
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "pullRequestUrl": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "identifier",
+                                    "url",
+                                    "state",
+                                    "pullRequestUrl"
+                                  ]
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -6170,7 +6209,8 @@
                           "completedAt",
                           "durationMs",
                           "waitedMs",
-                          "sandboxProvider"
+                          "sandboxProvider",
+                          "blockers"
                         ]
                       }
                     },
@@ -6347,6 +6387,45 @@
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "blockers": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "identifier": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "state": {
+                                "type": "string"
+                              },
+                              "pullRequestUrl": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "identifier",
+                              "url",
+                              "state",
+                              "pullRequestUrl"
+                            ]
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
                       ]
                     },
                     "temporalWorkflowId": {
@@ -6745,6 +6824,7 @@
                     "durationMs",
                     "waitedMs",
                     "sandboxProvider",
+                    "blockers",
                     "temporalWorkflowId",
                     "terminal",
                     "stopRequestedAt",

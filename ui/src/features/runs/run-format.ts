@@ -55,10 +55,16 @@ export const STATUS_FILTERS = [
   "STALE_BASE",
   "DRAFT_PUBLISHED",
   "CANCELLED",
+  "WAITING_FOR_BLOCKERS",
   "QUEUED",
   "IMPLEMENTING",
   "REPAIRING",
 ] as const;
+
+/** docs/specs/blocked-by-wait.md. A blocker holds the run while its state is not completed or canceled. */
+export function isOpenBlocker(blocker: { state: string }): boolean {
+  return blocker.state !== "completed" && blocker.state !== "canceled";
+}
 
 /** The Temporal UI page of one workflow, through the proxy at /temporal. */
 export function temporalWorkflowUrl(namespace: string, workflowId: string): string {

@@ -36,6 +36,10 @@ export const RUN_STATUSES = [
   // Factoree published it as a draft pull request. The run keeps its failure reason and message,
   // because the checks still failed, so this is not a success.
   "DRAFT_PUBLISHED",
+  // docs/specs/blocked-by-wait.md. Linear marks the work item as blocked by an open issue. No
+  // workflow exists yet: the sweep starts it once no blocker is open, and the workflow adopts the
+  // row. The run holds no run slot, no held slot and no sandbox.
+  "WAITING_FOR_BLOCKERS",
 ] as const;
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
