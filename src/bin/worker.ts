@@ -84,7 +84,7 @@ import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { buildInfo } from "~/config/build-info.js";
 import { isAgentRunnerName, resolveRole } from "~/domain/products/agent-settings.js";
 import { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
-import { opencodeModelsFileOf } from "~/domain/products/model-catalog.js";
+import { opencodeModelsFileOf, opencodeProviderConfigOf } from "~/domain/products/model-catalog.js";
 import { PrismaModelCatalogStore } from "~/persistence/prisma/model-catalog.prisma.js";
 import { renderVisionFailure, roleModelsOf, visionGaps } from "~/domain/products/model-vision.js";
 import type { WorkItemContentPort } from "~/domain/context/work-item-content.js";
@@ -205,6 +205,7 @@ const sessionSettings = async (input: AgentRunInput, runner: string): Promise<Ag
     silenceLimitMs: product.silenceMinutes * 60_000,
     executable: customImage && isAgentRunnerName(runner) ? `${KILN_RUNNER_BIN}/${runner}` : null,
     modelsFile: catalog === null || model === null ? null : opencodeModelsFileOf(catalog.raw, model, effort),
+    providerConfig: catalog === null || model === null ? null : opencodeProviderConfigOf(catalog.raw, model),
   };
 };
 

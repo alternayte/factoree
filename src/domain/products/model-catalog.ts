@@ -192,3 +192,27 @@ export const opencodeModelsFileOf = (raw: RawCatalog, model: string, effort: str
   const typed = { ...provider, id: provider.id ?? providerId, models: { ...provider.models, [modelId]: typedModelEntry(provider, modelId, effort) } };
   return JSON.stringify({ [providerId]: typed });
 };
+
+/**
+ * GitHub issue 37. The opencode `provider` config of a model whose catalog entry moves it to
+ * another SDK, as models.dev does for `azure/claude-*` (`@ai-sdk/anthropic`), or null when none
+ * is needed. opencode 1.19.5 gives a provider its key as `apiKey` only when the provider names one
+ * environment variable. Azure names two, the resource and the key, so the model-level SDK reads
+ * its own default variable, such as `ANTHROPIC_API_KEY`, and the session fails before any request.
+ * The config names the provider key variable with opencode's `{env:...}` form, so the value stays
+ * in the sandbox environment and never enters the config.
+ */
+export const opencodeProviderConfigOf = (raw: RawCatalog, model: string): Record<string, unknown> | null => {
+  const providerId = model.slice(0, model.indexOf("/"));
+  const modelId = model.slice(model.indexOf("/") + 1);
+  const provider = providerId === "" ? undefined : raw[providerId];
+  if (provider === undefined) return null;
+  const entry = provider.models?.[modelId] ?? typedModelEntry(provider, modelId, null);
+  const override = entry.provider as { npm?: unknown } | undefined;
+  if (typeof override?.npm !== "string" || override.npm === provider.npm) return null;
+  const env = Array.isArray(provider.env) ? provider.env : [];
+  if (env.length < 2) return null;
+  const keys = env.filter((name) => typeof name === "string" && name.endsWith("_API_KEY"));
+  if (keys.length !== 1) return null;
+  return { [providerId]: { options: { apiKey: `{env:${keys[0]}}` } } };
+};

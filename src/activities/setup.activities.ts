@@ -596,7 +596,20 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           };
         }
         const proposalText = await readText(dependencies.sandbox, ref, `${primary.path}/${CONFIG}`);
-        if (proposalText === null) return { kind: "failed", reason: "The setup agent wrote no .factoree/config.yaml." };
+        if (proposalText === null) {
+          // GitHub issue 37. A session that did not finish names its own error, redacted by the
+          // runner, as a Run does. Without it the reason hides a model or a credential fault.
+          if (!result.completed) {
+            dependencies.logger.warn("the setup agent session did not finish", {
+              setup_id: setup.id,
+              outcome: result.outcome,
+              exit_code: result.exitCode,
+              summary: result.summary,
+            });
+          }
+          const cause = result.completed || result.summary.trim() === "" ? "" : ` The agent session ${result.outcome === "hung" ? "hung" : "failed"}: ${result.summary.trim().slice(0, 1_000)}`;
+          return { kind: "failed", reason: `The setup agent wrote no .factoree/config.yaml.${cause}` };
+        }
 
         // The bootstrap allow list is what the sandbox reached inside the ecosystem host list. A
         // provider that records no egress gets the whole list.

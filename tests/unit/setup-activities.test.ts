@@ -32,6 +32,8 @@ interface World {
   latest?: RepositorySetupRecord | null;
   files?: Record<string, string>;
   testSecrets?: string[];
+  /** The session result over a finished session. */
+  result?: { completed: boolean; outcome: string; summary: string };
 }
 
 const build = (status: string, world: World = {}) => {
@@ -67,7 +69,7 @@ const build = (status: string, world: World = {}) => {
         run: (input: { role: string; prompt: string }) => {
           runs.push(input.role);
           prompts.push(input.prompt);
-          return Promise.resolve({ outcome: "finished", usage: null, model: null, effort: null, session: { sessionId: "s", processId: "p" } });
+          return Promise.resolve({ completed: true, summary: "", exitCode: 0, outcome: "finished", usage: null, model: null, effort: null, session: { sessionId: "s", processId: "p" }, ...world.result });
         },
       }),
     },
@@ -111,6 +113,20 @@ describe("runSetupSession (repository-setup-and-services.md)", () => {
     });
     expect(updates[0]).toEqual({ status: "running", temporalRunId: "run-1" });
     expect(sandbox.calls).toContain("destroy");
+  });
+
+  it("names the agent error when a failed session wrote no config (GitHub issue 37)", async () => {
+    const { session, sandbox } = build("", {
+      result: { completed: false, outcome: "failed", summary: "Anthropic API key is missing. Pass it using the 'apiKey' parameter." },
+    });
+    const exec = sandbox.onExec;
+    sandbox.onExec = (command) =>
+      command.file === "cat" && command.args[0]?.endsWith(".factoree/config.yaml") ? { exitCode: 1, stdout: "", stderr: "No such file" } : (exec?.(command) ?? { exitCode: 0, stdout: "", stderr: "" });
+    expect(await session()).toEqual({
+      kind: "failed",
+      reason:
+        "The setup agent wrote no .factoree/config.yaml. The agent session failed: Anthropic API key is missing. Pass it using the 'apiKey' parameter.",
+    });
   });
 
   it("reaches only the repository, the ecosystem host list and the product allow list", async () => {

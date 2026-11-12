@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogEffortProblem, catalogFor, opencodeModelsFileOf, type RawCatalog } from "~/domain/products/model-catalog.js";
+import { catalogEffortProblem, catalogFor, opencodeModelsFileOf, opencodeProviderConfigOf, type RawCatalog } from "~/domain/products/model-catalog.js";
 import { ModelCatalogService, type StoredCatalog } from "~/domain/products/model-catalog-service.js";
 
 // docs/specs/model-picker.md. Shapes from models.dev api.json, read 2026-11-09.
@@ -91,6 +91,36 @@ describe("opencodeModelsFileOf", () => {
     expect(file["anthropic"]!.models!["claude-sonnet-5-5"]).toEqual(RAW["anthropic"]!.models!["claude-sonnet-5-5"]);
     const odd = fileOf("turbo")["anthropic"]!.models!["claude-sonnet-6"]!;
     expect(odd.reasoning_options).toEqual([{ type: "effort", values: ["turbo"] }]);
+  });
+});
+
+// GitHub issue 37. Shapes from models.dev api.json, read 2026-11-12.
+const AZURE: RawCatalog = {
+  azure: {
+    env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"],
+    npm: "@ai-sdk/azure",
+    models: {
+      "gpt-5.5": { tool_call: true, release_date: "2026-08-01" },
+      "claude-opus-5-5": {
+        tool_call: true,
+        release_date: "2026-09-22",
+        provider: { npm: "@ai-sdk/anthropic", api: "https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1" },
+      },
+    },
+  },
+};
+
+describe("opencodeProviderConfigOf", () => {
+  it("gives the key variable of the provider to a model on another SDK", () => {
+    expect(opencodeProviderConfigOf(AZURE, "azure/claude-opus-5-5")).toEqual({
+      azure: { options: { apiKey: "{env:AZURE_API_KEY}" } },
+    });
+  });
+
+  it("names nothing for a model on the provider SDK, or a provider with one variable", () => {
+    expect(opencodeProviderConfigOf(AZURE, "azure/gpt-5.5")).toBeNull();
+    expect(opencodeProviderConfigOf(RAW, "anthropic/claude-sonnet-5-5")).toBeNull();
+    expect(opencodeProviderConfigOf(RAW, "nobody/model")).toBeNull();
   });
 });
 

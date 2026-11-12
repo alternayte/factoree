@@ -26,7 +26,14 @@ import { randomUUID } from "node:crypto";
  * repository, so a repository cannot add an MCP server, a plugin or a permission. The repository
  * therefore cannot choose the model either. The worker chooses it instead (B-3).
  */
-const OPENCODE_CONFIG = JSON.stringify({ permission: { external_directory: "allow" } });
+const OPENCODE_PERMISSION = { external_directory: "allow" };
+
+/** The inline config of one session. GitHub issue 37: the provider config of the model, when it has one. */
+const opencodeConfig = (settings: AgentSessionSettings): string =>
+  JSON.stringify({
+    permission: OPENCODE_PERMISSION,
+    ...(settings.providerConfig === undefined || settings.providerConfig === null ? {} : { provider: settings.providerConfig }),
+  });
 
 /** docs/specs/model-picker.md. opencode reads the catalog from the file and fetches none. */
 const modelsEnvironment = (path: string): Record<string, string> => ({
@@ -129,7 +136,7 @@ export class OpenCodeRunner extends CliAgentRunner {
       file: "sh",
       args: ["-c", EXPORT_SCRIPT, "sh", this.executableOf(context.settings), context.sessionId],
       cwd: context.directory,
-      env: { ...context.environment, OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG, OPENCODE_DISABLE_PROJECT_CONFIG: "1" },
+      env: { ...context.environment, OPENCODE_CONFIG_CONTENT: opencodeConfig(context.settings), OPENCODE_DISABLE_PROJECT_CONFIG: "1" },
       timeoutMs: USAGE_READ_TIMEOUT_MS,
     });
     if (result.exitCode !== 0) return { usage: null, model: fallbackModel };
@@ -151,7 +158,7 @@ export class OpenCodeRunner extends CliAgentRunner {
       env: {
         FACTOREE_PROMPT_FILE: promptFile,
         FACTOREE_OPENCODE_BIN: this.executableOf(settings),
-        OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
+        OPENCODE_CONFIG_CONTENT: opencodeConfig(settings),
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       },
     };
@@ -170,7 +177,7 @@ export class OpenCodeRunner extends CliAgentRunner {
         FACTOREE_PROMPT_FILE: promptFile,
         FACTOREE_OPENCODE_BIN: this.executableOf(settings),
         FACTOREE_OPENCODE_SESSION: sessionId,
-        OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
+        OPENCODE_CONFIG_CONTENT: opencodeConfig(settings),
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       },
     };
