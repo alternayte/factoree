@@ -10,7 +10,7 @@ import type { ValidationCriterion } from "~/domain/validation/validation-contrac
 import { buildValidationContract } from "~/domain/validation/validation-contract-builder.js";
 import { validateValidationContract } from "~/domain/validation/validation-contract.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
-import type { Sandbox } from "~/domain/runs/sandbox.js";
+import type { CommandResult, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import {
   AgentSessionUnavailableError,
   type AgentRunResult,
@@ -22,6 +22,7 @@ import {
   agentSessionKey,
   describeSilenceLimit,
   planCorrectionSessionKey,
+  selectorRecheckSessionKey,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
 import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
@@ -37,9 +38,14 @@ import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import type { BrowserLimits } from "~/domain/validation/browser-limits.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
-import { buildPlanCorrection, buildUserValidatorInput } from "~/domain/validation/user-validator-input.js";
+import {
+  buildPlanCorrection,
+  buildSelectorRecheck,
+  buildUserValidatorInput,
+} from "~/domain/validation/user-validator-input.js";
 import { parseValidationPlan, ValidationPlanInvalidError } from "~/domain/validation/validation-plan.js";
-import { runUserValidation } from "~/domain/validation/user-validator.js";
+import { runUserValidation, type SelectorRecheck } from "~/domain/validation/user-validator.js";
+import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
@@ -143,6 +149,11 @@ export interface UserValidateActivityInput {
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
   egress?: EgressFacts | null;
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye. The
+   * pass captures one screenshot of each route. Absent in a history recorded before they existed.
+   */
+  forYourEye?: ForYourEyeCriterion[];
 }
 
 export interface UserValidateActivityOutput {
@@ -220,6 +231,23 @@ const manualIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>):
 /** docs/specs/run-recovery.md. The assertions a browser checks, so a follow-up run sees a dropped one. */
 const browserIdsOf = (assertions: ReadonlyArray<{ id: string; method: string }>): string[] =>
   assertions.filter((assertion) => assertion.method === "browser").map((assertion) => assertion.id);
+
+/** A file name part made of an assertion identifier. */
+const fileSafe = (value: string): string => value.replace(/[^A-Za-z0-9._-]+/g, "-");
+
+/**
+ * DI-21.44. `Sandbox.writeFile` writes text, so the bytes travel as base64 to a file beside the
+ * target, and the sandbox decodes them.
+ */
+const writeBinaryFile = async (sandbox: Sandbox, ref: SandboxRef, path: string, bytes: Uint8Array): Promise<void> => {
+  await sandbox.writeFile(ref, `${path}.base64`, Buffer.from(bytes).toString("base64"));
+  const decoded = await sandbox.exec(ref, {
+    file: "sh",
+    args: ["-c", 'base64 -d < "$0.base64" > "$0" && rm -f -- "$0.base64"', path],
+    cwd: "/",
+  });
+  if (decoded.exitCode !== 0) throw new Error(`exit code ${decoded.exitCode}, ${decoded.stderr.trim()}`);
+};
 
 /** The reasons the plan rules reject one plan text for, or null when the plan is valid. */
 const planRejectionOf = (planText: string, contract: ValidationContract, accounts: readonly string[]): string[] | null => {
@@ -428,9 +456,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // (DI-14.41), and `runUserValidation` owns it from the pass on and stops it in its own
       // `finally`, at this same URL, because `exposeService` is a pure address computation over
       // one fixed port.
-      const needsPreview = storedContract.assertions.some(
-        (assertion) => assertion.method === "browser" || assertion.method === "http",
-      );
+      // docs/specs/by-eye-criteria-and-selector-recheck.md. A for-your-eye screenshot needs it too.
+      const forYourEye = input.forYourEye ?? [];
+      const needsPreview =
+        forYourEye.length > 0 ||
+        storedContract.assertions.some((assertion) => assertion.method === "browser" || assertion.method === "http");
       let previewBaseUrl: string | null = null;
       if (needsPreview && input.preview !== null && input.preview.enabled) {
         const port = Number(new URL(input.preview.readyUrl).port);
@@ -683,6 +713,89 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         };
       }
 
+      /**
+       * DI-15.23 and docs/specs/by-eye-criteria-and-selector-recheck.md. One bounded round: the live
+       * CLI session resumes with the message. When it cannot resume, and wrote nothing, one fresh
+       * session gets the normal prompt and then the same message.
+       */
+      const askOnce = async (round: {
+        /** The live CLI session. A runner that never learned a CLI session identifier names it by its process, and that cannot be resumed. */
+        last: AgentSessionRef;
+        message: { prompt: string; promptVersion: string };
+        /** The plan path the normal prompt of a fresh session names. */
+        freshPlanPath: string;
+        key: string;
+        read: () => Promise<CommandResult>;
+        into: AgentRunResult[];
+        freshLog: string;
+        logFields: Record<string, unknown>;
+      }): Promise<CommandResult> => {
+        let resumed: AgentRunResult | null = null;
+        if (round.last.sessionId !== round.last.processId) {
+          try {
+            resumed = await runner.resume(round.last, { prompt: round.message.prompt, timeoutMs: input.timeoutMs });
+            round.into.push(resumed);
+          } catch (error) {
+            // Another worker holds the session, so this one cannot resume it.
+            if (!(error instanceof AgentSessionUnavailableError)) throw error;
+          }
+        }
+        let read = await round.read();
+        const resumeFailed =
+          resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
+        if (resumeFailed && read.exitCode !== 0 && !context.cancellationSignal.aborted) {
+          dependencies.logger.warn(round.freshLog, { ...round.logFields, resumed: resumed !== null });
+          const freshInput = buildUserValidatorInput({
+            goal: input.goal,
+            validationContract: storedContract.document,
+            primaryRepositoryPath: input.primaryPath,
+            planPath: round.freshPlanPath,
+            previewBaseUrl,
+            actionPolicy,
+            projectTestSecrets,
+            accounts: accountNames,
+            fakes,
+            imageFiles: input.imageFiles ?? [],
+            egress: input.egress ?? null,
+          });
+          const promptVersion = `${freshInput.promptVersion}+${round.message.promptVersion}`;
+          const fresh = await runner.run({
+            runId: input.runId,
+            tenantId: input.tenantId,
+            role: "validator",
+            sandbox: uv.sandbox,
+            ref,
+            workingDirectory: validationDirectory,
+            repositoryPath: input.primaryPath,
+            prompt: `${freshInput.prompt}\n\n${round.message.prompt}`,
+            promptVersion,
+            environment: freshInput.environment,
+            actionPolicy,
+            timeoutMs: input.timeoutMs,
+          });
+          round.into.push(fresh);
+          await uv.executions.record({
+            tenantId: input.tenantId,
+            runId: input.runId,
+            role: "validator",
+            runner: runner.name,
+            model: null,
+            sessionRef: fresh.session.sessionId,
+            promptVersion,
+            durationMs: fresh.durationMs,
+            finalResult: {
+              completed: fresh.completed,
+              exitCode: fresh.exitCode,
+              cancelled: fresh.cancelled,
+              summary: fresh.summary,
+            },
+            idempotencyKey: round.key,
+          });
+          read = await round.read();
+        }
+        return read;
+      };
+
       // `ValidationContract.version` stays the literal `1` of SDD section 24, so the stored row's
       // numeric `version` column must be dropped here rather than passed through.
       const frozenContract: ValidationContract = {
@@ -695,6 +808,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       let planText = planResult.exitCode === 0 ? planResult.stdout : null;
       let rejectedPlanReason: string | undefined;
+      // The live CLI session of the pass, which a later round resumes.
+      let liveSession = invocations.at(-1)!.session;
 
       // DI-15.23, amending SDD section 36. A plan the rules reject proves nothing, although the
       // change may be correct (FAC-63). Factoree asks the validator once for a corrected plan, with
@@ -728,80 +843,18 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         const readCorrectedPlan = () => uv.sandbox.exec(ref, { file: "cat", args: [correctedPlanPath] });
 
         const correctionInvocations: AgentRunResult[] = [];
-        const correctedResult = await cancellable(async () => {
-          // The last invocation is the live CLI session. A runner that never learned a CLI
-          // session identifier names the session by its process, and that cannot be resumed.
-          const last = invocations.at(-1)!.session;
-          let resumed: AgentRunResult | null = null;
-          if (last.sessionId !== last.processId) {
-            try {
-              resumed = await runner.resume(last, { prompt: correction.prompt, timeoutMs: input.timeoutMs });
-              correctionInvocations.push(resumed);
-            } catch (error) {
-              // Another worker holds the session, so this one cannot resume it.
-              if (!(error instanceof AgentSessionUnavailableError)) throw error;
-            }
-          }
-          let read = await readCorrectedPlan();
-          const resumeFailed =
-            resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
-          if (resumeFailed && read.exitCode !== 0 && !context.cancellationSignal.aborted) {
-            dependencies.logger.warn("the validator session cannot be resumed; starting one fresh session to correct the plan", {
-              ...logFields,
-              resumed: resumed !== null,
-            });
-            // The fresh session reads the normal prompt, with the corrected plan path, and then
-            // the same correction message.
-            const freshInput = buildUserValidatorInput({
-              goal: input.goal,
-              validationContract: storedContract.document,
-              primaryRepositoryPath: input.primaryPath,
-              planPath: correctedPlanPath,
-              previewBaseUrl,
-              actionPolicy,
-              projectTestSecrets,
-              accounts: accountNames,
-              fakes,
-              imageFiles: input.imageFiles ?? [],
-              egress: input.egress ?? null,
-            });
-            const promptVersion = `${freshInput.promptVersion}+${correction.promptVersion}`;
-            const fresh = await runner.run({
-              runId: input.runId,
-              tenantId: input.tenantId,
-              role: "validator",
-              sandbox: uv.sandbox,
-              ref,
-              workingDirectory: validationDirectory,
-              repositoryPath: input.primaryPath,
-              prompt: `${freshInput.prompt}\n\n${correction.prompt}`,
-              promptVersion,
-              environment: freshInput.environment,
-              actionPolicy,
-              timeoutMs: input.timeoutMs,
-            });
-            correctionInvocations.push(fresh);
-            await uv.executions.record({
-              tenantId: input.tenantId,
-              runId: input.runId,
-              role: "validator",
-              runner: runner.name,
-              model: null,
-              sessionRef: fresh.session.sessionId,
-              promptVersion,
-              durationMs: fresh.durationMs,
-              finalResult: {
-                completed: fresh.completed,
-                exitCode: fresh.exitCode,
-                cancelled: fresh.cancelled,
-                summary: fresh.summary,
-              },
-              idempotencyKey: correctionKey,
-            });
-            read = await readCorrectedPlan();
-          }
-          return read;
-        });
+        const correctedResult = await cancellable(() =>
+          askOnce({
+            last: invocations.at(-1)!.session,
+            message: correction,
+            freshPlanPath: correctedPlanPath,
+            key: correctionKey,
+            read: readCorrectedPlan,
+            into: correctionInvocations,
+            freshLog: "the validator session cannot be resumed; starting one fresh session to correct the plan",
+            logFields,
+          }),
+        );
 
         await recordAgentSession(
           { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
@@ -836,6 +889,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
         planText = correctedResult.exitCode === 0 ? correctedResult.stdout : null;
         const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames);
+        liveSession = correctionInvocations.at(-1)?.session ?? liveSession;
         if (planText === null || secondRejection !== null) {
           dependencies.logger.warn("the corrected validation plan was rejected", {
             ...logFields,
@@ -848,6 +902,82 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           dependencies.logger.info("the corrected validation plan was accepted", logFields);
         }
       }
+
+      // docs/specs/by-eye-criteria-and-selector-recheck.md. The one selector re-check round of the
+      // pass. The validator gets the failed step, the error, the final screenshot and the page
+      // HTML in this sandbox, and writes the corrected entries. The domain checks and runs them.
+      const selectorRecheck: SelectorRecheck = async (requests) => {
+        const recheckDirectory = `${validationDirectory}/${afterHang ? "selector-recheck-after-hang" : "selector-recheck"}`;
+        const logFields = { tenant_id: input.tenantId, product_id: input.productId, run_id: input.runId, step: "user_validate", attempt: input.attempt };
+        await uv.sandbox.exec(ref, { file: "mkdir", args: ["-p", recheckDirectory] });
+        const failures = [];
+        for (const request of requests) {
+          const base = `${recheckDirectory}/${fileSafe(request.assertionId)}`;
+          let screenshotPath: string | null = null;
+          if (request.screenshot !== null) {
+            try {
+              await writeBinaryFile(uv.sandbox, ref, `${base}-final.png`, request.screenshot);
+              screenshotPath = `${base}-final.png`;
+            } catch (error) {
+              dependencies.logger.warn("the final screenshot did not reach the sandbox for the selector re-check", {
+                ...logFields,
+                assertion_id: request.assertionId,
+                error: String(error),
+              });
+            }
+          }
+          let htmlPath: string | null = null;
+          if (request.pageHtml !== null) {
+            await uv.sandbox.writeFile(ref, `${base}.html`, request.pageHtml);
+            htmlPath = `${base}.html`;
+          }
+          failures.push({
+            assertionId: request.assertionId,
+            entry: JSON.stringify(request.entry),
+            step: `step ${String(request.failure.index + 1)}, ${request.failure.action} \`${request.failure.selector}\``,
+            error: request.error,
+            screenshotPath,
+            htmlPath,
+          });
+        }
+        const answerPath = `${recheckDirectory}/corrected-entries.json`;
+        const recheck = buildSelectorRecheck({ failures, answerPath });
+        const recheckKey = selectorRecheckSessionKey(input.runId, input.attempt, afterHang);
+        const recheckInvocations: AgentRunResult[] = [];
+        const read = await cancellable(() =>
+          askOnce({
+            last: liveSession,
+            message: recheck,
+            freshPlanPath: planPath,
+            key: recheckKey,
+            read: () => uv.sandbox.exec(ref, { file: "cat", args: [answerPath] }),
+            into: recheckInvocations,
+            freshLog: "the validator session cannot be resumed; starting one fresh session for the selector re-check",
+            logFields,
+          }),
+        );
+        await recordAgentSession(
+          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
+          {
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runId: input.runId,
+            role: "validator",
+            attempt: input.attempt,
+            runner: runner.name,
+            idempotencyKey: recheckKey,
+            sandboxId: input.spriteId,
+          },
+          recheckInvocations,
+        );
+        const recheckHang = hangOf(recheckInvocations);
+        if (recheckHang !== null) {
+          return { text: null, problem: `the validator session wrote no output for ${describeSilenceLimit(recheckHang.silenceLimitMs)}` };
+        }
+        return read.exitCode === 0
+          ? { text: read.stdout, problem: null }
+          : { text: null, problem: "the validator wrote no corrected entries" };
+      };
 
       // Step 9. Executes the plan against the frozen contract.
       const sessionMs = Date.now() - sessionStarted;
@@ -886,6 +1016,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               // Issue #44, DI-21.71. A stop reaches the check loop and the browser, so the
               // activity ends as cancelled within seconds instead of after its checks.
               signal: context.cancellationSignal,
+              forYourEye,
+              selectorRecheck,
             },
           ),
       );
@@ -908,6 +1040,17 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           runId: input.runId,
           validationAssertionId,
           outcome: assertionOutcome,
+          attempt: input.attempt,
+        });
+      }
+
+      // docs/specs/by-eye-criteria-and-selector-recheck.md. Each capture of this attempt, captured or
+      // not, so the Proof Pack shows the last attempt.
+      for (const capture of outcome.forYourEye ?? []) {
+        await uv.evidencePersistence.persistForYourEye({
+          tenantId: input.tenantId,
+          runId: input.runId,
+          capture,
           attempt: input.attempt,
         });
       }

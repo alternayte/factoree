@@ -44,6 +44,7 @@ import type {
 import type { WorkItemSource } from "~/domain/refinement/work-item.js";
 import type { RunStageStore } from "~/domain/runs/run-stage.js";
 import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
+import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 
 export interface RefineActivityInput {
   runId: string;
@@ -159,6 +160,11 @@ export interface ProposeRefinementActivityOutput {
   decisions: FactoreeDecision[];
   /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap: string | null;
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye. They
+   * never freeze. Absent in a history recorded before they existed.
+   */
+  forYourEye?: ForYourEyeCriterion[];
   reason: string;
   /**
    * Issue #39, DI-21.66. The whole failure message, when the human must act on it: the proposal
@@ -535,12 +541,14 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         accepted: gated.accepted.length,
         implied: gated.implied.length,
         not_built: gated.notBuilt.length,
+        for_your_eye: gated.forYourEye.length,
       });
       return {
         status: "proposed",
         accepted: gated.accepted,
         decisions: refinementDecisions(gated),
         visualEvidenceGap: gated.visualEvidenceGap,
+        forYourEye: gated.forYourEye,
         reason: "",
         hang: null,
         missingHosts: hosts.missing,

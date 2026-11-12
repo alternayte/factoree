@@ -7,13 +7,16 @@ import {
   type ReadinessProbe,
 } from "~/domain/runs/preview.js";
 import {
+  checkSelectorCorrection,
   parseValidationPlan,
   ValidationPlanInvalidError,
   planKindForMethod,
+  type BrowserPlanEntry,
   type BrowserStep,
   type ValidationPlan,
   type ValidationPlanEntry,
 } from "~/domain/validation/validation-plan.js";
+import { forYourEyeSource, type ForYourEyeCapture, type ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type {
   AssertionOutcome,
   EvidenceArtifact,
@@ -22,7 +25,13 @@ import type {
 import { summarizeUserValidation } from "~/domain/validation/validation-result.js";
 import { executeHttpAssertion, type HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import { resolvePreviewUrl } from "~/domain/validation/preview-url.js";
-import type { BrowserDriver, BrowserSignInResult, BrowserStepEvent } from "~/domain/validation/browser-driver.js";
+import type {
+  BrowserDriver,
+  BrowserRunResult,
+  BrowserSelectorFailure,
+  BrowserSignInResult,
+  BrowserStepEvent,
+} from "~/domain/validation/browser-driver.js";
 import {
   DEFAULT_BROWSER_LIMITS,
   effectiveBrowserLimits,
@@ -82,7 +91,43 @@ export interface UserValidationInput {
    * no further assertion, closes a running browser, and rejects with the abort reason.
    */
   signal?: AbortSignal;
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye. After
+   * the plan runs, the pass captures one screenshot of each route.
+   */
+  forYourEye?: readonly ForYourEyeCriterion[];
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. Asks the validator once for corrected
+   * selectors. Absent: a selector-only failure stays a failure.
+   */
+  selectorRecheck?: SelectorRecheck;
 }
+
+/** docs/specs/by-eye-criteria-and-selector-recheck.md. One browser entry that failed only on its selector, twice. */
+export interface SelectorRecheckRequest {
+  assertionId: string;
+  /** The entry as the plan held it. */
+  entry: BrowserPlanEntry;
+  failure: BrowserSelectorFailure;
+  /** The readable reason of the second failure, redacted. */
+  error: string;
+  /** The final screenshot of the second run, or null when the driver captured none. */
+  screenshot: Uint8Array | null;
+  /** The page HTML of the second run, redacted, or null when the driver read none. */
+  pageHtml: string | null;
+}
+
+/**
+ * The answer of the re-check: the text of the file the validator wrote, or null with the reason
+ * no file exists.
+ */
+export interface SelectorRecheckReply {
+  text: string | null;
+  problem: string | null;
+}
+
+/** The one re-check round of a pass. The activity resumes the validator session. */
+export type SelectorRecheck = (requests: SelectorRecheckRequest[]) => Promise<SelectorRecheckReply>;
 
 /** Issue #44. How one browser assertion runs. */
 export interface BrowserAssertionRun {
@@ -217,7 +262,16 @@ export const executeBrowserAssertion = async (
   entry: Extract<ValidationPlanEntry, { kind: "browser" }>,
   handle: PreviewHandle,
   options: BrowserAssertionRun,
-): Promise<AssertionOutcome> => {
+): Promise<AssertionOutcome> => (await runBrowserAssertion(dependencies, assertion, entry, handle, options)).outcome;
+
+/** Rule 8, with the driver result, or null when Factoree refused the plan before the browser ran. */
+const runBrowserAssertion = async (
+  dependencies: UserValidatorDependencies,
+  assertion: ValidationAssertion,
+  entry: Extract<ValidationPlanEntry, { kind: "browser" }>,
+  handle: PreviewHandle,
+  options: BrowserAssertionRun,
+): Promise<{ outcome: AssertionOutcome; run: BrowserRunResult | null }> => {
   // Defence in depth. The plan parser already rejects a goto path that can leave the preview
   // origin. This control repeats the check, because it must not trust the parser. A refusal is
   // BLOCKED, never a PASS and never a silent skip.
@@ -230,11 +284,14 @@ export const executeBrowserAssertion = async (
         error instanceof Error ? error.message : String(error),
       );
       return {
-        assertionId: assertion.id,
-        method: assertion.method,
-        result: "BLOCKED",
-        reason: `Factoree refused the browser goto path: ${message}`,
-        artifacts: [],
+        outcome: {
+          assertionId: assertion.id,
+          method: assertion.method,
+          result: "BLOCKED",
+          reason: `Factoree refused the browser goto path: ${message}`,
+          artifacts: [],
+        },
+        run: null,
       };
     }
   }
@@ -351,11 +408,14 @@ export const executeBrowserAssertion = async (
     : `The browser scenario for "${assertion.id}" failed: ${dependencies.redactor.redactText(run.failureReason ?? "no reason was given.")}`;
 
   return {
-    assertionId: assertion.id,
-    method: assertion.method,
-    result: run.passed ? "PASS" : "FAIL",
-    reason,
-    artifacts,
+    outcome: {
+      assertionId: assertion.id,
+      method: assertion.method,
+      result: run.passed ? "PASS" : "FAIL",
+      reason,
+      artifacts,
+    },
+    run,
   };
 };
 
@@ -455,12 +515,20 @@ const validate = async (
     }
   }
 
+  const forYourEye = input.forYourEye ?? [];
   if (planFailureReason !== null) {
     for (const assertion of automatedAssertions) {
       outcomesById.set(assertion.id, blockedOutcome(assertion, planFailureReason));
     }
     const outcomes = contract.assertions.map((assertion) => outcomesById.get(assertion.id)!);
-    return summarizeUserValidation(outcomes);
+    return {
+      ...summarizeUserValidation(outcomes),
+      forYourEye: forYourEye.map((item) => ({
+        ...item,
+        captured: false,
+        reason: "Factoree ran no check in this attempt, because it had no Validation Plan it could run.",
+      })),
+    };
   }
 
   const planEntries = new Map<string, ValidationPlanEntry>();
@@ -475,11 +543,13 @@ const validate = async (
 
   const pendingAssertions = automatedAssertions.filter((assertion) => !outcomesById.has(assertion.id));
 
-  // Rule 4. Decide whether a preview is needed.
-  const previewRequired = pendingAssertions.some((assertion) => {
-    const kind = planKindForMethod(assertion.method);
-    return needsPreview(kind);
-  });
+  // Rule 4. Decide whether a preview is needed. A for-your-eye screenshot needs it too.
+  const previewRequired =
+    forYourEye.length > 0 ||
+    pendingAssertions.some((assertion) => {
+      const kind = planKindForMethod(assertion.method);
+      return needsPreview(kind);
+    });
 
   const previewMisconfigured = input.preview === null || !input.preview.enabled;
 
@@ -495,6 +565,12 @@ const validate = async (
   const remainingAssertions = pendingAssertions.filter((assertion) => !outcomesById.has(assertion.id));
 
   let handle: PreviewHandle | null = null;
+  // Why the pass has no preview, for a for-your-eye capture that needs one.
+  let previewProblem: string | null = previewMisconfigured
+    ? "the repository configures no enabled preview in .factoree/config.yaml"
+    : null;
+  const recheckCandidates: RecheckCandidate[] = [];
+  const captures: ForYourEyeCapture[] = [];
   try {
     if (previewRequired && !previewMisconfigured) {
       // Rule 5. Start the preview once, for the whole pass. The log names how long the build and
@@ -523,6 +599,7 @@ const validate = async (
         if (!(error instanceof PreviewStartError)) throw error;
         const redactedReason = dependencies.redactor.redactText(error.message);
         const redactedLog = dependencies.redactor.redactText(error.log);
+        previewProblem = redactedReason;
         let attachedLog = false;
         for (const assertion of remainingAssertions) {
           const kind = planKindForMethod(assertion.method);
@@ -597,18 +674,37 @@ const validate = async (
           signal: input.signal,
           storageState,
         });
-        outcome = enforceRequiredEvidence(
-          assertion,
-          await executeBrowserAssertion(dependencies, assertion, entry, handle!, browserRun()),
-        );
+        const first = await runBrowserAssertion(dependencies, assertion, entry, handle!, browserRun());
+        outcome = enforceRequiredEvidence(assertion, first.outcome);
         // docs/specs/run-recovery.md. A failed browser assertion runs once more in the same check
         // sprite. A different result makes it unstable: not proven, and not worth a repair.
         if (outcome.result === "FAIL") {
           input.signal?.throwIfAborted();
-          const rerun = enforceRequiredEvidence(
-            assertion,
-            await executeBrowserAssertion(dependencies, assertion, entry, handle!, browserRun()),
-          );
+          const second = await runBrowserAssertion(dependencies, assertion, entry, handle!, browserRun());
+          const rerun = enforceRequiredEvidence(assertion, second.outcome);
+          // docs/specs/by-eye-criteria-and-selector-recheck.md. Both runs failed only on a selector,
+          // so the check may be at fault, not the change. It waits for the one re-check round.
+          const selectorFailure = second.run?.selectorFailure ?? null;
+          if (rerun.result === "FAIL" && (first.run?.selectorFailure ?? null) !== null && selectorFailure !== null) {
+            const failed = second.run!;
+            const handleNow = handle!;
+            recheckCandidates.push({
+              assertion,
+              request: {
+                assertionId: assertion.id,
+                entry,
+                failure: selectorFailure,
+                error: dependencies.redactor.redactText(failed.failureReason ?? "no reason was given."),
+                screenshot: failed.artifacts.find((artifact) => artifact.kind === "screenshot" && artifact.name === "final")?.bytes ?? null,
+                pageHtml: failed.pageHtml === undefined || failed.pageHtml === null ? null : dependencies.redactor.redactText(failed.pageHtml),
+              },
+              run: async (corrected) =>
+                enforceRequiredEvidence(
+                  assertion,
+                  (await runBrowserAssertion(dependencies, assertion, corrected, handleNow, browserRun())).outcome,
+                ),
+            });
+          }
           if (rerun.result === "PASS") {
             outcome = {
               ...outcome,
@@ -636,6 +732,38 @@ const validate = async (
       // Rule 10. Enforce the required evidence.
       outcomesById.set(assertion.id, enforceRequiredEvidence(assertion, outcome));
     }
+
+    // docs/specs/by-eye-criteria-and-selector-recheck.md. One re-check round per pass, after every
+    // entry ran, so one resumed session corrects every selector-only failure at once.
+    if (recheckCandidates.length > 0 && input.selectorRecheck !== undefined) {
+      input.signal?.throwIfAborted();
+      for (const [id, outcome] of await recheckSelectors(dependencies, input, input.selectorRecheck, recheckCandidates, outcomesById)) {
+        outcomesById.set(id, outcome);
+      }
+    }
+
+    // docs/specs/by-eye-criteria-and-selector-recheck.md. Factoree owns the capture, so no agent
+    // writes a check that can fail. A failed capture is a line for the human, never a failure.
+    for (const item of forYourEye) {
+      input.signal?.throwIfAborted();
+      const capture = await captureForYourEye(dependencies, input, item, {
+        handle,
+        previewProblem,
+        signIn: signInAs,
+        deadline: passDeadline,
+      });
+      if (capture.captured) {
+        dependencies.logger.info("for-your-eye screenshot captured", { run_id: input.runId, step: "user_validate", criterion_id: item.id });
+      } else {
+        dependencies.logger.warn("for-your-eye screenshot not captured", {
+          run_id: input.runId,
+          step: "user_validate",
+          criterion_id: item.id,
+          reason: capture.reason,
+        });
+      }
+      captures.push(capture);
+    }
   } finally {
     // Rule 11. Stop the preview in a finally, whatever happened.
     if (handle !== null) {
@@ -645,5 +773,165 @@ const validate = async (
 
   // Rule 12. Summarize in contract order.
   const outcomes = contract.assertions.map((assertion) => outcomesById.get(assertion.id)!);
-  return summarizeUserValidation(outcomes);
+  return { ...summarizeUserValidation(outcomes), forYourEye: captures };
+};
+
+/** A browser entry that waits for the re-check, and the run of its corrected entry. */
+interface RecheckCandidate {
+  assertion: ValidationAssertion;
+  request: SelectorRecheckRequest;
+  run: (corrected: BrowserPlanEntry) => Promise<AssertionOutcome>;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The corrected entries of the re-check file, or the reason it holds none. */
+const correctedEntriesOf = (reply: SelectorRecheckReply): { entries: unknown[] } | { problem: string } => {
+  if (reply.text === null) return { problem: reply.problem ?? "the validator wrote no corrected entries" };
+  let document: unknown;
+  try {
+    document = JSON.parse(reply.text);
+  } catch {
+    return { problem: "the re-check file is not valid JSON" };
+  }
+  if (!isRecord(document) || !Array.isArray(document["entries"])) {
+    return { problem: 'the re-check file holds no "entries" list' };
+  }
+  return { entries: document["entries"] };
+};
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. Asks the validator once for corrected
+ * selectors, checks each answer against the entry that failed, and runs each accepted one once. A
+ * pass is a pass on evidence, and a fail is a real failure. A rejected answer leaves the original
+ * failure. The round spends no repair budget, because it runs inside the pass.
+ */
+const recheckSelectors = async (
+  dependencies: UserValidatorDependencies,
+  input: UserValidationInput,
+  recheck: SelectorRecheck,
+  candidates: RecheckCandidate[],
+  outcomesById: ReadonlyMap<string, AssertionOutcome>,
+): Promise<Map<string, AssertionOutcome>> => {
+  const logFields = { run_id: input.runId, step: "user_validate" };
+  dependencies.logger.info("selector re-check started", {
+    ...logFields,
+    assertion_ids: candidates.map((candidate) => candidate.assertion.id),
+  });
+  let reply: SelectorRecheckReply;
+  try {
+    reply = await recheck(candidates.map((candidate) => candidate.request));
+  } catch (error) {
+    // A stop ends the pass. Any other fault of the round leaves each failure as it was.
+    input.signal?.throwIfAborted();
+    reply = { text: null, problem: `the re-check session failed: ${dependencies.redactor.redactText(error instanceof Error ? error.message : String(error))}` };
+  }
+  const answer = correctedEntriesOf(reply);
+  const results = new Map<string, AssertionOutcome>();
+  for (const candidate of candidates) {
+    const id = candidate.assertion.id;
+    const original = outcomesById.get(id)!;
+    const offered =
+      "entries" in answer
+        ? answer.entries.find((entry) => isRecord(entry) && entry["assertionId"] === id)
+        : undefined;
+    const checked =
+      "problem" in answer
+        ? { problem: answer.problem }
+        : offered === undefined
+          ? { problem: "the validator wrote no corrected entry for it" }
+          : checkSelectorCorrection(candidate.request.entry, offered);
+    if ("problem" in checked) {
+      const problem = dependencies.redactor.redactText(checked.problem);
+      dependencies.logger.warn("selector re-check rejected; the failure stands", { ...logFields, assertion_id: id, reason: problem });
+      results.set(id, {
+        ...original,
+        reason: `${original.reason} Factoree asked the validator once to correct the selector, and rejected the answer: ${problem}.`,
+      });
+      continue;
+    }
+    input.signal?.throwIfAborted();
+    const rerun = await candidate.run(checked.entry);
+    dependencies.logger.info("selector re-check finished", { ...logFields, assertion_id: id, result: rerun.result });
+    results.set(id, { ...rerun, reason: `After one selector re-check: ${rerun.reason}` });
+  }
+  return results;
+};
+
+/** What a for-your-eye capture needs from the pass. */
+interface CaptureContext {
+  handle: PreviewHandle | null;
+  previewProblem: string | null;
+  signIn: (name: string) => Promise<BrowserSignInResult>;
+  deadline: number;
+}
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. Loads one route in the preview, signed in as
+ * the first account when the repository defines one, and keeps the screenshot. No interaction
+ * step runs before it. A repository ready selector is waited for, so the page has rendered.
+ */
+const captureForYourEye = async (
+  dependencies: UserValidatorDependencies,
+  input: UserValidationInput,
+  item: ForYourEyeCriterion,
+  context: CaptureContext,
+): Promise<ForYourEyeCapture> => {
+  const failed = (reason: string): ForYourEyeCapture => ({ ...item, captured: false, reason });
+  if (context.handle === null) return failed(context.previewProblem ?? "the preview did not start");
+  const account = (input.accounts ?? [])[0];
+  let storageState: string | undefined;
+  if (account !== undefined) {
+    const signedIn = await context.signIn(account.name);
+    if (!signedIn.signedIn) {
+      return failed(
+        `the sign-in of account "${account.name}" failed at step ${String(signedIn.failedStep)}: ` +
+          dependencies.redactor.redactText(signedIn.reason),
+      );
+    }
+    storageState = signedIn.storageState;
+  }
+  const readySelector = input.preview?.readySelector;
+  const steps: BrowserStep[] = [
+    { action: "goto", path: item.route },
+    ...(readySelector === undefined ? [] : [{ action: "expectVisible" as const, selector: readySelector }]),
+  ];
+  const limits = effectiveBrowserLimits(input.browserLimits ?? DEFAULT_BROWSER_LIMITS, context.deadline - Date.now());
+  try {
+    const run = await dependencies.browser.run({
+      baseUrl: context.handle.baseUrl,
+      steps,
+      captureVideo: false,
+      captureTrace: false,
+      timeoutMs: limits.scenarioTimeoutMs,
+      stepTimeoutMs: limits.stepTimeoutMs,
+      ...(readySelector === undefined ? {} : { readySelector }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(storageState === undefined ? {} : { storageState }),
+    });
+    const screenshot = run.artifacts.find((artifact) => artifact.kind === "screenshot");
+    if (!run.passed || screenshot === undefined) {
+      return failed(dependencies.redactor.redactText(run.failureReason ?? "the browser returned no screenshot"));
+    }
+    return {
+      ...item,
+      captured: true,
+      artifact: {
+        kind: "screenshot",
+        source: forYourEyeSource(item.id),
+        contentType: screenshot.contentType,
+        bytes: screenshot.bytes,
+        metadata: {
+          forYourEye: item.id,
+          statement: item.statement,
+          route: item.route,
+          ...(account === undefined ? {} : { signedInAs: account.name }),
+        },
+      },
+    };
+  } catch (error) {
+    input.signal?.throwIfAborted();
+    return failed(dependencies.redactor.redactText(error instanceof Error ? error.message : String(error)));
+  }
 };

@@ -54,6 +54,111 @@ export const requestGlobProblem = (url: string): string | null => {
   return null;
 };
 
+/** The selector a browser step acts on, or null for a step with none. */
+export const stepSelectorOf = (step: BrowserStep): string | null =>
+  step.action === "click" || step.action === "fill" || step.action === "expectText" || step.action === "expectVisible"
+    ? step.selector
+    : null;
+
+/** Skips a quoted string that starts at `start`, and returns the index after its closing quote. */
+const skipQuoted = (text: string, start: number): number => {
+  const quote = text[start];
+  let index = start + 1;
+  while (index < text.length && text[index] !== quote) index += text[index] === "\\" ? 2 : 1;
+  return index + 1;
+};
+
+/** Splits a Playwright selector chain on `>>`, outside quotes and brackets. */
+const chainParts = (selector: string): string[] => {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let index = 0;
+  while (index < selector.length) {
+    const char = selector[index]!;
+    if (char === '"' || char === "'") {
+      index = skipQuoted(selector, index);
+      continue;
+    }
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === "[" || char === "(") depth += 1;
+    if (char === "]" || char === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && selector.startsWith(">>", index)) {
+      parts.push(selector.slice(start, index));
+      index += 2;
+      start = index;
+      continue;
+    }
+    index += 1;
+  }
+  parts.push(selector.slice(start));
+  return parts;
+};
+
+const CLASS_NAME_START = /[A-Za-z_\-\\\u00a0-\uffff]/;
+
+/** True when a CSS selector holds a class selector (`.name`) or a `class` attribute selector. */
+const cssHoldsClass = (css: string): boolean => {
+  let index = 0;
+  while (index < css.length) {
+    const char = css[index]!;
+    if (char === '"' || char === "'") {
+      index = skipQuoted(css, index);
+      continue;
+    }
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === "[") {
+      const name = /^\s*(?:[\w-]*\|)?([\w-]+)/.exec(css.slice(index + 1));
+      if (name?.[1]?.toLowerCase() === "class") return true;
+      // The value of an attribute selector is no selector, so a dot in it is no class.
+      index += 1;
+      while (index < css.length && css[index] !== "]") {
+        index = css[index] === '"' || css[index] === "'" ? skipQuoted(css, index) : index + 1;
+      }
+      index += 1;
+      continue;
+    }
+    if (char === "." && CLASS_NAME_START.test(css[index + 1] ?? "")) return true;
+    index += 1;
+  }
+  return false;
+};
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. True when a Playwright selector selects by a
+ * styling class: a CSS class selector (`.name`), a `class` attribute selector, or an XPath
+ * `@class`. A text, role, label or test id engine part holds no CSS, so its text is never read as
+ * a class.
+ */
+export const selectsByClass = (selector: string): boolean =>
+  chainParts(selector).some((raw) => {
+    const part = raw.trim();
+    const engine = /^([A-Za-z][\w-]*(?::[\w-]+)?)\s*=/.exec(part);
+    if (engine !== null) {
+      const name = engine[1]!.toLowerCase();
+      const body = part.slice(engine[0].length);
+      if (name === "css") return cssHoldsClass(body);
+      if (name === "xpath") return /@class\b/.test(body);
+      return false;
+    }
+    if (part.startsWith("//") || part.startsWith("..")) return /@class\b/.test(part);
+    if (part.startsWith('"') || part.startsWith("'")) return false;
+    return cssHoldsClass(part);
+  });
+
+/** The reason the plan rules give for a step that selects by a styling class. */
+export const classSelectorReason = (assertionId: string, stepNumber: number, selector: string): string =>
+  `The Validation Plan browser entry for "${assertionId}" selects \`${selector}\` at step ${String(stepNumber)} by a ` +
+  "styling class. Select by role, label, text or data-testid instead, such as " +
+  '`role=button[name="Save"]`, `[aria-label="Email"]`, `text=Order saved` or `[data-testid="timeline"]`: ' +
+  "markup classes change on every repair.";
+
 export interface CommandPlanEntry {
   run: string;
   expectExitCode: number;
@@ -316,6 +421,14 @@ export const parseValidationPlan = (
           );
         }
       });
+      // docs/specs/by-eye-criteria-and-selector-recheck.md. A styling class changes on every
+      // repair, so a check that selects by one fails on markup, not on behaviour.
+      entry.steps.forEach((step, index) => {
+        const selector = stepSelectorOf(step);
+        if (selector !== null && selectsByClass(selector)) {
+          reasons.push(classSelectorReason(entry.assertionId, index + 1, selector));
+        }
+      });
       // A goto path resolves against the exposed preview base URL. A protocol-relative path
       // replaces the origin, so an assertion can drive a foreign host and still report PASS.
       for (const step of entry.steps) {
@@ -343,4 +456,48 @@ export const parseValidationPlan = (
   if (reasons.length > 0) throw new ValidationPlanInvalidError(reasons);
 
   return plan;
+};
+
+/** A browser entry of a parsed plan. */
+export type BrowserPlanEntry = Extract<ValidationPlanEntry, { kind: "browser" }>;
+
+/** The entry with every selector blanked, so two entries compare on everything else. */
+const withoutSelectors = (entry: BrowserPlanEntry): string =>
+  JSON.stringify({
+    ...entry,
+    steps: entry.steps.map((step) => (stepSelectorOf(step) === null ? step : { ...step, selector: "" })),
+  });
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. Checks the corrected entry of a selector
+ * re-check against the entry that failed. It may change only `selector` fields, and it must change
+ * at least one: a re-check must not weaken what the check asserts. A new selector follows the plan
+ * rule on styling classes.
+ */
+export const checkSelectorCorrection = (
+  original: BrowserPlanEntry,
+  candidate: unknown,
+): { entry: BrowserPlanEntry } | { problem: string } => {
+  const parsed = planEntrySchema.safeParse(candidate);
+  if (!parsed.success) {
+    return { problem: `the corrected entry does not match the plan schema: ${parsed.error.issues.map(describeIssue).join("; ")}` };
+  }
+  const entry = parsed.data;
+  if (entry.kind !== "browser") return { problem: `the corrected entry is a "${entry.kind}" check, not a "browser" check` };
+  // The original passed the same schema, so both serialise their keys in one order.
+  const baseline = planEntrySchema.parse(original) as BrowserPlanEntry;
+  if (withoutSelectors(entry) !== withoutSelectors(baseline)) {
+    return { problem: "the corrected entry changes more than its selector fields" };
+  }
+  if (JSON.stringify(entry) === JSON.stringify(baseline)) {
+    return { problem: "the corrected entry changes no selector" };
+  }
+  const classStep = entry.steps.findIndex((step) => {
+    const selector = stepSelectorOf(step);
+    return selector !== null && selectsByClass(selector);
+  });
+  if (classStep !== -1) {
+    return { problem: classSelectorReason(entry.assertionId, classStep + 1, stepSelectorOf(entry.steps[classStep]!)!) };
+  }
+  return { entry };
 };

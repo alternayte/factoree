@@ -4,8 +4,11 @@ import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.j
 import {
   USER_VALIDATOR_PLAN_CORRECTION_VERSION,
   USER_VALIDATOR_PROMPT_VERSION,
+  USER_VALIDATOR_SELECTOR_RECHECK_VERSION,
   renderPlanCorrectionPrompt,
+  renderSelectorRecheckPrompt,
   renderUserValidatorPrompt,
+  type SelectorRecheckPromptFields,
 } from "~/prompts/user-validator.js";
 import type { ValidationAssertion } from "~/domain/validation/validation-contract.js";
 import { planKindForMethod } from "~/domain/validation/validation-plan.js";
@@ -45,6 +48,7 @@ const PLAN_SCHEMA = [
   'The document is one JSON object: { "version": 1, "entries": [...] }.',
   "Each entry names the assertionId of one Validation Contract assertion, and one kind.",
   'An "http" entry: { "assertionId": string, "kind": "http", "request": { "method": "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD", "path": string, "headers": { string: string }, "body": string | null, "expectStatus": number, "expectBodyContains": string | null } }.',
+  'A selector names an element by its role, label, text or data-testid, never by a styling class.',
   'A "browser" entry: { "assertionId": string, "kind": "browser", "steps": [...] }. The first step is a goto. Only holdRequest and failRequest steps may come before it, so they match the requests the page makes on load. An optional "as": string names the account the entry starts signed in as. Each step is exactly one of:',
   '- { "action": "goto", "path": "/" } with a path relative to the preview',
   '- { "action": "click", "selector": string }',
@@ -132,4 +136,14 @@ export const buildPlanCorrection = (input: BuildPlanCorrectionInput): PlanCorrec
     planPath: input.planPath,
   }),
   promptVersion: USER_VALIDATOR_PLAN_CORRECTION_VERSION,
+});
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. The message of the one selector re-check of
+ * an attempt. A resumed session receives it alone. A fresh session receives it after the normal
+ * prompt, so its prompt version names both.
+ */
+export const buildSelectorRecheck = (fields: SelectorRecheckPromptFields): PlanCorrection => ({
+  prompt: renderSelectorRecheckPrompt(fields),
+  promptVersion: USER_VALIDATOR_SELECTOR_RECHECK_VERSION,
 });

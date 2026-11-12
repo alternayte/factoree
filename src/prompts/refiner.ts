@@ -3,7 +3,7 @@ import { contextFilesBody, imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@8";
+export const REFINER_PROMPT_VERSION = "refiner@9";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -84,6 +84,9 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "Give each criterion the check that proves it: `test` with a test file path, `command` with a shell command, `http` with \"METHOD /path\", or `browser` with a route that starts with \"/\".",
         "A criterion with no automated check does not freeze: Factoree drops it. Use `manual` or `code_review` only when no command, test, HTTP request or page can prove the criterion.",
         "Set `visible` to true when the criterion names a page, a screen or a UI element a user sees. Give a visible criterion the method `browser` and the route of the page, so Factoree captures a screenshot of it.",
+        "A criterion a person judges by eye, such as \"follows the screenshot\", \"looks like\" or \"is consistent with the brand\", gets the method `manual`, `visible` true, and the route of its page as `target`. " +
+          "No automated check can judge a look, and a brittle check burns the repair budget. Factoree does not freeze it: it captures a screenshot of the page and shows it to the human.",
+        "When you name an element, name it by its role, label, text or `data-testid`. Never name it by a styling class such as `rounded-full`, `text-xs` or `bg-*`: markup classes change on every repair.",
         `Propose at most ${String(fields.criteriaLimit)} criteria and at most ${String(fields.questionsLimit)} questions. ` +
           "When the Work Item needs more, keep the criteria the Work Item states, merge related ones, and say in a question that the ticket should be split.",
         "Prefer an existing test or command of the repository. Name the files that show the pattern in `patterns`.",

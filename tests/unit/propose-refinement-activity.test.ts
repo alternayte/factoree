@@ -166,7 +166,7 @@ describe("the proposeRefinement activity (docs/specs/refiner-agent.md)", () => {
     expect(output.status).toBe("proposed");
     expect(runner.resumes).toHaveLength(0);
     expect(runner.runs).toHaveLength(2);
-    expect(runner.runs[1]?.promptVersion).toBe("refiner@8+refiner-limit-correction@1");
+    expect(runner.runs[1]?.promptVersion).toBe("refiner@9+refiner-limit-correction@1");
     expect(recorded.map((entry) => entry.idempotencyKey)).toContain("run:run-1:refiner:limit-correction");
   });
 

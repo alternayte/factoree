@@ -98,6 +98,19 @@ export interface BrowserNetworkEntry {
   status: number | null;
 }
 
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. A step that failed only on its selector: a
+ * Playwright strict-mode violation, or a locator timeout on `click`, `fill`, `expectVisible` or
+ * `expectText`. The wait for `preview.readySelector` is no such failure.
+ */
+export interface BrowserSelectorFailure {
+  /** Counts from 0, as `BrowserStepResult.index`. */
+  index: number;
+  action: "click" | "fill" | "expectVisible" | "expectText";
+  selector: string;
+  kind: "strict_mode" | "timeout";
+}
+
 export interface BrowserRunResult {
   passed: boolean;
   steps: BrowserStepResult[];
@@ -106,6 +119,13 @@ export interface BrowserRunResult {
   artifacts: BrowserArtifact[];
   /** Null when every step passed. */
   failureReason: string | null;
+  /** Set when the scenario failed only on a selector. Absent or null otherwise. */
+  selectorFailure?: BrowserSelectorFailure | null;
+  /**
+   * The page HTML at the end of a scenario that failed only on a selector, so the validator can
+   * correct the selector from the real markup. Absent or null otherwise.
+   */
+  pageHtml?: string | null;
 }
 
 /**

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import {
+  checkSelectorCorrection,
   parseValidationPlan,
   planKindForMethod,
+  selectsByClass,
   ValidationPlanInvalidError,
+  type BrowserPlanEntry,
 } from "~/domain/validation/validation-plan.js";
 import {
   summarizeUserValidation,
@@ -468,6 +471,106 @@ describe("parseValidationPlan", () => {
     );
 
     expect(plan.entries).toHaveLength(1);
+  });
+});
+
+describe("styling-class selectors (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
+  const browserPlan = (selector: string): string =>
+    JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          assertionId: "VAL-UI-001",
+          kind: "browser",
+          steps: [
+            { action: "goto", path: "/" },
+            { action: "expectVisible", selector },
+          ],
+        },
+      ],
+    });
+
+  it("rejects a class selector, so the plan goes to the correction round (issue #42)", () => {
+    let error: unknown;
+    try {
+      parseValidationPlan(browserPlan('li[data-state="processed"] span.rounded-full.bg-state-processed-soft'), contract);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(ValidationPlanInvalidError);
+    expect((error as ValidationPlanInvalidError).reasons).toEqual([
+      expect.stringContaining('selects `li[data-state="processed"] span.rounded-full.bg-state-processed-soft` at step 2 by a styling class'),
+    ]);
+  });
+
+  it("finds a class in CSS, a class attribute and an XPath, and none in text, role, test id or attribute values", () => {
+    for (const selector of [
+      "span.rounded-full",
+      ".badge",
+      '[class*="badge"]',
+      "div[ class ~= x]",
+      "css=ol .text-xs",
+      "header >> .logo",
+      'xpath=//span[@class="x"]',
+      "div:has(.badge)",
+    ]) {
+      expect(selectsByClass(selector), selector).toBe(true);
+    }
+    for (const selector of [
+      'role=button[name="Save.v2"]',
+      "text=Order saved.",
+      '[data-testid="timeline"]',
+      'a[href="events.html"]',
+      "a[href=events.html]",
+      'button:has-text("v1.2")',
+      "#save",
+      'internal:label="E.mail"',
+      "data-testid=a.b",
+      'header >> text="Mr. Smith"',
+      "li:nth-child(2) > span",
+    ]) {
+      expect(selectsByClass(selector), selector).toBe(false);
+    }
+  });
+});
+
+describe("checkSelectorCorrection (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
+  const original: BrowserPlanEntry = {
+    assertionId: "VAL-UI-003",
+    kind: "browser",
+    steps: [
+      { action: "goto", path: "/events" },
+      { action: "expectText", selector: 'header a[href="events"]', text: "Events" },
+    ],
+  };
+  const corrected = (steps: unknown[]): unknown => ({ ...original, steps });
+
+  it("accepts a change of selectors only", () => {
+    const result = checkSelectorCorrection(
+      original,
+      corrected([original.steps[0], { action: "expectText", selector: 'role=link[name="Events"]', text: "Events" }]),
+    );
+    expect("entry" in result && result.entry.steps[1]).toEqual({ action: "expectText", selector: 'role=link[name="Events"]', text: "Events" });
+  });
+
+  it("rejects a corrected entry that also changes an expectText value", () => {
+    const result = checkSelectorCorrection(
+      original,
+      corrected([original.steps[0], { action: "expectText", selector: 'role=link[name="Events"]', text: "Event" }]),
+    );
+    expect(result).toEqual({ problem: "the corrected entry changes more than its selector fields" });
+  });
+
+  it("rejects a dropped step, an unchanged entry and a new class selector", () => {
+    expect(checkSelectorCorrection(original, corrected([original.steps[0]]))).toEqual({
+      problem: "the corrected entry changes more than its selector fields",
+    });
+    expect(checkSelectorCorrection(original, original)).toEqual({ problem: "the corrected entry changes no selector" });
+    const classed = checkSelectorCorrection(
+      original,
+      corrected([original.steps[0], { action: "expectText", selector: "header a.nav-link", text: "Events" }]),
+    );
+    expect("problem" in classed && classed.problem).toContain("by a styling class");
   });
 });
 

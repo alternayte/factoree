@@ -9,12 +9,14 @@ import type {
   BrowserNetworkEntry,
   BrowserRunResult,
   BrowserScenario,
+  BrowserSelectorFailure,
   BrowserSignIn,
   BrowserSignInResult,
   BrowserStepResult,
 } from "../../../domain/validation/browser-driver.js";
 import {
   HOLD_LIMIT_MS,
+  stepSelectorOf,
   type BrowserStep,
   type FailRequestStatus,
 } from "../../../domain/validation/validation-plan.js";
@@ -34,27 +36,47 @@ interface ReadyState {
   selector: string | undefined;
 }
 
-/** Issue #44, DI-21.68. A step that ran out of its limit. Its message is the readable reason. */
+/**
+ * Issue #44, DI-21.68. A step that ran out of its limit. Its message is the readable reason.
+ * `locator` is true when the step's own locator timed out, not a page load or the ready wait.
+ */
 class StepTimeoutError extends Error {
   constructor(
     message: string,
     readonly limitMs: number,
     readonly selector: string | null,
+    readonly locator = false,
   ) {
     super(message);
     this.name = "StepTimeoutError";
   }
 }
 
+/** A Playwright strict-mode violation: the selector matched more than one element. */
+const isStrictModeViolation = (error: unknown): boolean =>
+  error instanceof Error && /strict mode violation/i.test(error.message);
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. The selector-only failure of one failed step,
+ * or null when the step failed for another reason.
+ */
+const selectorFailureOf = (step: BrowserStep, index: number, error: unknown): BrowserSelectorFailure | null => {
+  if (step.action !== "click" && step.action !== "fill" && step.action !== "expectVisible" && step.action !== "expectText") {
+    return null;
+  }
+  if (isStrictModeViolation(error)) return { index, action: step.action, selector: step.selector, kind: "strict_mode" };
+  if (error instanceof StepTimeoutError && error.locator) {
+    return { index, action: step.action, selector: step.selector, kind: "timeout" };
+  }
+  return null;
+};
+
 /** A wait of at most `limitMs` that ends by `deadline`, and never less than the floor. */
 const capped = (limitMs: number, deadline: number): number =>
   Math.max(MIN_STEP_TIMEOUT_MS, Math.min(limitMs, deadline - Date.now()));
 
 /** The selector a step acts on, or null. */
-const selectorOf = (step: BrowserStep): string | null =>
-  step.action === "click" || step.action === "fill" || step.action === "expectText" || step.action === "expectVisible"
-    ? step.selector
-    : null;
+const selectorOf = stepSelectorOf;
 
 /** Keep only the first line of a Playwright error. It drops stack noise from the assertion log. */
 const redact = (error: unknown): string => {
@@ -199,6 +221,8 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
     const artifacts: BrowserArtifact[] = [];
     const steps: BrowserStepResult[] = [];
     let failureReason: string | null = null;
+    let selectorFailure: BrowserSelectorFailure | null = null;
+    let pageHtml: string | null = null;
 
     try {
       browser = await chromium.launch({ headless: true });
@@ -285,6 +309,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
           steps.push({ index, action: step.action, passed: false, detail: message });
           failureReason = message;
           stopped = true;
+          selectorFailure = aborted() ? null : selectorFailureOf(step, index, error);
           if (error instanceof StepTimeoutError && !aborted()) {
             scenario.onStep?.({ kind: "timed_out", index, action: step.action, selector: error.selector, limitMs: error.limitMs });
           }
@@ -305,6 +330,15 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         });
       } catch (error) {
         consoleLines.push(`driver: failed to capture the final screenshot: ${redact(error)}`);
+      }
+      // docs/specs/by-eye-criteria-and-selector-recheck.md. The validator corrects a selector from
+      // the real markup, so a selector-only failure keeps the page HTML.
+      if (selectorFailure !== null) {
+        try {
+          pageHtml = await page.content();
+        } catch (error) {
+          consoleLines.push(`driver: failed to read the page HTML: ${redact(error)}`);
+        }
       }
 
       // A hold lasts until a release step or the end of the scenario.
@@ -365,6 +399,8 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         network,
         artifacts,
         failureReason,
+        selectorFailure,
+        pageHtml,
       };
     } finally {
       signal?.removeEventListener("abort", onAbort);
@@ -458,11 +494,12 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
     // Issue #44, DI-21.68. A timeout fails the step with a sentence the proof pack can show, not
     // the Playwright call log.
     const limit = describeLimit(timeoutMs);
+    // A step that names a selector times out on its own locator.
     const timed = async <T>(call: Promise<T>, sentence: string, selector: string | null): Promise<T> => {
       try {
         return await call;
       } catch (error) {
-        if (error instanceof errors.TimeoutError) throw new StepTimeoutError(sentence, timeoutMs, selector);
+        if (error instanceof errors.TimeoutError) throw new StepTimeoutError(sentence, timeoutMs, selector, selector !== null);
         throw error;
       }
     };
@@ -521,7 +558,8 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
             step.selector,
           );
         } catch (error) {
-          if (error instanceof StepTimeoutError) throw error;
+          // A strict-mode violation keeps its own words: the selector matched more than one element.
+          if (error instanceof StepTimeoutError || isStrictModeViolation(error)) throw error;
           throw new Error(`Expected ${step.selector} to be visible, but it was not.`);
         }
         return `Confirmed ${step.selector} is visible.`;

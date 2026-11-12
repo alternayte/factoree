@@ -438,6 +438,45 @@ describe("PlaywrightBrowserDriver", () => {
       });
     }, 60_000);
 
+    it("marks a strict-mode violation as a selector-only failure and keeps the page HTML (by-eye-criteria-and-selector-recheck.md)", async () => {
+      // The fixture form holds an input and a button, so `form > *` matches two elements.
+      const result = await driver.run({
+        ...scenario,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectVisible", selector: "form > *" },
+        ],
+      });
+      expect(result.passed).toBe(false);
+      expect(result.failureReason).toContain("strict mode violation");
+      expect(result.selectorFailure).toEqual({ index: 1, action: "expectVisible", selector: "form > *", kind: "strict_mode" });
+      expect(result.pageHtml).toContain('<button id="save" type="submit">Save</button>');
+    }, 60_000);
+
+    it("marks a locator timeout as a selector-only failure, and a wrong text as none", async () => {
+      const timedOut = await driver.run({
+        ...scenario,
+        stepTimeoutMs: 1_000,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectText", selector: "#never", text: "x" },
+        ],
+      });
+      expect(timedOut.selectorFailure).toEqual({ index: 1, action: "expectText", selector: "#never", kind: "timeout" });
+      expect(timedOut.pageHtml).toContain("<form");
+
+      const wrongText = await driver.run({
+        ...scenario,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectText", selector: "#current", text: "Something else" },
+        ],
+      });
+      expect(wrongText.passed).toBe(false);
+      expect(wrongText.selectorFailure).toBeNull();
+      expect(wrongText.pageHtml).toBeNull();
+    }, 60_000);
+
     it("names a selector that never becomes visible in plain words", async () => {
       const result = await driver.run({
         ...scenario,

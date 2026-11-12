@@ -196,3 +196,41 @@ describe("gateRefinerProposal (docs/specs/refiner-agent.md, own-proposals-and-pa
     expect(refinementDecisions(withoutPreview).map((decision) => decision.statement)).toEqual(["proceeded with no screenshot"]);
   });
 });
+
+describe("by-eye criteria (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
+  const byEye = {
+    statement: "The page follows the screenshot's colours.",
+    origin: "stated",
+    quote: "Users lose messages.",
+    method: "manual",
+    target: "/events",
+    visible: true,
+  };
+
+  it("records a manual visible criterion with a route as for your eye: not frozen, not dropped, no gap", () => {
+    const gated = gateRefinerProposal(parseRefinerProposal(proposal([byEye])), TICKET, NO_PREVIEW);
+    expect(gated.forYourEye).toEqual([{ id: "AC-R1", statement: "The page follows the screenshot's colours.", route: "/events" }]);
+    expect(gated.accepted).toEqual([]);
+    expect(gated.unverifiable).toEqual([]);
+    expect(gated.visualEvidenceGap).toBeNull();
+    expect(refinementDecisions(gated)).toEqual([]);
+  });
+
+  it("drops a manual criterion that is not visible, or has no page route, and does not build an uncited one", () => {
+    const gated = gateRefinerProposal(
+      parseRefinerProposal(
+        proposal([
+          { ...byEye, statement: "Not visible.", visible: false },
+          { ...byEye, statement: "No route.", target: null },
+          { ...byEye, statement: "Foreign route.", target: "//evil.example/" },
+          { ...byEye, statement: "Uncited.", quote: "The ticket never says this." },
+        ]),
+      ),
+      TICKET,
+      NO_PREVIEW,
+    );
+    expect(gated.forYourEye).toEqual([]);
+    expect(gated.unverifiable).toEqual(["Not visible.", "No route.", "Foreign route."]);
+    expect(gated.notBuilt).toEqual(["Uncited."]);
+  });
+});

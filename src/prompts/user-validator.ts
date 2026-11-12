@@ -3,7 +3,7 @@ import { imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@9";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@10";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -113,6 +113,11 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
         "You must not weaken the Validation Contract. Check exactly what it states, not a lesser claim.",
         "You must state plainly an assertion you cannot check.",
         "You must not invent an assertion the Validation Contract does not state.",
+        "Select an element by its role, label, text or data-testid, such as `role=button[name=\"Save\"]`, " +
+          "`[aria-label=\"Email\"]`, `text=Order saved` or `[data-testid=\"timeline\"]`. Never select by a styling class " +
+          "such as `.rounded-full`, `span.text-xs`, `.bg-*` or `[class*=\"badge\"]`: markup classes change on every repair, " +
+          "and Factoree rejects a plan that selects by one.",
+        "Pick a selector that matches exactly one element. A selector that matches two elements fails the check.",
       ].join("\n"),
     ),
   ].join("\n");
@@ -151,4 +156,62 @@ export const renderPlanCorrectionPrompt = (fields: PlanCorrectionPromptFields): 
     `Write the full corrected Validation Plan, as one JSON document, to ${fields.planPath}. ` +
       "Write every entry again, not only the entries that changed. Write the file and nothing " +
       "else. Do not answer with the plan in a message. Factoree asks for a correction only once.",
+  ].join("\n");
+
+/** SDD section 56. Change this value whenever the re-check template below changes. */
+export const USER_VALIDATOR_SELECTOR_RECHECK_VERSION = "user-validator-selector-recheck@1";
+
+export interface SelectorRecheckPromptFields {
+  /** One block per browser entry that failed only on its selector. */
+  failures: Array<{
+    assertionId: string;
+    /** The entry as the plan held it, as JSON. */
+    entry: string;
+    /** The failed step: its number, its action and its selector. */
+    step: string;
+    /** The readable reason the step failed. */
+    error: string;
+    /** The final screenshot in this sandbox, or null when the driver captured none. */
+    screenshotPath: string | null;
+    /** The page HTML in this sandbox, or null when the driver read none. */
+    htmlPath: string | null;
+  }>;
+  /** The file the corrected entries go to. */
+  answerPath: string;
+}
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. The one selector re-check of an attempt. It
+ * names only what the browser saw: the failed step, the error, the screenshot and the page HTML.
+ * It holds no Implementer output, so the fresh context of SDD section 36 holds.
+ */
+export const renderSelectorRecheckPrompt = (fields: SelectorRecheckPromptFields): string =>
+  [
+    "# Selector re-check",
+    "",
+    "Factoree ran your Validation Plan. These browser entries failed only on a selector, twice, in " +
+      "the same sandbox. The page may be correct and the selector wrong.",
+    "",
+    ...fields.failures.flatMap((failure) => [
+      `## ${failure.assertionId}`,
+      "",
+      `Entry: ${failure.entry}`,
+      `Failed step: ${failure.step}`,
+      `Error: ${failure.error}`,
+      failure.screenshotPath === null ? "Final screenshot: none was captured." : `Final screenshot: ${failure.screenshotPath}`,
+      failure.htmlPath === null ? "Page HTML: none was read." : `Page HTML at the failed step: ${failure.htmlPath}`,
+      "",
+    ]),
+    "Read the page HTML and the screenshot. For each entry, find the selector that names the element " +
+      "the step means, and that matches exactly one element. Select by role, label, text or data-testid. " +
+      "Never select by a styling class.",
+    "",
+    "You may change only the `selector` fields of each entry. Keep every other field and every step " +
+      "exactly as it is: the actions, the paths, the expected texts, the values and the order. Factoree " +
+      "compares each corrected entry with the entry that failed and rejects it when anything else changed. " +
+      "When the page does not hold the element the step means, keep the entry as it is: that is a real failure.",
+    "",
+    `Write one JSON document to ${fields.answerPath}: { "entries": [ ...one corrected entry per failed entry... ] }. ` +
+      "Write the file and nothing else. Do not write the Validation Plan again: Factoree already ran it. " +
+      "Factoree runs each corrected entry once, and asks for a re-check only once.",
   ].join("\n");

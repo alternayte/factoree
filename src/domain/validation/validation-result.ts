@@ -1,4 +1,5 @@
 import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validation/validation-contract.js";
+import type { ForYourEyeCapture } from "~/domain/validation/for-your-eye.js";
 
 /**
  * SDD section 36 lists the first four. docs/specs/run-recovery.md adds UNSTABLE: a browser
@@ -36,6 +37,11 @@ export interface UserValidationOutcome {
   summary: string;
   /** The failing assertions, formatted for `ImplementActivityInput.repairFindings`. */
   failures: string[];
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. One capture per for-your-eye criterion. It
+   * counts in no assertion total and decides nothing about `passed`.
+   */
+  forYourEye?: ForYourEyeCapture[];
 }
 
 /**

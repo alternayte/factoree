@@ -22,6 +22,7 @@ import type {
 } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { ProposeRefinementActivityOutput } from "~/activities/refinement.activities.js";
+import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
@@ -629,6 +630,9 @@ export async function agentRunWorkflow(
   let openQuestion: string | null = null;
   let contextContractVersion: string | null = null;
   let validationContractVersion: string | null = null;
+  // docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye, from
+  // the refiner gate. Each validation pass captures their screenshots, and the Proof Pack shows them.
+  let forYourEye: ForYourEyeCriterion[] = [];
   let questionRounds = 0;
   /** DI-21.50. True once this run moved, or tried to move, its issue to started. */
   let issueStatusTracked = false;
@@ -1172,6 +1176,7 @@ export async function agentRunWorkflow(
         imageFiles: attemptInput.prepared.imageFiles ?? [],
         egress: egressOf(attemptInput.prepared),
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
+        ...(forYourEye.length === 0 ? {} : { forYourEye }),
       }),
     );
   };
@@ -1955,6 +1960,7 @@ export async function agentRunWorkflow(
       // allow list does not hold stops the Run before anything freezes. Only a human widens it.
       const refinerMissingHosts = proposal.missingHosts ?? [];
       if (refinerMissingHosts.length > 0) return await failMissingHosts("refiner", refinerMissingHosts);
+      forYourEye = proposal.forYourEye ?? [];
       // A refiner that freezes nothing leaves the criteria the Work Item states.
       const contractCriteria = proposal.accepted.length === 0 ? refined.criteria : proposal.accepted;
       const validationAnswers: string[] = [];
@@ -2928,6 +2934,7 @@ export async function agentRunWorkflow(
           reviewAttempt: publishedReviewAttempt,
           changeDescription: publishedChangeDescription,
           visualEvidenceGap,
+          ...(forYourEye.length === 0 ? {} : { forYourEye }),
           decisions: factoreeDecisions,
           baseMove:
             publication.baseMove === null

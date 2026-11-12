@@ -3,6 +3,8 @@ import type { ValidationCriterion } from "~/domain/validation/validation-contrac
 import { VALIDATION_METHODS, type ValidationMethod } from "~/domain/validation/validation-contract.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { MissingHost } from "~/domain/runs/egress.js";
+import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
+import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 
 /**
  * docs/specs/egress-honesty-and-issue-status.md, DI-21.47. One host the work needs and the sandbox
@@ -179,9 +181,15 @@ export interface GatedRefinement {
   /**
    * Criteria no automated check can prove: `manual`, `code_review`, or a target that does not
    * run. They never freeze, because the workflow ends a Run that holds one, and the independent
-   * Reviewer still reads the code.
+   * Reviewer still reads the code. A by-eye criterion is not among them.
    */
   unverifiable: string[];
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. Each cited `manual`, `visible` criterion
+   * whose target is a page route. It never freezes, it is not dropped, and it is no visual
+   * evidence gap: Factoree captures a screenshot of the route for the human.
+   */
+  forYourEye: ForYourEyeCriterion[];
   /**
    * docs/specs/proof-pack-and-visual-evidence.md. Why a visible criterion has no visual evidence,
    * or null when every visible criterion has a browser check. The Proof Pack lists it under
@@ -202,8 +210,9 @@ export interface GateRepository {
  * docs/specs/refiner-agent.md and docs/specs/own-proposals-and-parallel-runs.md. The deterministic
  * gate. A stated or implied criterion freezes only when its quote appears in the ticket text, and
  * only with a runnable target. A new criterion, or one whose quote the ticket does not hold, is
- * not built. One without a runnable target, or with the method `manual` or `code_review`, is
- * unverifiable and does not freeze.
+ * not built. A cited `manual` criterion that is `visible` with a page route is for your eye
+ * (docs/specs/by-eye-criteria-and-selector-recheck.md). Any other one without a runnable target,
+ * or with the method `manual` or `code_review`, is unverifiable and does not freeze.
  */
 export const gateRefinerProposal = (
   proposal: RefinerProposal,
@@ -216,12 +225,20 @@ export const gateRefinerProposal = (
   const notBuilt: string[] = [];
   const unproven: string[] = [];
   const unverifiable: string[] = [];
+  const forYourEye: ForYourEyeCriterion[] = [];
   proposal.criteria.forEach((criterion, index) => {
     const statement = criterion.statement.trim();
     const quote = criterion.quote === null ? "" : criterion.quote.trim();
     const cited = quote !== "" && ticket.includes(normalize(quote));
     if (criterion.origin === "new" || !cited) {
       notBuilt.push(statement);
+      return;
+    }
+    // docs/specs/by-eye-criteria-and-selector-recheck.md. No automated check can judge a look,
+    // so the criterion reaches the human with a screenshot of its page instead.
+    const route = criterion.target === null ? "" : criterion.target.trim();
+    if (criterion.method === "manual" && criterion.visible && isPreviewRelativePath(route)) {
+      forYourEye.push({ id: `AC-R${String(index + 1)}`, statement, route });
       return;
     }
     if (!runnable(criterion.method, criterion.target)) {
@@ -248,6 +265,7 @@ export const gateRefinerProposal = (
     notBuilt,
     questions: proposal.questions,
     unverifiable,
+    forYourEye,
     visualEvidenceGap: visualEvidenceGapOf(unproven, repository),
     missingHosts: proposal.missingHosts,
   };

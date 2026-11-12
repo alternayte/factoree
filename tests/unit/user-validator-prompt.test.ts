@@ -23,7 +23,7 @@ describe("buildUserValidatorInput", () => {
     expect(built.prompt).toContain("Add the health endpoint.");
     expect(built.prompt).toContain("# Validation Contract");
     expect(built.prompt).toContain("/workspace/validation/plan.json");
-    expect(built.promptVersion).toBe("user-validator@9");
+    expect(built.promptVersion).toBe("user-validator@10");
     expect(built.promptVersion).toBe(USER_VALIDATOR_PROMPT_VERSION);
   });
 

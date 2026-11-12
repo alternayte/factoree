@@ -55,6 +55,23 @@ export interface ProofPackAssertion {
   injectedFailure?: boolean;
 }
 
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. One criterion a person judges by eye, with
+ * the screenshot of the last attempt, or the reason Factoree has none. It is no assertion and
+ * counts in no total: it proves nothing by design.
+ */
+export interface ProofPackForYourEye {
+  id: string;
+  statement: string;
+  route: string;
+  screenshot: ProofPackEvidenceRef | null;
+  /** Why no screenshot exists. Null when one does. */
+  reason: string | null;
+}
+
+/** The heading of the for-your-eye section. The body holds it only when a criterion exists. */
+export const NEEDS_YOUR_EYE_HEADING = "### Needs your eye";
+
 /** docs/specs/repository-setup-and-services.md. One compose service that answered for an external API. */
 export interface ProofPackFake {
   service: string;
@@ -194,6 +211,8 @@ export interface ProofPackInput {
   checkDefiningFiles?: string[];
   /** The visual evidence gap Factoree accepted at refinement, or null. */
   visualEvidenceGap: string | null;
+  /** docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye. */
+  needsYourEye?: ProofPackForYourEye[];
   /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
   fakes?: ProofPackFake[];
   /** SDD section 18. Present only for a Run that a routed Product produced. */
@@ -256,6 +275,8 @@ export interface ProofPackDocument {
   pullRequestUrl: string;
   changeDescription: string;
   needsAttention: string[];
+  /** docs/specs/by-eye-criteria-and-selector-recheck.md. Outside `assertions` and every total. */
+  needsYourEye: ProofPackForYourEye[];
   visualEvidenceGap: string | null;
   fakes: ProofPackFake[];
   assertions: ProofPackAssertion[];
@@ -366,6 +387,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   pullRequestUrl: input.pullRequestUrl,
   changeDescription: input.changeDescription,
   needsAttention: needsAttention(input),
+  needsYourEye: input.needsYourEye ?? [],
   decisions: input.decisions ?? [],
   baseMove: input.baseMove ?? null,
   visualEvidenceGap: input.visualEvidenceGap,
@@ -419,6 +441,14 @@ const visualSection = (input: ProofPackInput): string[] => {
     }
   }
   return lines;
+};
+
+/** docs/specs/by-eye-criteria-and-selector-recheck.md. One line per criterion a person judges by eye. */
+export const needsYourEyeLine = (item: ProofPackForYourEye): string => {
+  const head = `- ${line(item.statement)} (\`${line(item.route)}\`)`;
+  if (item.screenshot === null) return `${head}: Factoree has no screenshot: ${line(item.reason ?? "no reason was recorded.")}`;
+  if (!openable(item.screenshot.storageRef)) return `${head}: the screenshot is stored, and its link does not open here.`;
+  return `${head}\n\n  ![${item.id}](${item.screenshot.storageRef})`;
 };
 
 const evidenceLinks = (assertion: ProofPackAssertion): string => {
@@ -521,6 +551,7 @@ const footer = (input: ProofPackInput, documentUrl: string | null): string =>
 /** docs/specs/proof-pack-and-visual-evidence.md. The short body a human reads in Linear. */
 export const renderProofPack = (input: ProofPackInput, documentUrl: string | null): string => {
   const attention = needsAttention(input);
+  const eye = input.needsYourEye ?? [];
   const visual = visualSection(input);
   const description = line(input.changeDescription);
   return [
@@ -541,6 +572,16 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     "",
     ...(attention.length === 0 ? ["Nothing."] : attention.map((item) => `- ${line(item)}`)),
     "",
+    ...(eye.length === 0
+      ? []
+      : [
+          NEEDS_YOUR_EYE_HEADING,
+          "",
+          "Factoree does not check these. Look at each screenshot and judge it yourself.",
+          "",
+          ...eye.map(needsYourEyeLine),
+          "",
+        ]),
     "### Visual evidence",
     "",
     ...(visual.length === 0 ? ["None captured."] : visual),
