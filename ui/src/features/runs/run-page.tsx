@@ -244,6 +244,7 @@ function RunDetail({
                 ? [
                     {
                       label: "Stopped from",
+                      prose: true,
                       value:
                         run.stopSource === "factoree_ui"
                           ? `Factoree UI${run.stopRequestedBy ? ` by ${run.stopRequestedBy}` : ""}`
@@ -255,6 +256,7 @@ function RunDetail({
                 ? [
                     {
                       label: "Draft asked from",
+                      prose: true,
                       value: `${run.draftSource === "factoree_ui" ? "Factoree UI" : "Linear"}${run.draftRequestedBy ? ` by ${run.draftRequestedBy}` : ""}`,
                     },
                   ]
@@ -281,7 +283,8 @@ function RunDetail({
                 {run.status === "DRAFT_PUBLISHED" ? "Draft pull request" : "Pull request"}
               </a>
             ) : null}
-            {admin ? (
+            {/* docs/specs/blocked-by-wait.md. A waiting run has no workflow yet, so the link would find nothing. */}
+            {admin && run.status !== "WAITING_FOR_BLOCKERS" ? (
               <a className="link" href={temporalWorkflowUrl(temporalNamespace, run.temporalWorkflowId)} target="_blank" rel="noreferrer">
                 Workflow in Temporal
               </a>
@@ -341,6 +344,7 @@ function RunDetail({
         open={confirmingDraft}
         title="Publish this run as a draft?"
         confirmLabel="Publish as draft"
+        confirmVariant="primary"
         mutation={draft}
         onCancel={() => {
           setConfirmingDraft(false);

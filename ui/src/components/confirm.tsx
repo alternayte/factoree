@@ -10,6 +10,7 @@ export function Confirm({
   title,
   children,
   confirmLabel,
+  confirmVariant = "danger",
   mutation,
   onConfirm,
   onCancel,
@@ -18,6 +19,8 @@ export function Confirm({
   title: string;
   children?: ReactNode;
   confirmLabel: string;
+  /** A confirm that destroys nothing, such as publishing a draft, is not red. */
+  confirmVariant?: "danger" | "primary";
   mutation?: MutationState;
   onConfirm: () => void;
   onCancel: () => void;
@@ -50,7 +53,7 @@ export function Confirm({
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="danger" mutation={mutation} onClick={onConfirm}>
+        <Button variant={confirmVariant} mutation={mutation} onClick={onConfirm}>
           {confirmLabel}
         </Button>
       </div>
