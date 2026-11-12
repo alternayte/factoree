@@ -9415,6 +9415,9 @@
                     },
                     "operatorAdmin": {
                       "type": "boolean"
+                    },
+                    "temporalNamespace": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -9424,7 +9427,8 @@
                     "image",
                     "apiKeyId",
                     "memberships",
-                    "operatorAdmin"
+                    "operatorAdmin",
+                    "temporalNamespace"
                   ]
                 }
               }

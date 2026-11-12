@@ -82,6 +82,11 @@ export interface AgentSessionSettings {
    * JSON, or absent for opencode's own snapshot. The runner writes it into the sandbox.
    */
   modelsFile?: string | null;
+  /**
+   * GitHub issue 37. The opencode `provider` config of the model, or absent for none. It names
+   * environment variables only, never a value.
+   */
+  providerConfig?: Record<string, unknown> | null;
 }
 
 export interface CliAgentRunnerOptions {

@@ -358,6 +358,8 @@ export const meSchema = z.object({
   apiKeyId: z.string().nullable(),
   memberships: z.array(membershipSchema),
   operatorAdmin: z.boolean(),
+  /** The Temporal namespace of the install, for the links into the Temporal UI. */
+  temporalNamespace: z.string(),
 });
 
 export const workspaceSchema = z.object({

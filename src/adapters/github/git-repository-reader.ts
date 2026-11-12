@@ -215,15 +215,19 @@ export class GitRepositoryReader implements RepositoryReader {
   private async gitResult(
     cwd: string,
     args: string[],
+    url: string,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     try {
-      // This form reads the local mirror only, so it reaches no remote and needs no credential.
+      // GitHub issue 38. The mirror is a `blob:none` clone, so a read of a blob git does not hold
+      // yet fetches it from the promisor remote. A private repository refuses that fetch without
+      // the credential.
+      const credentialEnv = await this.credentialFor(url);
       const { stdout } = await run("git", args, {
         cwd,
         timeout: GIT_READ_TIMEOUT_MS,
         maxBuffer: MAX_OUTPUT_BYTES,
         encoding: "utf8",
-        env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+        env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never", ...credentialEnv },
       });
       return { exitCode: 0, stdout, stderr: "" };
     } catch (error) {
@@ -292,11 +296,15 @@ export class GitRepositoryReader implements RepositoryReader {
     // reaches its own byte ceiling first on a very large repository, and that ceiling throws
     // instead of a truncation. SDD section 18 requires the truncation, so the entry ceiling must
     // be the only limit the reader hits.
+    // GitHub issue 38. `-l` prints the size of each blob, so git fetches every blob the
+    // `blob:none` mirror lacks from the promisor remote. A private repository refuses that fetch
+    // without the credential.
+    const credentialEnv = await this.credentialFor(url);
     const child = spawn("git", ["ls-tree", "-r", "-l", "-z", "--full-tree", sha], {
       cwd: path,
       // A private repository must fail immediately instead of a wait for a password. No
       // interactive helper runs.
-      env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
+      env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never", ...credentialEnv },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -385,7 +393,7 @@ export class GitRepositoryReader implements RepositoryReader {
 
   async readBlob(url: string, sha: string, path: string): Promise<string | null> {
     const mirror = await this.mirror(url);
-    const sizeResult = await this.gitResult(mirror, ["cat-file", "-s", `${sha}:${path}`]);
+    const sizeResult = await this.gitResult(mirror, ["cat-file", "-s", `${sha}:${path}`], url);
     if (sizeResult.exitCode !== 0) {
       // A missing path or an invalid object at this SHA is an ordinary discovery outcome, not a
       // fault, so it returns null rather than a throw. Every other failure, for example a
@@ -404,6 +412,7 @@ export class GitRepositoryReader implements RepositoryReader {
       mirror,
       ["cat-file", "blob", `${sha}:${path}`],
       `the blob "${path}" of ${withoutUrlCredentials(url)} at ${sha} could not be read`,
+      url,
     );
     return stdout;
   }
