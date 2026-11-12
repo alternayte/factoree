@@ -33,6 +33,20 @@ export interface RunListItem {
    * or its id when the provider is gone. Null before the selection.
    */
   sandboxProvider: string | null;
+  /**
+   * docs/specs/blocked-by-wait.md. Each blocker as the last read saw it, or null when the run never
+   * waited or its blockers were never read.
+   */
+  blockers: RunBlockerView[] | null;
+}
+
+export interface RunBlockerView {
+  identifier: string;
+  url: string | null;
+  /** The Linear state type of the blocker issue. */
+  state: string;
+  /** The pull request of the newest Factoree run of the blocker issue, or null. */
+  pullRequestUrl: string | null;
 }
 
 export interface RunStageView {
@@ -100,6 +114,26 @@ export interface RunSkillProposalView {
 
 export interface RunDetail extends RunListItem {
   temporalWorkflowId: string;
+  /** Issue #45. True when the status is terminal, so the run takes no stop. */
+  terminal: boolean;
+  /** Issue #45, DI-21.65. The first stop that reached the workflow, or null. */
+  stopRequestedAt: Date | null;
+  /** "linear" or "factoree_ui", or null when nobody stopped the run. */
+  stopSource: string | null;
+  /** The admin who stopped the run from the Factoree UI, or null. */
+  stopRequestedBy: string | null;
+  /**
+   * docs/specs/draft-of-failed-run.md. True when a draft request of the run would start the draft
+   * workflow now: a failed run with a patch that no refusal rule stops.
+   */
+  draftQualifies: boolean;
+  /** DI-21.79. The request that started the draft workflow: when, from where, and who. */
+  draftRequestedAt: Date | null;
+  /** "linear" or "factoree_ui", or null when nobody asked for a draft. */
+  draftSource: string | null;
+  draftRequestedBy: string | null;
+  /** The sandbox retention of the product, in hours. A stopped run keeps its work sprite this long. */
+  sandboxRetentionHours: number;
   autonomyLevel: string;
   /** docs/specs/run-recovery.md. The failed run this run follows up, or null. */
   followUpOfRunId: string | null;

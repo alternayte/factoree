@@ -41,8 +41,11 @@ const input: ProposeRefinementActivityInput = {
   timeoutMs: 60_000,
 };
 
-/** Answers the tree fingerprint and the proposal read. `trees` gives the tree of each fingerprint. */
-const build = (options: { trees: string[]; proposal: string | null }) => {
+/**
+ * Answers the tree fingerprint and the proposal read. `trees` gives the tree of each fingerprint.
+ * A function `proposal` answers per read path, so a corrected file can differ from the first.
+ */
+const build = (options: { trees: string[]; proposal: string | null | ((path: string) => string | null) }) => {
   const sandbox = new FakeSandbox();
   let fingerprints = 0;
   sandbox.onExec = (command) => {
@@ -52,9 +55,8 @@ const build = (options: { trees: string[]; proposal: string | null }) => {
       return { exitCode: 0, stdout: `${tree}\n`, stderr: "" };
     }
     if (command.file === "cat") {
-      return options.proposal === null
-        ? { exitCode: 1, stdout: "", stderr: "no such file" }
-        : { exitCode: 0, stdout: options.proposal, stderr: "" };
+      const text = typeof options.proposal === "function" ? options.proposal(command.args[0] ?? "") : options.proposal;
+      return text === null ? { exitCode: 1, stdout: "", stderr: "no such file" } : { exitCode: 0, stdout: text, stderr: "" };
     }
     return { exitCode: 0, stdout: "", stderr: "" };
   };
@@ -79,8 +81,28 @@ const build = (options: { trees: string[]; proposal: string | null }) => {
       redactor,
     },
   });
-  return { activities, runner, recorded };
+  return { activities, runner, recorded, sandbox };
 };
+
+/** A proposal with `count` stated criteria that quote the ticket. */
+const proposalOf = (count: number): string =>
+  JSON.stringify({
+    criteria: Array.from({ length: count }, (_, index) => ({
+      statement: `A failed delivery is retried, case ${String(index)}.`,
+      origin: "stated",
+      quote: "is never retried",
+      method: "test",
+      target: "tests/retry.test.ts",
+    })),
+    questions: [],
+    patterns: [],
+  });
+
+const run = (
+  activities: ReturnType<typeof build>["activities"],
+  value: ProposeRefinementActivityInput,
+): Promise<ProposeRefinementActivityOutput> =>
+  new MockActivityEnvironment().run((entry: ProposeRefinementActivityInput) => activities.proposeRefinement(entry), value);
 
 describe("the proposeRefinement activity (docs/specs/refiner-agent.md)", () => {
   it("returns the gated proposal of a fresh refiner session and records its execution", async () => {
@@ -110,5 +132,60 @@ describe("the proposeRefinement activity (docs/specs/refiner-agent.md)", () => {
     const { activities } = build({ trees: ["a".repeat(40)], proposal: "{\"criteria\": 1}" });
     const output: ProposeRefinementActivityOutput = await new MockActivityEnvironment().run((value: ProposeRefinementActivityInput) => activities.proposeRefinement(value), input);
     expect(output.status).toBe("unavailable");
+  });
+
+  // Issue #39, DI-21.66.
+  it("states the criteria limit of the Product in the prompt", async () => {
+    const { activities, runner } = build({ trees: ["a".repeat(40)], proposal: PROPOSAL });
+    await run(activities, { ...input, criteriaLimit: 12 });
+    expect(runner.runs[0]?.prompt).toContain("Propose at most 12 criteria and at most 5 questions.");
+  });
+
+  it("resumes the session once to correct a proposal over the criteria limit, and takes the corrected file", async () => {
+    const { activities, runner } = build({
+      trees: ["a".repeat(40)],
+      proposal: (path) => (path.endsWith("proposal-corrected.json") ? proposalOf(3) : proposalOf(4)),
+    });
+    const output = await run(activities, { ...input, criteriaLimit: 3 });
+    expect(output.status).toBe("proposed");
+    expect(output.accepted).toHaveLength(3);
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.resumes[0]?.input.prompt).toContain("4 criteria. The limit is 3.");
+    expect(runner.resumes[0]?.input.prompt).toContain("/workspace/refinement/proposal-corrected.json");
+    expect(runner.runs).toHaveLength(1);
+  });
+
+  it("starts one fresh session when the session cannot be resumed", async () => {
+    const { activities, runner, recorded } = build({
+      trees: ["a".repeat(40)],
+      // Only the fresh session writes the corrected file.
+      proposal: (path) => (!path.endsWith("corrected.json") ? proposalOf(4) : runner.runs.length > 1 ? proposalOf(2) : null),
+    });
+    runner.setResult({ session: { sessionId: "process-fake", processId: "process-fake", runner: "claude" } });
+    const output = await run(activities, { ...input, criteriaLimit: 3 });
+    expect(output.status).toBe("proposed");
+    expect(runner.resumes).toHaveLength(0);
+    expect(runner.runs).toHaveLength(2);
+    expect(runner.runs[1]?.promptVersion).toBe("refiner@9+refiner-limit-correction@1");
+    expect(recorded.map((entry) => entry.idempotencyKey)).toContain("run:run-1:refiner:limit-correction");
+  });
+
+  it("fails with a message for the human when the proposal stays over the limit", async () => {
+    const { activities, runner } = build({ trees: ["a".repeat(40)], proposal: proposalOf(4) });
+    const output = await run(activities, { ...input, criteriaLimit: 3 });
+    expect(output.status).toBe("unavailable");
+    expect(runner.resumes).toHaveLength(1);
+    expect(output.message).toBe(
+      "The Work Item needs more than 3 acceptance criteria, the limit of this product. Split it into smaller issues, " +
+        "or raise the refiner criteria limit on the product page. Factoree published nothing.",
+    );
+  });
+
+  it("asks for no correction for a schema fault other than a limit", async () => {
+    const { activities, runner } = build({ trees: ["a".repeat(40)], proposal: "{\"criteria\": 1}" });
+    const output = await run(activities, input);
+    expect(output.status).toBe("unavailable");
+    expect(output.message).toBeUndefined();
+    expect(runner.resumes).toHaveLength(0);
   });
 });

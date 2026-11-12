@@ -58,7 +58,8 @@ export const startMoveOf = (snapshot: IssueStateSnapshot): { from: IssueWorkflow
 
 /**
  * The run statuses that end with no pull request. Such a run moves its issue back to its
- * previous state. READY_FOR_HUMAN is the one status with a pull request.
+ * previous state. READY_FOR_HUMAN has a pull request. DRAFT_PUBLISHED has one too, and the draft
+ * workflow moves no issue state (docs/specs/draft-of-failed-run.md).
  */
 export const endsWithoutPullRequest = (status: string): boolean =>
   ["FAILED", "FAILED_REVIEW", "FAILED_CONFIGURATION", "STALE_BASE", "CANCELLED", "REPORTED"].includes(status) ||

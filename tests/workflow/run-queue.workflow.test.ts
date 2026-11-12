@@ -10,7 +10,7 @@ import { createWorkflowHarness, waitFor } from "./support/harness.js";
 let environment: TestWorkflowEnvironment;
 
 const harness = createWorkflowHarness(() => environment);
-const { completions, prepared, postedProgress, runSlotClaims, runSlotCalls, sandboxSlotWaits, statusesOf, implementCalls, input, runWorker } =
+const { completions, prepared, postedProgress, postedFinalResponses, runSlotClaims, runSlotCalls, sandboxSlotWaits, statusesOf, implementCalls, input, runWorker } =
   harness;
 
 beforeAll(async () => {
@@ -70,11 +70,31 @@ describe("the Run queue before PREPARING", () => {
     });
 
     expect(result.status).toBe("CANCELLED");
+    // Issue #45. A stop with no payload, from an older client or the Temporal CLI, keeps the Linear wording.
+    expect(postedFinalResponses.at(-1)).toBe("Factoree stopped this Run at your request. No change was published.");
     expect(completions.filter((entry) => entry.runId === runId)).toEqual([
       expect.objectContaining({ status: "CANCELLED", failureReason: "STOPPED_BY_HUMAN" }),
     ]);
     expect(prepared.some((entry) => entry.runId === runId)).toBe(false);
     expect(statusesOf(runId)).not.toContain("PREPARING");
+  });
+
+  // Issue #45, DI-21.64. A stop from the Factoree UI carries a payload, and the final response
+  // names it. The stop with no argument above keeps the Linear wording.
+  it("names the Factoree UI and the admin in the final response of a stop with a payload", async () => {
+    const runId = "run-queue-ui-stop";
+    runSlotClaims.set(runId, () => ({ granted: false, ahead: 1 }));
+    const before = postedFinalResponses.length;
+
+    const result = await runWorker(async () => {
+      const handle = await start("queue-ui-stop");
+      await waitFor(async () => (await handle.query(runStatusQuery)).status === "QUEUED", "the QUEUED state");
+      await handle.signal(stopSignal, { source: "factoree_ui", by: "Ada Admin" });
+      return handle.result();
+    });
+
+    expect(result.status).toBe("CANCELLED");
+    expect(postedFinalResponses.slice(before)).toEqual(["Stopped from the Factoree UI by Ada Admin. No change was published."]);
   });
 
   it("does not spend the Run budget while it waits in the queue", async () => {

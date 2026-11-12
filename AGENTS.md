@@ -101,3 +101,6 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - PR follow-up run: a follow-up run that targets an existing PR branch, started by a failed PR reviewer check, a human request-changes review or a base conflict, and that pushes a new verified commit. Avoid: PR repair, autofix, PR fix.
 - PR workflow: the workflow that publication starts per published PR, which takes the review, check, conflict, merge and deploy events after the run ends. Avoid: PR watcher, PR monitor.
 - finding triage: the fresh reviewer session that keeps only PR reviewer findings with a concrete defect, a rule and evidence, and answers each dropped finding on the PR. Avoid: finding filter, comment triage.
+- blocker: a Linear issue that blocks a work item through a "blocks" relation, open while its state type is neither completed nor canceled. Avoid: dependency, prerequisite, parent issue.
+- failed-run draft: the draft pull request Factoree publishes from the last patch of a failed run on human request, never marked ready by Factoree. Avoid: partial PR, WIP PR, unverified PR.
+- selector re-check: one validator round, after a browser entry fails only on its selector, that may change only that entry's selectors before Factoree runs it again. Avoid: selector repair, selector retry.

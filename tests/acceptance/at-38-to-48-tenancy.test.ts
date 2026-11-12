@@ -53,6 +53,8 @@ const productFor = (slug: string, teamId = "team-1"): ProductRecord => ({
   models: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   silenceMinutes: 10,
+  refinerCriteriaLimit: 20,
+  repairMaxAttempts: 2,
   sandboxRetentionHours: 24,
   sandboxProviderIds: [],
   maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
@@ -87,6 +89,7 @@ const buildDelegationService = (options: { products: ProductRecord[]; repositori
       },
       signalStop: () => Promise.resolve(true),
       signalHumanInput: () => Promise.resolve(true),
+      startDraft: () => Promise.resolve(true),
     },
     refusalNotifier: {
       postFailure: (workspaceId: string, sessionId: string, message: string) => {
@@ -367,6 +370,8 @@ class FakeProductRegistry implements ProductRegistry {
       models: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
       effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
       silenceMinutes: 10,
+      refinerCriteriaLimit: 20,
+      repairMaxAttempts: 2,
       sandboxRetentionHours: 24,
       sandboxProviderIds: [],
       maxConcurrentRuns: 2, appChangeIssues: "one_per_change",

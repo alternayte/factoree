@@ -83,6 +83,7 @@ beforeAll(async () => {
         start: vi.fn(() => Promise.resolve(undefined)),
         signalStop: vi.fn(() => Promise.resolve(true)),
         signalHumanInput: vi.fn(() => Promise.resolve(true)),
+        startDraft: vi.fn(() => Promise.resolve(true)),
       },
       refusalNotifier: { postFailure: () => Promise.resolve(undefined), postResponse: () => Promise.resolve(undefined) },
       logger,

@@ -5,6 +5,7 @@ import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.j
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { PrismaRunSkillStore } from "~/persistence/prisma/run-skill.prisma.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
+import { PrismaRunDraftStore } from "~/persistence/prisma/run-draft.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
 import { OrganizationSkillsRegistry } from "~/adapters/github/organization-skills-registry.js";
 import { GitHubSkillProposals } from "~/adapters/github/github-skill-proposals.js";
@@ -78,6 +79,7 @@ import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { githubApiBaseUrl, githubAppCredentials, githubBaseUrl, linearOAuthFromSettings } from "./install-wiring.js";
+import { createBlockerWait } from "./blocker-wait-wiring.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
@@ -226,7 +228,7 @@ const reaper = new SpriteReaper({
 const agentSession: AgentSessionPort = {
   acknowledge: (sessionId, message) => call(sessionId, (client) => client.acknowledge(sessionId, message)),
   progress: (sessionId, message) => call(sessionId, (client) => client.progress(sessionId, message)),
-  elicit: (sessionId, question) => call(sessionId, (client) => client.elicit(sessionId, question)),
+  elicit: (sessionId, question, options) => call(sessionId, (client) => client.elicit(sessionId, question, options)),
   respond: (sessionId, body) => call(sessionId, (client) => client.respond(sessionId, body)),
   fail: (sessionId, message) => call(sessionId, (client) => client.fail(sessionId, message)),
   addLink: (sessionId, label, url) => call(sessionId, (client) => client.addLink(sessionId, label, url)),
@@ -501,6 +503,8 @@ const worker = await Worker.create({
     // repository takes a skill proposal as a pull request.
     skills: new PrismaRunSkillStore(prisma),
     runViews: new PrismaRunViewReader(prisma),
+    // docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run.
+    drafts: new PrismaRunDraftStore(prisma),
     setups: new PrismaRepositorySetupStore(prisma),
     // docs/specs/setup-app-change-issues.md. The issues act as the Factoree app of the tenant's
     // workspace. The state read mints a pull-request token of the one repository.
@@ -548,6 +552,36 @@ const reapTimer = setInterval(() => {
 }, REAP_INTERVAL_MS);
 reapTimer.unref();
 
+// docs/specs/blocked-by-wait.md. The sweep reads the blockers of every waiting run every minute, with
+// one batched Linear query per tenant, and starts each run that no open blocker holds.
+const BLOCKER_SWEEP_INTERVAL_MS = 60_000;
+const blockerClient = await createTemporalClient(env);
+const blockerWait = createBlockerWait({
+  prisma,
+  linearToken: (workspaceId) => linearTokens.tokenFor(workspaceId),
+  client: blockerClient,
+  taskQueue: env.FACTOREE_TEMPORAL_TASK_QUEUE,
+  logger,
+});
+// One pass at a time, as the reaper does. A slow Linear answer must not start a second pass.
+let sweeping = false;
+const blockerTimer = setInterval(() => {
+  if (sweeping) return;
+  sweeping = true;
+  void blockerWait
+    .sweep()
+    .then(({ released }) => {
+      if (released > 0) logger.info("blocked runs released", { count: released, step: "blockers" });
+    })
+    .catch((error: unknown) => {
+      logger.error("the blocker sweep failed", { error: String(error), step: "blockers" });
+    })
+    .finally(() => {
+      sweeping = false;
+    });
+}, BLOCKER_SWEEP_INTERVAL_MS);
+blockerTimer.unref();
+
 // docs/specs/run-speed.md. A release can change the default sandbox image, and the install settings
 // can change while no worker runs. A warm snapshot of another template then serves no run, so the
 // worker requests a build-ahead for every repository. The build-ahead workflow of a repository
@@ -590,5 +624,7 @@ try {
   await worker.run();
 } finally {
   clearInterval(reapTimer);
+  clearInterval(blockerTimer);
+  await blockerClient.connection.close();
   repositoryReader.close();
 }

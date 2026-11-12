@@ -171,11 +171,20 @@ export interface RunTargetPatch {
 
 export interface RunRepository {
   createIfAbsent(input: CreateRunInput): Promise<{ run: RunRecord; created: boolean }>;
+  /**
+   * docs/specs/blocked-by-wait.md. The delegation wrote the row of a blocked run before any
+   * workflow existed. The workflow of that id takes it over: WAITING_FOR_BLOCKERS becomes RECEIVED.
+   * It answers null when no row of the workflow id waits, also when a stop cancelled it first.
+   */
+  adoptWaiting(temporalWorkflowId: string): Promise<RunRecord | null>;
   findById(tenantId: string, id: string): Promise<RunRecord | null>;
   /** The newest run of the agent session. A follow-up run is newer than the run it follows. */
   findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null>;
-  /** docs/specs/run-recovery.md. Records the last patch a check sprite captured. */
-  recordLastPatch(tenantId: string, runId: string, patchBase64: string): Promise<void>;
+  /**
+   * docs/specs/run-recovery.md. Records the last patch a check sprite captured, and the attempt it
+   * served (docs/specs/draft-of-failed-run.md, DI-21.76).
+   */
+  recordLastPatch(tenantId: string, runId: string, patchBase64: string, attempt: number): Promise<void>;
   /** docs/specs/run-recovery.md. The last patch a check sprite captured, or null. */
   lastPatch(tenantId: string, runId: string): Promise<string | null>;
   updateStatus(id: string, status: RunStatus, patch?: RunStatusPatch): Promise<RunRecord>;

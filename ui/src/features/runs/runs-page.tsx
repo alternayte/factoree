@@ -9,7 +9,7 @@ import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import { pickWorkspace } from "@/lib/workspace";
 import { WorkspacePicker } from "@/features/products/workspace-picker";
-import { formatCost, formatDuration, issueIdentifier, STATUS_FILTERS, statusTone } from "./run-format";
+import { formatCost, formatDuration, isOpenBlocker, issueIdentifier, STATUS_FILTERS, statusTone } from "./run-format";
 
 export type RunsSearch = { ws?: string; product?: string; status?: string };
 
@@ -148,6 +148,16 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                     <Badge tone={statusTone(run.status)}>{run.status}</Badge>
                     {run.failureReason ? (
                       <div className="mt-1 font-mono text-xs text-mute">{run.failureReason}</div>
+                    ) : null}
+                    {run.status === "WAITING_FOR_BLOCKERS" ? (
+                      <div className="mt-1 text-xs text-mute">
+                        {run.blockers === null
+                          ? "blockers not read yet"
+                          : `waits for ${run.blockers
+                              .filter(isOpenBlocker)
+                              .map((blocker) => blocker.identifier)
+                              .join(", ")}`}
+                      </div>
                     ) : null}
                   </td>
                   <td className="t-value text-right">

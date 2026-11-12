@@ -1,6 +1,8 @@
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
+import { NOT_CHECKED_REASON } from "~/domain/runs/run-draft.js";
 import { ApplicationFailure } from "@temporalio/activity";
-import type { EvidenceStore } from "~/domain/evidence/evidence.js";
+import { canonicalEvidenceHash, type EvidenceStore } from "~/domain/evidence/evidence.js";
+import { forYourEyeSource, type ForYourEyeCapture, type ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type { EvidenceStorage } from "~/domain/evidence/evidence-storage.js";
 import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import type { AssertionOutcome, EvidenceArtifact } from "~/domain/validation/validation-result.js";
@@ -28,6 +30,7 @@ import {
   type ProofPackBaseMove,
   type ProofPackCheck,
   type ProofPackEvidenceRef,
+  type ProofPackForYourEye,
   type ProofPackRouting,
 } from "~/domain/evidence/proof-pack.js";
 
@@ -47,8 +50,17 @@ export interface PersistAssertionOutcomeInput {
   attempt: number;
 }
 
+/** docs/specs/by-eye-criteria-and-selector-recheck.md. One for-your-eye capture of one attempt. */
+export interface PersistForYourEyeInput {
+  tenantId: string;
+  runId: string;
+  capture: ForYourEyeCapture;
+  attempt: number;
+}
+
 export interface EvidencePersistence {
   persistAssertionOutcome(input: PersistAssertionOutcomeInput): Promise<void>;
+  persistForYourEye(input: PersistForYourEyeInput): Promise<void>;
 }
 
 /** The file extension of every content type an evidence artefact carries today. */
@@ -146,7 +158,55 @@ export const createEvidencePersistence = (
       step: "user_validate",
     });
   },
+
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. Stores the screenshot of one for-your-eye
+   * criterion as visual evidence that answers no assertion, or one row with the reason when the
+   * capture failed. The Proof Pack reads the row of the last attempt.
+   */
+  async persistForYourEye(input: PersistForYourEyeInput): Promise<void> {
+    const { capture } = input;
+    const idempotencyKey = `run:${input.runId}:validation:${input.attempt}:for-your-eye:${capture.id}`;
+    const base = { forYourEye: capture.id, statement: capture.statement, route: capture.route, attempt: input.attempt };
+    if (capture.captured) {
+      const stored = await dependencies.storage.put({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        name: storageNameOf(capture.id, capture.artifact),
+        contentType: capture.artifact.contentType,
+        bytes: capture.artifact.bytes,
+      });
+      await dependencies.evidence.record({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        validationAssertionId: null,
+        kind: "screenshot",
+        source: capture.artifact.source,
+        sha256: stored.sha256,
+        storageRef: stored.storageRef,
+        metadata: { ...capture.artifact.metadata, ...base, captured: true },
+        idempotencyKey,
+      });
+    } else {
+      const metadata = { ...base, captured: false, reason: capture.reason };
+      await dependencies.evidence.record({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        validationAssertionId: null,
+        kind: "screenshot",
+        source: forYourEyeSource(capture.id),
+        sha256: canonicalEvidenceHash(metadata),
+        storageRef: null,
+        metadata,
+        idempotencyKey,
+      });
+    }
+  },
 });
+
+/** Reads the for-your-eye criterion id of an evidence row, or null for any other row. */
+const forYourEyeIdOf = (metadata: Record<string, unknown>): string | null =>
+  typeof metadata["forYourEye"] === "string" ? metadata["forYourEye"] : null;
 
 export interface ProofPackActivityDependencies {
   runs: RunRepository;
@@ -203,6 +263,11 @@ export interface PublishProofPackActivityInput {
   changeDescription?: string;
   /** docs/specs/proof-pack-and-visual-evidence.md. The visual evidence gap Factoree accepted. */
   visualEvidenceGap?: string | null;
+  /**
+   * docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye.
+   * Absent in a history recorded before they existed.
+   */
+  forYourEye?: ForYourEyeCriterion[];
   /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
   fakes?: Array<{ service: string; name: string }>;
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
@@ -216,6 +281,13 @@ export interface PublishProofPackActivityInput {
   autonomyReasons: string[];
   /** docs/specs/check-isolation.md. Changed files that define a check. */
   checkDefiningFiles: string[];
+  /**
+   * docs/specs/draft-of-failed-run.md. The draft of a failed run: the attempt whose check sprite
+   * received the published patch, and whether a review of it finished. Only the results, the
+   * evidence and the checks of that attempt describe the patch, and every other assertion is not
+   * proven.
+   */
+  draft?: { attempt: number; reviewed: boolean };
 }
 
 export interface PublishProofPackActivityOutput {
@@ -284,8 +356,10 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
 
     // SDD section 42. The last attempt of one assertion is its outcome. An earlier repair
     // attempt is history, and it must not decide what the Proof Pack reports.
+    const draft = input.draft;
     const latest = new Map<string, (typeof resultRows)[number]>();
     for (const row of resultRows) {
+      if (draft !== undefined && row.attempt !== draft.attempt) continue;
       const held = latest.get(row.assertionKey);
       if (held === undefined || row.attempt >= held.attempt) latest.set(row.assertionKey, row);
     }
@@ -298,6 +372,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     for (const row of evidenceRows) {
       if (row.validationAssertionId === null) continue;
       const attempt = metadataNumber(row.metadata, "attempt");
+      if (draft !== undefined && attempt !== draft.attempt) continue;
       const held = lastAttemptByAssertion.get(row.validationAssertionId);
       if (held === undefined || attempt > held) {
         lastAttemptByAssertion.set(row.validationAssertionId, attempt);
@@ -326,6 +401,30 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       evidenceByAssertion.set(row.validationAssertionId, list);
     }
 
+    // docs/specs/by-eye-criteria-and-selector-recheck.md. The screenshot of the last validation
+    // attempt, outside every assertion total. Every pass writes a result row, so the highest
+    // result attempt is the last pass.
+    const lastValidationAttempt = draft?.attempt ?? resultRows.reduce((held, row) => Math.max(held, row.attempt), -1);
+    const needsYourEye: ProofPackForYourEye[] = (input.forYourEye ?? []).map((item) => {
+      const row = evidenceRows.find(
+        (candidate) =>
+          candidate.validationAssertionId === null &&
+          forYourEyeIdOf(candidate.metadata) === item.id &&
+          metadataNumber(candidate.metadata, "attempt") === lastValidationAttempt,
+      );
+      if (row === undefined) {
+        return { ...item, screenshot: null, reason: "Factoree captured no screenshot in the last attempt." };
+      }
+      if (row.metadata["captured"] !== true) {
+        return { ...item, screenshot: null, reason: metadataText(row.metadata, "reason") || "the capture failed." };
+      }
+      return {
+        ...item,
+        screenshot: { kind: row.kind, source: row.source, sha256: row.sha256, storageRef: row.storageRef },
+        reason: null,
+      };
+    });
+
     const assertions: ProofPackAssertion[] = contract.assertions.map((assertion) => {
       const outcome = latest.get(assertion.id);
       return {
@@ -337,7 +436,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         // An assertion with no result row proved nothing. BLOCKED is the honest report, and
         // SDD section 68 then refuses the completion.
         result: outcome?.result ?? "BLOCKED",
-        reason: outcome?.reason ?? "No result row exists for this assertion.",
+        reason: outcome?.reason ?? (draft === undefined ? "No result row exists for this assertion." : NOT_CHECKED_REASON),
         evidence: evidenceByAssertion.get(assertion.rowId) ?? [],
         injectedFailure: injectedFailure.has(assertion.rowId),
       };
@@ -348,10 +447,8 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     // describes the change Factoree published, and a stale failing row would tell the human
     // that a passing Run failed its own verification.
     const checkRows = evidenceRows.filter((row) => row.kind === "deterministic_check");
-    const lastCheckAttempt = checkRows.reduce(
-      (held, row) => Math.max(held, metadataNumber(row.metadata, "attempt")),
-      -1,
-    );
+    const lastCheckAttempt =
+      draft?.attempt ?? checkRows.reduce((held, row) => Math.max(held, metadataNumber(row.metadata, "attempt")), -1);
 
     // SDD section 47 forbids a raw log dump, so only the named fields travel. The `log` key of
     // the evidence metadata is never read here, and a spread would defeat the whole rule.
@@ -476,6 +573,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       autonomyReasons: input.autonomyReasons,
       checkDefiningFiles: input.checkDefiningFiles,
       visualEvidenceGap: input.visualEvidenceGap ?? null,
+      needsYourEye,
       fakes: input.fakes ?? [],
       decisions: input.decisions ?? [],
       baseMove: input.baseMove ?? null,
@@ -509,6 +607,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         url: proposal.url,
         reason: proposal.reason,
       })),
+      ...(draft === undefined ? {} : { draft: { reviewed: draft.reviewed } }),
     };
 
     // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.

@@ -44,6 +44,7 @@ import {
   listSetupLinearTeams,
   listWorkspaces,
   type Options,
+  publishRunDraft,
   putContextSource,
   putLinearApp,
   putProductSecret,
@@ -52,6 +53,7 @@ import {
   startLinearInstall,
   startRepositorySetups,
   startSetupLinearInstall,
+  stopRun,
   testContextSource,
   updateInstallSettings,
   updateProduct,
@@ -151,6 +153,9 @@ import type {
   ListSetupLinearTeamsResponse,
   ListWorkspacesData,
   ListWorkspacesResponse,
+  PublishRunDraftData,
+  PublishRunDraftError,
+  PublishRunDraftResponse,
   PutContextSourceData,
   PutContextSourceError,
   PutContextSourceResponse,
@@ -175,6 +180,9 @@ import type {
   StartSetupLinearInstallData,
   StartSetupLinearInstallError,
   StartSetupLinearInstallResponse,
+  StopRunData,
+  StopRunError,
+  StopRunResponse,
   TestContextSourceData,
   TestContextSourceError,
   TestContextSourceResponse,
@@ -761,6 +769,42 @@ export const getRunOptions = (options: Options<GetRunData>) =>
     },
     queryKey: getRunQueryKey(options),
   });
+
+export const stopRunMutation = (
+  options?: Partial<Options<StopRunData>>,
+): UseMutationOptions<StopRunResponse, StopRunError, Options<StopRunData>> => {
+  const mutationOptions: UseMutationOptions<StopRunResponse, StopRunError, Options<StopRunData>> = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await stopRun({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const publishRunDraftMutation = (
+  options?: Partial<Options<PublishRunDraftData>>,
+): UseMutationOptions<PublishRunDraftResponse, PublishRunDraftError, Options<PublishRunDraftData>> => {
+  const mutationOptions: UseMutationOptions<
+    PublishRunDraftResponse,
+    PublishRunDraftError,
+    Options<PublishRunDraftData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await publishRunDraft({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
 
 export const listProductAgentSessionsQueryKey = (options: Options<ListProductAgentSessionsData>) =>
   createQueryKey("listProductAgentSessions", options);

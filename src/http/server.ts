@@ -201,6 +201,14 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       registerRunRoutes(admin, {
         tenants: dependencies.tenants,
         runViews: new PrismaRunViewReader(dependencies.prisma),
+        // Issue #45. A Factoree UI stop takes the stop path of a Linear stop.
+        stopRun: (input) => dependencies.delegation.stopRun(input),
+        // docs/specs/draft-of-failed-run.md. A Factoree UI draft takes the path of a Linear reply.
+        requestDraft: (input) => dependencies.delegation.requestDraft(input),
+        userName: async (userId) => {
+          const user = await dependencies.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+          return user === null ? null : user.name.trim() || user.email;
+        },
       });
       registerProductSessionRoutes(admin, {
         products: dependencies.products,

@@ -29,10 +29,19 @@ export function formatTokens(value: number | null): string {
 
 export type StatusTone = "success" | "warning" | "neutral" | "accent";
 
-/** The badge tone of a run status: success, a failure, or still at work. */
+/**
+ * The badge tone of a run status: success, a failure, or still at work. DRAFT_PUBLISHED is a
+ * failure with a draft pull request, not a success (docs/specs/draft-of-failed-run.md).
+ */
 export function statusTone(status: string): StatusTone {
   if (status === "READY_FOR_HUMAN" || status === "REPORTED") return "success";
-  if (status.startsWith("FAILED") || status === "STALE_BASE" || status.startsWith("BLOCKED")) return "warning";
+  if (
+    status.startsWith("FAILED") ||
+    status === "STALE_BASE" ||
+    status.startsWith("BLOCKED") ||
+    status === "DRAFT_PUBLISHED"
+  )
+    return "warning";
   if (status === "CANCELLED") return "neutral";
   return "accent";
 }
@@ -44,11 +53,18 @@ export const STATUS_FILTERS = [
   "FAILED_REVIEW",
   "FAILED_CONFIGURATION",
   "STALE_BASE",
+  "DRAFT_PUBLISHED",
   "CANCELLED",
+  "WAITING_FOR_BLOCKERS",
   "QUEUED",
   "IMPLEMENTING",
   "REPAIRING",
 ] as const;
+
+/** docs/specs/blocked-by-wait.md. A blocker holds the run while its state is not completed or canceled. */
+export function isOpenBlocker(blocker: { state: string }): boolean {
+  return blocker.state !== "completed" && blocker.state !== "canceled";
+}
 
 /** The Temporal UI page of one workflow, through the proxy at /temporal. */
 export function temporalWorkflowUrl(namespace: string, workflowId: string): string {

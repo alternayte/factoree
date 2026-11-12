@@ -1,5 +1,5 @@
 import { metrics } from "~/telemetry/metrics.js";
-import { buildFollowUpWorkflowId, buildWorkflowId } from "~/temporal/workflow-id.js";
+import { buildDraftWorkflowId, buildFollowUpWorkflowId, buildWorkflowId } from "~/temporal/workflow-id.js";
 import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
 import { noFollowUpLine, renderFollowUpDescription, takesFollowUp } from "~/domain/runs/run-recovery.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
@@ -8,6 +8,17 @@ import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
+import type { RunStopLog, StopRequest } from "~/domain/runs/run-stop.js";
+import type { BlockerWait } from "~/domain/runs/blocker-wait.js";
+import {
+  decideDraft,
+  DRAFT_IN_PROGRESS_LINE,
+  DRAFT_STARTED_LINE,
+  draftPublishedLine,
+  isDraftCommand,
+  type DraftRequest,
+  type RunDraftStore,
+} from "~/domain/runs/run-draft.js";
 
 /**
  * Specification section 9. Posts a refusal reason on the agent session that raised it, so a
@@ -44,20 +55,51 @@ import { ignoresImages } from "~/domain/products/model-vision.js";
 export interface WorkflowStarter {
   start(input: { workflowId: string; args: [AgentRunWorkflowInput] }): Promise<void>;
   // Both signal methods report false if the workflow is not running.
-  signalStop(workflowId: string): Promise<boolean>;
+  signalStop(workflowId: string, request?: StopRequest): Promise<boolean>;
   signalHumanInput(workflowId: string, body: string): Promise<boolean>;
+  /**
+   * docs/specs/draft-of-failed-run.md. Starts the draft workflow of one failed run. It reports
+   * false when that workflow already runs.
+   */
+  startDraft(input: { workflowId: string; tenantId: string; runId: string }): Promise<boolean>;
 }
 
 export type DelegationOutcome =
   | { kind: "started"; agentSessionId: string; workflowId: string }
+  | { kind: "waiting_for_blockers"; workflowId: string }
   | { kind: "duplicate" }
   | { kind: "stopped"; workflowId: string }
   | { kind: "prompt_forwarded"; workflowId: string }
   | { kind: "not_running"; workflowId: string }
   | { kind: "follow_up_refused"; status: string }
+  | { kind: "draft"; outcome: DraftOutcome["kind"] }
   | { kind: "ignored"; reason: string }
   | { kind: "unconfigured"; reason: string }
   | { kind: "blocked_routing"; reason: string };
+
+/** docs/specs/draft-of-failed-run.md. The answer to one draft request. */
+export type DraftOutcome =
+  | { kind: "not_found" }
+  | { kind: "refused"; reason: string }
+  | { kind: "published"; pullRequestUrl: string }
+  | { kind: "started"; workflowId: string }
+  | { kind: "in_progress"; workflowId: string };
+
+/** The line Factoree answers a draft request with on the agent session. */
+const draftLine = (outcome: DraftOutcome): string => {
+  switch (outcome.kind) {
+    case "not_found":
+      return "Factoree found no run to publish as a draft.";
+    case "refused":
+      return outcome.reason;
+    case "published":
+      return draftPublishedLine(outcome.pullRequestUrl);
+    case "started":
+      return DRAFT_STARTED_LINE;
+    case "in_progress":
+      return DRAFT_IN_PROGRESS_LINE;
+  }
+};
 
 export interface DelegationDependencies {
   tenants: TenantRegistry;
@@ -77,6 +119,12 @@ export interface DelegationDependencies {
    * operator sets up a repository.
    */
   productPageUrl?: ((productId: string) => string) | undefined;
+  /** Issue #45. Records who stopped a Run and from where. */
+  stops?: RunStopLog | undefined;
+  /** docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run. */
+  drafts?: RunDraftStore | undefined;
+  /** docs/specs/blocked-by-wait.md. The hold of a blocked work item, its stop and its reply. */
+  blockerWait?: Pick<BlockerWait, "hold" | "stop" | "answerReply"> | undefined;
 }
 
 export class DelegationService {
@@ -134,17 +182,42 @@ export class DelegationService {
     const latest = (await this.dependencies.sessionRuns?.findByAgentSession(tenantId, event.agentSession.id)) ?? null;
     if (command.kind === "stop") {
       const target = latest?.temporalWorkflowId ?? workflowId;
-      const signalled = await this.dependencies.starter.signalStop(target);
-      metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
+      const signalled = await this.stopRun({
+        tenantId,
+        runId: latest !== null && !isTerminalRunStatus(latest.status) ? latest.id : null,
+        workflowId: target,
+        request: { source: "linear" },
+      });
       return signalled ? { kind: "stopped", workflowId: target } : { kind: "not_running", workflowId: target };
     }
     let followUp: { failedRunId: string; reply: string; browserAssertions: string[] } | null = null;
     if (command.kind === "prompt") {
+      // docs/specs/blocked-by-wait.md. No workflow exists yet to take the reply, so it gets one
+      // fixed answer. A run that left the wait since the read takes the reply as before.
+      if (
+        latest !== null &&
+        latest.status === "WAITING_FOR_BLOCKERS" &&
+        this.dependencies.blockerWait !== undefined &&
+        (await this.dependencies.blockerWait.answerReply(tenantId, latest.id))
+      ) {
+        return { kind: "waiting_for_blockers", workflowId: latest.temporalWorkflowId };
+      }
       if (latest === null || !isTerminalRunStatus(latest.status)) {
         const target = latest?.temporalWorkflowId ?? workflowId;
         const signalled = await this.dependencies.starter.signalHumanInput(target, command.body);
         metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
         return signalled ? { kind: "prompt_forwarded", workflowId: target } : { kind: "not_running", workflowId: target };
+      }
+      // docs/specs/draft-of-failed-run.md. The command is the whole reply, so a real follow-up
+      // reply never matches. The chosen option of the elicitation arrives as the same prompt.
+      if (isDraftCommand(command.body)) {
+        const outcome = await this.requestDraft({
+          tenantId,
+          runId: latest.id,
+          request: { source: "linear", by: command.author },
+        });
+        await this.dependencies.refusalNotifier.postResponse(event.organizationId, event.agentSession.id, draftLine(outcome));
+        return { kind: "draft", outcome: outcome.kind };
       }
       if (!takesFollowUp(latest.status)) {
         await this.dependencies.refusalNotifier.postResponse(
@@ -234,6 +307,8 @@ export class DelegationService {
       organizationSkillsRepository: product.organizationSkillsRepository,
       // docs/specs/skill-registry.md. The key stays in the secret store. Only the settings travel.
       skillRegistry: product.skillRegistry,
+      // Issue #39, DI-21.66. The criteria cap of the refiner proposal is a Product setting.
+      refinerCriteriaLimit: product.refinerCriteriaLimit,
       // docs/specs/egress-honesty-and-issue-status.md. A missing-host post names the product page.
       ...(this.dependencies.productPageUrl === undefined ? {} : { productPageUrl: this.dependencies.productPageUrl(product.id) }),
     };
@@ -262,32 +337,103 @@ export class DelegationService {
 
     const runWorkflowId =
       followUp === null ? workflowId : buildFollowUpWorkflowId(event.organizationId, event.agentSession.id, followUp.failedRunId);
-    await this.dependencies.starter.start({
-      workflowId: runWorkflowId,
-      args: [
-        {
-          tenantId,
-          workspaceId: event.organizationId,
-          productId: product.id,
-          linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
-          agentSessionId: event.agentSession.id,
-          autonomyLevel: defaultAutonomy,
-          maxRunMinutes: product.maxRunMinutes,
-          workItem,
-          product: workflowProduct,
-          ...(followUp === null
-            ? {}
-            : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
-          // docs/specs/work-item-images-and-links.md. The run reads the comments created up to this
-          // delegation, or up to the reply of a follow-up run (DI-21.39). A reply "ignore the
-          // images" skips the image check of the follow-up run.
-          delegatedAt: new Date(event.webhookTimestamp ?? Date.now()).toISOString(),
-          ...(followUp !== null && ignoresImages(followUp.reply) ? { ignoreImages: true } : {}),
-        },
-      ],
-    });
+    const startInput: AgentRunWorkflowInput = {
+      tenantId,
+      workspaceId: event.organizationId,
+      productId: product.id,
+      linearIssueId: event.agentSession.issueId ?? event.agentSession.issue?.id ?? null,
+      agentSessionId: event.agentSession.id,
+      autonomyLevel: defaultAutonomy,
+      maxRunMinutes: product.maxRunMinutes,
+      workItem,
+      product: workflowProduct,
+      ...(followUp === null
+        ? {}
+        : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
+      // docs/specs/work-item-images-and-links.md. The run reads the comments created up to this
+      // delegation, or up to the reply of a follow-up run (DI-21.39). A reply "ignore the
+      // images" skips the image check of the follow-up run.
+      delegatedAt: new Date(event.webhookTimestamp ?? Date.now()).toISOString(),
+      ...(followUp !== null && ignoresImages(followUp.reply) ? { ignoreImages: true } : {}),
+    };
+
+    // docs/specs/blocked-by-wait.md, DI-21.88. A delegation whose work item Linear marks as blocked
+    // by an open issue starts no workflow. The run waits as a row, and the sweep starts it with
+    // this input. A follow-up run answers a human reply, so it starts at once.
+    if (followUp === null && this.dependencies.blockerWait !== undefined) {
+      const held = await this.dependencies.blockerWait.hold({
+        tenantId,
+        productId: product.id,
+        linearIssueId: startInput.linearIssueId,
+        linearAgentSessionId: event.agentSession.id,
+        temporalWorkflowId: runWorkflowId,
+        autonomyLevel: defaultAutonomy,
+        workItemTitle: workItem.title,
+        workItemUrl: workItem.url,
+        startInput,
+      });
+      if (held) return { kind: "waiting_for_blockers", workflowId: runWorkflowId };
+    }
+
+    await this.dependencies.starter.start({ workflowId: runWorkflowId, args: [startInput] });
 
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId: runWorkflowId };
+  }
+
+  /**
+   * SDD section 50, issue #45. The one stop path of a Run, for a Linear stop and for a Factoree UI
+   * stop. It reports false when the workflow is not running. A Run that took the signal records
+   * who stopped it and from where. A failed record never undoes a stop that reached the workflow.
+   */
+  async stopRun(input: { tenantId: string; runId: string | null; workflowId: string; request: StopRequest }): Promise<boolean> {
+    const signalled = await this.dependencies.starter.signalStop(input.workflowId, input.request);
+    metrics.humanInterventions.inc({ tenant_id: input.tenantId, product_id: "" });
+    // docs/specs/blocked-by-wait.md. A waiting run has no workflow to signal, so the stop reaches
+    // its row. The cancel records the stop and posts the stop message.
+    if (!signalled && input.runId !== null && this.dependencies.blockerWait !== undefined) {
+      return await this.dependencies.blockerWait.stop(input.tenantId, input.runId, input.request);
+    }
+    if (signalled && input.runId !== null && this.dependencies.stops !== undefined) {
+      try {
+        await this.dependencies.stops.record(input.tenantId, input.runId, input.request, new Date());
+      } catch (error) {
+        this.dependencies.logger.error("the stop of a run was not recorded", {
+          tenant_id: input.tenantId,
+          run_id: input.runId,
+          error: String(error),
+        });
+      }
+    }
+    return signalled;
+  }
+
+  /**
+   * docs/specs/draft-of-failed-run.md. The one path of a draft request, for the Linear reply, the
+   * chosen option and the Factoree UI. A run that already published its draft answers with its pull
+   * request, and a draft workflow that runs answers with its id, so a second request starts nothing.
+   */
+  async requestDraft(input: { tenantId: string; runId: string; request: DraftRequest }): Promise<DraftOutcome> {
+    const drafts = this.dependencies.drafts;
+    const facts = drafts === undefined ? null : await drafts.facts(input.tenantId, input.runId);
+    if (drafts === undefined || facts === null) return { kind: "not_found" };
+    const decision = decideDraft(facts);
+    if (decision.kind === "refused") return { kind: "refused", reason: decision.reason };
+    if (decision.kind === "published") return { kind: "published", pullRequestUrl: decision.pullRequestUrl };
+    const workflowId = buildDraftWorkflowId(input.runId);
+    const started = await this.dependencies.starter.startDraft({ workflowId, tenantId: input.tenantId, runId: input.runId });
+    metrics.humanInterventions.inc({ tenant_id: input.tenantId, product_id: "" });
+    if (!started) return { kind: "in_progress", workflowId };
+    // DI-21.79. The request that started the workflow is the record. A failed write never undoes it.
+    try {
+      await drafts.recordRequest(input.tenantId, input.runId, input.request, new Date());
+    } catch (error) {
+      this.dependencies.logger.error("the draft request of a run was not recorded", {
+        tenant_id: input.tenantId,
+        run_id: input.runId,
+        error: String(error),
+      });
+    }
+    return { kind: "started", workflowId };
   }
 
   /** docs/specs/run-recovery.md. The issue text plus the reply and the facts of the failed run. */

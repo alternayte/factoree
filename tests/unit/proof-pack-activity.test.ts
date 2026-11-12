@@ -533,3 +533,61 @@ describe("publishProofPack, a corrected Validation Plan (DI-15.23)", () => {
     expect(JSON.parse(harness.documents[0]!)).toMatchObject({ planCorrections: [] });
   });
 });
+
+describe("publishProofPack, needs your eye (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
+  const eye = { id: "AC-R2", statement: "The page follows the screenshot's colours.", route: "/events" };
+  const eyeRow = (attempt: number, metadata: Record<string, unknown>, storageRef: string | null): EvidenceRecord => ({
+    id: `eye-${attempt}`,
+    tenantId: "t1",
+    runId: "run-1",
+    validationAssertionId: null,
+    kind: "screenshot",
+    source: "for-your-eye:AC-R2:screenshot",
+    createdAt: new Date("2026-01-01T02:00:00.000Z"),
+    sha256: "e".repeat(64),
+    storageRef,
+    metadata: { forYourEye: "AC-R2", statement: eye.statement, route: eye.route, attempt, ...metadata },
+  });
+
+  it("shows the screenshot of the last attempt under Needs your eye, outside every assertion total", async () => {
+    const harness = build({
+      evidence: {
+        listForRun: async () => [
+          eyeRow(1, { captured: true }, "https://uploads.linear.app/eye-attempt-1.png"),
+          eyeRow(2, { captured: true }, "https://uploads.linear.app/eye-attempt-2.png"),
+        ],
+      },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+    const output = await harness.activities.publishProofPack({ ...input, forYourEye: [eye] });
+
+    const body = harness.posted[0]!;
+    expect(body).toContain("### Needs your eye");
+    expect(body).toContain("- The page follows the screenshot's colours. (`/events`)");
+    expect(body).toContain("![AC-R2](https://uploads.linear.app/eye-attempt-2.png)");
+    expect(body).not.toContain("eye-attempt-1.png");
+    expect(body.indexOf("### Needs your eye")).toBeLessThan(body.indexOf("### Visual evidence"));
+    expect(output.assertionCount).toBe(1);
+    const document = JSON.parse(harness.documents[0]!) as {
+      assertions: unknown[];
+      needsYourEye: Array<{ id: string; reason: string | null; screenshot: { storageRef: string } | null }>;
+    };
+    expect(document.assertions).toHaveLength(1);
+    expect(document.needsYourEye.map((item) => [item.id, item.reason, item.screenshot?.storageRef])).toEqual([
+      ["AC-R2", null, "https://uploads.linear.app/eye-attempt-2.png"],
+    ]);
+  });
+
+  it("lists a failed capture as a line with its reason", async () => {
+    const harness = build({
+      evidence: { listForRun: async () => [eyeRow(2, { captured: false, reason: "the preview did not start" }, null)] },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+    await harness.activities.publishProofPack({ ...input, forYourEye: [eye] });
+    expect(harness.posted[0]).toContain("(`/events`): Factoree has no screenshot: the preview did not start");
+  });
+
+  it("writes no Needs your eye section when the run has no by-eye criterion", async () => {
+    const harness = build();
+    await harness.activities.publishProofPack(input);
+    expect(harness.posted[0]).not.toContain("Needs your eye");
+  });
+});

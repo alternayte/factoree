@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createSandboxActivities, type ProviderFailover } from "~/activities/sandbox.activities.js";
+import { createSandboxActivities, type ProviderFailover, type SandboxActivityDependencies } from "~/activities/sandbox.activities.js";
+import type { ProductRecord } from "~/domain/products/product-registry.js";
 import { SandboxCreateError } from "~/domain/runs/sandbox.js";
 import { SandboxProviderDownError } from "~/domain/runs/sandbox-slot-error.js";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
@@ -77,6 +78,7 @@ const build = (
     tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
   },
   failover?: ProviderFailover,
+  products?: SandboxActivityDependencies["products"],
 ) => {
   const runs = {
     setSandbox: vi.fn().mockResolvedValue(superseded),
@@ -84,6 +86,7 @@ const build = (
     findById: vi.fn().mockResolvedValue(null),
     listExpiredSandboxes: vi.fn().mockResolvedValue([]),
     createIfAbsent: vi.fn(),
+    adoptWaiting: vi.fn(),
     findByAgentSession: vi.fn(),
     updateStatus: vi.fn(),
     // The real store throws when the write reaches no row. The fake must not be more permissive.
@@ -131,6 +134,7 @@ const build = (
     logger: createLogger({ level: "error", redactor, sink: () => undefined }),
     tokens,
     ...(failover === undefined ? {} : { failover }),
+    ...(products === undefined ? {} : { products }),
   });
   return { activities, sandbox, runs, redactor };
 };
@@ -330,6 +334,18 @@ describe("the prepareSandbox activity and the preview configuration", () => {
       readyUrl: "http://127.0.0.1:8080/health",
       timeoutSeconds: 60,
     });
+  });
+
+  // Issue #43, DI-21.67. A repository with no repair block runs on the Product budget.
+  it("takes the Product repair budget when the repository sets none, and the repository budget when it does", async () => {
+    const roles = { implementer: null, refiner: null, validator: null, reviewer: null, setup: null };
+    const product = { defaultRunner: "opencode", model: null, runners: roles, models: roles, effort: roles, repairMaxAttempts: 4 };
+    const products = { findById: () => Promise.resolve(product as unknown as ProductRecord) };
+    const fromProduct = build({ spriteId: null, adapter: null }, {}, sandboxWithConfig(DEFAULT_CONFIG_YAML), undefined, undefined, undefined, products);
+    expect((await fromProduct.activities.prepareSandbox(input)).runtime).toMatchObject({ repairMaxAttempts: 4, repairBudgetSource: "product" });
+    const repository = sandboxWithConfig(`${DEFAULT_CONFIG_YAML}repair:\n  maxAttempts: 1\n`);
+    const fromRepository = build({ spriteId: null, adapter: null }, {}, repository, undefined, undefined, undefined, products);
+    expect((await fromRepository.activities.prepareSandbox(input)).runtime).toMatchObject({ repairMaxAttempts: 1, repairBudgetSource: "repository" });
   });
 
   it("reports no preview when the repository configures none", async () => {

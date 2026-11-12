@@ -45,6 +45,8 @@ export class FakeBrowserDriver implements BrowserDriver {
   async run(scenario: BrowserScenario): Promise<BrowserRunResult> {
     this.calls.push(scenario);
     if (this.during !== null) await this.during();
+    // As the real driver: a stop closes the browser, and run rejects with the abort reason.
+    scenario.signal?.throwIfAborted();
     return this.result;
   }
 }

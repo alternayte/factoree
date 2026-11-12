@@ -18,6 +18,8 @@ const {
   activityOrder,
   input,
   runWorker,
+  refinerOutcomes,
+  userValidateCalls,
 } = harness;
 
 beforeAll(async () => {
@@ -50,6 +52,26 @@ describe("AT-30 — the Proof Pack completes a successful Run", () => {
     expect(completion?.status).toBe("READY_FOR_HUMAN");
     // SDD section 48. A success carries no failure reason.
     expect(completion?.failureReason).toBeUndefined();
+  });
+
+  it("carries the by-eye criteria from the refiner to each validation pass and the Proof Pack (by-eye-criteria-and-selector-recheck.md)", async () => {
+    const runId = "run-ses-at30-eye";
+    const eye = { id: "AC-R2", statement: "The page follows the screenshot's colours.", route: "/events" };
+    const stated = { id: "AC-R1", statement: "The page loads.", source: "ticket:quote", method: "test" as const, target: "t.test.ts" };
+    refinerOutcomes.set(runId, {
+      status: "proposed",
+      accepted: [stated],
+      decisions: [],
+      visualEvidenceGap: null,
+      forYourEye: [eye],
+      reason: "",
+      hang: null,
+    });
+    const result = await runWorker(async () => (await startRun("ses-at30-eye")).result());
+
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    expect(userValidateCalls.filter((entry) => entry.runId === runId).map((entry) => entry.forYourEye)).toEqual([[eye]]);
+    expect(proofPackCalls.find((entry) => entry.runId === runId)?.forYourEye).toEqual([eye]);
   });
 
   it("passes the published facts to the Proof Pack", async () => {

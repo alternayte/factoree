@@ -7,8 +7,10 @@ import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/gi
 import {
   assertSameChangedFiles,
   capturePatch as captureVerifiedPatch,
+  changedFilesOfPatch,
   EmptyPatchError,
   PatchError,
+  sha256OfBase64,
 } from "~/domain/publishing/patch.js";
 import {
   buildPullRequestBody,
@@ -190,6 +192,73 @@ const asNonRetryable = (redactor: Redactor, error: unknown): unknown => {
   return asRunConfigurationErrorIfDeterministic(redactor, error);
 };
 
+/**
+ * The write credential of one publish. DI-21.33: a patch that changes a GitHub Actions workflow
+ * also asks for `workflows: write`, and a refusal of that permission names the repair.
+ */
+const mintPublishToken = async (
+  dependencies: PublishingActivityDependencies,
+  input: { githubInstallationId: string; repositorySlug: string },
+  changedFiles: readonly string[],
+): Promise<string> => {
+  const workflowFiles = workflowFilesOf(changedFiles);
+  try {
+    return await dependencies.tokens.tokenForInstallation(input.githubInstallationId, publishTokenScope(changedFiles), [
+      input.repositorySlug,
+    ]);
+  } catch (error) {
+    if (workflowFiles.length > 0 && error instanceof GitHubAppAuthError && error.status === 422) {
+      throw new RunConfigurationError(
+        `The change edits ${workflowFiles.join(", ")}, and GitHub lets an App push a workflow file ` +
+          "only with the Workflows permission. In the Factoree GitHub App, set Repository " +
+          "permissions, Workflows, to Read and write, accept the new permission on the " +
+          "installation, then reply here.",
+      );
+    }
+    throw error;
+  }
+};
+
+/** An empty installation id names no installation to mint against. */
+const assertInstallation = (githubInstallationId: string): void => {
+  if (githubInstallationId === "") {
+    throw new RunConfigurationError(
+      "The target repository carries no GitHub App installation. Factoree needs one to push " +
+        "the branch and to open the pull request. Install the Factoree GitHub App on the " +
+        "repository.",
+    );
+  }
+};
+
+/** docs/specs/draft-of-failed-run.md. The input of the draft publication of one failed run. */
+export interface PublishDraftActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  repositorySlug: string;
+  repositoryBaseUrl: string;
+  baseBranch: string;
+  baseSha: string;
+  githubInstallationId: string;
+  workItemTitle: string;
+  workItemUrl: string | null;
+  repairCount: number;
+  /** The warning block that starts the pull request body. */
+  warning: string;
+}
+
+export interface PublishDraftActivityOutput {
+  patchSha256: string;
+  commitSha: string;
+  pullRequestUrl: string;
+  pullRequestNumber: number;
+  branch: string;
+  /** False when a pull request for this head branch already existed. */
+  created: boolean;
+  patchByteLength: number;
+  changedFiles: string[];
+}
+
 /** SDD section 44, section 45, and section 46. */
 export const createPublishingActivities = (dependencies: PublishingActivityDependencies) => ({
   /**
@@ -215,37 +284,13 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // Step 2. The GitHub write credential. An empty installation id names no installation to
       // mint against, and a mint request against an empty id would reach GitHub as a malformed
       // URL rather than a clear refusal, so this activity refuses it here instead.
-      if (input.githubInstallationId === "") {
-        throw new RunConfigurationError(
-          "The target repository carries no GitHub App installation. Factoree needs one to push " +
-            "the branch and to open the pull request. Install the Factoree GitHub App on the " +
-            "repository.",
-        );
-      }
+      assertInstallation(input.githubInstallationId);
 
       // Ruling 2 requires the token to carry a scope no wider than this publish needs. This
       // publish pushes one branch. It opens one pull request. The token carries exactly those
       // two permissions, plus `workflows` only for a patch that changes a workflow (DI-21.33).
       // Step 6 proves later that the captured patch changes exactly the reviewed files.
-      const workflowFiles = workflowFilesOf(input.reviewedChangedFiles);
-      let token: string;
-      try {
-        token = await dependencies.tokens.tokenForInstallation(
-          input.githubInstallationId,
-          publishTokenScope(input.reviewedChangedFiles),
-          [input.repositorySlug],
-        );
-      } catch (error) {
-        if (workflowFiles.length > 0 && error instanceof GitHubAppAuthError && error.status === 422) {
-          throw new RunConfigurationError(
-            `The change edits ${workflowFiles.join(", ")}, and GitHub lets an App push a workflow file ` +
-              "only with the Workflows permission. In the Factoree GitHub App, set Repository " +
-              "permissions, Workflows, to Read and write, accept the new permission on the " +
-              "installation, then reply here.",
-          );
-        }
-        throw error;
-      }
+      const token = await mintPublishToken(dependencies, input, input.reviewedChangedFiles);
 
       // Step 3. The credential reaches the redactor at once, so no later message can echo it.
       dependencies.redactor.addSecret(token);
@@ -436,6 +481,146 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         startedAt,
         endedAt: new Date(),
       });
+    }
+  },
+  /**
+   * docs/specs/draft-of-failed-run.md. Publishes the last patch a check sprite of a failed run
+   * received, as a draft pull request, through the same trusted checkout as `publish`. The patch
+   * comes from the run row, so no sandbox takes part and the reaper cannot block it. Its SHA-256 is
+   * the hash the commit message names, and the trusted checkout proves it again before the push.
+   */
+  async publishDraft(input: PublishDraftActivityInput): Promise<PublishDraftActivityOutput> {
+    try {
+      await registerProjectSecrets(
+        dependencies.redactor,
+        dependencies.secrets,
+        input.tenantId,
+        input.productId,
+        dependencies.logger,
+      );
+      assertInstallation(input.githubInstallationId);
+
+      const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId);
+      if (patchBase64 === null) throw new PatchError("the run holds no patch, so Factoree published nothing.");
+      const patchSha256 = sha256OfBase64(patchBase64);
+      const patchBytes = Buffer.from(patchBase64, "base64");
+      // DI-21.33 still applies: the changed files of the stored patch decide the token scope.
+      const changedFiles = changedFilesOfPatch(patchBytes.toString("utf8"));
+      if (changedFiles.length === 0 || patchBytes.byteLength === 0) throw new EmptyPatchError();
+
+      const token = await mintPublishToken(dependencies, input, changedFiles);
+      dependencies.redactor.addSecret(token);
+      const plainUrl = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
+      assertHttpsRepositoryUrl(plainUrl);
+
+      const branch = publishBranchName(input.runId);
+      const port = dependencies.pullRequests(token);
+
+      // AT-35. A second request, or a retry, finds the pull request of this branch.
+      const existing = await port.findByHead(input.repositorySlug, branch, input.githubInstallationId);
+      if (existing !== null) {
+        await dependencies.runs.setPublication(input.tenantId, input.runId, {
+          patchSha256,
+          commitSha: existing.headSha,
+          pullRequestUrl: existing.url,
+        });
+        return {
+          patchSha256,
+          commitSha: existing.headSha,
+          pullRequestUrl: existing.url,
+          pullRequestNumber: existing.number,
+          branch,
+          created: false,
+          patchByteLength: patchBytes.byteLength,
+          changedFiles,
+        };
+      }
+
+      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle });
+      const commitMessage = [
+        title,
+        "",
+        "Draft of a failed run. Factoree did not prove this change.",
+        "",
+        `Run ID: ${input.runId}`,
+        `Base SHA: ${input.baseSha}`,
+        `Patch SHA-256: ${patchSha256}`,
+      ].join("\n");
+      const publish = dependencies.publishToBranch ?? publishToBranchDefault;
+      const author = await dependencies.gitAuthor();
+      const publication = await publish({
+        cloneUrl: plainUrl,
+        token,
+        baseSha: input.baseSha,
+        branch,
+        baseBranch: input.baseBranch,
+        patchBase64,
+        verifiedPatchSha256: patchSha256,
+        verifiedGitVersion: "the git of the work sprite that captured the stored patch",
+        commitMessage,
+        commitTimestamp: PUBLICATION_COMMIT_TIMESTAMP,
+        authorName: author.name,
+        authorEmail: author.email,
+        onCleanupFailure: (error: unknown) => {
+          dependencies.logger.error("the trusted checkout directory was not removed", {
+            tenant_id: input.tenantId,
+            product_id: input.productId,
+            run_id: input.runId,
+            step: "publish_draft",
+            error: dependencies.redactor.redactText(String(error)),
+          });
+        },
+      });
+
+      // The pull request is always a draft, at every autonomy level. Only a human marks it ready.
+      const created = await port.create(
+        {
+          slug: input.repositorySlug,
+          headBranch: branch,
+          baseBranch: input.baseBranch,
+          draft: true,
+          title,
+          body: dependencies.redactor.redactText(
+            buildPullRequestBody({
+              workItemTitle: input.workItemTitle,
+              workItemUrl: input.workItemUrl,
+              runId: input.runId,
+              baseSha: input.baseSha,
+              patchSha256,
+              verificationSummary: "The checks of this patch did not pass. The warning above lists what did not pass.",
+              changedFileCount: changedFiles.length,
+              repairCount: input.repairCount,
+              draftWarning: input.warning,
+            }),
+          ),
+        },
+        input.githubInstallationId,
+      );
+      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+        patchSha256,
+        commitSha: publication.commitSha,
+        pullRequestUrl: created.url,
+      });
+      dependencies.logger.info("the draft pull request was created", {
+        tenant_id: input.tenantId,
+        product_id: input.productId,
+        run_id: input.runId,
+        step: "publish_draft",
+        branch,
+        pull_request: created.number,
+      });
+      return {
+        patchSha256,
+        commitSha: publication.commitSha,
+        pullRequestUrl: created.url,
+        pullRequestNumber: created.number,
+        branch,
+        created: true,
+        patchByteLength: patchBytes.byteLength,
+        changedFiles,
+      };
+    } catch (error) {
+      throw asNonRetryable(dependencies.redactor, error);
     }
   },
 });

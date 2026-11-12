@@ -363,7 +363,13 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
               record({ kind: "account", name: account.name, passed: false, reason: "it needs the preview, which failed" });
               continue;
             }
-            const signIn = await dependencies.browser.signIn({ baseUrl: handle.baseUrl, steps: signInStepsOf(account), timeoutMs: 60_000 });
+            // Issue #44, DI-21.69. The proof signs in as a run does, with the ready wait of the config.
+            const signIn = await dependencies.browser.signIn({
+              baseUrl: handle.baseUrl,
+              steps: signInStepsOf(account),
+              timeoutMs: 60_000,
+              ...(preview?.readySelector === undefined ? {} : { readySelector: preview.readySelector }),
+            });
             record(
               signIn.signedIn
                 ? { kind: "account", name: account.name, passed: true, reason: null }

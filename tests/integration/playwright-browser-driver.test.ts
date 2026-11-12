@@ -19,7 +19,7 @@ import {
   PlaywrightBrowserDriver,
   resolveGotoUrl,
 } from "../../src/adapters/browser/playwright/playwright-browser-driver.js";
-import type { BrowserScenario, BrowserStepResult, BrowserArtifact } from "../../src/domain/validation/browser-driver.js";
+import type { BrowserScenario, BrowserStepEvent, BrowserStepResult, BrowserArtifact } from "../../src/domain/validation/browser-driver.js";
 
 const PAGE_HTML = `<!doctype html>
 <html>
@@ -81,6 +81,21 @@ const LOGIN_HTML = `<!doctype html><html><body>
   </script>
 </body></html>`;
 
+// Issue #44. A Blazor Server page: the markup shows at once, and the click handler attaches later,
+// when the circuit is up. It then shows #ready.
+const LATE_HANDLER_HTML = `<!doctype html><html><body>
+  <button id="apply">Apply</button><p id="count">0</p>
+  <script>
+    setTimeout(function () {
+      document.getElementById("apply").addEventListener("click", function () {
+        var count = document.getElementById("count");
+        count.textContent = String(Number(count.textContent) + 1);
+      });
+      document.body.insertAdjacentHTML("beforeend", '<div id="ready">ready</div>');
+    }, 2500);
+  </script>
+</body></html>`;
+
 // A cold SPA: the form renders only after its first load.
 const SLOW_LOGIN_HTML = `<!doctype html><html><body>
   <script>
@@ -116,6 +131,12 @@ const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
         response.end(request.url === "/login" ? LOGIN_HTML : ACCOUNT_HTML);
         return;
       }
+      if (request.url === "/late-handler") {
+        response.setHeader("Content-Type", "text/html");
+        response.writeHead(200);
+        response.end(LATE_HANDLER_HTML);
+        return;
+      }
       if (request.url === "/slow-login") {
         response.setHeader("Content-Type", "text/html");
         response.writeHead(200);
@@ -148,6 +169,7 @@ describe("PlaywrightBrowserDriver", () => {
     captureVideo: false,
     captureTrace: false,
     timeoutMs: 30_000,
+    stepTimeoutMs: 5_000,
   };
 
   beforeAll(async () => {
@@ -184,6 +206,7 @@ describe("PlaywrightBrowserDriver", () => {
       captureVideo: false,
       captureTrace: false,
       timeoutMs: 30_000,
+      stepTimeoutMs: 5_000,
     });
 
     expect(result.passed).toBe(true);
@@ -383,6 +406,149 @@ describe("PlaywrightBrowserDriver", () => {
       ]);
       expect(result.passed).toBe(true);
       expect(result.steps[0]!.detail).toBe("No request matched https://api.example.com/**.");
+    }, 60_000);
+  });
+
+  describe("step limits, ready wait and stop (issue #44)", () => {
+    it("fails a selector that never matches in the step limit, with a readable reason (DI-21.68, DI-21.70)", async () => {
+      const events: BrowserStepEvent[] = [];
+      const started = Date.now();
+      const result = await driver.run({
+        ...scenario,
+        timeoutMs: 600_000,
+        stepTimeoutMs: 1_000,
+        onStep: (event) => events.push(event),
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "click", selector: "#does-not-exist" },
+          { action: "expectVisible", selector: "#current" },
+        ],
+      });
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(result.passed).toBe(false);
+      expect(result.failureReason).toBe("The selector `#does-not-exist` never matched an element that takes a click within 1 s.");
+      expect(result.steps[1]!.detail).toBe(result.failureReason);
+      expect(events.filter((event) => event.kind === "started").map((event) => event.index)).toEqual([0, 1]);
+      expect(events.find((event) => event.kind === "timed_out")).toEqual({
+        kind: "timed_out",
+        index: 1,
+        action: "click",
+        selector: "#does-not-exist",
+        limitMs: 1_000,
+      });
+    }, 60_000);
+
+    it("marks a strict-mode violation as a selector-only failure and keeps the page HTML (by-eye-criteria-and-selector-recheck.md)", async () => {
+      // The fixture form holds an input and a button, so `form > *` matches two elements.
+      const result = await driver.run({
+        ...scenario,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectVisible", selector: "form > *" },
+        ],
+      });
+      expect(result.passed).toBe(false);
+      expect(result.failureReason).toContain("strict mode violation");
+      expect(result.selectorFailure).toEqual({ index: 1, action: "expectVisible", selector: "form > *", kind: "strict_mode" });
+      expect(result.pageHtml).toContain('<button id="save" type="submit">Save</button>');
+    }, 60_000);
+
+    it("marks a locator timeout as a selector-only failure, and a wrong text as none", async () => {
+      const timedOut = await driver.run({
+        ...scenario,
+        stepTimeoutMs: 1_000,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectText", selector: "#never", text: "x" },
+        ],
+      });
+      expect(timedOut.selectorFailure).toEqual({ index: 1, action: "expectText", selector: "#never", kind: "timeout" });
+      expect(timedOut.pageHtml).toContain("<form");
+
+      const wrongText = await driver.run({
+        ...scenario,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectText", selector: "#current", text: "Something else" },
+        ],
+      });
+      expect(wrongText.passed).toBe(false);
+      expect(wrongText.selectorFailure).toBeNull();
+      expect(wrongText.pageHtml).toBeNull();
+    }, 60_000);
+
+    it("names a selector that never becomes visible in plain words", async () => {
+      const result = await driver.run({
+        ...scenario,
+        stepTimeoutMs: 1_000,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectVisible", selector: "#never" },
+        ],
+      });
+      expect(result.failureReason).toBe("The selector `#never` never became visible within 1 s.");
+    }, 60_000);
+
+    it("cuts a step to what is left of the scenario limit", async () => {
+      const started = Date.now();
+      const result = await driver.run({
+        ...scenario,
+        timeoutMs: 1_500,
+        stepTimeoutMs: 30_000,
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "expectVisible", selector: "#never" },
+        ],
+      });
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(result.failureReason).toMatch(/^The selector `#never` never became visible within 1(\.\d)? s\.$/);
+    }, 60_000);
+
+    it("clicks only after the ready selector shows, so the late handler takes the click (DI-21.69)", async () => {
+      const steps = [
+        { action: "goto" as const, path: "/late-handler" },
+        { action: "click" as const, selector: "#apply" },
+        { action: "expectText" as const, selector: "#count", text: "1" },
+      ];
+      const ready = await driver.run({ ...scenario, readySelector: "#ready", steps });
+      expect(ready.failureReason).toBeNull();
+      // Without the ready selector the click lands before the handler, so the count stays 0.
+      const early = await driver.run({ ...scenario, steps });
+      expect(early.passed).toBe(false);
+    }, 60_000);
+
+    it("fails the click with a clear reason when the ready selector never shows", async () => {
+      const result = await driver.run({
+        ...scenario,
+        stepTimeoutMs: 1_000,
+        readySelector: "#never-ready",
+        steps: [
+          { action: "goto", path: "/" },
+          { action: "click", selector: "#save" },
+        ],
+      });
+      expect(result.failureReason).toBe(
+        "The page never became ready: the preview.readySelector `#never-ready` never became visible within 1 s.",
+      );
+    }, 60_000);
+
+    it("closes the browser on a stop and rejects with the abort reason within seconds (DI-21.71)", async () => {
+      const stop = new AbortController();
+      const reason = new Error("stopped");
+      setTimeout(() => stop.abort(reason), 1_000);
+      const started = Date.now();
+      await expect(
+        driver.run({
+          ...scenario,
+          stepTimeoutMs: 30_000,
+          signal: stop.signal,
+          steps: [
+            { action: "goto", path: "/" },
+            { action: "expectVisible", selector: "#never" },
+          ],
+        }),
+      ).rejects.toBe(reason);
+      expect(Date.now() - started).toBeLessThan(10_000);
     }, 60_000);
   });
 

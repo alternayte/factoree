@@ -1,5 +1,5 @@
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@7";
+export const SETUP_PROMPT_VERSION = "setup@8";
 
 export interface SetupPromptFields {
   repository: string;
@@ -81,6 +81,7 @@ preview:                  # optional: the app a browser check runs against
   command: ./.factoree/preview.sh
   readyUrl: http://localhost:3000/
   timeoutSeconds: 600
+  readySelector: "body[data-ready]"  # optional: shows once the page takes input
 accounts:                 # optional: users the seed creates, for signed-in browser checks
   - name: member
     username: member@example.test
@@ -130,6 +131,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "A seed creates the data and the accounts the app needs, through the app's own path: its CLI, its migrations, or its registration endpoint. Put a seed script in `.factoree/`.",
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",
         "The preview must listen on every interface, 0.0.0.0 or [::], and not on localhost alone: Factoree and its browser reach it through the sandbox's exposed port, from outside the sandbox. Write readyUrl with localhost and the explicit port.",
+        "Set preview.readySelector only when the app renders its markup before it attaches its handlers, as Blazor Server, Phoenix LiveView and Hotwire do: a click before then does nothing. Pick a selector that shows only once the page takes input. Before the first click or fill after each page load, Factoree waits for it, as well as for the load event and network idle.",
         "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",
       ].join("\n"),
     ),

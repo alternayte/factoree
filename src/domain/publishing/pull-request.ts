@@ -49,6 +49,11 @@ export interface PullRequestBodyInput {
   verificationSummary: string;
   changedFileCount: number;
   repairCount: number;
+  /**
+   * docs/specs/draft-of-failed-run.md. The warning block of a draft of a failed run. It starts the
+   * body, and the closing sentence names the last patch, not a verified one.
+   */
+  draftWarning?: string;
 }
 
 /**
@@ -58,6 +63,7 @@ export interface PullRequestBodyInput {
  */
 export const buildPullRequestBody = (input: PullRequestBodyInput): string =>
   [
+    ...(input.draftWarning === undefined ? [] : [input.draftWarning, ""]),
     "## Factoree change",
     "",
     `Work Item: ${input.workItemTitle}`,
@@ -72,6 +78,13 @@ export const buildPullRequestBody = (input: PullRequestBodyInput): string =>
     "",
     input.verificationSummary,
     "",
-    "Factoree applied the verified patch to a clean trusted checkout and proved the patch hash",
-    "again before it created this pull request.",
+    ...(input.draftWarning === undefined
+      ? [
+          "Factoree applied the verified patch to a clean trusted checkout and proved the patch hash",
+          "again before it created this pull request.",
+        ]
+      : [
+          "Factoree applied the last patch a check sprite received to a clean trusted checkout and",
+          "proved its hash again before it created this draft. Only a human marks it ready.",
+        ]),
   ].join("\n");

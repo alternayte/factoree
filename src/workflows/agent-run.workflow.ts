@@ -14,6 +14,7 @@ import {
   workflowInfo,
 } from "@temporalio/workflow";
 import type { RunStatus } from "~/domain/runs/run-status.js";
+import { readStopRequest, stopResponse, type StopRequest } from "../domain/runs/run-stop.js";
 import type { Activities } from "~/activities/index.js";
 import type {
   PrepareCheckSandboxActivityOutput,
@@ -21,6 +22,7 @@ import type {
 } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityOutput } from "~/activities/agent.activities.js";
 import type { ProposeRefinementActivityOutput } from "~/activities/refinement.activities.js";
+import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { ReviewActivityOutput } from "~/activities/review.activities.js";
@@ -65,6 +67,7 @@ import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time but
 // `sandbox.js`, which imports nothing.
 import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from "../domain/runs/egress.js";
+import { describeSpentRepairBudget } from "../domain/runs/repair-budget.js";
 import { allowListCovers } from "../domain/runs/sandbox.js";
 import { endsWithoutPullRequest } from "../domain/runs/issue-status.js";
 // The workflow bundler resolves a relative path only. The module imports nothing.
@@ -109,6 +112,11 @@ export interface AgentRunProductInput {
    * operator widens the allow list. Absent in an older history.
    */
   productPageUrl?: string;
+  /**
+   * Issue #39, DI-21.66. The most criteria a refiner proposal may hold. Absent in an older
+   * history, where the activity takes the default of 20.
+   */
+  refinerCriteriaLimit?: number;
 }
 
 /** SDD section 7. The Work Item text, exactly as the author wrote it. */
@@ -228,6 +236,11 @@ const SANDBOX_SLOT_WAIT_PATCH = "sandbox-slot-wait";
  * there before the work sprite. An older history prepares on the default provider.
  */
 const SANDBOX_PROVIDER_PATCH = "sandbox-provider-spillover";
+/**
+ * docs/specs/draft-of-failed-run.md. After the failure post of a qualifying run, Factoree offers its
+ * last patch as a draft pull request. An older history posts no offer.
+ */
+const DRAFT_OFFER_PATCH = "draft-offer";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -256,7 +269,13 @@ type ReviewBranchOutcome =
   | { kind: "unavailable" }
   | { kind: "error"; error: unknown };
 
-export const stopSignal = defineSignal("stop");
+/**
+ * SDD section 50, issue #45. The payload names where the stop came from. It is optional, so a
+ * signal with no argument, from an older client or the Temporal CLI, still stops the Run and
+ * reads as a Linear stop. Only the text of the final response depends on it, so a replay of a
+ * workflow that took the old signal gives the same commands (DI-21.64).
+ */
+export const stopSignal = defineSignal<[StopRequest?]>("stop");
 export const humanInputSignal = defineSignal<[string]>("humanInput");
 export const runStatusQuery = defineQuery<RunSnapshot>("runStatus");
 
@@ -582,6 +601,8 @@ export async function agentRunWorkflow(
   let status: RunStatus = "RECEIVED";
   const humanInputs: string[] = [];
   let stopRequested = false;
+  /** Issue #45. Where the first stop came from, or null for a stop with no payload. */
+  let stopRequest: StopRequest | null = null;
   let sprite: PrepareSandboxActivityOutput | null = null;
   // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
   // validation, review and publication run there, never in the sprite the Implementer used.
@@ -614,6 +635,9 @@ export async function agentRunWorkflow(
   let openQuestion: string | null = null;
   let contextContractVersion: string | null = null;
   let validationContractVersion: string | null = null;
+  // docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye, from
+  // the refiner gate. Each validation pass captures their screenshots, and the Proof Pack shows them.
+  let forYourEye: ForYourEyeCriterion[] = [];
   let questionRounds = 0;
   /** DI-21.50. True once this run moved, or tried to move, its issue to started. */
   let issueStatusTracked = false;
@@ -639,7 +663,8 @@ export async function agentRunWorkflow(
   const defaultBranchForSlug = (slug: string) =>
     targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
 
-  setHandler(stopSignal, () => {
+  setHandler(stopSignal, (request?: StopRequest) => {
+    if (!stopRequested) stopRequest = readStopRequest(request);
     stopRequested = true;
   });
   setHandler(humanInputSignal, (body: string) => {
@@ -671,6 +696,12 @@ export async function agentRunWorkflow(
     ...(input.followUpOfRunId === undefined ? {} : { followUpOfRunId: input.followUpOfRunId }),
   });
   runId = created.runId;
+  // docs/specs/blocked-by-wait.md. A stop cancelled the waiting run before this workflow started.
+  // The row is terminal and the stop posted its message, so the workflow ends with no write.
+  if (created.ended === true) {
+    status = created.status ?? "CANCELLED";
+    return { runId: created.runId, status };
+  }
   // A const holds the identifier, because narrowing of a let does not survive into a closure.
   const id = created.runId;
 
@@ -831,6 +862,9 @@ export async function agentRunWorkflow(
       }
     }
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
+    if (patched(DRAFT_OFFER_PATCH)) {
+      await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
+    }
     return { runId: id, status };
   };
 
@@ -882,11 +916,12 @@ export async function agentRunWorkflow(
     role: AgentSessionRole,
     hang: { silenceLimitMs: number },
     reason = "for the second time in the same step",
+    hint = "",
   ): Promise<AgentRunWorkflowResult> =>
     await failRun(
       "AGENT_HUNG",
       `The ${describeAgentRole(role)} session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)} ` +
-        `${reason}, so Factoree stopped it and ended the Run. Factoree published nothing.`,
+        `${reason}, so Factoree stopped it and ended the Run. ${hint === "" ? "" : `${hint} `}Factoree published nothing.`,
     );
 
   /**
@@ -1146,11 +1181,16 @@ export async function agentRunWorkflow(
         attempt: attemptInput.attempt,
         // docs/specs/repository-setup-and-services.md. From the config at the base SHA.
         accounts: attemptInput.prepared.runtime.accounts ?? [],
+        // Issue #44, DI-21.68. Absent in a history recorded before the limits existed.
+        ...(attemptInput.prepared.runtime.browserLimits === undefined
+          ? {}
+          : { browserLimits: attemptInput.prepared.runtime.browserLimits }),
         services: attemptInput.prepared.runtime.services ?? null,
         // docs/specs/work-item-images-and-links.md. The images of the check sprite.
         imageFiles: attemptInput.prepared.imageFiles ?? [],
         egress: egressOf(attemptInput.prepared),
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
+        ...(forYourEye.length === 0 ? {} : { forYourEye }),
       }),
     );
   };
@@ -1234,11 +1274,7 @@ export async function agentRunWorkflow(
     await notify(() =>
       activities.postFinalResponse({
         sessionId: input.agentSessionId,
-        body:
-          publishedPullRequestUrl === null
-            ? "Factoree stopped this Run at your request. No change was published."
-            : "Factoree stopped this Run at your request. The verified change is already " +
-              `published and waits for a human. Pull request: ${publishedPullRequestUrl}.`,
+        body: stopResponse(stopRequest, publishedPullRequestUrl),
       }),
     );
     return { runId: id, status };
@@ -1890,6 +1926,7 @@ export async function agentRunWorkflow(
             egress: egressOf(preparedSandbox),
             timeoutMs: remainingMs(),
             ...(afterHang ? { afterHang: true } : {}),
+            ...(input.product.refinerCriteriaLimit === undefined ? {} : { criteriaLimit: input.product.refinerCriteriaLimit }),
           }),
         );
       try {
@@ -1926,15 +1963,18 @@ export async function agentRunWorkflow(
         return await failHung("refiner", refinerHang);
       }
       if (proposal.status !== "proposed") {
+        // Issue #39, DI-21.66. A proposal over the criteria limit carries a message for the human.
+        // A result from an older history holds none and takes the message from before.
         return await failRun(
           "REFINEMENT_UNAVAILABLE",
-          `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
+          proposal.message ?? `Factoree could not use the Refiner proposal. ${proposal.reason} Factoree published nothing.`,
         );
       }
       // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. A host the work needs and the
       // allow list does not hold stops the Run before anything freezes. Only a human widens it.
       const refinerMissingHosts = proposal.missingHosts ?? [];
       if (refinerMissingHosts.length > 0) return await failMissingHosts("refiner", refinerMissingHosts);
+      forYourEye = proposal.forYourEye ?? [];
       // A refiner that freezes nothing leaves the criteria the Work Item states.
       const contractCriteria = proposal.accepted.length === 0 ? refined.criteria : proposal.accepted;
       const validationAnswers: string[] = [];
@@ -2032,6 +2072,9 @@ export async function agentRunWorkflow(
       let repairFindings: string[] = [];
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
+      // Issue #43, DI-21.67. A spent budget names its size and where it comes from. Only the
+      // message text changes, so a running history replays the same commands.
+      const spentBudget = describeSpentRepairBudget(maxRepairs, preparedSandbox.runtime.repairBudgetSource);
       // docs/specs/agent-session-usage-and-hangs.md. The hung Implementer session the next attempt
       // resumes, and whether the current step already resumed one. One step allows one hang.
       let continueSession: AgentSessionRef | null = null;
@@ -2119,7 +2162,8 @@ export async function agentRunWorkflow(
             return await failHung(
               "implementer",
               implementerHang,
-              "and the repair budget is spent, so Factoree cannot resume it",
+              `and ${spentBudget.clause}, so Factoree cannot resume it`,
+              spentBudget.hint,
             );
           }
           await reportHang("implementer", implementerHang, "resumes it once");
@@ -2320,7 +2364,7 @@ export async function agentRunWorkflow(
           if (repairCount >= maxRepairs) {
             return await failRun(
               "VERIFICATION_FAILED",
-              "Deterministic verification did not pass, and the repair budget is spent. " +
+              `Deterministic verification did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
                 `${verification.summary} Factoree published nothing.`,
             );
           }
@@ -2492,7 +2536,7 @@ export async function agentRunWorkflow(
             if (repairCount >= maxRepairs) {
               return await failRun(
                 "VALIDATION_FAILED",
-                "User validation did not pass, and the repair budget is spent. " +
+                `User validation did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
                   `${userValidation.summary} Factoree published nothing.`,
               );
             }
@@ -2670,7 +2714,7 @@ export async function agentRunWorkflow(
         if (repairCount >= maxRepairs) {
           return await failRun(
             "REVIEW_BLOCKING_FINDINGS",
-            "The independent review rejected this change, and the repair budget is spent. " +
+            `The independent review rejected this change, and ${spentBudget.clause}. ${spentBudget.hint} ` +
               `${review.summary} Factoree published nothing.`,
           );
         }
@@ -2904,6 +2948,7 @@ export async function agentRunWorkflow(
           reviewAttempt: publishedReviewAttempt,
           changeDescription: publishedChangeDescription,
           visualEvidenceGap,
+          ...(forYourEye.length === 0 ? {} : { forYourEye }),
           decisions: factoreeDecisions,
           baseMove:
             publication.baseMove === null
@@ -2995,6 +3040,9 @@ export async function agentRunWorkflow(
           // The post falls back to the message when the facts cannot be read.
         }
         await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
+        if (patched(DRAFT_OFFER_PATCH)) {
+          await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
+        }
       });
     }
     // A plain error fails the workflow task, and Temporal retries that task for ever while the

@@ -76,6 +76,8 @@ type ProductRow = {
   effortReviewer: string | null;
   effortSetup: string | null;
   silenceMinutes: number;
+  refinerCriteriaLimit: number;
+  repairMaxAttempts: number;
   sandboxRetentionHours: number;
   sandboxProviderIds: string[];
   maxConcurrentRuns: number;
@@ -359,6 +361,8 @@ export class PrismaProductRegistry implements ProductRegistry {
         effortReviewer: settings.effort?.reviewer,
         effortSetup: settings.effort?.setup,
         silenceMinutes: settings.silenceMinutes,
+        refinerCriteriaLimit: settings.refinerCriteriaLimit,
+        repairMaxAttempts: settings.repairMaxAttempts,
         sandboxRetentionHours: settings.sandboxRetentionHours,
         sandboxProviderIds: settings.sandboxProviderIds,
         maxConcurrentRuns: settings.maxConcurrentRuns,

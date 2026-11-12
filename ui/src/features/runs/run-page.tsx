@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { getRunOptions } from "@/api/@tanstack/react-query.gen";
+import { useState } from "react";
+import { getRunOptions, getRunQueryKey } from "@/api/@tanstack/react-query.gen";
+import { publishRunDraft, stopRun } from "@/api/sdk.gen";
 import type { GetRunResponse } from "@/api/types.gen";
+import { Button } from "@/components/button";
+import { Confirm } from "@/components/confirm";
 import {
   Alert,
   Badge,
@@ -24,18 +28,32 @@ import {
   formatTokens,
   issueIdentifier,
   statusTone,
+  isOpenBlocker,
   temporalWorkflowUrl,
 } from "./run-format";
 
 type Run = GetRunResponse;
 
+/** How long the page polls for the draft pull request after it asked for one. */
+const DRAFT_POLL_MS = 5 * 60_000;
+
 /** docs/specs/run-visibility.md. One run: why it ended, where its time went and what it cost. */
 export function RunPage({ runId, ws }: { runId: string; ws?: string }) {
   const me = useMe();
   const workspace = pickWorkspace(me.data?.memberships ?? [], ws);
+  // Issue #45. True once this page sent a stop, so it polls even when the stop record is late.
+  const [stopSent, setStopSent] = useState(false);
+  // docs/specs/draft-of-failed-run.md. When this page asked for a draft, so it polls until the draft opens.
+  const [draftSentAt, setDraftSentAt] = useState<number | null>(null);
   const run = useQuery({
     ...getRunOptions({ path: { id: runId }, query: { linearWorkspaceId: workspace?.linearWorkspaceId ?? "" } }),
     enabled: Boolean(workspace),
+    // A stopped run polls until it ends, so a stop that takes time to reach the activity shows.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && draftSentAt !== null && data.status !== "DRAFT_PUBLISHED" && Date.now() - draftSentAt < DRAFT_POLL_MS) return 3000;
+      return data && !data.terminal && (stopSent || data.stopRequestedAt !== null) ? 3000 : false;
+    },
   });
   const back = (
     <Link to="/runs" search={ws ? { ws } : {}} className="hover:text-body">
@@ -74,6 +92,10 @@ export function RunPage({ runId, ws }: { runId: string; ws?: string }) {
       admin={workspace.admin}
       workspaceId={workspace.linearWorkspaceId}
       temporalNamespace={me.data?.temporalNamespace ?? "default"}
+      stopping={!run.data.terminal && (stopSent || run.data.stopRequestedAt !== null)}
+      onStopped={() => setStopSent(true)}
+      draftSent={draftSentAt !== null && run.data.status !== "DRAFT_PUBLISHED"}
+      onDraftSent={() => setDraftSentAt(Date.now())}
     />
   );
 }
@@ -84,17 +106,62 @@ function RunDetail({
   admin,
   workspaceId,
   temporalNamespace,
+  stopping,
+  onStopped,
+  draftSent,
+  onDraftSent,
 }: {
   run: Run;
   crumb: React.ReactNode;
   admin: boolean;
   workspaceId: string;
   temporalNamespace: string;
+  stopping: boolean;
+  onStopped: () => void;
+  draftSent: boolean;
+  onDraftSent: () => void;
 }) {
   const identifier = issueIdentifier(run.workItemUrl);
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const stop = useMutation({
+    mutationFn: async () =>
+      stopRun({ path: { id: run.id }, body: { linearWorkspaceId: workspaceId }, throwOnError: true }),
+    onSuccess: () => {
+      setConfirming(false);
+      onStopped();
+      void qc.invalidateQueries({
+        queryKey: getRunQueryKey({ path: { id: run.id }, query: { linearWorkspaceId: workspaceId } }),
+      });
+    },
+  });
+  // docs/specs/draft-of-failed-run.md. A workspace admin publishes the last patch of a failed run as a draft.
+  const [confirmingDraft, setConfirmingDraft] = useState(false);
+  const draft = useMutation({
+    mutationFn: async () =>
+      publishRunDraft({ path: { id: run.id }, body: { linearWorkspaceId: workspaceId }, throwOnError: true }),
+    onSuccess: () => {
+      setConfirmingDraft(false);
+      onDraftSent();
+      void qc.invalidateQueries({
+        queryKey: getRunQueryKey({ path: { id: run.id }, query: { linearWorkspaceId: workspaceId } }),
+      });
+    },
+  });
+  const hours = run.sandboxRetentionHours;
   return (
     <>
       <PageHeader
+        actions={
+          // Issue #45. A workspace admin stops a run that has not ended. The badge shows the stop until the run ends.
+          admin && !run.terminal && !stopping ? (
+            <Button variant="danger" onClick={() => setConfirming(true)}>
+              Stop run
+            </Button>
+          ) : admin && run.draftQualifies && !draftSent ? (
+            <Button onClick={() => setConfirmingDraft(true)}>Publish as draft</Button>
+          ) : null
+        }
         crumb={
           <>
             {crumb} / {identifier ?? run.id.slice(0, 8)}
@@ -104,6 +171,8 @@ function RunDetail({
         description={
           <span className="flex flex-wrap items-center gap-2">
             <Badge tone={statusTone(run.status)}>{run.status}</Badge>
+            {stopping ? <Badge tone="neutral">Stopping…</Badge> : null}
+            {draftSent ? <Badge tone="neutral">Publishing the draft…</Badge> : null}
             {run.failureReason ? <span className="font-mono text-xs">{run.failureReason}</span> : null}
             <span>{run.productName}</span>
           </span>
@@ -115,6 +184,40 @@ function RunDetail({
           <Link to="/runs/$runId" params={{ runId: run.followUpOfRunId }} search={{ ws: workspaceId }} className="link">
             Open the failed run
           </Link>
+        </Alert>
+      ) : null}
+      {run.status === "WAITING_FOR_BLOCKERS" ? (
+        // docs/specs/blocked-by-wait.md. Factoree starts the run within a minute of the last open blocker completing.
+        <Alert tone="info" className="mb-4" title="Waiting for blockers">
+          {run.blockers === null ? (
+            <p>Factoree has not read the blockers of this issue from Linear yet. It reads them again every minute.</p>
+          ) : (
+            <>
+              <p>
+                Factoree starts this run when every blocker is completed or canceled. Remove the relation in Linear to
+                start now.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {run.blockers.map((blocker) => (
+                  <li key={blocker.identifier} className="flex flex-wrap items-center gap-2">
+                    {blocker.url ? (
+                      <a className="link font-mono" href={blocker.url} target="_blank" rel="noreferrer">
+                        {blocker.identifier}
+                      </a>
+                    ) : (
+                      <span className="font-mono">{blocker.identifier}</span>
+                    )}
+                    <Badge tone={isOpenBlocker(blocker) ? "accent" : "success"}>{blocker.state}</Badge>
+                    {blocker.pullRequestUrl ? (
+                      <a className="link" href={blocker.pullRequestUrl} target="_blank" rel="noreferrer">
+                        Pull request #{blocker.pullRequestUrl.split("/").at(-1)}
+                      </a>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </Alert>
       ) : null}
       {run.failureMessage ? (
@@ -137,6 +240,27 @@ function RunDetail({
               { label: "Autonomy", value: run.autonomyLevel },
               { label: "Started", value: formatDate(run.createdAt) },
               { label: "Ended", value: run.completedAt ? formatDate(run.completedAt) : "—" },
+              ...(run.stopSource
+                ? [
+                    {
+                      label: "Stopped from",
+                      prose: true,
+                      value:
+                        run.stopSource === "factoree_ui"
+                          ? `Factoree UI${run.stopRequestedBy ? ` by ${run.stopRequestedBy}` : ""}`
+                          : "Linear",
+                    },
+                  ]
+                : []),
+              ...(run.draftSource
+                ? [
+                    {
+                      label: "Draft asked from",
+                      prose: true,
+                      value: `${run.draftSource === "factoree_ui" ? "Factoree UI" : "Linear"}${run.draftRequestedBy ? ` by ${run.draftRequestedBy}` : ""}`,
+                    },
+                  ]
+                : []),
               { label: "Base", value: run.baseSha ? <code>{run.baseSha.slice(0, 12)}</code> : "—" },
               ...(run.skillResolutionId
                 ? [
@@ -156,10 +280,11 @@ function RunDetail({
             ) : null}
             {run.pullRequestUrl ? (
               <a className="link" href={run.pullRequestUrl} target="_blank" rel="noreferrer">
-                Pull request
+                {run.status === "DRAFT_PUBLISHED" ? "Draft pull request" : "Pull request"}
               </a>
             ) : null}
-            {admin ? (
+            {/* docs/specs/blocked-by-wait.md. A waiting run has no workflow yet, so the link would find nothing. */}
+            {admin && run.status !== "WAITING_FOR_BLOCKERS" ? (
               <a className="link" href={temporalWorkflowUrl(temporalNamespace, run.temporalWorkflowId)} target="_blank" rel="noreferrer">
                 Workflow in Temporal
               </a>
@@ -190,6 +315,50 @@ function RunDetail({
           <Skills run={run} />
         </Section>
       ) : null}
+      <Confirm
+        open={confirming}
+        title="Stop this run?"
+        confirmLabel="Stop run"
+        mutation={stop}
+        onCancel={() => {
+          setConfirming(false);
+          stop.reset();
+        }}
+        onConfirm={() => stop.mutate()}
+      >
+        {run.status === "WAITING_FOR_BLOCKERS" ? (
+          <p>
+            The run has not started, so no agent or sandbox exists. The Run ends as Cancelled, and Factoree does not start
+            it when its blockers complete. Delegate the issue again to start a new one.
+          </p>
+        ) : (
+          <p>
+            Factoree stops the agents and the checks, and the Run ends as Cancelled. A cancelled run takes no reply;
+            delegate the issue again to start a new one. Work so far stays in the retained sandbox for {hours}{" "}
+            {hours === 1 ? "hour" : "hours"}.
+          </p>
+        )}
+        <ErrorAlert error={stop.error} className="mt-3" />
+      </Confirm>
+      <Confirm
+        open={confirmingDraft}
+        title="Publish this run as a draft?"
+        confirmLabel="Publish as draft"
+        confirmVariant="primary"
+        mutation={draft}
+        onCancel={() => {
+          setConfirmingDraft(false);
+          draft.reset();
+        }}
+        onConfirm={() => draft.mutate()}
+      >
+        <p>
+          Factoree publishes the last patch of this run as a draft pull request on its base SHA. The checks did not pass,
+          so the body lists what failed, and only a human marks it ready. The run ends as Draft published and the Linear
+          issue keeps its state.
+        </p>
+        <ErrorAlert error={draft.error} className="mt-3" />
+      </Confirm>
     </>
   );
 }

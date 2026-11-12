@@ -27,6 +27,9 @@ export const PROOF_PACK_HEADINGS = [
   "### Checks",
 ] as const;
 
+/** docs/specs/draft-of-failed-run.md. The sentence that marks the proof pack of a draft. */
+export const DRAFT_NOT_PROVEN = "Factoree did not prove this change.";
+
 /** The file name of the JSON document, in Linear and in the body link. */
 export const PROOF_PACK_DOCUMENT_NAME = "proof-pack.json";
 
@@ -54,6 +57,23 @@ export interface ProofPackAssertion {
    */
   injectedFailure?: boolean;
 }
+
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. One criterion a person judges by eye, with
+ * the screenshot of the last attempt, or the reason Factoree has none. It is no assertion and
+ * counts in no total: it proves nothing by design.
+ */
+export interface ProofPackForYourEye {
+  id: string;
+  statement: string;
+  route: string;
+  screenshot: ProofPackEvidenceRef | null;
+  /** Why no screenshot exists. Null when one does. */
+  reason: string | null;
+}
+
+/** The heading of the for-your-eye section. The body holds it only when a criterion exists. */
+export const NEEDS_YOUR_EYE_HEADING = "### Needs your eye";
 
 /** docs/specs/repository-setup-and-services.md. One compose service that answered for an external API. */
 export interface ProofPackFake {
@@ -194,6 +214,8 @@ export interface ProofPackInput {
   checkDefiningFiles?: string[];
   /** The visual evidence gap Factoree accepted at refinement, or null. */
   visualEvidenceGap: string | null;
+  /** docs/specs/by-eye-criteria-and-selector-recheck.md. The criteria a person judges by eye. */
+  needsYourEye?: ProofPackForYourEye[];
   /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
   fakes?: ProofPackFake[];
   /** SDD section 18. Present only for a Run that a routed Product produced. */
@@ -215,6 +237,11 @@ export interface ProofPackInput {
   /** docs/specs/skill-registry.md. The skills the implementer loaded, and its skill proposals. */
   skills?: ProofPackSkill[];
   skillProposals?: ProofPackSkillProposal[];
+  /**
+   * docs/specs/draft-of-failed-run.md. Present for the draft of a failed run: each assertion that
+   * did not pass is not proven, and `reviewed` says whether a review of the patch finished.
+   */
+  draft?: { reviewed: boolean };
 }
 
 /**
@@ -251,11 +278,14 @@ export interface ProofPackBaseMove {
 export interface ProofPackDocument {
   version: 1;
   runId: string;
-  status: "READY_FOR_HUMAN";
+  /** docs/specs/draft-of-failed-run.md. DRAFT_PUBLISHED for the draft of a failed run. */
+  status: "READY_FOR_HUMAN" | "DRAFT_PUBLISHED";
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
   changeDescription: string;
   needsAttention: string[];
+  /** docs/specs/by-eye-criteria-and-selector-recheck.md. Outside `assertions` and every total. */
+  needsYourEye: ProofPackForYourEye[];
   visualEvidenceGap: string | null;
   fakes: ProofPackFake[];
   assertions: ProofPackAssertion[];
@@ -312,9 +342,15 @@ const openable = (ref: string | null): ref is string => ref !== null && /^https:
  */
 export const needsAttention = (input: ProofPackInput): string[] => {
   const items: string[] = [];
+  const draft = input.draft;
+  // docs/specs/draft-of-failed-run.md. The draft of a failed run says first that nothing is proven.
+  if (draft !== undefined) {
+    items.push(`${DRAFT_NOT_PROVEN} The pull request is a draft of a failed run. Only a human marks it ready.`);
+    if (!draft.reviewed) items.push("This patch was not reviewed.");
+  }
   // docs/specs/run-recovery.md. An unstable assertion is the first thing a human must weigh: the
   // pull request is a draft because Factoree could not prove it.
-  for (const assertion of input.assertions.filter((candidate) => candidate.result === "UNSTABLE")) {
+  for (const assertion of input.assertions.filter((candidate) => draft === undefined && candidate.result === "UNSTABLE")) {
     items.push(
       `${assertion.id} is UNSTABLE, so the pull request is a draft: ${assertion.statement} ${assertion.reason} ` +
         "Check it by hand before you merge.",
@@ -348,8 +384,12 @@ export const needsAttention = (input: ProofPackInput): string[] => {
         `${finding.description} It did not block, because ${finding.decisionReason}`,
     );
   }
-  for (const assertion of input.assertions.filter((candidate) => candidate.result !== "PASS" && candidate.result !== "UNSTABLE")) {
-    items.push(`${assertion.id} is ${assertion.result}: ${assertion.statement} ${assertion.reason}`);
+  for (const assertion of input.assertions.filter((candidate) => candidate.result !== "PASS" && (draft !== undefined || candidate.result !== "UNSTABLE"))) {
+    items.push(
+      draft === undefined
+        ? `${assertion.id} is ${assertion.result}: ${assertion.statement} ${assertion.reason}`
+        : `${assertion.id} is not proven (${assertion.result}): ${assertion.statement} ${assertion.reason}`,
+    );
   }
   // A gap Factoree accepted is one of its decisions. Only a gap without one is listed here.
   const gapDecided = (input.decisions ?? []).some((decision) => decision.kind === "visual_evidence");
@@ -361,11 +401,12 @@ export const needsAttention = (input: ProofPackInput): string[] => {
 export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument => ({
   version: 1,
   runId: input.runId,
-  status: "READY_FOR_HUMAN",
+  status: input.draft === undefined ? "READY_FOR_HUMAN" : "DRAFT_PUBLISHED",
   workItem: input.workItem,
   pullRequestUrl: input.pullRequestUrl,
   changeDescription: input.changeDescription,
   needsAttention: needsAttention(input),
+  needsYourEye: input.needsYourEye ?? [],
   decisions: input.decisions ?? [],
   baseMove: input.baseMove ?? null,
   visualEvidenceGap: input.visualEvidenceGap,
@@ -421,6 +462,14 @@ const visualSection = (input: ProofPackInput): string[] => {
   return lines;
 };
 
+/** docs/specs/by-eye-criteria-and-selector-recheck.md. One line per criterion a person judges by eye. */
+export const needsYourEyeLine = (item: ProofPackForYourEye): string => {
+  const head = `- ${line(item.statement)} (\`${line(item.route)}\`)`;
+  if (item.screenshot === null) return `${head}: Factoree has no screenshot: ${line(item.reason ?? "no reason was recorded.")}`;
+  if (!openable(item.screenshot.storageRef)) return `${head}: the screenshot is stored, and its link does not open here.`;
+  return `${head}\n\n  ![${item.id}](${item.screenshot.storageRef})`;
+};
+
 const evidenceLinks = (assertion: ProofPackAssertion): string => {
   const links = assertion.evidence
     .filter((item) => openable(item.storageRef))
@@ -444,14 +493,16 @@ const checkLines = (input: ProofPackInput): string[] => {
     ),
     ...input.assertions.map(
       (assertion) =>
-        `- ${assertion.result} ${assertion.id}: ${line(assertion.statement)}` +
+        `- ${input.draft !== undefined && assertion.result !== "PASS" ? `NOT PROVEN (${assertion.result})` : assertion.result} ${assertion.id}: ${line(assertion.statement)}` +
         `${assertion.injectedFailure === true ? ` ${INJECTED_FAILURE_NOTE}` : ""}${evidenceLinks(assertion)}`,
     ),
     ...(input.planCorrections ?? []).map(planCorrectionLine),
     ...(input.fakes ?? []).map(fakeLine),
-    `- ${blocking === 0 ? "PASS" : "FAIL"} Independent review: ${input.reviewPasses} ` +
-      `${input.reviewPasses === 1 ? "pass" : "passes"}, ${input.findings.length} ` +
-      `${input.findings.length === 1 ? "finding" : "findings"}, ${blocking} blocking.`,
+    input.draft !== undefined && !input.draft.reviewed
+      ? "- NOT PROVEN Independent review: this patch was not reviewed."
+      : `- ${blocking === 0 ? "PASS" : "FAIL"} Independent review: ${input.reviewPasses} ` +
+        `${input.reviewPasses === 1 ? "pass" : "passes"}, ${input.findings.length} ` +
+        `${input.findings.length === 1 ? "finding" : "findings"}, ${blocking} blocking.`,
   ];
 };
 
@@ -521,12 +572,13 @@ const footer = (input: ProofPackInput, documentUrl: string | null): string =>
 /** docs/specs/proof-pack-and-visual-evidence.md. The short body a human reads in Linear. */
 export const renderProofPack = (input: ProofPackInput, documentUrl: string | null): string => {
   const attention = needsAttention(input);
+  const eye = input.needsYourEye ?? [];
   const visual = visualSection(input);
   const description = line(input.changeDescription);
   return [
     "## Factoree delivery",
     "",
-    `**Ready for human review.** ${line(input.workItem.title)}${
+    `${input.draft === undefined ? "**Ready for human review.**" : `**Draft pull request. ${DRAFT_NOT_PROVEN}**`} ${line(input.workItem.title)}${
       input.workItem.url === null ? "" : ` (${input.workItem.url})`
     }`,
     "",
@@ -541,6 +593,16 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     "",
     ...(attention.length === 0 ? ["Nothing."] : attention.map((item) => `- ${line(item)}`)),
     "",
+    ...(eye.length === 0
+      ? []
+      : [
+          NEEDS_YOUR_EYE_HEADING,
+          "",
+          "Factoree does not check these. Look at each screenshot and judge it yourself.",
+          "",
+          ...eye.map(needsYourEyeLine),
+          "",
+        ]),
     "### Visual evidence",
     "",
     ...(visual.length === 0 ? ["None captured."] : visual),

@@ -2,6 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
+import type { StopRequest } from "~/domain/runs/run-stop.js";
+import type { DraftRequest } from "~/domain/runs/run-draft.js";
+import type { DraftOutcome } from "~/domain/runs/delegation-service.js";
+import { principalOf } from "../auth/admin-guard.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 
 /** The most runs one page returns. */
@@ -18,6 +22,7 @@ const listQuerySchema = z.object({
 });
 
 const detailQuerySchema = z.object({ linearWorkspaceId: z.string().min(1) });
+const stopBodySchema = z.object({ linearWorkspaceId: z.string().min(1) });
 
 export const runListItemSchema = z.object({
   id: z.string(),
@@ -39,10 +44,42 @@ export const runListItemSchema = z.object({
   waitedMs: z.number(),
   /** docs/specs/sandbox-provider-spillover.md. The sandbox provider of the run, or null. */
   sandboxProvider: z.string().nullable(),
+  /**
+   * docs/specs/blocked-by-wait.md. Each blocker as the last read saw it, with its Linear state type
+   * and the pull request of its newest Factoree run. Null when the run never waited.
+   */
+  blockers: z
+    .array(
+      z.object({
+        identifier: z.string(),
+        url: z.string().nullable(),
+        state: z.string(),
+        pullRequestUrl: z.string().nullable(),
+      }),
+    )
+    .nullable(),
 });
 
 export const runDetailSchema = runListItemSchema.extend({
   temporalWorkflowId: z.string(),
+  /** Issue #45. True when the status is terminal, so the run takes no stop. */
+  terminal: z.boolean(),
+  /** Issue #45, DI-21.65. The first stop that reached the workflow, or null. */
+  stopRequestedAt: z.string().nullable(),
+  /** "linear" or "factoree_ui", or null when nobody stopped the run. */
+  stopSource: z.string().nullable(),
+  /** The admin who stopped the run from the Factoree UI, or null. */
+  stopRequestedBy: z.string().nullable(),
+  /** docs/specs/draft-of-failed-run.md. True when a draft request would start the draft now. */
+  draftQualifies: z.boolean(),
+  /** DI-21.79. The request that started the draft workflow, or null. */
+  draftRequestedAt: z.string().nullable(),
+  /** "linear" or "factoree_ui", or null when nobody asked for a draft. */
+  draftSource: z.string().nullable(),
+  /** The Linear user or the admin who asked for the draft, or null. */
+  draftRequestedBy: z.string().nullable(),
+  /** The sandbox retention of the product, in hours. */
+  sandboxRetentionHours: z.number(),
   autonomyLevel: z.string(),
   followUpOfRunId: z.string().nullable(),
   baseSha: z.string().nullable(),
@@ -126,11 +163,21 @@ export const runDetailSchema = runListItemSchema.extend({
 
 /**
  * docs/specs/run-visibility.md. The read model of the Runs pages. Every member of the workspace
- * reads it, and nothing here changes a run.
+ * reads it. Issue #45: only the stop route changes a run, and the admin guard limits it to a
+ * Linear admin of the workspace, as for every other change.
  */
 export const registerRunRoutes = (
   app: FastifyInstance,
-  dependencies: { tenants: TenantRegistry; runViews: RunViewReader },
+  dependencies: {
+    tenants: TenantRegistry;
+    runViews: RunViewReader;
+    /** The stop path of a Linear stop: DelegationService.stopRun. */
+    stopRun: (input: { tenantId: string; runId: string; workflowId: string; request: StopRequest }) => Promise<boolean>;
+    /** The name, or else the email, of a user, for the stop message and the stop record. */
+    userName: (userId: string) => Promise<string | null>;
+    /** docs/specs/draft-of-failed-run.md. The draft path of a Linear reply: DelegationService.requestDraft. */
+    requestDraft: (input: { tenantId: string; runId: string; request: DraftRequest }) => Promise<DraftOutcome>;
+  },
 ): void => {
   useSchemasAsDocumentation(app);
 
@@ -184,6 +231,91 @@ export const registerRunRoutes = (
       const run = await dependencies.runViews.detail(tenant.id, request.params.id);
       if (!run) return reply.code(404).send({ error: "run not found" });
       return run;
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/admin/runs/:id/stop",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "stopRun",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        body: schemaOf(stopBodySchema),
+        response: {
+          202: schemaOf(z.object({ stopRequestedBy: z.string().nullable() })),
+          400: errorSchema,
+          404: errorSchema,
+          409: errorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = stopBodySchema.safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(body.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const run = await dependencies.runViews.detail(tenant.id, request.params.id);
+      if (!run) return reply.code(404).send({ error: "run not found" });
+      if (run.terminal) return reply.code(409).send({ error: `the run already ended as ${run.status}` });
+      const by = await dependencies.userName(principalOf(request).userId);
+      const signalled = await dependencies.stopRun({
+        tenantId: tenant.id,
+        runId: run.id,
+        workflowId: run.temporalWorkflowId,
+        request: { source: "factoree_ui", by },
+      });
+      // DI-21.65. A run row that is not terminal while its workflow is gone takes no signal, so
+      // nothing can stop it from here.
+      if (!signalled) return reply.code(409).send({ error: "the workflow of the run is not running" });
+      return reply.code(202).send({ stopRequestedBy: by });
+    },
+  );
+  /**
+   * docs/specs/draft-of-failed-run.md. A workspace admin asks for the draft of a failed run, on the
+   * path of the Linear reply. 202 names the started or running draft workflow, or the pull request
+   * of a draft that is already open. 409 names why Factoree refuses it.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/admin/runs/:id/draft",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "publishRunDraft",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        body: schemaOf(stopBodySchema),
+        response: {
+          202: schemaOf(z.object({ workflowId: z.string().nullable(), pullRequestUrl: z.string().nullable() })),
+          400: errorSchema,
+          404: errorSchema,
+          409: errorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = stopBodySchema.safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(body.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const by = await dependencies.userName(principalOf(request).userId);
+      const outcome = await dependencies.requestDraft({
+        tenantId: tenant.id,
+        runId: request.params.id,
+        request: { source: "factoree_ui", by },
+      });
+      switch (outcome.kind) {
+        case "not_found":
+          return reply.code(404).send({ error: "run not found" });
+        case "refused":
+          return reply.code(409).send({ error: outcome.reason });
+        case "published":
+          return reply.code(202).send({ workflowId: null, pullRequestUrl: outcome.pullRequestUrl });
+        case "started":
+        case "in_progress":
+          return reply.code(202).send({ workflowId: outcome.workflowId, pullRequestUrl: null });
+      }
     },
   );
 };

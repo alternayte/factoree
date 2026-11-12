@@ -332,6 +332,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.models !== undefined ||
       body.data.effort !== undefined ||
       body.data.silenceMinutes !== undefined ||
+      body.data.refinerCriteriaLimit !== undefined ||
+      body.data.repairMaxAttempts !== undefined ||
       body.data.sandboxRetentionHours !== undefined ||
       body.data.sandboxProviderIds !== undefined ||
       body.data.maxConcurrentRuns !== undefined ||
@@ -345,6 +347,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
         ...(body.data.models === undefined ? {} : { models: body.data.models }),
         ...(body.data.effort === undefined ? {} : { effort: body.data.effort }),
         ...(body.data.silenceMinutes === undefined ? {} : { silenceMinutes: body.data.silenceMinutes }),
+        ...(body.data.refinerCriteriaLimit === undefined ? {} : { refinerCriteriaLimit: body.data.refinerCriteriaLimit }),
+        ...(body.data.repairMaxAttempts === undefined ? {} : { repairMaxAttempts: body.data.repairMaxAttempts }),
         ...(body.data.sandboxRetentionHours === undefined
           ? {}
           : { sandboxRetentionHours: body.data.sandboxRetentionHours }),

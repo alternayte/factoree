@@ -351,7 +351,8 @@ const build = async (
     productId: input.productId,
     primary: input.primary,
     references: input.references,
-    defaults: { ...input.defaults, runners },
+    // Issue #43, DI-21.67. The Product repair budget applies when the repository sets none.
+    defaults: { ...input.defaults, runners, ...(product === null ? {} : { repairMaxAttempts: product.repairMaxAttempts }) },
     environment: { ...input.environment, ...runnerEnvironment },
     agentHosts,
     ...(repositoryCredential === null ? {} : { repositoryCredential }),
@@ -744,7 +745,7 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
           });
           // docs/specs/run-recovery.md. A follow-up run reads what this run last tried. A failed
           // write costs the follow-up its reference and nothing else.
-          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, captured.patchBase64).catch((error: unknown) => {
+          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, captured.patchBase64, input.attempt).catch((error: unknown) => {
             dependencies.logger.warn("the last patch of the run was not recorded", { run_id: input.runId, error: String(error) });
           });
           // docs/specs/run-speed.md. The reviewer's check sprite must hold the patch the first

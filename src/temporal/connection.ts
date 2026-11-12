@@ -6,12 +6,13 @@ import {
 } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import type { Env } from "~/config/env.js";
-import { agentRunWorkflow, humanInputSignal, stopSignal } from "~/workflows/agent-run.workflow.js";
+import { agentRunWorkflow, humanInputSignal, stopSignal, type AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/workflows/sync-installation.workflow.js";
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
 import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
+import { draftRunWorkflow } from "~/workflows/draft-run.workflow.js";
 import { setupAfterPushWorkflow, setupAfterPushWorkflowId, setupPushedSignal } from "~/workflows/setup-after-push.workflow.js";
 
 const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
@@ -49,13 +50,55 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
       if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
     }
   },
-  async signalStop(workflowId) {
-    return signalIfRunning(() => client.workflow.getHandle(workflowId).signal(stopSignal));
+  async signalStop(workflowId, request) {
+    // Issue #45. The payload names where the stop came from. A stop with none still works.
+    return signalIfRunning(() =>
+      request === undefined
+        ? client.workflow.getHandle(workflowId).signal(stopSignal)
+        : client.workflow.getHandle(workflowId).signal(stopSignal, request),
+    );
   },
   async signalHumanInput(workflowId, body) {
     return signalIfRunning(() => client.workflow.getHandle(workflowId).signal(humanInputSignal, body));
   },
+  async startDraft(input) {
+    // docs/specs/draft-of-failed-run.md. The default reuse policy lets a request start the draft
+    // again after a workflow that failed, and Temporal refuses a start while one runs.
+    try {
+      await client.workflow.start(draftRunWorkflow, {
+        taskQueue,
+        workflowId: input.workflowId,
+        args: [{ tenantId: input.tenantId, runId: input.runId }],
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError) return false;
+      throw error;
+    }
+  },
 });
+
+/**
+ * docs/specs/blocked-by-wait.md, DI-21.89. The sweep starts a released run with the deterministic workflow
+ * id its delegation chose. REJECT_DUPLICATE refuses the id even after that workflow closed, so two
+ * workers or two sweeps cannot start one run twice.
+ */
+export const createReleasedRunStarter =
+  (client: Client, taskQueue: string) =>
+  async (workflowId: string, input: AgentRunWorkflowInput): Promise<"started" | "already_started"> => {
+    try {
+      await client.workflow.start(agentRunWorkflow, {
+        taskQueue,
+        workflowId,
+        args: [input],
+        workflowIdReusePolicy: "REJECT_DUPLICATE",
+      });
+      return "started";
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError) return "already_started";
+      throw error;
+    }
+  };
 
 /**
  * Starts `syncInstallationWorkflow`, keyed on the installation id. A repeated `installation`

@@ -302,7 +302,7 @@ function ProductEditor({
         <div className="flex min-w-0 flex-col gap-4">
           <Section
             title="Limits"
-            description="Runs over the parallel limit wait in a queue and start in delegation order."
+            description="Runs over the parallel limit wait in a queue and start in delegation order. A repository's repair.maxAttempts in .factoree/config.yaml replaces the repair budget."
           >
             <div className="grid grid-cols-2 items-end gap-x-4 gap-y-3.5 sm:grid-cols-4">
               {LIMITS.map((limit) => (

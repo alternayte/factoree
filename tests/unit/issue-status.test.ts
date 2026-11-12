@@ -96,6 +96,7 @@ describe("the pull_request closed event (DI-21.51)", () => {
     const lines: string[] = [];
     const recorded: unknown[] = [];
     const queries: unknown[] = [];
+    const blockerEvents: string[] = [];
     const redactor = new Redactor();
     const handler = new PullRequestCloseHandler({
       webhookLog,
@@ -109,10 +110,18 @@ describe("the pull_request closed event (DI-21.51)", () => {
       issues: () => Promise.resolve(port),
       respond: (_tenantId, _sessionId, body) => Promise.resolve(void lines.push(body)),
       logger: createLogger({ level: "error", redactor, sink: () => undefined }),
+      blockers: {
+        sweepSoon: (tenantId) => {
+          // The sweep reads the blocker issue after the move of this handler.
+          blockerEvents.push(`sweep ${tenantId} after ${issue.current}`);
+        },
+        pullRequestClosedUnmerged: (tenantId, issueId, pullRequest) =>
+          Promise.resolve(void blockerEvents.push(`closed ${tenantId} ${issueId} ${pullRequest}`)),
+      },
     });
     const close = (merged: boolean, deliveryId = "d1") =>
       handler.handle({ tenantId: "t1", deliveryId, repositoryFullName: "acme/api", number: 7, merged });
-    return { issue, lines, recorded, queries, close };
+    return { issue, lines, recorded, queries, close, blockerEvents };
   };
   const tracked = { issueStateFromId: "Backlog", issueStateSetId: "In Progress" };
 
@@ -147,6 +156,17 @@ describe("the pull_request closed event (DI-21.51)", () => {
     const untracked = build("In Progress", { issueStateFromId: null, issueStateSetId: null, pullRequestStates: ["merged"] });
     await untracked.close(true);
     expect(untracked.issue.moves).toEqual([]);
+  });
+
+  // docs/specs/blocked-by-wait.md. A merge starts a sweep at once; a close without a merge tells the
+  // runs that wait for this issue.
+  it("sweeps the tenant after a merge, and tells the waiting runs about a close without a merge", async () => {
+    const merged = build("In Progress", { ...tracked, pullRequestStates: ["merged"] });
+    await merged.close(true);
+    expect(merged.blockerEvents).toEqual(["sweep t1 after Done"]);
+    const closed = build("In Progress", { ...tracked, pullRequestStates: ["closed"] });
+    await closed.close(false);
+    expect(closed.blockerEvents).toEqual(["closed t1 issue-1 acme/api#7"]);
   });
 
   it("handles one delivery once, and ignores a pull request no run opened", async () => {

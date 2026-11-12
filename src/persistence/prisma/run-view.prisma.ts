@@ -9,6 +9,11 @@ import {
   type RunListQuery,
   type RunViewReader,
 } from "~/domain/runs/run-view.js";
+import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
+import { takesFollowUp } from "~/domain/runs/run-recovery.js";
+import { decideDraft } from "~/domain/runs/run-draft.js";
+import { PrismaRunDraftStore } from "./run-draft.prisma.js";
+import { blockersFromJson } from "./waiting-run.prisma.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -45,6 +50,7 @@ const runSelect = {
   completedAt: true,
   waitedMs: true,
   sandboxProviderId: true,
+  blockers: true,
   product: { select: { slug: true, name: true } },
 } satisfies Prisma.RunSelect;
 
@@ -72,6 +78,13 @@ const toListItem = (row: RunRow, costUsd: number | null, providerNames: Readonly
       : Math.max(0, row.completedAt.getTime() - (row.startedAt ?? row.createdAt).getTime() - row.waitedMs),
   waitedMs: row.waitedMs,
   sandboxProvider: row.sandboxProviderId === null ? null : (providerNames.get(row.sandboxProviderId) ?? row.sandboxProviderId),
+  blockers:
+    blockersFromJson(row.blockers)?.map((blocker) => ({
+      identifier: blocker.identifier,
+      url: blocker.url,
+      state: blocker.state,
+      pullRequestUrl: blocker.pullRequestUrl,
+    })) ?? null,
 });
 
 /** docs/specs/run-visibility.md. Every query carries the tenant. SDD section 52. */
@@ -126,6 +139,13 @@ export class PrismaRunViewReader implements RunViewReader {
     };
   }
 
+  /** docs/specs/draft-of-failed-run.md. Only a failed run can qualify, so only it reads the facts. */
+  private async draftQualifies(tenantId: string, runId: string, status: string): Promise<boolean> {
+    if (!takesFollowUp(status)) return false;
+    const facts = await new PrismaRunDraftStore(this.prisma).facts(tenantId, runId);
+    return facts !== null && decideDraft(facts).kind === "qualifies";
+  }
+
   async detail(tenantId: string, runId: string): Promise<RunDetail | null> {
     const row = await this.prisma.run.findFirst({
       where: { tenantId, id: runId },
@@ -140,6 +160,13 @@ export class PrismaRunViewReader implements RunViewReader {
         skillRegistrySet: true,
         skillResolutionId: true,
         proofPackPostedAt: true,
+        stopRequestedAt: true,
+        stopSource: true,
+        stopRequestedBy: true,
+        draftRequestedAt: true,
+        draftSource: true,
+        draftRequestedBy: true,
+        product: { select: { slug: true, name: true, sandboxRetentionHours: true } },
       },
     });
     if (row === null) return null;
@@ -160,6 +187,15 @@ export class PrismaRunViewReader implements RunViewReader {
     return {
       ...toListItem(row, costs.get(runId) ?? null, await this.providerNames()),
       temporalWorkflowId: row.temporalWorkflowId,
+      terminal: isTerminalRunStatus(row.status as RunStatus),
+      stopRequestedAt: row.stopRequestedAt,
+      stopSource: row.stopSource,
+      stopRequestedBy: row.stopRequestedBy,
+      draftQualifies: await this.draftQualifies(tenantId, runId, row.status),
+      draftRequestedAt: row.draftRequestedAt,
+      draftSource: row.draftSource,
+      draftRequestedBy: row.draftRequestedBy,
+      sandboxRetentionHours: row.product.sandboxRetentionHours,
       autonomyLevel: row.autonomyLevel,
       followUpOfRunId: row.followUpOfRunId,
       baseSha: row.baseSha,

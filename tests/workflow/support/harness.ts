@@ -345,6 +345,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const activityOrder: string[] = [];
   /** docs/specs/run-recovery.md. Every createRun input, so a test reads the workflow id it recorded. */
   const createRunCalls: Array<{ linearAgentSessionId: string; temporalWorkflowId: string; followUpOfRunId?: string }> = [];
+  /** docs/specs/blocked-by-wait.md. The sessions whose waiting row a stop cancelled before the start. */
+  const cancelledBeforeStart = new Set<string>();
   /** Every question the workflow elicited, in order. */
   const elicitations: string[] = [];
   /** Every autonomy level the workflow wrote to the Run after Refinement, in order. */
@@ -397,6 +399,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     createRun: async (input: { linearAgentSessionId: string; temporalWorkflowId: string; followUpOfRunId?: string }) => {
       created.push(input.linearAgentSessionId);
       createRunCalls.push(input);
+      if (cancelledBeforeStart.has(input.linearAgentSessionId)) {
+        return { runId: `run-${input.linearAgentSessionId}`, created: false, ended: true, status: "CANCELLED" as const };
+      }
       return {
         runId: `run-${input.linearAgentSessionId}`,
         created: created.filter((id) => id === input.linearAgentSessionId).length === 1,
@@ -883,6 +888,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       activityOrder.push("describeRunFailure");
       return Promise.resolve(activityInput.message);
     },
+    // docs/specs/draft-of-failed-run.md. The real activity reads the draft facts and may post the offer.
+    offerDraft: (): Promise<void> => {
+      activityOrder.push("offerDraft");
+      return Promise.resolve();
+    },
     submitSkillProposals: (activityInput: SubmitSkillProposalsInput): Promise<void> => {
       activityOrder.push("submitSkillProposals");
       skillProposalCalls.push(activityInput);
@@ -1085,6 +1095,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     targetIdentityCalls,
     activityOrder,
     createRunCalls,
+    cancelledBeforeStart,
     workItemLabels,
     workItemProjects,
     failingLabelReads,

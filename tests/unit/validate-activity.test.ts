@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockActivityEnvironment } from "@temporalio/testing";
+import { CancelledFailure } from "@temporalio/common";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import {
@@ -10,7 +11,8 @@ import {
 } from "~/domain/runs/agent-runner.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { FakeRunner } from "../support/fake-runner.js";
-import { build, input, planFiles, planText, rejectedPlan } from "../support/user-validate-fixture.js";
+import { build, input, passingBrowserResult, planFiles, planText, rejectedPlan } from "../support/user-validate-fixture.js";
+import type { BrowserRunResult } from "~/domain/validation/browser-driver.js";
 
 /**
  * Rejects every `exposeService` call, the way `FlySpriteSandbox` does today (a recorded Phase 2
@@ -35,7 +37,7 @@ describe("the userValidate activity", () => {
     );
 
     expect(runner.runs[0]?.role).toBe("validator");
-    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@9" });
+    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@10" });
     expect(output.sessionId).toBe("ses_fake");
   });
 
@@ -64,6 +66,24 @@ describe("the userValidate activity", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("ends as cancelled when a stop arrives during the browser checks (issue #44, DI-21.71)", async () => {
+    // A stop reached only the agent sessions, so the checks ran on for 87 minutes and the run
+    // ended as INTERNAL_ERROR after a worker restart.
+    const runner = new FakeRunner();
+    const { activities, browser } = build(runner);
+    const environment = new MockActivityEnvironment();
+    browser.during = () => {
+      environment.cancel();
+      return Promise.resolve();
+    };
+
+    await expect(
+      environment.run((activityInput: typeof input) => activities.userValidate(activityInput), input),
+    ).rejects.toBeInstanceOf(CancelledFailure);
+    expect(browser.calls).toHaveLength(1);
+    expect(browser.calls[0]!.signal?.aborted).toBe(true);
   });
 
   it("never gives the validator an Implementer transcript", async () => {
@@ -364,7 +384,7 @@ describe("the userValidate activity, a rejected Validation Plan (DI-15.23)", () 
     expect(fresh.prompt).toContain(commandReason);
     expect(fresh.prompt).toContain("/workspace/validation/plan-corrected.json");
     expect(fresh.prompt).not.toContain("/workspace/validation/plan.json");
-    expect(fresh.promptVersion).toBe("user-validator@9+user-validator-plan-correction@1");
+    expect(fresh.promptVersion).toBe("user-validator@10+user-validator-plan-correction@1");
     expect(output.passed).toBe(true);
     expect(results.rows.map((row) => row.result)).toEqual(["PASS", "PASS"]);
     expect(executions.rows.map((row) => row.idempotencyKey)).toEqual([
@@ -406,5 +426,154 @@ describe("the userValidate activity, a rejected Validation Plan (DI-15.23)", () 
     expect(runner.runs).toHaveLength(2);
     expect(runner.runs[1]!.prompt).toContain("# Validation Plan correction");
     expect(output.passed).toBe(true);
+  });
+});
+
+describe("the userValidate activity, a selector re-check (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
+  const strictFailure: BrowserRunResult = {
+    passed: false,
+    steps: [
+      { index: 0, action: "goto", passed: true, detail: "Opened /." },
+      { index: 1, action: "expectText", passed: false, detail: "strict mode violation" },
+    ],
+    consoleLines: [],
+    network: [],
+    artifacts: [{ kind: "screenshot", name: "final", contentType: "image/png", bytes: new Uint8Array([7]) }],
+    failureReason: "locator.textContent: Error: strict mode violation: locator('h1') resolved to 2 elements:",
+    selectorFailure: { index: 1, action: "expectText", selector: "h1", kind: "strict_mode" },
+    pageHtml: "<html><body><h1>Welcome</h1><h1>Welcome back</h1></body></html>",
+  };
+  const answer = (text: string): string =>
+    JSON.stringify({
+      entries: [
+        {
+          assertionId: "VAL-UI-001",
+          kind: "browser",
+          steps: [
+            { action: "goto", path: "/" },
+            { action: "expectText", selector: 'role=heading[name="Welcome"]', text },
+          ],
+        },
+      ],
+    });
+  const sandboxAnswering = (corrected: string | null): FakeSandbox => {
+    const sandbox = new FakeSandbox();
+    sandbox.onExec = (command) => {
+      if (command.file !== "cat") return { exitCode: 0, stdout: "", stderr: "" };
+      const path = command.args[0] ?? "";
+      if (path.endsWith("/plan.json")) return { exitCode: 0, stdout: planText, stderr: "" };
+      if (path.endsWith("/selector-recheck/corrected-entries.json") && corrected !== null) {
+        return { exitCode: 0, stdout: corrected, stderr: "" };
+      }
+      return { exitCode: 1, stdout: "", stderr: "No such file" };
+    };
+    return sandbox;
+  };
+  const scriptBrowser = (browser: ReturnType<typeof build>["browser"], results: BrowserRunResult[]): void => {
+    const queue = [...results];
+    browser.run = (scenario) => {
+      browser.calls.push(scenario);
+      return Promise.resolve(queue.shift() ?? passingBrowserResult);
+    };
+  };
+  const run = (activities: ReturnType<typeof build>["activities"]): Promise<UserValidateActivityOutput> =>
+    new MockActivityEnvironment().run((activityInput: typeof input) => activities.userValidate(activityInput), input);
+
+  it("resumes the validator once after the rerun, runs the corrected entry, and logs the result", async () => {
+    const runner = new FakeRunner();
+    const sandbox = sandboxAnswering(answer("Welcome"));
+    const { activities, browser, results, sessions, logLines } = build(runner, sandbox);
+    scriptBrowser(browser, [strictFailure, strictFailure, passingBrowserResult]);
+
+    const output = await run(activities);
+
+    // The first run, the rerun of run-recovery.md, then the corrected entry.
+    expect(browser.calls).toHaveLength(3);
+    expect(browser.calls[2]!.steps[1]).toEqual({ action: "expectText", selector: 'role=heading[name="Welcome"]', text: "Welcome" });
+    expect(runner.resumes).toHaveLength(1);
+    const prompt = runner.resumes[0]!.input.prompt;
+    expect(prompt).toContain("# Selector re-check");
+    expect(prompt).toContain("strict mode violation");
+    expect(prompt).toContain("step 2, expectText `h1`");
+    expect(prompt).toContain("/workspace/validation/selector-recheck/VAL-UI-001-final.png");
+    expect(sandbox.files.get("/workspace/validation/selector-recheck/VAL-UI-001.html")).toBe(strictFailure.pageHtml);
+    expect(output.passed).toBe(true);
+    expect(results.rows.map((row) => row.result)).toEqual(["PASS", "PASS"]);
+    expect(results.rows[0]!.reason).toMatch(/^After one selector re-check: /);
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual([
+      "run:run-1:validator:1",
+      "run:run-1:validator:1:selector-recheck",
+    ]);
+    expect(logLines.find((line) => line["message"] === "selector re-check started")?.["assertion_ids"]).toEqual(["VAL-UI-001"]);
+    expect(logLines.find((line) => line["message"] === "selector re-check finished")).toMatchObject({ assertion_id: "VAL-UI-001", result: "PASS" });
+  });
+
+  it("rejects a corrected entry that changes an expectText value, and the original failure stands", async () => {
+    const runner = new FakeRunner();
+    const { activities, browser, logLines } = build(runner, sandboxAnswering(answer("Welcome back")));
+    scriptBrowser(browser, [strictFailure, strictFailure]);
+
+    const output = await run(activities);
+
+    expect(browser.calls).toHaveLength(2);
+    expect(output.hasFailure).toBe(true);
+    expect(output.results[0]!.result).toBe("FAIL");
+    expect(output.results[0]!.reason).toContain("strict mode violation");
+    expect(output.results[0]!.reason).toContain("the corrected entry changes more than its selector fields");
+    expect(logLines.some((line) => line["message"] === "selector re-check rejected; the failure stands")).toBe(true);
+  });
+
+  it("asks for no re-check when a run failed for a reason other than its selector", async () => {
+    const runner = new FakeRunner();
+    const { activities, browser } = build(runner, sandboxAnswering(answer("Welcome")));
+    const wrongText: BrowserRunResult = { ...strictFailure, failureReason: 'Expected h1 to contain text "Welcome".', selectorFailure: null, pageHtml: null };
+    scriptBrowser(browser, [strictFailure, wrongText]);
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(0);
+    expect(browser.calls).toHaveLength(2);
+    expect(output.results[0]!.result).toBe("FAIL");
+  });
+});
+
+describe("the userValidate activity, for-your-eye screenshots (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
+  const eye = { id: "AC-R3", statement: "The page follows the screenshot's colours.", route: "/events" };
+  const run = (activities: ReturnType<typeof build>["activities"]): Promise<UserValidateActivityOutput> =>
+    new MockActivityEnvironment().run(
+      (activityInput: typeof input & { forYourEye: (typeof eye)[] }) => activities.userValidate(activityInput),
+      { ...input, forYourEye: [eye] },
+    );
+
+  it("loads the route after the plan and stores its screenshot as evidence of no assertion", async () => {
+    const { activities, browser, evidence } = build(new FakeRunner());
+
+    const output = await run(activities);
+
+    expect(output.passed).toBe(true);
+    expect(output.results).toHaveLength(2);
+    expect(browser.calls.at(-1)!.steps).toEqual([{ action: "goto", path: "/events" }]);
+    const row = evidence.rows.find((candidate) => candidate.source === "for-your-eye:AC-R3:screenshot");
+    expect(row).toMatchObject({ validationAssertionId: null, kind: "screenshot" });
+    expect(row!.storageRef).not.toBeNull();
+    expect(row!.metadata).toMatchObject({ forYourEye: "AC-R3", route: "/events", attempt: 1, captured: true });
+  });
+
+  it("records a failed capture as a reason, never as a failure of the run", async () => {
+    const { activities, browser, evidence } = build(new FakeRunner());
+    const queue = [passingBrowserResult];
+    browser.run = (scenario) => {
+      browser.calls.push(scenario);
+      return Promise.resolve(
+        queue.shift() ?? { ...passingBrowserResult, passed: false, failureReason: "The page `/events` did not load within 30 s." },
+      );
+    };
+
+    const output = await run(activities);
+
+    expect(output.passed).toBe(true);
+    const row = evidence.rows.find((candidate) => candidate.source === "for-your-eye:AC-R3:screenshot");
+    expect(row).toMatchObject({ storageRef: null });
+    expect(row!.metadata).toMatchObject({ captured: false, reason: "The page `/events` did not load within 30 s." });
   });
 });

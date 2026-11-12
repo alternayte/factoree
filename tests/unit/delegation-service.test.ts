@@ -7,6 +7,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
+import { DRAFT_STARTED_LINE, type DraftFacts, type DraftRequest } from "~/domain/runs/run-draft.js";
 
 const event = (name: string) =>
   agentSessionEventSchema.parse(JSON.parse(readFileSync(`tests/fixtures/linear/${name}.json`, "utf8")));
@@ -33,6 +34,8 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   models: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   effort: { implementer: null, refiner: null, validator: null, reviewer: null, setup: null },
   silenceMinutes: 10,
+  refinerCriteriaLimit: 20,
+  repairMaxAttempts: 2,
   sandboxRetentionHours: 24,
   sandboxProviderIds: [],
   maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
@@ -74,7 +77,15 @@ const build = (
     products: ProductRecord[];
     repositories: RepositoryRecord[];
     startFails: boolean;
-    latest: { id: string; status: "FAILED" | "READY_FOR_HUMAN" | "IMPLEMENTING"; temporalWorkflowId: string; pullRequestUrl: string | null } | null;
+    latest: {
+      id: string;
+      status: "FAILED" | "READY_FOR_HUMAN" | "IMPLEMENTING" | "DRAFT_PUBLISHED" | "WAITING_FOR_BLOCKERS";
+      temporalWorkflowId: string;
+      pullRequestUrl: string | null;
+    } | null;
+    blockerWait: { hold: () => Promise<boolean>; stop: () => Promise<boolean>; answerReply: () => Promise<boolean> };
+    draftFacts: Partial<DraftFacts>;
+    draftRunning: boolean;
   }> = {},
 ) => {
   const postedResponses: string[] = [];
@@ -88,7 +99,9 @@ const build = (
     ),
     signalStop: vi.fn(() => Promise.resolve(true)),
     signalHumanInput: vi.fn(() => Promise.resolve(true)),
+    startDraft: vi.fn(() => Promise.resolve(overrides.draftRunning !== true)),
   };
+  const draftRequests: DraftRequest[] = [];
   const service = new DelegationService({
     tenants: {
       findByWorkspace: () =>
@@ -144,8 +157,32 @@ const build = (
           findings: [],
         } as never),
     },
+    drafts: {
+      facts: (_tenantId: string, runId: string) =>
+        Promise.resolve({
+          runId,
+          status: overrides.latest?.status ?? "FAILED",
+          failureReason: "VALIDATION_FAILED",
+          failureMessage: "VAL-UI-001 failed.",
+          pullRequestUrl: overrides.latest?.pullRequestUrl ?? null,
+          hasPatch: true,
+          patchAttempt: 1,
+          targetCount: 1,
+          assertions: [],
+          findings: [],
+          reviewed: true,
+          ...overrides.draftFacts,
+        }),
+      subject: () => Promise.resolve(null),
+      recordRequest: (_tenantId: string, _runId: string, request: DraftRequest) => {
+        draftRequests.push(request);
+        return Promise.resolve();
+      },
+      markPublished: () => Promise.resolve(true),
+    },
+    ...(overrides.blockerWait === undefined ? {} : { blockerWait: overrides.blockerWait }),
   });
-  return { service, starter, postedFailures, postedResponses };
+  return { service, starter, postedFailures, postedResponses, draftRequests };
 };
 
 describe("DelegationService", () => {
@@ -191,7 +228,7 @@ describe("DelegationService", () => {
     const { service, starter } = build();
     const outcome = await service.handleAgentSessionEvent(event("agent-session-prompted-stop"), "delivery-2");
     expect(outcome).toEqual({ kind: "stopped", workflowId: "linear:workspace-123:session-1" });
-    expect(starter.signalStop).toHaveBeenCalledWith("linear:workspace-123:session-1");
+    expect(starter.signalStop).toHaveBeenCalledWith("linear:workspace-123:session-1", { source: "linear" });
   });
 
   it("releases the delivery marker when the workflow start fails", async () => {
@@ -314,6 +351,7 @@ describe("DelegationService", () => {
       organizationSkillsRepository: null,
       skillRegistry: null,
       productPageUrl: "https://factoree.example/products/product-app",
+      refinerCriteriaLimit: 20,
     });
     expect(started.args[0]?.workItem).toMatchObject({
       title: "Fix the header",
@@ -423,6 +461,76 @@ describe("the delegation service and the organization skills repository", () => 
       expect(postedResponses).toEqual([expect.stringContaining("pull/24")]);
     });
 
+    // docs/specs/draft-of-failed-run.md. The typed reply and the chosen option take one matcher.
+    it("publishes a failed run as a draft for the reply `publish as draft`, and starts no follow-up run", async () => {
+      const { service, starter, postedResponses, draftRequests } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1", pullRequestUrl: null },
+      });
+      const prompted = JSON.parse(readFileSync("tests/fixtures/linear/agent-session-created.json", "utf8")) as Record<string, unknown>;
+      const outcome = await service.handleAgentSessionEvent(
+        agentSessionEventSchema.parse({
+          ...prompted,
+          action: "prompted",
+          agentActivity: { content: { type: "prompt", body: "  Publish as draft. " }, user: { id: "u-1", name: "Ada" } },
+        }),
+        "delivery-draft",
+      );
+
+      expect(outcome).toEqual({ kind: "draft", outcome: "started" });
+      expect(starter.startDraft).toHaveBeenCalledWith({ workflowId: "draft-run-73", tenantId: "tenant-1", runId: "run-73" });
+      expect(starter.start).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([DRAFT_STARTED_LINE]);
+      expect(draftRequests).toEqual([{ source: "linear", by: "Ada" }]);
+    });
+
+    it("still starts a follow-up run for any other reply on a failed run", async () => {
+      const { service, starter } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1", pullRequestUrl: null },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("fix the button colour"), "delivery-colour");
+
+      expect(outcome.kind).toBe("started");
+      expect(starter.startDraft).not.toHaveBeenCalled();
+      expect(starter.start.mock.calls[0]?.[0].workflowId).toMatch(/:follow-up:run-73$/);
+    });
+
+    it("answers a second request with the open draft pull request, and starts nothing", async () => {
+      const url = "https://github.com/acme/web/pull/31";
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-73", status: "DRAFT_PUBLISHED", temporalWorkflowId: "w", pullRequestUrl: url },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("publish as draft"), "delivery-draft-again");
+
+      expect(outcome).toEqual({ kind: "draft", outcome: "published" });
+      expect(starter.startDraft).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([`The draft pull request of this run is open: ${url}.`]);
+    });
+
+    it("answers a request while the draft workflow runs with that workflow, and records nothing", async () => {
+      const { service, draftRequests } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "w", pullRequestUrl: null },
+        draftRunning: true,
+      });
+      const outcome = await service.requestDraft({ tenantId: "tenant-1", runId: "run-73", request: { source: "factoree_ui", by: "Ada" } });
+
+      expect(outcome).toEqual({ kind: "in_progress", workflowId: "draft-run-73" });
+      expect(draftRequests).toEqual([]);
+    });
+
+    it("refuses the draft of a patch whose review found a blocker, names the finding, and opens nothing", async () => {
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-73", status: "FAILED", temporalWorkflowId: "w", pullRequestUrl: null },
+        draftFacts: {
+          findings: [{ key: "RV-1", severity: "blocker", category: "security", evidence: "src/auth.ts:12", description: "The token reaches the log.", blocking: true }],
+        },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("Publish as draft"), "delivery-draft-blocker");
+
+      expect(outcome).toEqual({ kind: "draft", outcome: "refused" });
+      expect(starter.startDraft).not.toHaveBeenCalled();
+      expect(postedResponses[0]).toContain("RV-1 at src/auth.ts:12: The token reaches the log.");
+    });
+
     it("forwards a reply to the newest run while it is active", async () => {
       const { service, starter } = build({
         latest: { id: "run-74", status: "IMPLEMENTING", temporalWorkflowId: "linear:w:s:follow-up:run-73", pullRequestUrl: null },
@@ -432,5 +540,63 @@ describe("the delegation service and the organization skills repository", () => 
       expect(outcome).toEqual({ kind: "prompt_forwarded", workflowId: "linear:w:s:follow-up:run-73" });
       expect(starter.signalHumanInput).toHaveBeenCalledWith("linear:w:s:follow-up:run-73", "Use the old label.");
     });
+  });
+});
+
+describe("the delegation of a blocked work item (docs/specs/blocked-by-wait.md)", () => {
+  const prompt = (body: string) => {
+    const created = JSON.parse(readFileSync("tests/fixtures/linear/agent-session-created.json", "utf8")) as Record<string, unknown>;
+    return agentSessionEventSchema.parse({ ...created, action: "prompted", agentActivity: { content: { type: "prompt", body } } });
+  };
+  const waiting = { id: "run-2", status: "WAITING_FOR_BLOCKERS" as const, temporalWorkflowId: "linear:workspace-123:session-1", pullRequestUrl: null };
+
+  it("starts no workflow when the work item waits for a blocker, and hands the hold the start input", async () => {
+    const hold = vi.fn(() => Promise.resolve(true));
+    const { service, starter } = build({ blockerWait: { hold, stop: vi.fn(), answerReply: vi.fn() } });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-b1");
+    expect(outcome).toEqual({ kind: "waiting_for_blockers", workflowId: "linear:workspace-123:session-1" });
+    expect(starter.start).not.toHaveBeenCalled();
+    expect(hold).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        linearIssueId: "issue-1",
+        temporalWorkflowId: "linear:workspace-123:session-1",
+        startInput: expect.objectContaining({ agentSessionId: "session-1", productId: "product-acme" }) as unknown,
+      }),
+    );
+  });
+
+  it("starts the workflow as before when nothing holds the work item", async () => {
+    const { service, starter } = build({ blockerWait: { hold: () => Promise.resolve(false), stop: vi.fn(), answerReply: vi.fn() } });
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-created"), "delivery-b2");
+    expect(outcome).toMatchObject({ kind: "started" });
+    expect(starter.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers a reply during the wait and signals nothing", async () => {
+    const answerReply = vi.fn(() => Promise.resolve(true));
+    const { service, starter } = build({ latest: waiting, blockerWait: { hold: vi.fn(), stop: vi.fn(), answerReply } });
+    const outcome = await service.handleAgentSessionEvent(prompt("Any news?"), "delivery-b3");
+    expect(outcome).toEqual({ kind: "waiting_for_blockers", workflowId: waiting.temporalWorkflowId });
+    expect(answerReply).toHaveBeenCalledWith("tenant-1", "run-2");
+    expect(starter.signalHumanInput).not.toHaveBeenCalled();
+  });
+
+  it("cancels the waiting row on a Linear stop, because no workflow takes the signal", async () => {
+    const stop = vi.fn(() => Promise.resolve(true));
+    const { service, starter } = build({ latest: waiting, blockerWait: { hold: vi.fn(), stop, answerReply: vi.fn() } });
+    starter.signalStop.mockImplementation(() => Promise.resolve(false));
+    const outcome = await service.handleAgentSessionEvent(event("agent-session-prompted-stop"), "delivery-b4");
+    expect(outcome).toEqual({ kind: "stopped", workflowId: waiting.temporalWorkflowId });
+    expect(stop).toHaveBeenCalledWith("tenant-1", "run-2", { source: "linear" });
+  });
+
+  it("cancels the waiting row on a Factoree UI stop", async () => {
+    const stop = vi.fn(() => Promise.resolve(true));
+    const { service, starter } = build({ blockerWait: { hold: vi.fn(), stop, answerReply: vi.fn() } });
+    starter.signalStop.mockImplementation(() => Promise.resolve(false));
+    const request = { source: "factoree_ui" as const, by: "Nate" };
+    expect(await service.stopRun({ tenantId: "tenant-1", runId: "run-2", workflowId: "w", request })).toBe(true);
+    expect(stop).toHaveBeenCalledWith("tenant-1", "run-2", request);
   });
 });

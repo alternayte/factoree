@@ -21,6 +21,10 @@ export type ProductForm = {
   skillRegistryKey: string;
   maxRunMinutes: string;
   silenceMinutes: string;
+  /** Issue #39. The most criteria a refiner proposal may hold. */
+  refinerCriteriaLimit: string;
+  /** Issue #43. The repair budget of a run whose repository sets none. */
+  repairMaxAttempts: string;
   sandboxRetentionHours: string;
   maxConcurrentRuns: string;
   /** docs/specs/sandbox-provider-spillover.md. The providers the runs may use. Empty allows all. */
@@ -64,6 +68,8 @@ export function formOf(p: Product): ProductForm {
     skillRegistryKey: "",
     maxRunMinutes: String(p.maxRunMinutes),
     silenceMinutes: String(p.silenceMinutes),
+    refinerCriteriaLimit: String(p.refinerCriteriaLimit),
+    repairMaxAttempts: String(p.repairMaxAttempts),
     sandboxRetentionHours: String(p.sandboxRetentionHours),
     maxConcurrentRuns: String(p.maxConcurrentRuns),
     sandboxProviderIds: p.sandboxProviderIds,
@@ -82,6 +88,8 @@ export const LIMITS: Limits[] = [
   { key: "maxRunMinutes", label: "Run time limit (minutes)", min: 1, max: 600 },
   { key: "silenceMinutes", label: "Silence limit (minutes)", min: 1, max: 240 },
   { key: "sandboxRetentionHours", label: "Sandbox retention (hours)", min: 0, max: 720 },
+  { key: "refinerCriteriaLimit", label: "Refiner criteria limit", min: 1, max: 50 },
+  { key: "repairMaxAttempts", label: "Repair budget (attempts)", min: 0, max: 10 },
 ];
 
 /** bodyOf builds the full update body, or the problems that stop a save. */
@@ -95,12 +103,8 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
     }
     return n;
   };
-  const [maxConcurrentRuns, maxRunMinutes, silenceMinutes, sandboxRetentionHours] = LIMITS.map(int) as [
-    number,
-    number,
-    number,
-    number,
-  ];
+  const [maxConcurrentRuns, maxRunMinutes, silenceMinutes, sandboxRetentionHours, refinerCriteriaLimit, repairMaxAttempts] =
+    LIMITS.map(int) as [number, number, number, number, number, number];
   const riskCaps: Record<string, AutonomyLevel> = {};
   for (const cap of form.riskCaps) {
     const label = cap.label.trim().toLowerCase();
@@ -136,6 +140,8 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
         : null,
       maxRunMinutes,
       silenceMinutes,
+      refinerCriteriaLimit,
+      repairMaxAttempts,
       sandboxRetentionHours,
       maxConcurrentRuns,
       sandboxProviderIds: form.sandboxProviderIds,

@@ -1,5 +1,5 @@
 import type { Logger } from "~/telemetry/logger.js";
-import type { RunRepository, WebhookLog } from "./run-repository.js";
+import type { ClosedPullRequestRun, RunRepository, WebhookLog } from "./run-repository.js";
 import { moveIfStill, pullRequestsOutcome, type IssueMove, type IssueStatusPort } from "./issue-status.js";
 
 export interface PullRequestCloseDependencies {
@@ -10,6 +10,14 @@ export interface PullRequestCloseDependencies {
   /** Posts one line in the agent session of the run. */
   respond: (tenantId: string, sessionId: string, body: string) => Promise<void>;
   logger: Logger;
+  /**
+   * docs/specs/blocked-by-wait.md. The runs that wait for the issue of this run. A merge starts a
+   * sweep of the tenant at once. A close without a merge posts one line on each waiting session.
+   */
+  blockers?: {
+    sweepSoon(tenantId: string): void;
+    pullRequestClosedUnmerged(tenantId: string, blockerIssueId: string, pullRequest: string): Promise<void>;
+  };
 }
 
 export type PullRequestCloseOutcome = "handled" | "duplicate" | "unmatched";
@@ -68,11 +76,22 @@ export class PullRequestCloseHandler {
       input.merged ? "merged" : "closed",
     );
     if (run === null) return "unmatched";
+    await this.decide(input, run);
+    // After the issue move, so the sweep reads the blocker issue in the state the merge gave it.
+    const blockers = this.dependencies.blockers;
+    if (blockers !== undefined && run.linearIssueId !== null) {
+      if (input.merged) blockers.sweepSoon(input.tenantId);
+      else await blockers.pullRequestClosedUnmerged(input.tenantId, run.linearIssueId, `${input.repositoryFullName}#${String(input.number)}`);
+    }
+    return "handled";
+  }
+
+  private async decide(input: { tenantId: string; merged: boolean }, run: ClosedPullRequestRun): Promise<void> {
     const outcome = pullRequestsOutcome(run.pullRequestStates);
     const log = { run_id: run.runId, step: "pull_request_closed", outcome };
     if (outcome === "open") {
       this.dependencies.logger.info("a pull request of the run closed, and another one is still open", log);
-      return "handled";
+      return;
     }
     if (outcome === "mixed") {
       await this.dependencies.respond(
@@ -81,7 +100,7 @@ export class PullRequestCloseHandler {
         "Some pull requests of this run merged and others closed without a merge, so Factoree left the issue status for a human to judge.",
       );
       this.dependencies.logger.info("the pull requests of the run merged in part", log);
-      return "handled";
+      return;
     }
     // A run that moved nothing at its start leaves the issue to a human.
     let move: IssueMove | null = null;
@@ -100,6 +119,5 @@ export class PullRequestCloseHandler {
       await this.dependencies.respond(input.tenantId, run.linearAgentSessionId, closedLine(run.pullRequestStates.length, move));
     }
     this.dependencies.logger.info("the pull requests of the run closed", { ...log, issue_move: move?.kind ?? "none" });
-    return "handled";
   }
 }

@@ -244,6 +244,20 @@ const PLAN_CORRECTION_SUFFIX = ":plan-correction";
 export const planCorrectionSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
   `${agentSessionKey(runId, "validator", attempt, afterHang)}${PLAN_CORRECTION_SUFFIX}`;
 
+/**
+ * docs/specs/by-eye-criteria-and-selector-recheck.md. The key of the one selector re-check round of
+ * a pass. It writes its own row beside the first session, as the plan correction does.
+ */
+export const selectorRecheckSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
+  `${agentSessionKey(runId, "validator", attempt, afterHang)}:selector-recheck`;
+
+/**
+ * Issue #39, DI-21.66. The key of the one fresh refiner session that corrects an over-limit
+ * proposal when the first session cannot be resumed. It writes its own row beside the first.
+ */
+export const refinerLimitCorrectionSessionKey = (runId: string, afterHang: boolean): string =>
+  `${agentSessionKey(runId, "refiner", null, afterHang)}:limit-correction`;
+
 /** True for the row of a plan correction session. The Proof Pack reads it. */
 export const isPlanCorrectionSession = (row: Pick<RecordAgentSessionInput, "role" | "idempotencyKey">): boolean =>
   row.role === "validator" && row.idempotencyKey.endsWith(PLAN_CORRECTION_SUFFIX);

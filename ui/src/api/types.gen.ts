@@ -737,6 +737,8 @@ export type CreateSetupProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -900,6 +902,8 @@ export type ListProductsResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -998,6 +1002,8 @@ export type CreateProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1129,6 +1135,8 @@ export type GetProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1179,6 +1187,8 @@ export type UpdateProductData = {
       setup?: string | null;
     };
     silenceMinutes?: number;
+    refinerCriteriaLimit?: number;
+    repairMaxAttempts?: number;
     sandboxRetentionHours?: number;
     sandboxProviderIds?: Array<string>;
     maxConcurrentRuns?: number;
@@ -1271,6 +1281,8 @@ export type UpdateProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1367,6 +1379,8 @@ export type ActivateProductResponses = {
       setup: string | null;
     };
     silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
     sandboxRetentionHours: number;
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
@@ -1588,6 +1602,12 @@ export type ListRunsResponses = {
       durationMs: number | null;
       waitedMs: number;
       sandboxProvider: string | null;
+      blockers: Array<{
+        identifier: string;
+        url: string | null;
+        state: string;
+        pullRequestUrl: string | null;
+      }> | null;
     }>;
     nextCursor: string | null;
   };
@@ -1646,7 +1666,22 @@ export type GetRunResponses = {
     durationMs: number | null;
     waitedMs: number;
     sandboxProvider: string | null;
+    blockers: Array<{
+      identifier: string;
+      url: string | null;
+      state: string;
+      pullRequestUrl: string | null;
+    }> | null;
     temporalWorkflowId: string;
+    terminal: boolean;
+    stopRequestedAt: string | null;
+    stopSource: string | null;
+    stopRequestedBy: string | null;
+    draftQualifies: boolean;
+    draftRequestedAt: string | null;
+    draftSource: string | null;
+    draftRequestedBy: string | null;
+    sandboxRetentionHours: number;
     autonomyLevel: string;
     followUpOfRunId: string | null;
     baseSha: string | null;
@@ -1717,6 +1752,97 @@ export type GetRunResponses = {
 };
 
 export type GetRunResponse = GetRunResponses[keyof GetRunResponses];
+
+export type StopRunData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/runs/{id}/stop";
+};
+
+export type StopRunErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type StopRunError = StopRunErrors[keyof StopRunErrors];
+
+export type StopRunResponses = {
+  /**
+   * Default Response
+   */
+  202: {
+    stopRequestedBy: string | null;
+  };
+};
+
+export type StopRunResponse = StopRunResponses[keyof StopRunResponses];
+
+export type PublishRunDraftData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/runs/{id}/draft";
+};
+
+export type PublishRunDraftErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type PublishRunDraftError = PublishRunDraftErrors[keyof PublishRunDraftErrors];
+
+export type PublishRunDraftResponses = {
+  /**
+   * Default Response
+   */
+  202: {
+    workflowId: string | null;
+    pullRequestUrl: string | null;
+  };
+};
+
+export type PublishRunDraftResponse = PublishRunDraftResponses[keyof PublishRunDraftResponses];
 
 export type ListProductAgentSessionsData = {
   body?: never;

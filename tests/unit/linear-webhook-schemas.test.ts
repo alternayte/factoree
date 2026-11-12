@@ -29,7 +29,7 @@ describe("agentSessionEventSchema", () => {
       ...raw,
       agentActivity: { id: "activity-2", content: { type: "prompt", body: "please use Postgres" } },
     });
-    expect(classifyAgentSessionEvent(event)).toEqual({ kind: "prompt", body: "please use Postgres" });
+    expect(classifyAgentSessionEvent(event)).toEqual({ kind: "prompt", body: "please use Postgres", author: null });
   });
 
   it("ignores an unknown action", () => {

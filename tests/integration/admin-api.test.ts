@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startDatabase } from "./support/database.js";
 import { createPrismaClient, type FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
+import { PrismaRunStopLog } from "~/persistence/prisma/run-stop.prisma.js";
+import type { StopRequest } from "~/domain/runs/run-stop.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import {
@@ -28,6 +30,7 @@ let serverOptions: ServerDependencies;
 let tenants: PrismaTenantRegistry;
 let token: string;
 let auth: { authorization: string };
+const signalStop = vi.fn<(workflowId: string, request?: StopRequest) => Promise<boolean>>(() => Promise.resolve(true));
 
 // Every workspace the tests name, except the one a test names to prove a stranger is refused.
 const WORKSPACES = ["ws-context", "ws-context-other", "ws-1", "ws-admin", "ws-bad-skills", "ws-claim", "ws-fields", "ws-github-bind", "ws-github-owner", "ws-github-thief", "ws-kind", "ws-other", "ws-owner", "ws-refuse", "ws-remove", "ws-remove-other", "ws-remove-owner", "ws-repos", "ws-run-owner", "ws-run-sessions", "ws-secret", "ws-skills", "ws-sessions", "ws-sessions-other"];
@@ -68,7 +71,8 @@ beforeAll(async () => {
       products: new PrismaProductRegistry(prisma),
       repositories: new PrismaRepositoryRegistry(prisma),
       webhookLog: new PrismaWebhookLog(prisma),
-      starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop: vi.fn(() => Promise.resolve(true)), signalHumanInput: vi.fn(() => Promise.resolve(true)) },
+      starter: { start: vi.fn(() => Promise.resolve(undefined)), signalStop, signalHumanInput: vi.fn(() => Promise.resolve(true)), startDraft: vi.fn(() => Promise.resolve(true)) },
+      stops: new PrismaRunStopLog(prisma),
       refusalNotifier: { postFailure: () => Promise.resolve(undefined), postResponse: () => Promise.resolve(undefined) },
       logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
       repositoryBaseUrl: () => Promise.resolve("https://github.com"),
@@ -440,6 +444,53 @@ describe("administration API", () => {
     const second = await page(first.nextCursor ?? "");
     expect(second.items.map((item) => item.id)).toEqual([ids[0]]);
     expect(second.nextCursor).toBeNull();
+  });
+
+  // Issue #45. A workspace admin stops a run through the Linear stop path. A terminal run takes no stop.
+  it("stops a running run with the Factoree UI source, records who stopped it, and answers 409 for a terminal run", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      headers: auth,
+      payload: { linearWorkspaceId: "ws-run-sessions", slug: "run-stop", name: "Run stop", linearTeamKey: "RST" },
+    });
+    const product = created.json<{ id: string; tenantId: string }>();
+    const row = (status: string, suffix: string) =>
+      prisma.run.create({
+        data: {
+          tenantId: product.tenantId,
+          productId: product.id,
+          linearAgentSessionId: `session-run-stop-${suffix}`,
+          temporalWorkflowId: `workflow-run-stop-${suffix}`,
+          status,
+          autonomyLevel: "L2",
+        },
+      });
+    const running = await row("USER_VALIDATING", "running");
+    const ended = await row("READY_FOR_HUMAN", "ended");
+    const stopOf = (id: string) =>
+      app.inject({ method: "POST", url: `/admin/runs/${id}/stop`, headers: auth, payload: { linearWorkspaceId: "ws-run-sessions" } });
+
+    const refused = await stopOf(ended.id);
+    expect(refused.statusCode).toBe(409);
+    expect(signalStop).not.toHaveBeenCalledWith("workflow-run-stop-ended", expect.anything());
+
+    const stopped = await stopOf(running.id);
+    expect(stopped.statusCode).toBe(202);
+    expect(signalStop).toHaveBeenCalledWith("workflow-run-stop-running", { source: "factoree_ui", by: "Operator" });
+    const detail = await app.inject({
+      method: "GET",
+      url: `/admin/runs/${running.id}?linearWorkspaceId=ws-run-sessions`,
+      headers: auth,
+    });
+    const body = detail.json<{ stopRequestedAt: string | null }>();
+    expect(body).toMatchObject({ terminal: false, stopSource: "factoree_ui", stopRequestedBy: "Operator", sandboxRetentionHours: 24 });
+    expect(body.stopRequestedAt).not.toBeNull();
+
+    // A run row that is not terminal while its workflow is gone takes no signal.
+    signalStop.mockImplementationOnce(() => Promise.resolve(false));
+    const gone = await row("IMPLEMENTING", "gone");
+    expect((await stopOf(gone.id)).statusCode).toBe(409);
   });
 
   it("F6: answers 404 for a Product of another tenant", async () => {

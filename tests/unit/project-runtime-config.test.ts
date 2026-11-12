@@ -40,10 +40,42 @@ describe("toProjectRuntimeConfig", () => {
       refinerRunner: "opencode",
       agentsBlockIgnored: true,
       repairMaxAttempts: 1,
+      repairBudgetSource: "repository",
+      browserLimits: { stepTimeoutMs: 30_000, scenarioTimeoutMs: 180_000 },
       stagingRead: true,
       spriteRetentionHours: 48,
     });
     expect(resolved.verifyCommands).toEqual([{ name: "lint", run: "npm run lint" }]);
+  });
+
+  // Issue #44, DI-21.68, DI-21.69.
+  it("carries the browser limits in milliseconds and the ready selector of the preview", () => {
+    const resolved = toProjectRuntimeConfig(
+      parseFactoreeConfig(
+        `${minimum}validation:\n  browser:\n    stepTimeoutSeconds: 60\n    scenarioTimeoutSeconds: 600\n` +
+          "preview:\n  enabled: true\n  command: npm start\n  readyUrl: http://localhost:3000/\n  timeoutSeconds: 60\n  readySelector: '#app[data-ready]'\n",
+      ),
+      DEFAULT_PROJECT_DEFAULTS,
+    );
+    expect(resolved.runtime.browserLimits).toEqual({ stepTimeoutMs: 60_000, scenarioTimeoutMs: 600_000 });
+    expect(resolved.preview?.readySelector).toBe("#app[data-ready]");
+  });
+
+  // Issue #43, DI-21.67.
+  it("takes the repository repair budget when the file sets one, and the Product budget otherwise", () => {
+    const product = { ...DEFAULT_PROJECT_DEFAULTS, repairMaxAttempts: 4 };
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(minimum), product).runtime).toMatchObject({
+      repairMaxAttempts: 4,
+      repairBudgetSource: "product",
+    });
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(`${minimum}repair:\n  maxAttempts: 0\n`), product).runtime).toMatchObject({
+      repairMaxAttempts: 0,
+      repairBudgetSource: "repository",
+    });
+    expect(toProjectRuntimeConfig(parseFactoreeConfig(`${minimum}repair: {}\n`), DEFAULT_PROJECT_DEFAULTS).runtime).toMatchObject({
+      repairMaxAttempts: 2,
+      repairBudgetSource: "product",
+    });
   });
 
   it("maps the services block and turns Docker on for it (repository-setup-and-services.md)", () => {

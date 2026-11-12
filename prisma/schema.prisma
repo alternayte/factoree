@@ -87,6 +87,9 @@ model Run {
   // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured, so a
   // follow-up run can read what the failed run tried.
   lastPatchBase64          String?   @map("last_patch_base64")
+  // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
+  // patch, so a draft names the review of that same patch. Null on a run from before it.
+  lastPatchAttempt         Int?      @map("last_patch_attempt")
   temporalWorkflowId       String    @unique
   status                   String
   failureReason            String?
@@ -143,6 +146,23 @@ model Run {
   // issue from, and the state it set. Both null when the run moved nothing.
   issueStateFromId         String?   @map("issue_state_from_id")
   issueStateSetId          String?   @map("issue_state_set_id")
+  // Issue #45, DI-21.65. The first stop that reached the workflow: when, from where ("linear" or
+  // "factoree_ui"), and the admin who sent a Factoree UI stop. Null when nobody stopped the run.
+  stopRequestedAt          DateTime? @map("stop_requested_at")
+  stopSource               String?   @map("stop_source")
+  stopRequestedBy          String?   @map("stop_requested_by")
+  // docs/specs/draft-of-failed-run.md, DI-21.79. The request that started the draft workflow: when,
+  // from where ("linear" or "factoree_ui"), and the Linear user or the admin who asked.
+  draftRequestedAt         DateTime? @map("draft_requested_at")
+  draftSource              String?   @map("draft_source")
+  draftRequestedBy         String?   @map("draft_requested_by")
+  // docs/specs/blocked-by-wait.md. Each blocker of a WAITING_FOR_BLOCKERS run as the last read saw
+  // it: issue id, identifier, URL, state type and Factoree pull request URL. Null before the first
+  // read, and on a run that never waited.
+  blockers                 Json?     @map("blockers")
+  // docs/specs/blocked-by-wait.md, DI-21.83. The workflow input of a waiting run, built at the
+  // delegation, so the sweep starts the run with it. Null on a run that never waited.
+  waitingStartInput        Json?     @map("waiting_start_input")
   executions               AgentExecution[]
   agentSessions            AgentSession[]
   stages                   RunStage[]
@@ -159,6 +179,8 @@ model Run {
   @@index([productId, status])
   @@index([spriteRetainUntil])
   @@index([linearAgentSessionId, createdAt])
+  // docs/specs/blocked-by-wait.md. The sweep reads every waiting run each minute.
+  @@index([status])
 }
 
 model AgentExecution {
@@ -604,6 +626,11 @@ model Product {
   effortSetup       String?  @map("effort_setup")
   // The silence limit: an agent session that writes no output for this many minutes is hung.
   silenceMinutes Int      @default(10)
+  // Issue #39, DI-21.66. The most criteria a refiner proposal may hold, 1 to 50.
+  refinerCriteriaLimit Int @default(20) @map("refiner_criteria_limit")
+  // Issue #43, DI-21.67. The repair budget of a run, 0 to 10. A repository's
+  // `repair.maxAttempts` in .factoree/config.yaml replaces it.
+  repairMaxAttempts Int @default(2) @map("repair_max_attempts")
   // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
   sandboxRetentionHours Int @default(24)
   // docs/specs/sandbox-provider-spillover.md. The sandbox provider ids the runs of this product may
