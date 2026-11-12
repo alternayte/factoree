@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-12
+
+### Added
+
+- A work item that Linear marks as blocked by an open issue starts no run. The run waits as `WAITING_FOR_BLOCKERS`, and Factoree starts it from the default-branch head when every blocker is completed or canceled. Removing the relation in Linear starts it at once (`docs/specs/blocked-by-wait.md`, GitHub issue 40).
+- A failed run can publish its last patch as a draft pull request. Pick "Publish as draft" in Linear, reply `publish as draft`, or use the button on the run page. The body lists the checks that did not pass, and the run ends as `DRAFT_PUBLISHED` (`docs/specs/draft-of-failed-run.md`, GitHub issue 41).
+- A criterion that a person judges by eye gets a screenshot under "Needs your eye" in the proof pack, and no pass or fail. A browser check that fails only on its selector gets one selector re-check, which spends no repair (`docs/specs/by-eye-criteria-and-selector-recheck.md`, GitHub issue 42).
+- The product settings "Refiner criteria limit" (default 20) and "Repair budget". `repair.maxAttempts` in `.factoree/config.yaml` overrides the product repair budget when the file sets it (GitHub issues 39 and 43).
+- A workspace admin can stop a run from the run page, after a confirmation (GitHub issue 45).
+- `validation.browser.stepTimeoutSeconds`, `validation.browser.scenarioTimeoutSeconds` and `preview.readySelector` in `.factoree/config.yaml` (GitHub issue 44).
+
+### Changed
+
+- The refiner prompt states the criteria and question limits. A proposal over a limit gets one correction round, and a run that stays over it asks the human to split the issue (GitHub issue 39).
+- A failure message after the repair budget is spent names the budget and where it is set (GitHub issue 43).
+- A validation plan that selects by a styling class goes back to the validator for correction (GitHub issue 42).
+- `repair.maxAttempts` has no default in `.factoree/config.yaml`. A file without it uses the product repair budget, which is 2 by default.
+
+### Fixed
+
+- A browser step waits at most 30 s and a scenario at most 3 min, not a share of the whole run budget. A click or fill waits until the page is ready. The worker log names each step that times out (GitHub issue 44).
+- A stop reaches the browser checks, so the run ends as `CANCELLED` within seconds (GitHub issue 44).
+
 ## [0.9.2] - 2026-11-12
 
 ### Fixed
