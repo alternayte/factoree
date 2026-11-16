@@ -12,9 +12,10 @@ ARG PUPPETEER_BROWSERS_VERSION=3.2.6
 
 # git for the checkouts, iproute2 and procps for the preview port check, unzip for the browser
 # download, and the shared libraries and fonts chrome-headless-shell needs for a screenshot.
+# libicu72 because a .NET process, such as the Azure Functions host, stops at start without ICU.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git iproute2 procps unzip \
+      ca-certificates curl git iproute2 procps unzip libicu72 \
       fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 \
       libdbus-1-3 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 \
       libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \

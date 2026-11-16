@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `mise install` of an aqua tool, such as uv, works in a setup sandbox. The ecosystem host list holds `tuf-repo-cdn.sigstore.dev`, so mise verifies the GitHub artifact attestation instead of refusing the install. It also holds `releases.astral.sh`, from which the uv installer script downloads.
+- An Azure Functions app can run a preview. The ecosystem host list holds `cdn.functions.azure.com`, from which the Functions host downloads its extension bundle.
+- A .NET process starts in the sandbox. The sandbox image holds `libicu72`; without it, `dotnet` and the Azure Functions host stopped at start with "Couldn't find a valid ICU package".
+- The setup prompt states the limits of `preview.timeoutSeconds` and `services.waitTimeoutSeconds`, and its example preview timeout is below the limit. A setup agent proposed a timeout over 600, and Factoree refused the whole configuration after the session.
+
 ## [0.10.0] - 2026-11-12
 
 ### Added
