@@ -1,5 +1,7 @@
+import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
+
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@8";
+export const SETUP_PROMPT_VERSION = "setup@9";
 
 export interface SetupPromptFields {
   repository: string;
@@ -56,7 +58,7 @@ const list = (items: readonly string[], empty: string): string =>
   items.length === 0 ? empty : items.map((item) => `- ${item}`).join("\n");
 
 /** The config keys the setup agent writes, with one example. The parser in factoree-config.ts is the rule. */
-const CONFIG_SHAPE = `version: 1
+export const CONFIG_SHAPE = `version: 1
 identity:
   product: <product>
   linear:
@@ -80,7 +82,7 @@ preview:                  # optional: the app a browser check runs against
   enabled: true
   command: ./.factoree/preview.sh
   readyUrl: http://localhost:3000/
-  timeoutSeconds: 600
+  timeoutSeconds: 180
   readySelector: "body[data-ready]"  # optional: shows once the page takes input
 accounts:                 # optional: users the seed creates, for signed-in browser checks
   - name: member
@@ -130,6 +132,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "Use the repository's own compose file in services.compose. Put every extra service, and every fake, in `.factoree/compose.yaml`. Factoree passes it after the repository file, so it can add a service and change the environment of an existing one.",
         "A seed creates the data and the accounts the app needs, through the app's own path: its CLI, its migrations, or its registration endpoint. Put a seed script in `.factoree/`.",
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",
+        `preview.timeoutSeconds is at most ${PREVIEW_TIMEOUT_MAX_SECONDS} and services.waitTimeoutSeconds is at most ${SERVICES_WAIT_TIMEOUT_MAX_SECONDS}. Factoree refuses the whole configuration when a value is over its limit. A preview or a stack that needs longer is a part to leave out, not a limit to raise.`,
         "The preview must listen on every interface, 0.0.0.0 or [::], and not on localhost alone: Factoree and its browser reach it through the sandbox's exposed port, from outside the sandbox. Write readyUrl with localhost and the explicit port.",
         "Set preview.readySelector only when the app renders its markup before it attaches its handlers, as Blazor Server, Phoenix LiveView and Hotwire do: a click before then does nothing. Pick a selector that shows only once the page takes input. Before the first click or fill after each page load, Factoree waits for it, as well as for the load event and network idle.",
         "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",

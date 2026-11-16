@@ -36,10 +36,14 @@ export const ECOSYSTEM_HOSTS: readonly string[] = [
   "dotnetcli.azureedge.net",
   "dotnetcli.blob.core.windows.net",
   "ci.dot.net",
-  // Python: PyPI, uv, Poetry and conda.
+  // Azure Functions: the extension bundles that the Functions host downloads at start.
+  "cdn.functions.azure.com",
+  // Python: PyPI, uv, Poetry and conda. The uv installer script on astral.sh downloads from
+  // releases.astral.sh.
   "pypi.org",
   "files.pythonhosted.org",
   "astral.sh",
+  "releases.astral.sh",
   "install.python-poetry.org",
   "conda.anaconda.org",
   "repo.anaconda.com",
@@ -96,8 +100,10 @@ export const ECOSYSTEM_HOSTS: readonly string[] = [
   "objects.githubusercontent.com",
   "release-assets.githubusercontent.com",
   "raw.githubusercontent.com",
-  // mise.
+  // mise. It verifies the GitHub artifact attestation of an aqua tool, such as uv, against the
+  // Sigstore trust root, and refuses the install when it cannot load that root.
   "mise.jdx.dev",
   "mise-versions.jdx.dev",
   "mise-java.jdx.dev",
+  "tuf-repo-cdn.sigstore.dev",
 ];
