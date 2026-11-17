@@ -61,6 +61,7 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 import { SandboxProviderDownError, SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { RunSlotClaim } from "~/domain/runs/run-slots.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
+import type { RecordPublishedPullRequestInput } from "~/domain/pull-requests/pull-request-store.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 
 /** One conflict the context double reports. It carries the domain, the way a real record does. */
@@ -337,6 +338,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     commitSha?: string;
     pullRequestUrl?: string;
   }> = [];
+  /** docs/specs/pr-review-merge-and-deploy.md. Every pull request publication recorded, in order. */
+  const recordPullRequestCalls: RecordPublishedPullRequestInput[] = [];
+  /** The run ids whose run starts its PR workflow child. A test adds the id and terminates the child. */
+  const pullRequestWorkflowRuns = new Set<string>();
   /** Every recorded `recordDecision` call, in order. */
   const decisionCalls: Array<{ tenantId: string; runId: string; decision: FactoreeDecision }> = [];
   /** A run id in this map holds the publication open until the test resolves the promise. */
@@ -542,6 +547,25 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     startIssueWork: async () => undefined,
     restoreIssueStatus: async () => undefined,
     linkPullRequest: async () => undefined,
+    // docs/specs/pr-review-merge-and-deploy.md. The run then starts the PR workflow, which waits for events.
+    recordPullRequest: async (recordInput: RecordPublishedPullRequestInput) => {
+      recordPullRequestCalls.push(recordInput);
+      // An abandoned PR workflow waits for GitHub events that never come here. While a test awaits
+      // a run result, the time-skipping test server then jumps to that workflow's default timeout,
+      // and the next test in the file finds the clock stuck. Only a run that a test names starts it;
+      // the run's best-effort `notify` takes this refusal for every other run.
+      if (!pullRequestWorkflowRuns.has(recordInput.runId)) {
+        throw ApplicationFailure.nonRetryable("this test starts no PR workflow", "NoPullRequestWorkflow");
+      }
+      return {
+        pullRequestId: `pull-request-${recordInput.runId}`,
+        workflowId: `pr:${recordInput.tenantId}:${recordInput.repositoryId}#${String(recordInput.number)}:${recordInput.runId}`,
+      };
+    },
+    // DI-21.104. The PR workflow steers auto-merge at its start. No GitHub answers here.
+    steerAutoMerge: async () => ({ state: "off" }),
+    // docs/specs/pr-review-merge-and-deploy.md, slice 3. No review event reaches the PR workflow here.
+    planPullRequestFollowUp: async () => ({ kind: "none", reason: "no review event" }),
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
     readWorkItemContent: async () => ({
       comments: null,
@@ -1090,6 +1114,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldProofPacks,
     recordRunTargetCalls,
     recordRunTargetFactsCalls,
+    recordPullRequestCalls,
+    pullRequestWorkflowRuns,
     decisionCalls,
     targetIdentityOutcomes,
     targetIdentityCalls,

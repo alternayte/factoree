@@ -246,6 +246,154 @@ describe("publishToBranch", () => {
     expect(isDeterministicCheckoutFailure("error: patch failed: README.md:1")).toBe(true);
     expect(isDeterministicCheckoutFailure("fatal: unable to read tree (0000)")).toBe(true);
   });
+
+  // docs/specs/pr-review-merge-and-deploy.md, D2, DI-21.112. A PR follow-up commit takes the head it
+  // read as its parent, holds base plus the whole verified patch, and never forces the branch.
+  it("commits a PR follow-up on the head it read, and refuses a moved branch", async () => {
+    const common = {
+      cloneUrl: bare,
+      baseSha,
+      baseBranch: "main",
+      branch: "factoree/run-follow-up",
+      verifiedGitVersion: "git version 0.0.0-test",
+      commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
+      authorName: "Factoree",
+      authorEmail: "factoree@example.test",
+    };
+    const opened = await publishToBranch({ ...common, patchBase64, verifiedPatchSha256: sha256OfBase64(patchBase64) });
+
+    // The follow-up patch is the whole change of the pull request from the base, plus the repair.
+    const follow = join(root, "follow-up");
+    execFileSync("git", ["clone", bare, follow]);
+    git(follow, "checkout", "--detach", baseSha);
+    writeFileSync(join(follow, "README.md"), "base\nchanged\n");
+    writeFileSync(join(follow, "new.txt"), "new file\n");
+    writeFileSync(join(follow, "repair.txt"), "repair\n");
+    git(follow, "add", "-A");
+    const followPatch = Buffer.from(
+      execFileSync("git", [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, baseSha], { cwd: follow, encoding: "buffer" }),
+    ).toString("base64");
+
+    const pushedFiles: string[][] = [];
+    const pushed = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: opened.commitSha,
+      // DI-21.125. The push credential is minted from the files the commit changes on the branch.
+      pushToken: (files) => {
+        pushedFiles.push(files);
+        return Promise.resolve("");
+      },
+    });
+    expect(pushedFiles).toEqual([["repair.txt"]]);
+    expect(pushed.publishedPatchSha256).toBe(sha256OfBase64(followPatch));
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up^").trim()).toBe(opened.commitSha);
+    expect(git(bare, "diff", "--name-only", opened.commitSha, pushed.commitSha).trim()).toBe("repair.txt");
+
+    // A commit whose parent is no longer the branch head is refused, and the branch stays.
+    const refused = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: opened.commitSha,
+      commitMessage: "Another change\n",
+    })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(refused).toBeInstanceOf(TrustedCheckoutError);
+    expect((refused as TrustedCheckoutError).deterministic).toBe(true);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+
+    // A verified tree equal to the head changes nothing, so nothing is pushed.
+    const unchanged = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: pushed.commitSha,
+    })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(unchanged).toBeInstanceOf(TrustedCheckoutError);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+  });
+});
+
+// docs/specs/pr-review-merge-and-deploy.md, DI-21.119, DI-21.125. A base PR follow-up commit merges the
+// new base into the branch. The base side can change a GitHub Actions workflow the verified patch does
+// not name, and the push credential must ask for the Workflows permission for it.
+describe("publishToBranch, a base PR follow-up", () => {
+  it("names the base side of the merge among the files the push changes", async () => {
+    const own = mkdtempSync(join(tmpdir(), "factoree-base-follow-up-"));
+    try {
+      const remote = join(own, "remote.git");
+      const clone = join(own, "clone");
+      execFileSync("git", ["init", "--bare", "--initial-branch=main", remote]);
+      execFileSync("git", ["clone", remote, clone]);
+      git(clone, "config", "user.email", "fixture@example.test");
+      git(clone, "config", "user.name", "Fixture");
+      writeFileSync(join(clone, "README.md"), "base\n");
+      git(clone, "add", "-A");
+      git(clone, "commit", "-m", "base");
+      git(clone, "push", "origin", "main");
+      const oldBase = git(clone, "rev-parse", "HEAD").trim();
+
+      // The pull request branch holds one change on the old base.
+      git(clone, "checkout", "-b", "factoree/run-base");
+      writeFileSync(join(clone, "feature.txt"), "feature\n");
+      git(clone, "add", "-A");
+      git(clone, "commit", "-m", "feature");
+      git(clone, "push", "origin", "factoree/run-base");
+      const head = git(clone, "rev-parse", "HEAD").trim();
+
+      // The base branch moves with a new workflow file.
+      git(clone, "checkout", "main");
+      mkdirSync(join(clone, ".github", "workflows"), { recursive: true });
+      writeFileSync(join(clone, ".github", "workflows", "ci.yml"), "on: push\n");
+      git(clone, "add", "-A");
+      git(clone, "commit", "-m", "ci");
+      git(clone, "push", "origin", "main");
+      const newBase = git(clone, "rev-parse", "HEAD").trim();
+
+      // The verified patch runs from the new base: the pull request change and the repair.
+      git(clone, "checkout", "--detach", newBase);
+      writeFileSync(join(clone, "feature.txt"), "feature\n");
+      writeFileSync(join(clone, "repair.txt"), "repair\n");
+      git(clone, "add", "-A");
+      const patch = Buffer.from(
+        execFileSync("git", [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, newBase], { cwd: clone, encoding: "buffer" }),
+      ).toString("base64");
+
+      const pushedFiles: string[][] = [];
+      const pushed = await publishToBranch({
+        cloneUrl: remote,
+        baseSha: newBase,
+        baseBranch: "main",
+        branch: "factoree/run-base",
+        patchBase64: patch,
+        verifiedPatchSha256: sha256OfBase64(patch),
+        verifiedGitVersion: "git version 0.0.0-test",
+        commitMessage: "Factoree base follow-up\n",
+        commitTimestamp: COMMIT_TIMESTAMP,
+        authorName: "Factoree",
+        authorEmail: "factoree@example.test",
+        parentSha: head,
+        mergeParentSha: newBase,
+        pushToken: (files) => {
+          pushedFiles.push(files);
+          return Promise.resolve("");
+        },
+      });
+      expect(pushedFiles).toEqual([[".github/workflows/ci.yml", "repair.txt"]]);
+      expect(git(remote, "rev-parse", "factoree/run-base").trim()).toBe(pushed.commitSha);
+      expect(git(remote, "rev-parse", "factoree/run-base^2").trim()).toBe(newBase);
+      expect(oldBase).not.toBe(newBase);
+    } finally {
+      rmSync(own, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the review name query and the publication name query", () => {

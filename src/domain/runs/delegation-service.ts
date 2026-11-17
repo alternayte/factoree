@@ -1,5 +1,5 @@
 import { metrics } from "~/telemetry/metrics.js";
-import { buildDraftWorkflowId, buildFollowUpWorkflowId, buildWorkflowId } from "~/temporal/workflow-id.js";
+import { buildDraftWorkflowId, buildFollowUpWorkflowId, buildWorkflowId, isPrFollowUpWorkflowId } from "~/temporal/workflow-id.js";
 import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
 import { noFollowUpLine, renderFollowUpDescription, takesFollowUp } from "~/domain/runs/run-recovery.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
@@ -10,6 +10,8 @@ import type { RepositoryRegistry } from "~/domain/products/repository-registry.j
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
 import type { RunStopLog, StopRequest } from "~/domain/runs/run-stop.js";
 import type { BlockerWait } from "~/domain/runs/blocker-wait.js";
+import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
+import type { OpenDeployFailure } from "~/domain/pull-requests/deploys.js";
 import {
   decideDraft,
   DRAFT_IN_PROGRESS_LINE,
@@ -49,7 +51,7 @@ import type {
 } from "~/workflows/agent-run.workflow.js";
 import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
-import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
+import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
 import { ignoresImages } from "~/domain/products/model-vision.js";
 
 export interface WorkflowStarter {
@@ -76,6 +78,11 @@ export type DelegationOutcome =
   | { kind: "ignored"; reason: string }
   | { kind: "unconfigured"; reason: string }
   | { kind: "blocked_routing"; reason: string };
+
+/** The answer to a Linear reply after a failed PR follow-up run. */
+export const PR_FOLLOW_UP_REPLY_LINE =
+  "This run followed up its pull request, so a reply here starts no new run. Request changes on the pull request, " +
+  "or run the PR reviewer check again, to start another PR follow-up run.";
 
 /** docs/specs/draft-of-failed-run.md. The answer to one draft request. */
 export type DraftOutcome =
@@ -125,6 +132,11 @@ export interface DelegationDependencies {
   drafts?: RunDraftStore | undefined;
   /** docs/specs/blocked-by-wait.md. The hold of a blocked work item, its stop and its reply. */
   blockerWait?: Pick<BlockerWait, "hold" | "stop" | "answerReply"> | undefined;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.124. The failed deploys of a session. A
+   * reply after one starts a follow-up run.
+   */
+  deployFailures?: Pick<PullRequestStore, "openDeployFailure" | "markDeployFollowedUp"> | undefined;
 }
 
 export class DelegationService {
@@ -190,7 +202,7 @@ export class DelegationService {
       });
       return signalled ? { kind: "stopped", workflowId: target } : { kind: "not_running", workflowId: target };
     }
-    let followUp: { failedRunId: string; reply: string; browserAssertions: string[] } | null = null;
+    let followUp: { failedRunId: string; reply: string; browserAssertions: string[]; deploy?: OpenDeployFailure } | null = null;
     if (command.kind === "prompt") {
       // docs/specs/blocked-by-wait.md. No workflow exists yet to take the reply, so it gets one
       // fixed answer. A run that left the wait since the read takes the reply as before.
@@ -208,34 +220,53 @@ export class DelegationService {
         metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
         return signalled ? { kind: "prompt_forwarded", workflowId: target } : { kind: "not_running", workflowId: target };
       }
-      // docs/specs/draft-of-failed-run.md. The command is the whole reply, so a real follow-up
-      // reply never matches. The chosen option of the elicitation arrives as the same prompt.
-      if (isDraftCommand(command.body)) {
-        const outcome = await this.requestDraft({
-          tenantId,
-          runId: latest.id,
-          request: { source: "linear", by: command.author },
-        });
-        await this.dependencies.refusalNotifier.postResponse(event.organizationId, event.agentSession.id, draftLine(outcome));
-        return { kind: "draft", outcome: outcome.kind };
+      // docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.124. A reply after a failed deploy
+      // of the merged change starts a follow-up run with the failure as a finding. This extends
+      // DI-19.04: a reply after READY_FOR_HUMAN with no failed deploy still starts nothing.
+      const failedDeploy =
+        this.dependencies.deployFailures === undefined || isDraftCommand(command.body)
+          ? null
+          : await this.dependencies.deployFailures.openDeployFailure(tenantId, event.agentSession.id);
+      if (failedDeploy !== null) {
+        followUp = { failedRunId: failedDeploy.runId, reply: command.body, browserAssertions: [], deploy: failedDeploy };
+        metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
+      } else {
+        // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run follows an open pull request,
+        // and a review there starts the next one. A follow-up run of the issue would open a second pull
+        // request for the same work item, and so would a draft of its patch.
+        if (isPrFollowUpWorkflowId(latest.temporalWorkflowId) && (takesFollowUp(latest.status) || isDraftCommand(command.body))) {
+          await this.dependencies.refusalNotifier.postResponse(event.organizationId, event.agentSession.id, PR_FOLLOW_UP_REPLY_LINE);
+          return { kind: "follow_up_refused", status: latest.status };
+        }
+        // docs/specs/draft-of-failed-run.md. The command is the whole reply, so a real follow-up
+        // reply never matches. The chosen option of the elicitation arrives as the same prompt.
+        if (isDraftCommand(command.body)) {
+          const outcome = await this.requestDraft({
+            tenantId,
+            runId: latest.id,
+            request: { source: "linear", by: command.author },
+          });
+          await this.dependencies.refusalNotifier.postResponse(event.organizationId, event.agentSession.id, draftLine(outcome));
+          return { kind: "draft", outcome: outcome.kind };
+        }
+        if (!takesFollowUp(latest.status)) {
+          await this.dependencies.refusalNotifier.postResponse(
+            event.organizationId,
+            event.agentSession.id,
+            noFollowUpLine(latest.status, latest.pullRequestUrl),
+          );
+          return { kind: "follow_up_refused", status: latest.status };
+        }
+        const failed = (await this.dependencies.runViews?.detail(tenantId, latest.id)) ?? null;
+        followUp = {
+          failedRunId: latest.id,
+          reply: command.body,
+          browserAssertions: [
+            ...new Set((failed?.assertions ?? []).filter((assertion) => assertion.method === "browser").map((assertion) => assertion.key)),
+          ],
+        };
+        metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
       }
-      if (!takesFollowUp(latest.status)) {
-        await this.dependencies.refusalNotifier.postResponse(
-          event.organizationId,
-          event.agentSession.id,
-          noFollowUpLine(latest.status, latest.pullRequestUrl),
-        );
-        return { kind: "follow_up_refused", status: latest.status };
-      }
-      const failed = (await this.dependencies.runViews?.detail(tenantId, latest.id)) ?? null;
-      followUp = {
-        failedRunId: latest.id,
-        reply: command.body,
-        browserAssertions: [
-          ...new Set((failed?.assertions ?? []).filter((assertion) => assertion.method === "browser").map((assertion) => assertion.key)),
-        ],
-      };
-      metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
     }
 
     const teamId = event.agentSession.issue?.teamId ?? null;
@@ -275,7 +306,7 @@ export class DelegationService {
       description:
         followUp === null
           ? description
-          : await this.followUpDescription(tenantId, description, followUp.failedRunId, followUp.reply),
+          : await this.followUpDescription(tenantId, description, followUp.failedRunId, followUp.reply, followUp.deploy),
       url: event.agentSession.issue?.url ?? null,
       labels: [],
     };
@@ -286,32 +317,13 @@ export class DelegationService {
     // docs/specs/autonomy-levels.md. A pending Product can investigate and report, nothing
     // more, whatever level its row holds.
     const defaultAutonomy = product.status === "pending" ? "L0" : product.defaultAutonomy;
-    const workflowProduct: AgentRunProductInput = {
-      productId: product.id,
-      productSlug: product.slug,
+    const workflowProduct: AgentRunProductInput = agentRunProductInput({
+      product,
       defaultAutonomy,
-      riskCaps: product.riskCaps,
-      allowedDomains: product.allowedDomains,
-      repositories: repositories.map((repository) => ({
-        id: repository.id,
-        fullName: repository.fullName,
-        defaultBranch: repository.defaultBranch,
-        absentSince: repository.absentSince === null ? null : repository.absentSince.toISOString(),
-        githubInstallationId: repository.githubInstallationId,
-        linearProjects: repository.linearProjects,
-      })),
+      repositories,
       repositoryBaseUrl: await this.dependencies.repositoryBaseUrl(),
-      stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
-      // docs/specs/release-0-1-0.md. Retention is a Product setting.
-      spriteRetentionHours: product.sandboxRetentionHours,
-      organizationSkillsRepository: product.organizationSkillsRepository,
-      // docs/specs/skill-registry.md. The key stays in the secret store. Only the settings travel.
-      skillRegistry: product.skillRegistry,
-      // Issue #39, DI-21.66. The criteria cap of the refiner proposal is a Product setting.
-      refinerCriteriaLimit: product.refinerCriteriaLimit,
-      // docs/specs/egress-honesty-and-issue-status.md. A missing-host post names the product page.
-      ...(this.dependencies.productPageUrl === undefined ? {} : { productPageUrl: this.dependencies.productPageUrl(product.id) }),
-    };
+      productPageUrl: this.dependencies.productPageUrl === undefined ? null : this.dependencies.productPageUrl(product.id),
+    });
 
     // An unusable slug must stop the Run here, and not inside the workflow, where the operator
     // sees only a failed Run. The workflow builds the real clone URL later.
@@ -335,8 +347,16 @@ export class DelegationService {
       return { kind: "unconfigured", reason };
     }
 
+    // DI-21.124. A follow-up of a failed deploy is keyed by the deploy, so a second failed deploy of the
+    // same run gets its own follow-up run.
     const runWorkflowId =
-      followUp === null ? workflowId : buildFollowUpWorkflowId(event.organizationId, event.agentSession.id, followUp.failedRunId);
+      followUp === null
+        ? workflowId
+        : buildFollowUpWorkflowId(
+            event.organizationId,
+            event.agentSession.id,
+            followUp.deploy === undefined ? followUp.failedRunId : `deploy-${followUp.deploy.id}`,
+          );
     const startInput: AgentRunWorkflowInput = {
       tenantId,
       workspaceId: event.organizationId,
@@ -350,6 +370,17 @@ export class DelegationService {
       ...(followUp === null
         ? {}
         : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
+      ...(followUp?.deploy === undefined
+        ? {}
+        : {
+            deployFailure: {
+              environment: followUp.deploy.environment,
+              sha: followUp.deploy.sha,
+              previousSha: followUp.deploy.previousSha,
+              logUrl: followUp.deploy.logUrl,
+              pullRequestUrl: followUp.deploy.pullRequestUrl,
+            },
+          }),
       // docs/specs/work-item-images-and-links.md. The run reads the comments created up to this
       // delegation, or up to the reply of a follow-up run (DI-21.39). A reply "ignore the
       // images" skips the image check of the follow-up run.
@@ -376,6 +407,15 @@ export class DelegationService {
     }
 
     await this.dependencies.starter.start({ workflowId: runWorkflowId, args: [startInput] });
+    // DI-21.124. The failed deploy took its reply. A failed mark never undoes the start, and the
+    // workflow id keeps a second start of the same deploy out.
+    if (followUp?.deploy !== undefined && this.dependencies.deployFailures !== undefined) {
+      try {
+        await this.dependencies.deployFailures.markDeployFollowedUp(tenantId, followUp.deploy.id, runWorkflowId);
+      } catch (error) {
+        this.dependencies.logger.error("the follow-up of a failed deploy was not recorded", { tenant_id: tenantId, error: String(error) });
+      }
+    }
 
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId: runWorkflowId };
   }
@@ -437,15 +477,23 @@ export class DelegationService {
   }
 
   /** docs/specs/run-recovery.md. The issue text plus the reply and the facts of the failed run. */
-  private async followUpDescription(tenantId: string, description: string, failedRunId: string, reply: string): Promise<string> {
+  private async followUpDescription(
+    tenantId: string,
+    description: string,
+    failedRunId: string,
+    reply: string,
+    deploy?: OpenDeployFailure,
+  ): Promise<string> {
     const detail = (await this.dependencies.runViews?.detail(tenantId, failedRunId)) ?? null;
-    const patch = (await this.dependencies.sessionRuns?.lastPatch(tenantId, failedRunId)) ?? null;
+    // DI-21.124. The patch of a run whose deploy failed is merged into the base already.
+    const patch = deploy === undefined ? ((await this.dependencies.sessionRuns?.lastPatch(tenantId, failedRunId)) ?? null) : null;
     return renderFollowUpDescription({
       description,
       reply,
       failedRunId,
       run: { assertions: detail?.assertions ?? [], findings: detail?.findings ?? [] },
       previousPatch: patch === null ? null : Buffer.from(patch, "base64").toString("utf8"),
+      ...(deploy === undefined ? {} : { deployFailure: deploy }),
     });
   }
 }

@@ -1,8 +1,10 @@
 /**
  * Issue #45, SDD section 50. Where a stop of a Run came from. A Linear stop is the Stop button of
  * the agent session. A Factoree UI stop is `POST /admin/runs/:id/stop` by a workspace admin.
+ * docs/specs/pr-review-merge-and-deploy.md: the PR workflow stops a PR follow-up run whose pull
+ * request merged or closed.
  */
-export const STOP_SOURCES = ["linear", "factoree_ui"] as const;
+export const STOP_SOURCES = ["linear", "factoree_ui", "pull_request"] as const;
 
 export type StopSource = (typeof STOP_SOURCES)[number];
 
@@ -35,7 +37,9 @@ export const stopResponse = (request: StopRequest | null, pullRequestUrl: string
   const opening =
     request?.source === "factoree_ui"
       ? `Stopped from the Factoree UI${request.by ? ` by ${request.by}` : ""}.`
-      : "Factoree stopped this Run at your request.";
+      : request?.source === "pull_request"
+        ? "The pull request merged or closed, so Factoree stopped this PR follow-up run."
+        : "Factoree stopped this Run at your request.";
   return pullRequestUrl === null
     ? `${opening} No change was published.`
     : `${opening} The verified change is already published and waits for a human. Pull request: ${pullRequestUrl}.`;

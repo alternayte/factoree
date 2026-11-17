@@ -5,6 +5,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import {
+  getProductAutoMergeAttentionOptions,
+  getProductGitHubAccessOptions,
   getProductOptions,
   getProductQueryKey,
   listProductSecretsOptions,
@@ -209,6 +211,8 @@ function ProductEditor({
       {product.status === "pending" ? (
         <ActivateProduct product={product} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
       ) : null}
+      <GitHubAccessNotice productId={product.id} linearWorkspaceId={linearWorkspaceId} />
+      <AutoMergeNotice productId={product.id} linearWorkspaceId={linearWorkspaceId} />
       {/* docs/specs/run-visibility.md. On a desktop the sections sit in two columns. */}
       <form
         id="product-form"
@@ -354,6 +358,38 @@ function ProductEditor({
                 </Select>
               )}
             </Field>
+          </Section>
+
+          <Section
+            title="PR reviewer"
+            description="An external review app that checks each Factoree pull request. Factoree reads its verdict only from its check run or commit status on the pull request head. Leave both empty for none."
+          >
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
+              <Field label="GitHub App slug" hint="The slug in the app URL on GitHub.">
+                {(props) => (
+                  <Input
+                    {...props}
+                    mono
+                    disabled={disabled}
+                    placeholder="review-bot"
+                    value={form.prReviewerAppSlug}
+                    onChange={(e) => set("prReviewerAppSlug", e.target.value)}
+                  />
+                )}
+              </Field>
+              <Field label="Check name" hint="The exact check run name or status context.">
+                {(props) => (
+                  <Input
+                    {...props}
+                    mono
+                    disabled={disabled}
+                    placeholder="Code review"
+                    value={form.prReviewerCheckName}
+                    onChange={(e) => set("prReviewerCheckName", e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
           </Section>
 
           <Section
@@ -611,6 +647,92 @@ function ActivateProduct({
         </div>
       ) : null}
       <ErrorAlert error={activate.error} className="mt-2" />
+    </Alert>
+  );
+}
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. An installation keeps its old permissions until an owner
+ * accepts the new ones on GitHub. The notice names what each installation of the product lacks.
+ */
+function GitHubAccessNotice({ productId, linearWorkspaceId }: { productId: string; linearWorkspaceId: string }) {
+  const access = useQuery(getProductGitHubAccessOptions({ path: { id: productId }, query: { linearWorkspaceId } }));
+  const lacking = (access.data?.installations ?? []).filter(
+    (installation) =>
+      installation.error !== null ||
+      installation.missingPermissions.length > 0 ||
+      installation.missingEvents.length > 0,
+  );
+  if (lacking.length === 0) return null;
+  return (
+    <Alert tone="warning" title="The GitHub App lacks access that pull request reviews need" className="mb-4">
+      <ul className="flex flex-col gap-2">
+        {lacking.map((installation) => (
+          <li key={installation.installationId}>
+            <p>
+              Installation{" "}
+              <span className="font-mono text-body">{installation.accountLogin ?? installation.installationId}</span> (
+              <span className="font-mono">{installation.repositories.join(", ")}</span>)
+            </p>
+            {installation.error ? <p>{installation.error}</p> : null}
+            {installation.missingPermissions.length > 0 ? (
+              <p>
+                Missing permissions:{" "}
+                {installation.missingPermissions
+                  .map(
+                    (permission) =>
+                      `${permission.name} ${permission.required}${permission.granted ? ` (has ${permission.granted})` : ""}`,
+                  )
+                  .join(", ")}
+                .
+              </p>
+            ) : null}
+            {installation.missingEvents.length > 0 ? (
+              <p>Missing events: {installation.missingEvents.join(", ")}.</p>
+            ) : null}
+            {installation.missingPermissions.length > 0 || installation.missingEvents.length > 0 ? (
+              <p>
+                Add them to the GitHub App in its settings on GitHub. Then accept them on the{" "}
+                {installation.settingsUrl ? (
+                  <a className="underline" href={installation.settingsUrl} target="_blank" rel="noreferrer">
+                    installation page
+                  </a>
+                ) : (
+                  "installation page"
+                )}
+                . Until then, Factoree does not see the reviews, checks and statuses of its pull requests.
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </Alert>
+  );
+}
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D5. An L4 pull request stays open as at L3 when its
+ * repository does not allow auto-merge or its base branch has no rule. The notice names the setting.
+ */
+function AutoMergeNotice({ productId, linearWorkspaceId }: { productId: string; linearWorkspaceId: string }) {
+  const attention = useQuery(getProductAutoMergeAttentionOptions({ path: { id: productId }, query: { linearWorkspaceId } }));
+  const pullRequests = attention.data?.pullRequests ?? [];
+  if (pullRequests.length === 0) return null;
+  return (
+    <Alert tone="warning" title="Needs your attention: L4 pull requests without auto-merge" className="mb-4">
+      <ul className="flex flex-col gap-2">
+        {pullRequests.map((pullRequest) => (
+          <li key={pullRequest.url}>
+            <p>
+              <a className="font-mono underline" href={pullRequest.url} target="_blank" rel="noreferrer">
+                {pullRequest.repositoryFullName}#{pullRequest.number}
+              </a>{" "}
+              stays open as at L3.
+            </p>
+            <p>{pullRequest.reason}</p>
+          </li>
+        ))}
+      </ul>
     </Alert>
   );
 }

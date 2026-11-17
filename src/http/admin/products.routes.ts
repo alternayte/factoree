@@ -23,8 +23,13 @@ import { agentSettingsProblems, PRODUCT_ROLES, resolveRole, type RoleValues } fr
 import { catalogEffortProblem } from "~/domain/products/model-catalog.js";
 import type { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
+import type { GitHubAppInstallation } from "~/adapters/github/app-manifest.js";
+import { missingGitHubAccess } from "~/adapters/github/app-manifest.js";
+import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import {
+  autoMergeAttentionSchema,
   autonomyLevel,
+  githubAccessSchema,
   productSchema,
   productSettingsFields,
   secretDescriptorSchema,
@@ -51,8 +56,8 @@ const createSchema = z
   })
   .strict();
 
-// docs/specs/autonomy-levels.md. SDD section 27 reserves L4, and Version 1 never merges, so no
-// operator can set it. `autonomyLevel` in ./schemas.ts holds L0 to L3.
+// docs/specs/pr-review-merge-and-deploy.md amends docs/specs/autonomy-levels.md: an operator can set
+// L4. `autonomyLevel` in ./schemas.ts holds L0 to L4.
 
 const updateSchema = z
   .object({
@@ -133,6 +138,13 @@ export interface ProductRouteDependencies {
   modelCatalog?: Pick<ModelCatalogService, "current">;
   /** docs/specs/sandbox-provider-spillover.md. A product names only providers the install lists. */
   sandboxProviders?: Pick<SandboxProviderStore, "list">;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. Reads one installation of the GitHub App, or null when
+   * it belongs to another App. Absent in a server that reads no installation.
+   */
+  readGitHubAccess?: (installationId: string) => Promise<GitHubAppInstallation | null>;
+  /** docs/specs/pr-review-merge-and-deploy.md, D5. The L4 pull requests whose gate failed. */
+  pullRequests?: Pick<PullRequestStore, "listAutoMergeUnavailable">;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -338,7 +350,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.sandboxRetentionHours !== undefined ||
       body.data.sandboxProviderIds !== undefined ||
       body.data.maxConcurrentRuns !== undefined ||
-      body.data.appChangeIssues !== undefined
+      body.data.appChangeIssues !== undefined ||
+      body.data.prReviewer !== undefined
     ) {
       const before = await dependencies.products.findById(tenant.id, request.params.id);
       product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
@@ -355,6 +368,7 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
           : { sandboxRetentionHours: body.data.sandboxRetentionHours }),
         ...(body.data.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: body.data.maxConcurrentRuns }),
         ...(body.data.appChangeIssues === undefined ? {} : { appChangeIssues: body.data.appChangeIssues }),
+        ...(body.data.prReviewer === undefined ? {} : { prReviewer: body.data.prReviewer }),
         ...(body.data.sandboxProviderIds === undefined
           ? {}
           : { sandboxProviderIds: [...new Set(body.data.sandboxProviderIds)].sort() }),
@@ -478,6 +492,111 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!product) return reply.code(404).send({ error: "product not found" });
     return product;
   },
+  );
+
+  // docs/specs/pr-review-merge-and-deploy.md. An existing installation must accept the new
+  // permissions and events. Until it does, the product page names what each one lacks.
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id/github-access",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "getProductGitHubAccess",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        response: { 200: schemaOf(githubAccessSchema), 400: errorSchema, 404: errorSchema, 503: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const parsed = tenantQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      const read = dependencies.readGitHubAccess;
+      if (read === undefined) return reply.code(503).send({ error: "this server reads no GitHub App installation" });
+      const byInstallation = new Map<string, string[]>();
+      for (const repository of await dependencies.repositories.listByProduct(product.id)) {
+        if (repository.absentSince !== null) continue;
+        byInstallation.set(repository.githubInstallationId, [
+          ...(byInstallation.get(repository.githubInstallationId) ?? []),
+          repository.fullName,
+        ]);
+      }
+      const installations = await Promise.all(
+        [...byInstallation].map(async ([installationId, repositories]) => {
+          const base = { installationId, repositories: repositories.sort() };
+          try {
+            const installation = await read(installationId);
+            if (installation === null) {
+              return {
+                ...base,
+                accountLogin: null,
+                settingsUrl: null,
+                missingPermissions: [],
+                missingEvents: [],
+                error: "The installation belongs to another GitHub App, or it was removed.",
+              };
+            }
+            const missing = missingGitHubAccess(installation);
+            return {
+              ...base,
+              accountLogin: installation.accountLogin,
+              settingsUrl: installation.settingsUrl,
+              missingPermissions: missing.permissions,
+              missingEvents: missing.events,
+              error: null,
+            };
+          } catch (error) {
+            return {
+              ...base,
+              accountLogin: null,
+              settingsUrl: null,
+              missingPermissions: [],
+              missingEvents: [],
+              error: `Factoree could not read the installation: ${(error as Error).message}`,
+            };
+          }
+        }),
+      );
+      return { installations };
+    },
+  );
+
+  // docs/specs/pr-review-merge-and-deploy.md, D5. An L4 pull request whose repository misses a
+  // setting stays open as at L3, and the product page names the setting.
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id/auto-merge-attention",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "getProductAutoMergeAttention",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        response: { 200: schemaOf(autoMergeAttentionSchema), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const parsed = tenantQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      const pullRequests = (await dependencies.pullRequests?.listAutoMergeUnavailable(tenant.id, product.id)) ?? [];
+      return {
+        pullRequests: pullRequests.map((pullRequest) => ({
+          repositoryFullName: pullRequest.repositoryFullName,
+          number: pullRequest.number,
+          url: pullRequest.url,
+          baseBranch: pullRequest.baseBranch,
+          reason: pullRequest.autoMergeReason ?? "",
+        })),
+      };
+    },
   );
 
   // Discovery owns the Repository row: a repository declares itself in its own

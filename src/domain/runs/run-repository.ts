@@ -41,6 +41,11 @@ export interface RunRecord {
   proofPackPostedAt: Date | null;
   /** docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document, or null. */
   proofPackDocument: Record<string, unknown> | null;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input of the last proof pack,
+   * which an amendment renders again, or null for a proof pack from before it.
+   */
+  proofPackInput?: Record<string, unknown> | null;
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
   decisions: FactoreeDecision[];
   repairCount: number;
@@ -237,7 +242,7 @@ export interface RunRepository {
   setProofPack(
     tenantId: string,
     runId: string,
-    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown> },
+    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown>; input?: Record<string, unknown> },
   ): Promise<void>;
   /**
    * docs/specs/proof-pack-and-visual-evidence.md. Records the pull request preview of the
@@ -295,12 +300,17 @@ export interface RunRepository {
   /**
    * DI-21.51. Records that the pull request `number` of `repositoryFullName` merged or closed, and
    * answers its run, or null when no run target of the tenant opened that pull request.
+   *
+   * docs/specs/pr-review-merge-and-deploy.md, D3. With `originRunId`, every run target of that pull
+   * request takes the state, and the answer is the origin run, because a later run on the same branch
+   * moved no issue.
    */
   closePullRequest(
     tenantId: string,
     repositoryFullName: string,
     number: number,
     state: "merged" | "closed",
+    originRunId?: string,
   ): Promise<ClosedPullRequestRun | null>;
 }
 

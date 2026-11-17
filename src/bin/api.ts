@@ -20,6 +20,7 @@ import {
 import { DelegationService } from "~/domain/runs/delegation-service.js";
 import {
   createBuildAheadRequester,
+  createPullRequestEventSender,
   createRepositorySetupStarter,
   createSetupAfterPushRequester,
   createSyncInstallationStarter,
@@ -34,6 +35,8 @@ import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-t
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.js";
 import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
+import { PullRequestEventRouter } from "~/domain/pull-requests/pull-request-router.js";
+import { PrismaPullRequestStore } from "~/persistence/prisma/pull-request-store.prisma.js";
 import { createBlockerWait } from "./blocker-wait-wiring.js";
 import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
@@ -128,6 +131,8 @@ const delegation = new DelegationService({
   // docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run.
   drafts: new PrismaRunDraftStore(prisma),
   blockerWait,
+  // docs/specs/pr-review-merge-and-deploy.md, slice 5. A reply after a failed deploy starts a follow-up run.
+  deployFailures: new PrismaPullRequestStore(prisma),
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`
@@ -219,6 +224,15 @@ const pullRequestClose = new PullRequestCloseHandler({
   },
 });
 
+// docs/specs/pr-review-merge-and-deploy.md. Each event of a recorded pull request goes to its PR workflow.
+const pullRequestRecords = new PrismaPullRequestStore(prisma);
+const pullRequestEvents = new PullRequestEventRouter({
+  pullRequests: pullRequestRecords,
+  signal: createPullRequestEventSender(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
+  logger,
+});
+const readAppCredentials = githubAppCredentials(settings);
+
 const auth = new AuthHandle({ prisma, settings, publicUrl: env.FACTOREE_PUBLIC_URL, masterKey: env.FACTOREE_MASTER_KEY, logger });
 
 const startRepositorySetup = createRepositorySetupStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
@@ -252,6 +266,9 @@ const app = buildServer({
   checkSkillRegistry: (registry, key) => new SkaelRegistry({ url: registry.url, key, set: registry.set }).check(),
   recordPullRequestPreview,
   pullRequestClosed: (input) => pullRequestClose.handle(input),
+  pullRequestEvents,
+  pullRequestRecords,
+  readGitHubAccess: async (installationId) => readGitHubAppInstallation({ credentials: await readAppCredentials(), installationId }),
   setup: {
     github: {
       convertManifest: (input) => convertGitHubAppManifest(input),

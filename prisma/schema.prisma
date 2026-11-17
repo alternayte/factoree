@@ -130,6 +130,9 @@ model Run {
   proofPackPostedAt        DateTime?
   // docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document an agent reads.
   proofPackDocument        Json?
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input of the last proof pack,
+  // so an amendment after publication renders the whole proof pack again.
+  proofPackInput           Json?     @map("proof_pack_input")
   // docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking.
   decisions                Json      @default("[]")
   repairCount              Int       @default(0)
@@ -174,6 +177,7 @@ model Run {
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
   targets                  RunTarget[]
+  originOfPullRequests     PullRequest[]
 
   @@index([tenantId])
   @@index([productId, status])
@@ -405,6 +409,9 @@ model ValidationContract {
   goal        String
   // The rendered contract. It reaches the Implementer, the User Validator, and the Proof Pack.
   document    String
+  // docs/specs/pr-review-merge-and-deploy.md, D1, DI-21.116. The Validation Plan of the last user
+  // validation pass that passed, as parsed JSON. A bring-current check replays it with no agent.
+  passingPlan Json?    @map("passing_plan")
   createdAt   DateTime @default(now())
   assertions  ValidationAssertion[]
 
@@ -658,6 +665,11 @@ model Product {
   skillRegistryKind String? @map("skill_registry_kind")
   skillRegistryUrl  String? @map("skill_registry_url")
   skillRegistrySet  String? @map("skill_registry_set")
+  // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer: the GitHub App slug and the check
+  // name of an external review app. Both null means the product names none. Only the product sets
+  // it, never .factoree/config.yaml (R-4).
+  prReviewerAppSlug   String? @map("pr_reviewer_app_slug")
+  prReviewerCheckName String? @map("pr_reviewer_check_name")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   repositories   Repository[]
@@ -700,6 +712,7 @@ model Repository {
   needsSetupReason     String?   @map("needs_setup_reason")
   needsSetupAt         DateTime? @map("needs_setup_at")
   runTargets           RunTarget[]
+  pullRequests         PullRequest[]
 
   @@unique([tenantId, fullName])
   @@index([productId])
@@ -1017,4 +1030,125 @@ model ModelCatalog {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("model_catalog")
+}
+
+// docs/specs/pr-review-merge-and-deploy.md, DI-21.99. One pull request that a run published. The PR
+// workflow keyed `pr:<tenant>:<repository>#<number>` owns it after the run ends READY_FOR_HUMAN.
+model PullRequest {
+  id                String     @id @default(uuid())
+  tenantId          String     @map("tenant_id")
+  repositoryId      String     @map("repository_id")
+  repository        Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  number            Int
+  url               String
+  headBranch        String     @map("head_branch")
+  // The newest head commit GitHub reported: the published commit, then each synchronize.
+  headSha           String     @map("head_sha")
+  baseBranch        String     @map("base_branch")
+  // The run that published the pull request. Issue completion on a merge reads its issue state,
+  // because a later run on the same branch moved no issue.
+  originRunId       String     @map("origin_run_id")
+  originRun         Run        @relation(fields: [originRunId], references: [id], onDelete: Cascade)
+  // open, merged or closed.
+  state             String     @default("open")
+  mergeCommitSha    String?    @map("merge_commit_sha")
+  closedAt          DateTime?  @map("closed_at")
+  // The PR follow-up runs that a failed PR reviewer check started. The spec caps them at 3.
+  reviewerFollowUps Int        @default(0) @map("reviewer_follow_ups")
+  // The contract revision of the head commit. It starts at 1 and each PR follow-up run adds one.
+  // ValidationContract.version is the schema version, not this counter.
+  contractRevision  Int        @default(1) @map("contract_revision")
+  // off, enabled, unavailable or stopped. Factoree turns on GitHub auto-merge only at L4. enabled
+  // means Factoree turned it on. stopped means a human turned off what Factoree turned on (DI-21.105).
+  autoMerge         String     @default("off") @map("auto_merge")
+  autoMergeReason   String?    @map("auto_merge_reason")
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.104. The head commit whose every Factoree check
+  // passed: the commit a publication pushed. Only this head can auto-merge.
+  verifiedHeadSha   String?    @map("verified_head_sha")
+  // The autonomy level of the run that published the verified head. Null on a row from before it.
+  autonomyLevel     String?    @map("autonomy_level")
+  // DI-21.106. The base branch whose L4 gate Factoree read. Null until it reads one.
+  autoMergeGateBase String?    @map("auto_merge_gate_base")
+  // D2. The base SHA of the verified head, and the run that published it. A PR follow-up run starts
+  // its work sprite at this base with the pull request change applied.
+  verifiedBaseSha   String?    @map("verified_base_sha")
+  verifiedRunId     String?    @map("verified_run_id")
+  // DI-21.108. The failed PR reviewer check that last started a triage or a limit notice.
+  reviewerHandledKey String?   @map("reviewer_handled_key")
+  // DI-21.114. The PR follow-up runs that reviewerFollowUps counted, by run id, so a retry of the
+  // count after a successful write counts nothing.
+  reviewerFollowUpKeys String[] @default([]) @map("reviewer_follow_up_keys")
+  // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
+  // starts no other one on that head until the base branch moves.
+  bringCurrentHeadSha String?  @map("bring_current_head_sha")
+  workflowId        String     @map("workflow_id")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+  events            PullRequestEvent[]
+  deploys           PullRequestDeploy[]
+
+  @@unique([tenantId, repositoryId, number])
+  @@index([tenantId, headSha])
+  @@index([originRunId])
+  @@index([tenantId, state, closedAt])
+  @@map("pull_request")
+}
+
+// docs/specs/pr-review-merge-and-deploy.md, DI-21.100. Each GitHub event the PR workflow took for one
+// pull request, once per delivery.
+model PullRequestEvent {
+  id            String      @id @default(uuid())
+  tenantId      String      @map("tenant_id")
+  pullRequestId String      @map("pull_request_id")
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  deliveryId    String      @map("delivery_id")
+  kind          String
+  headSha       String?     @map("head_sha")
+  // The event as the PR workflow received it.
+  payload       Json
+  receivedAt    DateTime    @default(now()) @map("received_at")
+
+  @@unique([pullRequestId, deliveryId])
+  @@index([tenantId])
+  @@map("pull_request_event")
+}
+
+// docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.122. One deploy result of a merged pull
+// request: the first success per environment, and each failed deployment whose commit range holds
+// the merge commit. The run is the run of the verified head at the merge, whose proof pack the
+// deploy amends.
+model PullRequestDeploy {
+  id                 String      @id @default(uuid())
+  tenantId           String      @map("tenant_id")
+  pullRequestId      String      @map("pull_request_id")
+  pullRequest        PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  runId              String      @map("run_id")
+  // success:<environment> or failure:<deployment id>, so a success counts once per environment
+  // and a failure once per deployment.
+  key                String
+  environment        String
+  // success or failure.
+  state              String
+  deploymentId       String      @map("deployment_id")
+  sha                String
+  // The commit of the previous successful deploy of the environment, the start of the failed range.
+  previousSha        String?     @map("previous_sha")
+  logUrl             String?     @map("log_url")
+  environmentUrl     String?     @map("environment_url")
+  // A later success of the same environment resolves a failure.
+  resolvedAt         DateTime?   @map("resolved_at")
+  // The workflow id of the follow-up run a Linear reply started for a failure (DI-21.124).
+  followUpWorkflowId String?     @map("follow_up_workflow_id")
+  // The webhook delivery that recorded the row. A retry of the same delivery takes the row again
+  // with the same notice, and another delivery of the same key takes nothing (DI-21.126).
+  deliveryId         String?     @map("delivery_id")
+  // The issue move of a failed deploy: moving before the Linear call, then moved, human_moved or
+  // not_moved, with the state name the notice names (DI-21.126).
+  issueMove          String?     @map("issue_move")
+  issueStateName     String?     @map("issue_state_name")
+  createdAt          DateTime    @default(now()) @map("created_at")
+
+  @@unique([pullRequestId, key])
+  @@index([tenantId, state])
+  @@map("pull_request_deploy")
 }

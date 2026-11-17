@@ -12,7 +12,9 @@ import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
  * requests, and `schemaOf` turns each one into the JSON Schema of the OpenAPI document.
  */
 
-const autonomyLevel = z.enum(["L0", "L1", "L2", "L3"]);
+// docs/specs/pr-review-merge-and-deploy.md. L4 turns on GitHub auto-merge. Risk caps and the
+// factoree:l0 to factoree:l2 labels still lower it.
+const autonomyLevel = z.enum(["L0", "L1", "L2", "L3", "L4"]);
 
 export const effortSchema = z.object({
   implementer: z.string().nullable(),
@@ -67,6 +69,8 @@ export const productSchema = z.object({
   maxConcurrentRuns: z.number(),
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
+  /** docs/specs/pr-review-merge-and-deploy.md. The external review app whose check gates the PR, or null. */
+  prReviewer: z.object({ appSlug: z.string(), checkName: z.string() }).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -125,7 +129,54 @@ export const productSettingsFields = {
   sandboxProviderIds: z.array(z.string().min(1)).max(50),
   maxConcurrentRuns: z.number().int().positive().max(100),
   appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.102. A GitHub App slug and the exact name of its
+  // check run or commit status context. Null clears it.
+  prReviewer: z
+    .object({
+      appSlug: z
+        .string()
+        .trim()
+        .regex(/^[a-z0-9][a-z0-9-]{0,99}$/i, "must be a GitHub App slug")
+        .transform((slug) => slug.toLowerCase()),
+      checkName: z.string().trim().min(1).max(200),
+    })
+    .strict()
+    .nullable(),
 };
+
+/** docs/specs/pr-review-merge-and-deploy.md. What each GitHub App installation of a product lacks. */
+export const githubAccessSchema = z.object({
+  installations: z.array(
+    z.object({
+      installationId: z.string(),
+      accountLogin: z.string().nullable(),
+      /** The installation settings page, where an owner accepts new permissions. */
+      settingsUrl: z.string().nullable(),
+      repositories: z.array(z.string()),
+      missingPermissions: z.array(z.object({ name: z.string(), required: z.string(), granted: z.string().nullable() })),
+      missingEvents: z.array(z.string()),
+      /** Set when Factoree could not read the installation. */
+      error: z.string().nullable(),
+    }),
+  ),
+});
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D5. The open L4 pull requests of a product that stay
+ * open as at L3, each with the settings its repository misses.
+ */
+export const autoMergeAttentionSchema = z.object({
+  pullRequests: z.array(
+    z.object({
+      repositoryFullName: z.string(),
+      number: z.number(),
+      url: z.string(),
+      baseBranch: z.string(),
+      /** One sentence for each missing setting. */
+      reason: z.string(),
+    }),
+  ),
+});
 
 export { autonomyLevel };
 

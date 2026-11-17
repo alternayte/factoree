@@ -21,6 +21,7 @@ import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import { registrySkillUrl } from "~/domain/runs/skill-registry.js";
 import {
+  afterPublicationLines,
   buildProofPackDocument,
   defaultModelWarning,
   hashProofPack,
@@ -30,7 +31,10 @@ import {
   type ProofPackBaseMove,
   type ProofPackCheck,
   type ProofPackEvidenceRef,
+  type ProofPackAfterPublication,
   type ProofPackForYourEye,
+  type ProofPackInput,
+  type ProofPackPullRequestFollowUp,
   type ProofPackRouting,
 } from "~/domain/evidence/proof-pack.js";
 
@@ -288,6 +292,8 @@ export interface PublishProofPackActivityInput {
    * proven.
    */
   draft?: { attempt: number; reviewed: boolean };
+  /** docs/specs/pr-review-merge-and-deploy.md. Present for a PR follow-up run. */
+  pullRequestFollowUp?: ProofPackPullRequestFollowUp;
 }
 
 export interface PublishProofPackActivityOutput {
@@ -608,6 +614,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         reason: proposal.reason,
       })),
       ...(draft === undefined ? {} : { draft: { reviewed: draft.reviewed } }),
+      ...(input.pullRequestFollowUp === undefined ? {} : { pullRequestFollowUp: input.pullRequestFollowUp }),
     };
 
     // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.
@@ -629,9 +636,13 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     const sha256 = hashProofPack(body);
     const postedAt = new Date();
 
+    // docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input stays beside the
+    // document, so an amendment after publication renders the whole proof pack again.
+    const storedInput = JSON.parse(dependencies.redactor.redactText(JSON.stringify(proofPackInput))) as Record<string, unknown>;
+
     // The durable record comes first. A Linear outage must not lose the proof that the Proof
     // Pack exists, and the activity retry then posts the identical body again.
-    await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt, document });
+    await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt, document, input: storedInput });
     // Linear documents the session link as the way to name a published pull request.
     if (input.pullRequestLinked !== true) {
       await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
@@ -652,4 +663,77 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       postedAt: postedAt.toISOString(),
     };
   },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. Amends the proof pack of a run after
+   * publication: a deploy result, a plain comment or the PR reviewer suggestions on a passed check.
+   * The amendment renders the whole proof pack again from its stored input with the "After
+   * publication" section and stores the new document and hash. DI-21.126: it posts nothing in the
+   * agent session. The caller posts at most one short line, and the run page shows the proof pack. A
+   * proof pack from before the stored input gets the section alone, and its document takes it. A
+   * field the caller leaves out keeps its stored value.
+   */
+  async amendProofPack(input: AmendProofPackActivityInput): Promise<{ amended: boolean }> {
+    await registerProjectSecrets(dependencies.redactor, dependencies.secrets, input.tenantId, input.productId, dependencies.logger);
+    const run = await dependencies.runs.findById(input.tenantId, input.runId);
+    if (run === null || run.proofPackDocument === null) {
+      dependencies.logger.info("the run holds no proof pack to amend", { tenant_id: input.tenantId, run_id: input.runId, step: "proof_pack_amend" });
+      return { amended: false };
+    }
+    const stored = (run.proofPackInput ?? null) as ProofPackInput | null;
+    const before =
+      stored?.afterPublication ?? ((run.proofPackDocument["afterPublication"] ?? null) as ProofPackAfterPublication | null) ?? null;
+    const after: ProofPackAfterPublication = {
+      amendedFor: input.afterPublication.amendedFor,
+      comments: input.afterPublication.comments ?? before?.comments ?? [],
+      suggestions: input.afterPublication.suggestions ?? before?.suggestions ?? [],
+      deploys: input.afterPublication.deploys ?? before?.deploys ?? [],
+    };
+    const postedAt = new Date();
+    let body: string;
+    if (stored !== null) {
+      const next: ProofPackInput = { ...stored, afterPublication: after };
+      const documentText = dependencies.redactor.redactText(JSON.stringify(buildProofPackDocument(next), null, 2));
+      const document = JSON.parse(documentText) as Record<string, unknown>;
+      const storedDocument = await dependencies.storage.put({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        name: PROOF_PACK_DOCUMENT_NAME,
+        contentType: "application/json",
+        bytes: Buffer.from(documentText, "utf8"),
+      });
+      body = dependencies.redactor.redactText(renderProofPack(next, storedDocument.storageRef));
+      const nextInput = JSON.parse(dependencies.redactor.redactText(JSON.stringify(next))) as Record<string, unknown>;
+      await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256: hashProofPack(body), postedAt, document, input: nextInput });
+    } else {
+      const document = { ...run.proofPackDocument, afterPublication: after };
+      const documentText = dependencies.redactor.redactText(JSON.stringify(document, null, 2));
+      await dependencies.storage.put({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        name: PROOF_PACK_DOCUMENT_NAME,
+        contentType: "application/json",
+        bytes: Buffer.from(documentText, "utf8"),
+      });
+      body = dependencies.redactor.redactText(
+        ["## Factoree delivery", "", `_Amended: ${after.amendedFor}_`, "", ...afterPublicationLines(after), "---", "", `Run ${input.runId}`, ""].join("\n"),
+      );
+      // The proof pack body is the one posted at publication, so its hash stays.
+      await dependencies.runs.setProofPack(input.tenantId, input.runId, {
+        sha256: run.proofPackSha256 ?? hashProofPack(body),
+        postedAt: run.proofPackPostedAt ?? postedAt,
+        document: JSON.parse(documentText) as Record<string, unknown>,
+      });
+    }
+    dependencies.logger.info("proof pack amended", { tenant_id: input.tenantId, run_id: input.runId, step: "proof_pack_amend" });
+    return { amended: true };
+  },
 });
+
+/** docs/specs/pr-review-merge-and-deploy.md, DI-21.123. What one amendment changes. */
+export interface AmendProofPackActivityInput {
+  tenantId: string;
+  productId: string;
+  runId: string;
+  afterPublication: { amendedFor: string } & Partial<Omit<ProofPackAfterPublication, "amendedFor">>;
+}

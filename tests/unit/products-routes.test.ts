@@ -69,7 +69,7 @@ class FakeProductRegistry implements ProductRegistry {
       repairMaxAttempts: 2,
       sandboxRetentionHours: 24,
       sandboxProviderIds: [],
-      maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
+      maxConcurrentRuns: 2, appChangeIssues: "one_per_change", prReviewer: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -182,6 +182,7 @@ class FakeProductRegistry implements ProductRegistry {
       ...(settings.sandboxRetentionHours === undefined ? {} : { sandboxRetentionHours: settings.sandboxRetentionHours }),
       ...(settings.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: settings.maxConcurrentRuns }),
       ...(settings.sandboxProviderIds === undefined ? {} : { sandboxProviderIds: settings.sandboxProviderIds }),
+      ...(settings.prReviewer === undefined ? {} : { prReviewer: settings.prReviewer }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
@@ -431,7 +432,8 @@ describe("Products administration API", () => {
     expect(products.policyChanges.map((change) => change.field)).toEqual(["defaultAutonomy", "riskCaps"]);
   });
 
-  it("refuses L4 with 422 and changes nothing, because Version 1 never merges", async () => {
+  // docs/specs/pr-review-merge-and-deploy.md. L4 is a level an operator sets, and a cap may name it.
+  it("accepts L4 as the default and as a risk cap", async () => {
     const { app, products } = build({});
     const created = await app.inject({
       method: "POST",
@@ -439,17 +441,39 @@ describe("Products administration API", () => {
       payload: { linearWorkspaceId: "ws-1", slug: "merge", name: "Merge", linearTeamKey: "MRG" },
     });
     const product = created.json<{ id: string }>();
-    const before = products.rows.get(product.id)?.defaultAutonomy;
 
-    const refused = await app.inject({
+    const accepted = await app.inject({
       method: "PUT",
       url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
-      payload: { defaultAutonomy: "L4" },
+      payload: { defaultAutonomy: "L4", riskCaps: { payments: "L2", docs: "L4" } },
     });
 
-    expect(refused.statusCode).toBe(422);
-    expect(products.policyChanges).toEqual([]);
-    expect(products.rows.get(product.id)?.defaultAutonomy).toBe(before);
+    expect(accepted.statusCode).toBe(200);
+    expect(products.rows.get(product.id)?.defaultAutonomy).toBe("L4");
+    expect(products.rows.get(product.id)?.riskCaps).toEqual({ payments: "L2", docs: "L4" });
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.102. Only the product names the PR reviewer.
+  it("sets and clears the PR reviewer, and refuses a slug GitHub cannot hold", async () => {
+    const { app } = build({});
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: { linearWorkspaceId: "ws-1", slug: "review", name: "Review", linearTeamKey: "REV" },
+    });
+    const product = created.json<{ id: string }>();
+    const put = (prReviewer: unknown) =>
+      app.inject({ method: "PUT", url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`, payload: { prReviewer } });
+
+    const set = await put({ appSlug: " Review-Bot ", checkName: "Code review" });
+    expect(set.statusCode).toBe(200);
+    expect(set.json<{ prReviewer: unknown }>().prReviewer).toEqual({ appSlug: "review-bot", checkName: "Code review" });
+
+    expect((await put({ appSlug: "review bot", checkName: "Code review" })).statusCode).toBe(422);
+    expect((await put({ appSlug: "review-bot", checkName: "" })).statusCode).toBe(422);
+
+    const cleared = await put(null);
+    expect(cleared.json<{ prReviewer: unknown }>().prReviewer).toBeNull();
   });
 
   // docs/specs/claude-code-runner.md. A model or an effort of one runner means nothing to the other.

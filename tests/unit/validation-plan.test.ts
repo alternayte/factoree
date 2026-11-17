@@ -92,6 +92,22 @@ describe("parseValidationPlan", () => {
     expect(plan.version).toBe(1);
   });
 
+  // docs/specs/pr-review-merge-and-deploy.md, D1. A bring-current check replays the stored plan, which
+  // is the parsed plan as JSON. The parser must take its own output and give the same plan.
+  it("takes a parsed plan stored as JSON and gives the same plan", () => {
+    const plan = parseValidationPlan(
+      JSON.stringify({
+        version: 1,
+        entries: [
+          { assertionId: "VAL-UI-001", kind: "browser", steps: validBrowserSteps },
+          { assertionId: "VAL-API-001", kind: "http", request: validHttpRequest },
+        ],
+      }),
+      contract,
+    );
+    expect(parseValidationPlan(JSON.stringify(plan), contract)).toEqual(plan);
+  });
+
   it("rejects text that is not JSON (rule 1)", () => {
     expect(() => parseValidationPlan("not json", contract)).toThrow(ValidationPlanInvalidError);
   });

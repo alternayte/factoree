@@ -19,7 +19,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import type { ContextResolver } from "~/domain/context/context-resolver.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
-import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
+import type { ValidationContractStore, ValidationPlanStore } from "~/domain/validation/validation-contract-store.js";
 import type { ContextDeliverySourceProvider, ContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
@@ -63,6 +63,12 @@ import { createDraftActivities } from "./draft.activities.js";
 import type { RunDraftStore } from "~/domain/runs/run-draft.js";
 import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
+import { createPullRequestActivities } from "./pull-request.activities.js";
+import type { DeployPort } from "~/domain/pull-requests/deploys.js";
+import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
+import type { PullRequestReviewPort } from "~/domain/pull-requests/pr-follow-up.js";
+import type { AutoMergePort } from "~/domain/pull-requests/auto-merge.js";
+import type { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import {
   createSkillRegistryActivities,
   type OrganizationSkillsFactory,
@@ -114,6 +120,8 @@ export interface ActivityDependencies {
   /** docs/specs/external-context-delivery.md. The configured sources the work sprite delivery reads. */
   contextDelivery?: ContextDeliverySourceProvider | undefined;
   validationContracts: ValidationContractStore;
+  /** docs/specs/pr-review-merge-and-deploy.md, D1. The passing Validation Plans and the contract adoption. */
+  validationPlans?: ValidationPlanStore | undefined;
   repositoryReader: RepositoryReader;
   browser: BrowserDriver;
   httpValidationFetch: HttpValidationFetch;
@@ -171,6 +179,24 @@ export interface ActivityDependencies {
    * without it moves no issue status.
    */
   issueStatus?: ((tenantId: string) => Promise<IssueStatusPort>) | undefined;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. The published pull requests, and the close that moves
+   * the issue of the origin run. A worker without them records no pull request, so the run starts no
+   * PR workflow.
+   */
+  publishedPullRequests?: PullRequestStore | undefined;
+  pullRequestClose?: Pick<PullRequestCloseHandler, "closeOfRecord" | "afterFailedDeploy"> | undefined;
+  /** docs/specs/pr-review-merge-and-deploy.md. The GitHub calls of the L4 merge. A worker without them turns on no auto-merge. */
+  autoMerge?: AutoMergePort | undefined;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR
+   * follow-up runs. A worker without them starts no PR follow-up run.
+   */
+  pullRequestReviews?: PullRequestReviewPort | undefined;
+  /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The deploy reads. A worker without them reports no deploy. */
+  deploys?: DeployPort | undefined;
+  /** The product page of the Factoree UI, which a missing-host post names. */
+  productPageUrl?: ((productId: string) => string) | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -194,6 +220,64 @@ const NO_DRAFT_STORE: RunDraftStore = {
   subject: () => Promise.resolve(null),
   recordRequest: () => Promise.reject(new Error("this worker holds no draft store")),
   markPublished: () => Promise.reject(new Error("this worker holds no draft store")),
+};
+
+/** A worker built without the pull request store records no pull request and takes no event. */
+const NO_PULL_REQUEST_STORE: PullRequestStore = {
+  recordPublished: () => Promise.reject(new Error("this worker holds no pull request store")),
+  find: () => Promise.reject(new Error("this worker holds no pull request store")),
+  findByNumber: () => Promise.reject(new Error("this worker holds no pull request store")),
+  findByCommit: () => Promise.reject(new Error("this worker holds no pull request store")),
+  recordEvent: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markClosed: () => Promise.reject(new Error("this worker holds no pull request store")),
+  steeringFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
+  setAutoMerge: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listAutoMergeUnavailable: () => Promise.reject(new Error("this worker holds no pull request store")),
+  originFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markReviewerHandled: () => Promise.reject(new Error("this worker holds no pull request store")),
+  countReviewerFollowUp: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markBringCurrentTried: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listOpenByBase: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listEvents: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listMergedForDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listDeploys: () => Promise.reject(new Error("this worker holds no pull request store")),
+  recordDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
+  setDeployIssueMove: () => Promise.reject(new Error("this worker holds no pull request store")),
+  openDeployFailure: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markDeployFollowedUp: () => Promise.reject(new Error("this worker holds no pull request store")),
+};
+
+const NO_REVIEWS_REASON = "this worker holds no GitHub review port";
+
+/** A worker built without the review port starts no PR follow-up run, and the PR workflow logs it. */
+const NO_REVIEWS: PullRequestReviewPort = {
+  reviewerFindings: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  review: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  canWrite: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  reply: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  comment: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+};
+
+const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
+
+/** A worker built without the auto-merge port refuses the L4 merge, and the PR workflow logs it. */
+const NO_AUTO_MERGE: AutoMergePort = {
+  pullRequest: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  gate: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  reviewerVerdict: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  reviews: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  enable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  disable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  behindBy: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  merge: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+};
+
+const NO_DEPLOYS_REASON = "this worker holds no GitHub deployment port";
+
+/** A worker built without the deployment port reports no deploy, and the PR workflow logs it. */
+const NO_DEPLOYS: DeployPort = {
+  contains: () => Promise.reject(new Error(NO_DEPLOYS_REASON)),
+  previousSuccess: () => Promise.reject(new Error(NO_DEPLOYS_REASON)),
 };
 
 /** A worker built without the file reader refuses a setup, and runs every other activity. */
@@ -297,6 +381,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     contracts: dependencies.validationContracts,
     runs: dependencies.runs,
     logger: dependencies.logger,
+    plans: dependencies.validationPlans,
     userValidation: {
       sandbox: dependencies.sandbox,
       runners: dependencies.runners,
@@ -451,6 +536,23 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     setupMarks: dependencies.setupMarks,
     credentialKey: dependencies.hostCredentials?.key,
+  }),
+  ...createPullRequestActivities({
+    pullRequests: dependencies.publishedPullRequests ?? NO_PULL_REQUEST_STORE,
+    close: dependencies.pullRequestClose ?? {
+      closeOfRecord: () => Promise.reject(new Error("this worker holds no pull request close handler")),
+      afterFailedDeploy: () => Promise.reject(new Error("this worker holds no pull request close handler")),
+    },
+    logger: dependencies.logger,
+    autoMerge: dependencies.autoMerge ?? NO_AUTO_MERGE,
+    products: dependencies.products,
+    agentSession: dependencies.agentSession,
+    reviews: dependencies.pullRequestReviews ?? NO_REVIEWS,
+    repositories: dependencies.repositories,
+    workItems: dependencies.workItems,
+    repositoryBaseUrl: dependencies.repositoryBaseUrl,
+    productPageUrl: dependencies.productPageUrl,
+    deploys: dependencies.deploys ?? NO_DEPLOYS,
   }),
 });
 

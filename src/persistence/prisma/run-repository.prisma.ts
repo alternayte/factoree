@@ -51,6 +51,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   proofPackDocument: (row.proofPackDocument as Record<string, unknown> | null) ?? null,
+  proofPackInput: (row.proofPackInput as Record<string, unknown> | null) ?? null,
   decisions: (row.decisions as unknown as FactoreeDecision[] | null) ?? [],
   repairCount: row.repairCount,
   createdAt: row.createdAt,
@@ -278,7 +279,7 @@ export class PrismaRunRepository implements RunRepository {
   async setProofPack(
     tenantId: string,
     runId: string,
-    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown> },
+    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown>; input?: Record<string, unknown> },
   ): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
     const updated = await this.prisma.run.updateMany({
@@ -287,6 +288,7 @@ export class PrismaRunRepository implements RunRepository {
         proofPackSha256: proofPack.sha256,
         proofPackPostedAt: proofPack.postedAt,
         proofPackDocument: proofPack.document as Prisma.InputJsonObject,
+        ...(proofPack.input === undefined ? {} : { proofPackInput: proofPack.input as Prisma.InputJsonObject }),
       },
     });
     // SDD section 68 reads this value to decide whether the Run can complete. A silent success
@@ -429,22 +431,32 @@ export class PrismaRunRepository implements RunRepository {
     repositoryFullName: string,
     number: number,
     state: "merged" | "closed",
+    originRunId?: string,
   ): Promise<ClosedPullRequestRun | null> {
     // GitHub names a repository with its own case, so the match ignores case. The tenant filter is
     // part of the query, and the newest target wins when a number was reused across a rename.
-    const target = await this.prisma.runTarget.findFirst({
-      where: {
-        tenantId,
-        pullRequestNumber: number,
-        repository: { fullName: { equals: repositoryFullName, mode: "insensitive" } },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, runId: true },
-    });
-    if (target === null) return null;
-    await this.prisma.runTarget.update({ where: { id: target.id }, data: { pullRequestState: state } });
+    const where = {
+      tenantId,
+      pullRequestNumber: number,
+      repository: { fullName: { equals: repositoryFullName, mode: "insensitive" as const } },
+    };
+    let runId: string;
+    if (originRunId === undefined) {
+      const target = await this.prisma.runTarget.findFirst({
+        where,
+        orderBy: { createdAt: "desc" },
+        select: { id: true, runId: true },
+      });
+      if (target === null) return null;
+      await this.prisma.runTarget.update({ where: { id: target.id }, data: { pullRequestState: state } });
+      runId = target.runId;
+    } else {
+      // docs/specs/pr-review-merge-and-deploy.md, D3. The pull request record names the origin run.
+      await this.prisma.runTarget.updateMany({ where, data: { pullRequestState: state } });
+      runId = originRunId;
+    }
     const run = await this.prisma.run.findFirstOrThrow({
-      where: { id: target.runId, tenantId },
+      where: { id: runId, tenantId },
       select: {
         id: true,
         linearIssueId: true,

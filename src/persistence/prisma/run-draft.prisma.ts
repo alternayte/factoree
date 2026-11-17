@@ -1,3 +1,4 @@
+import { isPrFollowUpWorkflowId } from "~/temporal/workflow-id.js";
 import type { FactoreePrismaClient } from "./client.js";
 import { FOLLOW_UP_STATUSES } from "~/domain/runs/run-recovery.js";
 import {
@@ -18,7 +19,15 @@ export class PrismaRunDraftStore implements RunDraftStore {
   async facts(tenantId: string, runId: string): Promise<DraftFacts | null> {
     const run = await this.prisma.run.findFirst({
       where: { tenantId, id: runId },
-      select: { id: true, status: true, failureReason: true, failureMessage: true, pullRequestUrl: true, lastPatchAttempt: true },
+      select: {
+        id: true,
+        status: true,
+        failureReason: true,
+        failureMessage: true,
+        pullRequestUrl: true,
+        lastPatchAttempt: true,
+        temporalWorkflowId: true,
+      },
     });
     if (run === null) return null;
     const where = { tenantId, runId };
@@ -48,6 +57,7 @@ export class PrismaRunDraftStore implements RunDraftStore {
       failureReason: run.failureReason,
       failureMessage: run.failureMessage,
       pullRequestUrl: run.pullRequestUrl,
+      pullRequestFollowUp: isPrFollowUpWorkflowId(run.temporalWorkflowId),
       hasPatch,
       patchAttempt,
       targetCount,

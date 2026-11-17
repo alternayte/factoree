@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { OpenDeployFailure } from "~/domain/pull-requests/deploys.js";
 import { describe, expect, it, vi } from "vitest";
 import { agentSessionEventSchema } from "~/adapters/linear/webhook-schemas.js";
 import { DelegationService } from "~/domain/runs/delegation-service.js";
@@ -38,7 +39,7 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   repairMaxAttempts: 2,
   sandboxRetentionHours: 24,
   sandboxProviderIds: [],
-  maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
+  maxConcurrentRuns: 2, appChangeIssues: "one_per_change", prReviewer: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -86,8 +87,10 @@ const build = (
     blockerWait: { hold: () => Promise<boolean>; stop: () => Promise<boolean>; answerReply: () => Promise<boolean> };
     draftFacts: Partial<DraftFacts>;
     draftRunning: boolean;
+    deployFailure: OpenDeployFailure | null;
   }> = {},
 ) => {
+  const followedUpDeploys: Array<{ deployId: string; workflowId: string }> = [];
   const postedResponses: string[] = [];
   const recorded = new Set<string>();
   const postedFailures: Array<{ workspaceId: string; sessionId: string; message: string }> = [];
@@ -181,8 +184,15 @@ const build = (
       markPublished: () => Promise.resolve(true),
     },
     ...(overrides.blockerWait === undefined ? {} : { blockerWait: overrides.blockerWait }),
+    deployFailures: {
+      openDeployFailure: () => Promise.resolve(overrides.deployFailure ?? null),
+      markDeployFollowedUp: (_tenantId: string, deployId: string, workflowId: string) => {
+        followedUpDeploys.push({ deployId, workflowId });
+        return Promise.resolve(true);
+      },
+    },
   });
-  return { service, starter, postedFailures, postedResponses, draftRequests };
+  return { service, starter, postedFailures, postedResponses, draftRequests, followedUpDeploys };
 };
 
 describe("DelegationService", () => {
@@ -459,6 +469,56 @@ describe("the delegation service and the organization skills repository", () => 
       expect(outcome).toEqual({ kind: "follow_up_refused", status: "READY_FOR_HUMAN" });
       expect(starter.start).not.toHaveBeenCalled();
       expect(postedResponses).toEqual([expect.stringContaining("pull/24")]);
+    });
+
+    // docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.124. A failed deploy turns a reply after
+    // READY_FOR_HUMAN into a follow-up run with the failure as a finding.
+    it("starts a follow-up run for a reply after a failed deploy, keyed by the deploy", async () => {
+      const { service, starter, postedResponses, followedUpDeploys } = build({
+        latest: { id: "run-72", status: "READY_FOR_HUMAN", temporalWorkflowId: "w", pullRequestUrl: "https://github.com/acme/web/pull/24" },
+        deployFailure: {
+          id: "deploy-row-1",
+          runId: "run-72",
+          environment: "production",
+          sha: "b".repeat(40),
+          previousSha: "a".repeat(40),
+          logUrl: "https://github.com/acme/web/actions/runs/9",
+          pullRequestUrl: "https://github.com/acme/web/pull/24",
+          mergeCommitSha: "c".repeat(40),
+        },
+      });
+      const outcome = await service.handleAgentSessionEvent(reply("revert this"), "delivery-deploy");
+
+      expect(outcome.kind).toBe("started");
+      expect(postedResponses).toEqual([]);
+      const started = starter.start.mock.calls[0]?.[0];
+      expect(started?.workflowId).toMatch(/:follow-up:deploy-deploy-row-1$/);
+      expect(started?.args[0].followUpOfRunId).toBe("run-72");
+      expect(started?.args[0].deployFailure).toEqual({
+        environment: "production",
+        sha: "b".repeat(40),
+        previousSha: "a".repeat(40),
+        logUrl: "https://github.com/acme/web/actions/runs/9",
+        pullRequestUrl: "https://github.com/acme/web/pull/24",
+      });
+      expect(started?.args[0].workItem.description).toContain("revert this");
+      expect(started?.args[0].workItem.description).toContain("https://github.com/acme/web/actions/runs/9");
+      // The patch of the run is merged into the base, so the description repeats none.
+      expect(started?.args[0].workItem.description).not.toContain("diff --git a/x b/x");
+      expect(followedUpDeploys).toEqual([{ deployId: "deploy-row-1", workflowId: started?.workflowId }]);
+    });
+
+    // docs/specs/pr-review-merge-and-deploy.md, DI-21.111. A failed PR follow-up run follows an open
+    // pull request. A follow-up of the issue, or a draft, would open a second one.
+    it("answers a reply after a failed PR follow-up run with one line, and starts nothing", async () => {
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-75", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1:pr-follow-up:abc", pullRequestUrl: null },
+      });
+      for (const body of ["Try again.", "publish as draft"]) {
+        expect(await service.handleAgentSessionEvent(reply(body), `delivery-${body}`)).toEqual({ kind: "follow_up_refused", status: "FAILED" });
+      }
+      expect(starter.start).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([expect.stringContaining("Request changes on the pull request"), expect.stringContaining("Request changes")]);
     });
 
     // docs/specs/draft-of-failed-run.md. The typed reply and the chosen option take one matcher.

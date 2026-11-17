@@ -28,6 +28,8 @@ import {
   getMe,
   getModelCatalog,
   getProduct,
+  getProductAutoMergeAttention,
+  getProductGitHubAccess,
   getRun,
   getSetupState,
   getSetupStatus,
@@ -111,8 +113,14 @@ import type {
   GetModelCatalogData,
   GetModelCatalogError,
   GetModelCatalogResponse,
+  GetProductAutoMergeAttentionData,
+  GetProductAutoMergeAttentionError,
+  GetProductAutoMergeAttentionResponse,
   GetProductData,
   GetProductError,
+  GetProductGitHubAccessData,
+  GetProductGitHubAccessError,
+  GetProductGitHubAccessResponse,
   GetProductResponse,
   GetRunData,
   GetRunError,
@@ -591,6 +599,50 @@ export const activateProductMutation = (
   };
   return mutationOptions;
 };
+
+export const getProductGitHubAccessQueryKey = (options: Options<GetProductGitHubAccessData>) =>
+  createQueryKey("getProductGitHubAccess", options);
+
+export const getProductGitHubAccessOptions = (options: Options<GetProductGitHubAccessData>) =>
+  queryOptions<
+    GetProductGitHubAccessResponse,
+    GetProductGitHubAccessError,
+    GetProductGitHubAccessResponse,
+    ReturnType<typeof getProductGitHubAccessQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getProductGitHubAccess({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getProductGitHubAccessQueryKey(options),
+  });
+
+export const getProductAutoMergeAttentionQueryKey = (options: Options<GetProductAutoMergeAttentionData>) =>
+  createQueryKey("getProductAutoMergeAttention", options);
+
+export const getProductAutoMergeAttentionOptions = (options: Options<GetProductAutoMergeAttentionData>) =>
+  queryOptions<
+    GetProductAutoMergeAttentionResponse,
+    GetProductAutoMergeAttentionError,
+    GetProductAutoMergeAttentionResponse,
+    ReturnType<typeof getProductAutoMergeAttentionQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getProductAutoMergeAttention({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getProductAutoMergeAttentionQueryKey(options),
+  });
 
 export const listProductSecretsQueryKey = (options: Options<ListProductSecretsData>) =>
   createQueryKey("listProductSecrets", options);

@@ -1,10 +1,11 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Logger } from "~/telemetry/logger.js";
 import type {
   SaveValidationContractInput,
   StoredValidationAssertion,
   StoredValidationContract,
   ValidationContractStore,
+  ValidationPlanStore,
 } from "~/domain/validation/validation-contract-store.js";
 import type {
   ValidationEvidenceKind,
@@ -88,7 +89,7 @@ const toStored = (row: ContractRow): StoredValidationContract => ({
   createdAt: row.createdAt,
 });
 
-export class PrismaValidationContractStore implements ValidationContractStore {
+export class PrismaValidationContractStore implements ValidationContractStore, ValidationPlanStore {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly logger?: Logger,
@@ -148,6 +149,63 @@ export class PrismaValidationContractStore implements ValidationContractStore {
       // the race. The loser reads the contract the winner wrote, and does not fail the Run.
       const row = await this.findByRun(input.tenantId, input.runId);
       if (row !== null) return row;
+      throw error;
+    }
+  }
+
+  async savePassingPlan(tenantId: string, runId: string, plan: unknown): Promise<void> {
+    const updated = await this.prisma.validationContract.updateMany({
+      where: { tenantId, runId },
+      data: { passingPlan: plan as Prisma.InputJsonValue },
+    });
+    if (updated.count === 0) throw new Error(`no Validation Contract of run "${runId}" holds the passing plan`);
+  }
+
+  async passingPlan(tenantId: string, runId: string): Promise<unknown> {
+    const row = await this.prisma.validationContract.findFirst({ where: { tenantId, runId }, select: { passingPlan: true } });
+    return row?.passingPlan ?? null;
+  }
+
+  async adopt(
+    tenantId: string,
+    fromRunId: string,
+    toRunId: string,
+  ): Promise<{ contract: StoredValidationContract; hasPlan: boolean } | null> {
+    const source = await this.prisma.validationContract.findFirst({ where: { tenantId, runId: fromRunId }, include: { assertions: true } });
+    if (source === null) return null;
+    const hasPlan = source.passingPlan !== null;
+    const existing = await this.findByRun(tenantId, toRunId);
+    if (existing !== null) return { contract: existing, hasPlan };
+    try {
+      const row = await this.prisma.validationContract.create({
+        data: {
+          tenantId,
+          runId: toRunId,
+          version: source.version,
+          sha256: source.sha256,
+          workItem: source.workItem,
+          goal: source.goal,
+          document: source.document,
+          ...(source.passingPlan === null ? {} : { passingPlan: source.passingPlan }),
+          assertions: {
+            create: source.assertions.map((assertion) => ({
+              tenantId,
+              assertionKey: assertion.assertionKey,
+              requirement: assertion.requirement,
+              statement: assertion.statement,
+              method: assertion.method,
+              evidence: assertion.evidence,
+              preconditions: assertion.preconditions,
+            })),
+          },
+        },
+        include: { assertions: true },
+      });
+      return { contract: toStored(row), hasPlan };
+    } catch (error) {
+      // The unique index on `runId` decides a race of two attempts.
+      const row = await this.findByRun(tenantId, toRunId);
+      if (row !== null) return { contract: row, hasPlan };
       throw error;
     }
   }

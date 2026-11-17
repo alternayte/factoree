@@ -591,3 +591,57 @@ describe("publishProofPack, needs your eye (docs/specs/by-eye-criteria-and-selec
     expect(harness.posted[0]).not.toContain("Needs your eye");
   });
 });
+
+/** docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. */
+describe("amendProofPack", () => {
+  it("stores the whole proof pack again with the deploys and the comments after publication, and posts nothing (DI-21.126)", async () => {
+    const stored: { document: Record<string, unknown> | null; input: Record<string, unknown> | null; sha256: string | null } = {
+      document: null,
+      input: null,
+      sha256: null,
+    };
+    const runs = {
+      setProofPack: async (_tenantId: string, _runId: string, proofPack: { sha256: string; document: Record<string, unknown>; input?: Record<string, unknown> }) => {
+        stored.document = proofPack.document;
+        stored.sha256 = proofPack.sha256;
+        if (proofPack.input !== undefined) stored.input = proofPack.input;
+      },
+      listRunTargets: async () => [],
+      findById: async () => ({
+        proofPackDocument: stored.document,
+        proofPackInput: stored.input,
+        proofPackSha256: stored.sha256,
+        proofPackPostedAt: new Date(),
+      }),
+    };
+    const { activities, posted } = build({ runs } as unknown as Partial<ProofPackActivityDependencies>);
+    await activities.publishProofPack(input);
+    const first = stored.sha256;
+    await activities.amendProofPack({
+      tenantId: "t1",
+      productId: "p1",
+      runId: "run-1",
+      afterPublication: { amendedFor: "a comment arrived.", comments: ["dana: Looks fine."] },
+    });
+    await activities.amendProofPack({
+      tenantId: "t1",
+      productId: "p1",
+      runId: "run-1",
+      afterPublication: {
+        amendedFor: "the change is deployed to production.",
+        deploys: [{ environment: "production", state: "success", sha: "d".repeat(40), previousSha: null, logUrl: null, environmentUrl: null, resolved: false }],
+      },
+    });
+    expect(posted).toHaveLength(1);
+    expect(stored.document).toMatchObject({
+      afterPublication: {
+        amendedFor: "the change is deployed to production.",
+        deploys: [expect.objectContaining({ environment: "production", sha: "d".repeat(40) })],
+      },
+    });
+    // The stored input renders the whole proof pack again, with what the first amendment set.
+    expect(stored.input).toMatchObject({ afterPublication: { comments: ["dana: Looks fine."] } });
+    expect(stored.sha256).not.toBe(first);
+    expect(stored.document).toMatchObject({ afterPublication: { comments: ["dana: Looks fine."] } });
+  });
+});

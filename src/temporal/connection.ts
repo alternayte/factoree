@@ -13,6 +13,8 @@ import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/buil
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
 import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
 import { draftRunWorkflow } from "~/workflows/draft-run.workflow.js";
+import { pullRequestEventSignal, pullRequestWorkflow } from "~/workflows/pr.workflow.js";
+import type { PullRequestSignal } from "~/domain/pull-requests/pull-request-router.js";
 import { setupAfterPushWorkflow, setupAfterPushWorkflowId, setupPushedSignal } from "~/workflows/setup-after-push.workflow.js";
 
 const tlsOptions = (env: Env) => (env.FACTOREE_TEMPORAL_API_KEY === undefined ? {} : { tls: true, apiKey: env.FACTOREE_TEMPORAL_API_KEY });
@@ -164,5 +166,22 @@ export const createSetupAfterPushRequester =
       args: [input],
       signal: setupPushedSignal,
       signalArgs: [],
+    });
+  };
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. Sends one event to the PR workflow of a recorded pull
+ * request. Signal-with-start reaches the workflow that runs, or starts it when the run that published
+ * the pull request could not, or when a reopen follows a close.
+ */
+export const createPullRequestEventSender =
+  (client: Client, taskQueue: string) =>
+  async (input: PullRequestSignal): Promise<void> => {
+    await client.workflow.signalWithStart(pullRequestWorkflow, {
+      taskQueue,
+      workflowId: input.workflowId,
+      args: [{ tenantId: input.tenantId, pullRequestId: input.pullRequestId }],
+      signal: pullRequestEventSignal,
+      signalArgs: [input.event],
     });
   };

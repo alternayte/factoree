@@ -3,7 +3,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
-import type { Sandbox } from "~/domain/runs/sandbox.js";
+import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import { agentSessionKey, describeSilenceLimit, type AgentSessionStore } from "~/domain/runs/agent-session.js";
 import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
@@ -12,7 +12,7 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
-import { buildActionPolicy } from "~/domain/policy/action-policy.js";
+import { buildActionPolicy, type ActionPolicy } from "~/domain/policy/action-policy.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildReviewerInput } from "~/domain/review/reviewer-input.js";
 import {
@@ -29,6 +29,9 @@ import { decideReview, failureLine } from "~/domain/review/blocking.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { RunStageStore } from "~/domain/runs/run-stage.js";
+import type { PrReviewFinding, TriagedFinding } from "~/domain/pull-requests/pr-follow-up.js";
+import { decideTriage, parseTriageReport, TRIAGE_REPORT_SCHEMA_TEXT, TriageReportInvalidError } from "~/domain/review/triage-report.js";
+import { renderTriagePrompt, TRIAGE_PROMPT_VERSION } from "~/prompts/triage.js";
 
 /**
  * SDD section 40. The Reviewer runs in a fresh session, against the goal, the frozen Validation
@@ -104,6 +107,37 @@ export interface ReviewActivityOutput {
   hang: AgentHang;
 }
 
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. The triage of the PR reviewer's findings: a fresh
+ * reviewer session in a check sprite of the pull request head. It receives the findings, the change
+ * and the repository rules, and no implementer transcript.
+ */
+export interface TriageActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  runnerName: string;
+  spriteId: string;
+  adapter: string;
+  workspacePath: string;
+  primaryPath: string;
+  baseSha: string;
+  pullRequestUrl: string;
+  reviewerName: string;
+  findings: PrReviewFinding[];
+  repositoryInstructions: string;
+  timeoutMs: number;
+  afterHang?: boolean;
+}
+
+export interface TriageActivityOutput {
+  /** Factoree's decision on each finding, in the order of the input. Empty when the report is not usable. */
+  decisions: TriagedFinding[];
+  reportUsable: boolean;
+  reportProblem: string | null;
+  hang: AgentHang;
+}
+
 export interface ReviewActivityDependencies {
   sandbox: Sandbox;
   runners: AgentRunnerRegistry;
@@ -159,6 +193,149 @@ const redactFinding = (redactor: Redactor, finding: ReviewFinding): ReviewFindin
   evidence: redactor.redactText(finding.evidence),
   description: redactor.redactText(finding.description),
 });
+
+/** One fresh reviewer session: the review of a run, or the triage of a PR reviewer's findings. */
+interface ReviewerSessionInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  runnerName: string;
+  ref: SandboxRef;
+  spriteId: string;
+  workingDirectory: string;
+  primaryPath: string;
+  prompt: string;
+  promptVersion: string;
+  environment: Record<string, string>;
+  actionPolicy: ActionPolicy;
+  timeoutMs: number;
+  attempt: number;
+  idempotencyKey: string;
+}
+
+/**
+ * SDD section 40. Runs one fresh reviewer session under a heartbeat, cancels its live process when
+ * Temporal cancels the activity, and writes its AgentExecution row and its AgentSession row. Factoree
+ * never resumes a reviewer session and never carries a session reference between sessions.
+ */
+const runReviewerSession = async (
+  dependencies: ReviewActivityDependencies,
+  input: ReviewerSessionInput,
+): Promise<AgentRunResult> => {
+  // SDD section 49. An unregistered reviewer runner is a fault in the product settings, not a
+  // fault in the infrastructure. `RunConfigurationError` routes the Run to `FAILED_CONFIGURATION`,
+  // so an operator can repair the name.
+  let runner: AgentRunner;
+  try {
+    runner = dependencies.runners.get(input.runnerName);
+  } catch (error) {
+    if (!(error instanceof UnknownAgentRunnerError)) throw error;
+    throw new RunConfigurationError(
+      `The Product selects the reviewer runner "${input.runnerName}", which is not registered. ` +
+        `Registered runners: ${dependencies.runners.names().join(", ")}. Repair the reviewer runner on the product page.`,
+    );
+  }
+  const context = Context.current();
+
+  const heartbeat = setInterval(() => {
+    context.heartbeat();
+  }, REVIEWER_HEARTBEAT_INTERVAL_MS);
+
+  let running = true;
+  let pendingTimer: NodeJS.Timeout | null = null;
+
+  const cancelLiveSession = async (): Promise<void> => {
+    const deadline = Date.now() + REVIEWER_SESSION_LOOKUP_TIMEOUT_MS;
+    while (running && Date.now() < deadline) {
+      const session = activeReviewerSessionOf(runner, input.runId);
+      if (session !== undefined) {
+        try {
+          await Promise.race([
+            runner.cancel(session),
+            new Promise((_resolve, reject) =>
+              setTimeout(() => reject(new Error("the runner did not answer the cancel")), REVIEWER_CANCEL_TIMEOUT_MS).unref(),
+            ),
+          ]);
+        } catch (error) {
+          dependencies.logger.error("the cancellation of the Reviewer session failed", {
+            tenant_id: input.tenantId,
+            run_id: input.runId,
+            runner: runner.name,
+            error: String(error),
+          });
+        }
+        return;
+      }
+      await new Promise((resolve) => {
+        pendingTimer = setTimeout(resolve, REVIEWER_SESSION_LOOKUP_INTERVAL_MS);
+        pendingTimer.unref();
+      });
+    }
+  };
+
+  const onCancel = (): void => {
+    void cancelLiveSession();
+  };
+  if (context.cancellationSignal.aborted) onCancel();
+  else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
+
+  let sessionResult: AgentRunResult;
+  try {
+    sessionResult = await runner.run({
+      runId: input.runId,
+      tenantId: input.tenantId,
+      role: "reviewer",
+      sandbox: dependencies.sandbox,
+      ref: input.ref,
+      workingDirectory: input.workingDirectory,
+      // The session reads its model and its provider timeouts from the repository.
+      repositoryPath: input.primaryPath,
+      prompt: input.prompt,
+      promptVersion: input.promptVersion,
+      environment: input.environment,
+      actionPolicy: input.actionPolicy,
+      timeoutMs: input.timeoutMs,
+    });
+  } finally {
+    running = false;
+    clearInterval(heartbeat);
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    context.cancellationSignal.removeEventListener("abort", onCancel);
+  }
+
+  await dependencies.executions.record({
+    tenantId: input.tenantId,
+    runId: input.runId,
+    role: "reviewer",
+    runner: runner.name,
+    model: null,
+    sessionRef: sessionResult.session.sessionId,
+    promptVersion: input.promptVersion,
+    durationMs: sessionResult.durationMs,
+    finalResult: {
+      completed: sessionResult.completed,
+      exitCode: sessionResult.exitCode,
+      cancelled: sessionResult.cancelled,
+      summary: sessionResult.summary,
+    },
+    idempotencyKey: input.idempotencyKey,
+  });
+  await recordAgentSession(
+    { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages },
+    {
+      tenantId: input.tenantId,
+      productId: input.productId,
+      runId: input.runId,
+      role: "reviewer",
+      attempt: input.attempt,
+      runner: runner.name,
+      idempotencyKey: input.idempotencyKey,
+      sandboxId: input.spriteId,
+    },
+    [sessionResult],
+  );
+  return sessionResult;
+};
 
 /** SDD section 63 names this file. */
 export const createReviewActivities = (dependencies: ReviewActivityDependencies) => ({
@@ -273,124 +450,24 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         imageFiles: input.imageFiles ?? [],
       });
 
-      // Step 9. SDD section 49. An unregistered reviewer runner is a fault in
-      // `.factoree/config.yaml`, not a fault in the infrastructure. `RunConfigurationError`
-      // routes the Run to `FAILED_CONFIGURATION`, so an operator can repair the name.
-      let runner: AgentRunner;
-      try {
-        runner = dependencies.runners.get(input.runnerName);
-      } catch (error) {
-        if (!(error instanceof UnknownAgentRunnerError)) throw error;
-        throw new RunConfigurationError(
-          `The Product selects the reviewer runner "${input.runnerName}", which is not registered. ` +
-            `Registered runners: ${dependencies.runners.names().join(", ")}. Repair the reviewer runner on the product page.`,
-        );
-      }
-      const context = Context.current();
-
-      const heartbeat = setInterval(() => {
-        context.heartbeat();
-      }, REVIEWER_HEARTBEAT_INTERVAL_MS);
-
-      let running = true;
-      let pendingTimer: NodeJS.Timeout | null = null;
-
-      const cancelLiveSession = async (): Promise<void> => {
-        const deadline = Date.now() + REVIEWER_SESSION_LOOKUP_TIMEOUT_MS;
-        while (running && Date.now() < deadline) {
-          const session = activeReviewerSessionOf(runner, input.runId);
-          if (session !== undefined) {
-            try {
-              await Promise.race([
-                runner.cancel(session),
-                new Promise((_resolve, reject) =>
-                  setTimeout(
-                    () => reject(new Error("the runner did not answer the cancel")),
-                    REVIEWER_CANCEL_TIMEOUT_MS,
-                  ).unref(),
-                ),
-              ]);
-            } catch (error) {
-              dependencies.logger.error("the cancellation of the Reviewer session failed", {
-                tenant_id: input.tenantId,
-                run_id: input.runId,
-                runner: runner.name,
-                error: String(error),
-              });
-            }
-            return;
-          }
-          await new Promise((resolve) => {
-            pendingTimer = setTimeout(resolve, REVIEWER_SESSION_LOOKUP_INTERVAL_MS);
-            pendingTimer.unref();
-          });
-        }
-      };
-
-      const onCancel = (): void => {
-        void cancelLiveSession();
-      };
-      if (context.cancellationSignal.aborted) onCancel();
-      else context.cancellationSignal.addEventListener("abort", onCancel, { once: true });
-
-      let sessionResult: AgentRunResult;
-      try {
-        // Step 10. A fresh session, every attempt. Factoree never resumes a Reviewer session and
-        // never carries a session reference between attempts.
-        sessionResult = await runner.run({
-          runId: input.runId,
-          tenantId: input.tenantId,
-          role: "reviewer",
-          sandbox: dependencies.sandbox,
-          ref,
-          workingDirectory: reviewDirectory,
-          // The session reads its model and its provider timeouts from the repository.
-          repositoryPath: input.primaryPath,
-          prompt: reviewerInput.prompt,
-          promptVersion: reviewerInput.promptVersion,
-          environment: reviewerInput.environment,
-          actionPolicy,
-          timeoutMs: input.timeoutMs,
-        });
-      } finally {
-        running = false;
-        clearInterval(heartbeat);
-        if (pendingTimer !== null) clearTimeout(pendingTimer);
-        context.cancellationSignal.removeEventListener("abort", onCancel);
-      }
-
-      // Step 11. One AgentExecution row per review pass.
-      await dependencies.executions.record({
-        tenantId: input.tenantId,
+      // Steps 9 to 11. A fresh session, its AgentExecution row and its AgentSession row.
+      const sessionResult = await runReviewerSession(dependencies, {
         runId: input.runId,
-        role: "reviewer",
-        runner: runner.name,
-        model: null,
-        sessionRef: sessionResult.session.sessionId,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        runnerName: input.runnerName,
+        ref,
+        spriteId: input.spriteId,
+        workingDirectory: reviewDirectory,
+        primaryPath: input.primaryPath,
+        prompt: reviewerInput.prompt,
         promptVersion: reviewerInput.promptVersion,
-        durationMs: sessionResult.durationMs,
-        finalResult: {
-          completed: sessionResult.completed,
-          exitCode: sessionResult.exitCode,
-          cancelled: sessionResult.cancelled,
-          summary: sessionResult.summary,
-        },
+        environment: reviewerInput.environment,
+        actionPolicy,
+        timeoutMs: input.timeoutMs,
+        attempt: input.attempt,
         idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
       });
-      await recordAgentSession(
-        { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages },
-        {
-          tenantId: input.tenantId,
-          productId: input.productId,
-          runId: input.runId,
-          role: "reviewer",
-          attempt: input.attempt,
-          runner: runner.name,
-          idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
-          sandboxId: input.spriteId,
-        },
-        [sessionResult],
-      );
 
       // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing. The workflow
       // starts one fresh session in the same pass.
@@ -601,5 +678,99 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
     } finally {
       metrics.reviewDuration.observe(labels, (Date.now() - started) / 1000);
     }
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.110. Runs one fresh reviewer session that keeps
+   * only the PR reviewer findings with a concrete defect, a rule and evidence (SDD section 41).
+   * Factoree decides each finding from the report. A session that changed the worktree, wrote no
+   * report or wrote an invalid one proves nothing, so the answer is not usable.
+   */
+  async triagePullRequestFindings(input: TriageActivityInput): Promise<TriageActivityOutput> {
+    await registerProjectSecrets(dependencies.redactor, dependencies.secrets, input.tenantId, input.productId, dependencies.logger);
+    const unusable = (problem: string, hang: AgentHang = null): TriageActivityOutput => ({
+      decisions: [],
+      reportUsable: false,
+      reportProblem: dependencies.redactor.redactText(problem),
+      hang,
+    });
+    const actionPolicy = buildActionPolicy({ role: "reviewer" });
+    const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+    await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, input.tenantId, input.productId);
+    const triageDirectory = `${input.workspacePath}/triage`;
+    await dependencies.sandbox.exec(ref, { file: "mkdir", args: ["-p", triageDirectory] });
+
+    const gitDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
+    const diff = await captureSourceDiff(gitDependencies, { ref, primaryPath: input.primaryPath, baseSha: input.baseSha });
+    const beforeFingerprint = await worktreeFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
+    const beforeGitState = await worktreeGitStateFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
+
+    const afterHang = input.afterHang === true;
+    const reportPath = `${triageDirectory}/report${afterHang ? "-after-hang" : ""}.json`;
+    const prompt = renderTriagePrompt({
+      pullRequestUrl: input.pullRequestUrl,
+      reviewerName: input.reviewerName,
+      findings: input.findings,
+      sourceDiff: diff.text,
+      diffTruncated: diff.truncated,
+      changedFiles: diff.changedFiles,
+      repositoryInstructions: input.repositoryInstructions,
+      reportPath,
+      actionPolicy: actionPolicy.describe(),
+      reportSchema: TRIAGE_REPORT_SCHEMA_TEXT,
+    });
+    // The triage reads no secret, so its session gets no project test secret.
+    const sessionResult = await runReviewerSession(dependencies, {
+      runId: input.runId,
+      tenantId: input.tenantId,
+      productId: input.productId,
+      runnerName: input.runnerName,
+      ref,
+      spriteId: input.spriteId,
+      workingDirectory: triageDirectory,
+      primaryPath: input.primaryPath,
+      prompt,
+      promptVersion: TRIAGE_PROMPT_VERSION,
+      environment: {},
+      actionPolicy,
+      timeoutMs: input.timeoutMs,
+      attempt: 0,
+      idempotencyKey: `${agentSessionKey(input.runId, "reviewer", null, afterHang)}:triage`,
+    });
+
+    const hang = hangOf([sessionResult]);
+    if (hang !== null) return unusable(`The triage session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, so Factoree stopped it.`, hang);
+    if (!sessionResult.completed || sessionResult.cancelled) {
+      return unusable(sessionResult.cancelled ? "The triage session was cancelled." : "The triage session did not complete.");
+    }
+    const afterFingerprint = await worktreeFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
+    const afterGitState = await worktreeGitStateFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
+    if (afterFingerprint !== beforeFingerprint || afterGitState !== beforeGitState) {
+      return unusable("The triage session changed the primary worktree, which the reviewer role may not do, so Factoree refused its report.");
+    }
+    const reportResult = await dependencies.sandbox.exec(ref, { file: "cat", args: [reportPath] });
+    if (reportResult.exitCode !== 0) return unusable("The triage session wrote no report.");
+    let decisions: TriagedFinding[];
+    try {
+      decisions = decideTriage(input.findings, parseTriageReport(reportResult.stdout));
+    } catch (error) {
+      if (!(error instanceof TriageReportInvalidError)) throw error;
+      return unusable(error.message);
+    }
+    const redacted = decisions.map((decision) => ({
+      ...decision,
+      defect: dependencies.redactor.redactText(decision.defect),
+      rule: dependencies.redactor.redactText(decision.rule),
+      evidence: dependencies.redactor.redactText(decision.evidence),
+      reason: dependencies.redactor.redactText(decision.reason),
+    }));
+    dependencies.logger.info("triage finished", {
+      tenant_id: input.tenantId,
+      run_id: input.runId,
+      step: "triage",
+      finding_count: redacted.length,
+      kept_count: redacted.filter((decision) => decision.kept).length,
+    });
+    return { decisions: redacted, reportUsable: true, reportProblem: null, hang: null };
   },
 });

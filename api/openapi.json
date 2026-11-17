@@ -2182,7 +2182,8 @@
                       "L0",
                       "L1",
                       "L2",
-                      "L3"
+                      "L3",
+                      "L4"
                     ]
                   },
                   "runner": {
@@ -2542,6 +2543,28 @@
                         "one_for_all"
                       ]
                     },
+                    "prReviewer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "appSlug": {
+                              "type": "string"
+                            },
+                            "checkName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "appSlug",
+                            "checkName"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -2575,6 +2598,7 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
+                    "prReviewer",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3294,6 +3318,28 @@
                         "one_for_all"
                       ]
                     },
+                    "prReviewer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "appSlug": {
+                              "type": "string"
+                            },
+                            "checkName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "appSlug",
+                            "checkName"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -3327,6 +3373,7 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
+                    "prReviewer",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3722,6 +3769,28 @@
                           "one_for_all"
                         ]
                       },
+                      "prReviewer": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "appSlug": {
+                                "type": "string"
+                              },
+                              "checkName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "appSlug",
+                              "checkName"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "createdAt": {
                         "type": "string"
                       },
@@ -3755,6 +3824,7 @@
                       "sandboxProviderIds",
                       "maxConcurrentRuns",
                       "appChangeIssues",
+                      "prReviewer",
                       "createdAt",
                       "updatedAt"
                     ]
@@ -4143,6 +4213,28 @@
                         "one_for_all"
                       ]
                     },
+                    "prReviewer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "appSlug": {
+                              "type": "string"
+                            },
+                            "checkName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "appSlug",
+                            "checkName"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4176,6 +4268,7 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
+                    "prReviewer",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -4305,7 +4398,8 @@
                       "L0",
                       "L1",
                       "L2",
-                      "L3"
+                      "L3",
+                      "L4"
                     ]
                   },
                   "riskCaps": {
@@ -4320,7 +4414,8 @@
                         "L0",
                         "L1",
                         "L2",
-                        "L3"
+                        "L3",
+                        "L4"
                       ]
                     }
                   },
@@ -4585,6 +4680,32 @@
                     "enum": [
                       "one_per_change",
                       "one_for_all"
+                    ]
+                  },
+                  "prReviewer": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "appSlug": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"
+                          },
+                          "checkName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "required": [
+                          "appSlug",
+                          "checkName"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   }
                 },
@@ -4932,6 +5053,28 @@
                         "one_for_all"
                       ]
                     },
+                    "prReviewer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "appSlug": {
+                              "type": "string"
+                            },
+                            "checkName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "appSlug",
+                            "checkName"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4965,6 +5108,7 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
+                    "prReviewer",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5128,7 +5272,8 @@
                       "L0",
                       "L1",
                       "L2",
-                      "L3"
+                      "L3",
+                      "L4"
                     ]
                   }
                 },
@@ -5479,6 +5624,28 @@
                         "one_for_all"
                       ]
                     },
+                    "prReviewer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "appSlug": {
+                              "type": "string"
+                            },
+                            "checkName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "appSlug",
+                            "checkName"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -5512,6 +5679,7 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
+                    "prReviewer",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5536,6 +5704,295 @@
             }
           },
           "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/github-access": {
+      "get": {
+        "operationId": "getProductGitHubAccess",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "installations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "installationId": {
+                            "type": "string"
+                          },
+                          "accountLogin": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "settingsUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "missingPermissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "required": {
+                                  "type": "string"
+                                },
+                                "granted": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "required",
+                                "granted"
+                              ]
+                            }
+                          },
+                          "missingEvents": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "installationId",
+                          "accountLogin",
+                          "settingsUrl",
+                          "repositories",
+                          "missingPermissions",
+                          "missingEvents",
+                          "error"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "installations"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/auto-merge-attention": {
+      "get": {
+        "operationId": "getProductAutoMergeAttention",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pullRequests": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repositoryFullName": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "number"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "baseBranch": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "repositoryFullName",
+                          "number",
+                          "url",
+                          "baseBranch",
+                          "reason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "pullRequests"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
             "description": "Default Response",
             "content": {
               "application/json": {

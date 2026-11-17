@@ -3,7 +3,18 @@
  * holds only the names a caller in this codebase actually uses, so an unknown name fails at
  * compile time instead of reaching GitHub as a silently-accepted typo.
  */
-export type GitHubPermissionName = "contents" | "pull_requests" | "workflows" | "issues";
+export type GitHubPermissionName =
+  | "contents"
+  | "pull_requests"
+  | "workflows"
+  | "issues"
+  // docs/specs/pr-review-merge-and-deploy.md, D4. The PR workflow reads check runs, commit statuses
+  // and the repository settings of the L4 gate.
+  | "checks"
+  | "statuses"
+  | "metadata"
+  // Slice 5, DI-21.122. The deploy report reads the deployments of an environment.
+  | "deployments";
 
 /** The access level of one permission. GitHub also defines `admin`; Factoree asks for neither. */
 export type GitHubPermissionLevel = "read" | "write";
