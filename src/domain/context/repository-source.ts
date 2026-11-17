@@ -158,7 +158,7 @@ export class RepositoryContextSource implements ContextSource {
   private async discoverRepository(
     repository: RepositoryRef,
     request: ContextDiscoveryRequest,
-    role: "primary" | "reference",
+    role: "primary" | "target" | "reference",
   ): Promise<ContextCandidate[]> {
     // SDD section 20. An explicit commit SHA, never a moving ref.
     //
@@ -183,7 +183,11 @@ export class RepositoryContextSource implements ContextSource {
     const tree = await this.options.reader.listTree(repository.url, sha);
 
     const repositoryReason =
-      role === "primary" ? "the primary repository of the Project" : "a configured reference repository";
+      role === "primary"
+        ? "the primary repository of the Project"
+        : role === "target"
+          ? "a target repository of the change set"
+          : "a configured reference repository";
     const truncatedNote = tree.truncated
       ? ` The file listing was truncated, so this repository is only partly indexed.`
       : "";
@@ -205,7 +209,7 @@ export class RepositoryContextSource implements ContextSource {
         sizeBytes: null,
         // SDD section 21. A repository is never preloaded. The Implementer reaches it by path in
         // the sandbox. AT-09 requires exactly this.
-        suggestedClassification: role === "primary" ? "required" : "reference",
+        suggestedClassification: role === "reference" ? "reference" : "required",
       },
     ];
 
@@ -219,7 +223,8 @@ export class RepositoryContextSource implements ContextSource {
       // primary repository, and only when the path carries a Work Item topic. A large repository
       // then never floods the contract. AT-02 needs at least one such pattern.
       if (classification.authority === "source_code") {
-        if (role !== "primary" || topics.length === 0) continue;
+        // docs/specs/change-sets.md. Every target of a change set is changed, so each one offers its source.
+        if (role === "reference" || topics.length === 0) continue;
       }
 
       // SDD section 21. Every discovered file starts as a reference item. The resolver promotes
@@ -253,6 +258,9 @@ export class RepositoryContextSource implements ContextSource {
     // automatically discovered repository, and `fetch` must still reach a repository an earlier
     // pass pinned. Both maps are keyed by slug, so a repeated pass overwrites its own entry.
     const primary = await this.discoverRepository(request.primaryRepository, request, "primary");
+    for (const repository of request.targetRepositories ?? []) {
+      primary.push(...(await this.discoverRepository(repository, request, "target")));
+    }
     const references: ContextCandidate[] = [];
     for (const repository of request.referenceRepositories) {
       references.push(...(await this.discoverRepository(repository, request, "reference")));

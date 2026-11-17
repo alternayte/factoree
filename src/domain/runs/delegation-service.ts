@@ -41,7 +41,7 @@ export interface SessionRuns {
     agentSessionId: string,
   ): Promise<{ id: string; status: RunStatus; temporalWorkflowId: string } | null>;
   /** docs/specs/change-sets.md. The targets of a run, whose pull requests a reply is pointed to. */
-  listRunTargets(tenantId: string, runId: string): Promise<Array<{ pullRequestUrl: string | null }>>;
+  listRunTargets(tenantId: string, runId: string): Promise<Array<{ repositoryId: string; pullRequestUrl: string | null }>>;
   /** docs/specs/change-sets.md. The last patch of each target of a run. */
   lastPatches(tenantId: string, runId: string): Promise<Array<{ repositoryFullName: string; patchBase64: string }>>;
 }
@@ -365,6 +365,12 @@ export class DelegationService {
             event.agentSession.id,
             followUp.deploy === undefined ? followUp.failedRunId : `deploy-${followUp.deploy.id}`,
           );
+    // docs/specs/change-sets.md, DI-21.131. A follow-up run starts from the set of the run it follows.
+    // The human reply refines the work, it does not re-route it.
+    const followUpTargets =
+      followUp === null
+        ? []
+        : ((await this.dependencies.sessionRuns?.listRunTargets(tenantId, followUp.failedRunId)) ?? []).map((target) => target.repositoryId);
     const startInput: AgentRunWorkflowInput = {
       tenantId,
       workspaceId: event.organizationId,
@@ -378,6 +384,7 @@ export class DelegationService {
       ...(followUp === null
         ? {}
         : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
+      ...(followUpTargets.length === 0 ? {} : { followUpTargets }),
       ...(followUp?.deploy === undefined
         ? {}
         : {

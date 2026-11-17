@@ -49,6 +49,11 @@ export interface ContextDiscoveryRequest {
   topics: string[];
   primaryRepository: RepositoryRef;
   referenceRepositories: RepositoryRef[];
+  /**
+   * docs/specs/change-sets.md. The other target repositories of a change set, which the run changes
+   * as it changes the primary one. Absent for a run with one target.
+   */
+  targetRepositories?: RepositoryRef[];
   /** Every reference the Work Item declared, as written. */
   workItemReferences: string[];
   /** SDD section 23. Every human answer recorded on this Run so far. */

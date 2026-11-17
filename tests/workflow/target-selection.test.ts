@@ -113,6 +113,33 @@ describe("target selection and the RunTarget row", () => {
     });
   });
 
+  it("takes every repository the issue names as one change set", async () => {
+    // docs/specs/change-sets.md, DI-21.130. One RunTarget row per target, one notice for the set,
+    // the other target resolved with its own SHA, and each identity checked at its own base.
+    await runWorker(async () => {
+      const handle = await start("ses-target-set", {
+        product: { ...productInput, repositories: twoRepositories },
+        workItem: { ...workItemInput, description: "## Goal\n\nAdd the endpoint to api and call it from web.\n" },
+      });
+      await waitFor(() => implementsOf("run-ses-target-set").length === 1, "the Implementer of target-set");
+
+      expect(targetsOf("run-ses-target-set")).toEqual([
+        expect.objectContaining({ repositoryId: "repository-api", selectionReason: "the issue names api and web" }),
+        expect.objectContaining({ repositoryId: "repository-web", selectionReason: "the issue names api and web" }),
+      ]);
+      expect(noticesOf("run-ses-target-set")).toEqual([
+        { kind: "target", statement: "chose acme/api and acme/web", reason: "the issue names api and web" },
+      ]);
+      const calls = contextCallsOf("run-ses-target-set");
+      expect(calls[0]?.primaryRepository.slug).toBe("acme/api");
+      expect(calls[0]?.targetRepositories).toEqual([expect.objectContaining({ slug: "acme/web", githubInstallationId: "install-1" })]);
+      expect(identityCallsOf("run-ses-target-set").map((call) => call.baseSha)).toEqual([expect.any(String), "a".repeat(40)]);
+
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+  });
+
   it("F1: passes no sibling as a referenceRepository to resolveContext at Run start", async () => {
     // Specification section 12. A repository of the Product that is not the target is absent
     // at start. It must reach an agent only through clone_sibling, which the Action Policy

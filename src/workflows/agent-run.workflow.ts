@@ -68,7 +68,15 @@ import { renderRisks } from "../domain/refinement/risk.js";
 import { completionInvariantFailures, prePublicationFailures } from "../domain/runs/completion-invariant.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { proposeTarget, selectTarget } from "../domain/routing/select-targets.js";
+import {
+  inSetOrder,
+  matchReplyToCandidates,
+  proposeTarget,
+  proposeTargets,
+  selectTarget,
+  selectTargets,
+  type TargetSetOutcome,
+} from "../domain/routing/select-targets.js";
 import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time but
 // `sandbox.js`, which imports nothing.
@@ -166,6 +174,12 @@ export interface AgentRunWorkflowInput {
    * freezes none, its proof pack says the reply replaced them and no visual evidence exists.
    */
   followUpBrowserAssertions?: string[];
+  /**
+   * docs/specs/change-sets.md, DI-21.131. The repository ids of the targets of the run this run
+   * follows. The follow-up run changes the same set. Absent for a first run, for a run that follows
+   * a run with no target, and in an older history.
+   */
+  followUpTargets?: string[];
   /**
    * docs/specs/work-item-images-and-links.md. The moment of the delegation, ISO 8601. A comment
    * created later is not read. Absent in an older history.
@@ -291,6 +305,11 @@ const DRAFT_OFFER_PATCH = "draft-offer";
  * workflow. An older history starts none, and its close takes the webhook path of DI-21.51.
  */
 const PR_WORKFLOW_PATCH = "pr-workflow";
+/**
+ * docs/specs/change-sets.md. The run selects a set of target repositories, and a follow-up run takes
+ * the set of the run it follows. An older history selects one target.
+ */
+const CHANGE_SET_PATCH = "change-sets";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -750,6 +769,9 @@ export async function agentRunWorkflow(
   // The GitHub App installation that grants the target repository. The clone, the discovery
   // read, and the publish all mint against this id, never against a Project secret.
   let primaryRepositoryInstallationId = targetRepositories[0]?.githubInstallationId ?? "";
+  // docs/specs/change-sets.md. Every target of the Run, in set order. The first is the primary
+  // repository above. Target selection fills it.
+  let runTargets: Array<{ id: string; fullName: string; githubInstallationId: string }> = [];
   // Specification section 12. A repository in the Product that is not the target is absent at
   // start. It must reach an agent only through clone_sibling, which the Action Policy gates and
   // which writes an evidence record. This list must therefore never take a value from Product
@@ -2109,6 +2131,28 @@ export async function agentRunWorkflow(
         if (notice) await takeDecision({ kind: "target", statement: `chose ${repository.fullName}`, reason });
       };
 
+      /**
+       * docs/specs/change-sets.md. Applies a confirmed set: one RunTarget row per target, in set
+       * order. The first target is the primary repository. One notice names the whole set.
+       */
+      const applyTargets = async (repositories: RepositoryRecord[], reason: string, notice: boolean): Promise<void> => {
+        const first = repositories[0];
+        if (first === undefined) return;
+        primaryRepositorySlug = first.fullName;
+        primaryRepositoryId = first.id;
+        primaryRepositoryInstallationId = first.githubInstallationId;
+        refined.primaryRepository = first.fullName;
+        runTargets = repositories;
+        for (const repository of repositories) {
+          await activities.recordRunTarget({ tenantId: input.tenantId, runId: id, repositoryId: repository.id, selectionReason: reason });
+        }
+        if (notice) {
+          const names = repositories.map((repository) => repository.fullName);
+          const statement = names.length === 1 ? `chose ${names[0] ?? ""}` : `chose ${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
+          await takeDecision({ kind: "target", statement, reason });
+        }
+      };
+
       // docs/specs/own-proposals-and-parallel-runs.md. The issue text or the Linear project decides
       // the target when exactly one repository matches. A pick among equals is a guess, so only
       // then does a human choose.
@@ -2122,40 +2166,98 @@ export async function agentRunWorkflow(
           `The repository ${prFollowUp.repositoryFullName} of ${prFollowUp.url} is no longer part of this product, so Factoree cannot change it.`,
         );
       }
-      let targetOutcome: ReturnType<typeof selectTarget> =
-        pullRequestRepository !== null
-          ? { kind: "selected", repository: pullRequestRepository, reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
-          : selectTarget(
-              presentRepositories,
-              proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+      // docs/specs/change-sets.md. A run changes a set of repositories. The patch keeps the one-target
+      // selection of a history that passed this point before sets existed.
+      if (!patched(CHANGE_SET_PATCH)) {
+        let targetOutcome: ReturnType<typeof selectTarget> =
+          pullRequestRepository !== null
+            ? { kind: "selected", repository: pullRequestRepository, reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
+            : selectTarget(
+                presentRepositories,
+                proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+              );
+        while (targetOutcome.kind === "ambiguous") {
+          const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
+          const proceeded = await askAndWait(
+            "target-selection",
+            "Factoree found several repositories in this Product, and no confident target. " +
+              `Candidates: ${candidateNames}. Reply with the exact repository name to use.`,
+            undefined,
+            undefined,
+            "BLOCKED_TARGET",
+          );
+          if (stopRequested) return await cancelRun();
+          if (!proceeded) {
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            return await failRun(
+              "TARGET_UNRESOLVED",
+              "Factoree could not confirm the target repository of this Product, so it published " +
+                "nothing.",
             );
-      while (targetOutcome.kind === "ambiguous") {
-        const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
-        const proceeded = await askAndWait(
-          "target-selection",
-          "Factoree found several repositories in this Product, and no confident target. " +
-            `Candidates: ${candidateNames}. Reply with the exact repository name to use.`,
-          undefined,
-          undefined,
-          "BLOCKED_TARGET",
-        );
-        if (stopRequested) return await cancelRun();
-        if (!proceeded) {
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          }
+          const reply = decisions[decisions.length - 1]?.answer ?? "";
+          const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
+          targetOutcome =
+            chosen === null
+              ? { kind: "ambiguous", candidates: targetOutcome.candidates }
+              : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
+        }
+        await applyTarget(targetOutcome.repository, targetOutcome.reason, targetOutcome.notify);
+        runTargets = [targetOutcome.repository];
+      } else {
+        // DI-21.131. A follow-up run changes the set of the run it follows. A repository that left
+        // the product since then cannot be changed, and a guess would re-route the work.
+        const followUpTargets = prFollowUp === null ? (input.followUpTargets ?? []) : [];
+        const followUpSet = followUpTargets.map((repositoryId) => presentRepositories.find((repository) => repository.id === repositoryId) ?? null);
+        const goneTarget = followUpSet.findIndex((repository) => repository === null || repository.absentSince !== null);
+        if (goneTarget >= 0) {
+          const gone = followUpSet[goneTarget];
           return await failRun(
             "TARGET_UNRESOLVED",
-            "Factoree could not confirm the target repository of this Product, so it published " +
-              "nothing.",
+            `The repository ${gone?.fullName ?? followUpTargets[goneTarget] ?? ""} of the run this run follows is no longer part of this product, so Factoree cannot change it.`,
           );
         }
-        const reply = decisions[decisions.length - 1]?.answer ?? "";
-        const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
-        targetOutcome =
-          chosen === null
-            ? { kind: "ambiguous", candidates: targetOutcome.candidates }
-            : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
+        let setOutcome: TargetSetOutcome =
+          pullRequestRepository !== null
+            ? { kind: "selected", repositories: [pullRequestRepository], reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
+            : followUpSet.length > 0
+              ? {
+                  kind: "selected",
+                  repositories: inSetOrder(followUpSet.filter((repository): repository is RepositoryRecord => repository !== null)),
+                  reason: "the targets of the run this run follows",
+                  notify: false,
+                }
+              : selectTargets(
+                  presentRepositories,
+                  proposeTargets(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+                );
+        while (setOutcome.kind === "ambiguous") {
+          const candidateNames = setOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
+          const proceeded = await askAndWait(
+            "target-selection",
+            "Factoree found several repositories in this Product, and no rule decides which ones this issue changes. " +
+              `Candidates: ${candidateNames}. Reply with the exact name of each repository to change.`,
+            undefined,
+            undefined,
+            "BLOCKED_TARGET",
+          );
+          if (stopRequested) return await cancelRun();
+          if (!proceeded) {
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            return await failRun(
+              "TARGET_UNRESOLVED",
+              "Factoree could not confirm the target repositories of this Product, so it published " +
+                "nothing.",
+            );
+          }
+          const chosen = matchReplyToCandidates(decisions[decisions.length - 1]?.answer ?? "", setOutcome.candidates);
+          setOutcome =
+            chosen.length === 0
+              ? { kind: "ambiguous", candidates: setOutcome.candidates }
+              : { kind: "selected", repositories: chosen, reason: "human reply", notify: false };
+        }
+        await applyTargets(setOutcome.repositories, setOutcome.reason, setOutcome.notify);
       }
-      await applyTarget(targetOutcome.repository, targetOutcome.reason, targetOutcome.notify);
 
       // SDD section 20. Discovery pins one SHA for each repository. The ref below is the ref
       // discovery starts from. The checkout later uses the pinned SHA.
@@ -2187,6 +2289,14 @@ export async function agentRunWorkflow(
                 ? repositoryRef(refined.primaryRepository)
                 : { ...repositoryRef(refined.primaryRepository), ref: prFollowUp.baseSha },
             referenceRepositories: refined.referenceRepositories.map(repositoryRef),
+            // docs/specs/change-sets.md. The other targets of a change set, each at its default branch.
+            ...(runTargets.length > 1
+              ? {
+                  targetRepositories: runTargets
+                    .slice(1)
+                    .map((target) => ({ ...repositoryRef(target.fullName), githubInstallationId: target.githubInstallationId })),
+                }
+              : {}),
             workItemReferences: refined.workItemReferences,
             decisions,
             githubInstallationId: primaryRepositoryInstallationId,
@@ -2259,31 +2369,44 @@ export async function agentRunWorkflow(
       // Specification section 8. The routing table used a cached repository row. The base
       // commit is the ground truth. Factoree reads the identity block there. It checks that
       // block against the Product routing used.
-      const identity = await activities.verifyTargetIdentity({
-        runId: id,
-        tenantId: input.tenantId,
-        productId: input.productId,
-        productSlug: input.product.productSlug,
-        repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
-        baseSha: resolvedContext.primary.sha,
-        githubInstallationId: primaryRepositoryInstallationId,
-      });
-      if (stopRequested) return await cancelRun();
-      if (!identity.matched) {
-        return await endRoutingMismatch(
-          input.product.productSlug,
-          identity.declaredProduct ?? "an unknown Product",
-        );
+      // docs/specs/change-sets.md. Each target of a change set is checked at its own base, in set order.
+      // A run with one target makes the one call it made before.
+      const targetBases = (runTargets.length === 0 ? [{ id: primaryRepositoryId, fullName: resolvedContext.primary.slug, githubInstallationId: primaryRepositoryInstallationId }] : runTargets).map(
+        (target, index) => ({
+          ...target,
+          slug: index === 0 ? resolvedContext.primary.slug : target.fullName,
+          sha: index === 0 ? resolvedContext.primary.sha : (resolvedContext.targets?.find((pinned) => pinned.slug === target.fullName)?.sha ?? ""),
+        }),
+      );
+      for (const target of targetBases) {
+        const identity = await activities.verifyTargetIdentity({
+          runId: id,
+          tenantId: input.tenantId,
+          productId: input.productId,
+          productSlug: input.product.productSlug,
+          repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug),
+          baseSha: target.sha,
+          githubInstallationId: target.githubInstallationId,
+        });
+        if (stopRequested) return await cancelRun();
+        if (!identity.matched) {
+          return await endRoutingMismatch(
+            input.product.productSlug,
+            identity.declaredProduct ?? "an unknown Product",
+          );
+        }
       }
 
-      // Specification section 14. The base SHA of the target's RunTarget row is known now, at
+      // Specification section 14. The base SHA of each target's RunTarget row is known now, at
       // context resolution.
-      await activities.recordRunTargetFacts({
-        tenantId: input.tenantId,
-        runId: id,
-        repositoryId: primaryRepositoryId,
-        baseSha: resolvedContext.primary.sha,
-      });
+      for (const target of targetBases) {
+        await activities.recordRunTargetFacts({
+          tenantId: input.tenantId,
+          runId: id,
+          repositoryId: target.id,
+          baseSha: target.sha,
+        });
+      }
 
       // docs/specs/autonomy-levels.md. L0 reads and reports. The Context Contract is the report,
       // and no sandbox starts.

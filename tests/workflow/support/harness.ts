@@ -500,6 +500,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           slug: repository.slug,
           sha: `${index}`.repeat(40),
         })),
+        ...(input.targetRepositories === undefined
+          ? {}
+          : { targets: input.targetRepositories.map((repository, index) => ({ slug: repository.slug, sha: `${"abcdef"[index % 6] ?? "a"}`.repeat(40) })) }),
         unresolvedConflict,
         conflictCount: all.length,
         summary:

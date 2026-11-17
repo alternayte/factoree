@@ -150,7 +150,7 @@ const build = (
     productPageUrl: (productId: string) => `https://factoree.example/products/${productId}`,
     sessionRuns: {
       findByAgentSession: () => Promise.resolve(overrides.latest ?? null),
-      listRunTargets: () => Promise.resolve([{ pullRequestUrl: overrides.latest?.pullRequestUrl ?? null }]),
+      listRunTargets: () => Promise.resolve([{ repositoryId: "repository-1", pullRequestUrl: overrides.latest?.pullRequestUrl ?? null }]),
       lastPatches: () =>
         Promise.resolve([{ repositoryFullName: "acme/web", patchBase64: Buffer.from("diff --git a/x b/x\n").toString("base64") }]),
     },

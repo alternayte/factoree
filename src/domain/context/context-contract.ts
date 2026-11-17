@@ -30,6 +30,11 @@ export interface ContextContract {
   runId: string;
   goal: string;
   primaryRepository: ContextContractRepository;
+  /**
+   * docs/specs/change-sets.md. The other target repositories of a change set, each at its pinned
+   * SHA. Absent for a run with one target, so its contract and its hash do not change.
+   */
+  targetRepositories?: ContextContractRepository[];
   referenceRepositories: ContextContractReferenceRepository[];
   items: SelectedContextItem[];
   conflicts: ContextConflictRecord[];
@@ -66,6 +71,11 @@ export const validateContextContract = (contract: ContextContract): void => {
       `The primary repository ${contract.primaryRepository.repo} has no explicit commit SHA: ` +
         `"${contract.primaryRepository.sha}".`,
     );
+  }
+  for (const repository of contract.targetRepositories ?? []) {
+    if (!SHA.test(repository.sha)) {
+      fail(`The target repository ${repository.repo} has no explicit commit SHA: "${repository.sha}".`);
+    }
   }
   for (const repository of contract.referenceRepositories) {
     if (!SHA.test(repository.sha)) {
@@ -178,6 +188,14 @@ export const renderContextContract = (contract: ContextContract): string => {
     "",
     `- ${contract.primaryRepository.repo} at ${contract.primaryRepository.sha}`,
     "",
+    ...((contract.targetRepositories ?? []).length === 0
+      ? []
+      : [
+          "## Other target repositories",
+          "",
+          ...(contract.targetRepositories ?? []).map((repository) => `- ${repository.repo} at ${repository.sha}`),
+          "",
+        ]),
     "## Reference repositories",
     "",
     ...references,
