@@ -81,7 +81,8 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - setup input key: the SHA-256 of the default-branch head SHA and the rendered setup prompt. A setup whose key matches the newest unchanged setup skips its session. Avoid: setup hash, input fingerprint, cache key.
 - skipped setup: a setup that ends unchanged with no agent session, because its setup input key matches. It copies the report of the setup it matched. Avoid: cached setup, no-op setup.
 - setup history: the page per repository that lists every setup run with its time, cost and report. Avoid: setup log, setup runs page.
-- host credential: a product credential for one private host, a registry login or a header, that the sandbox provider adds to requests outside the guest. Avoid: registry login, registry secret, private registry credential.
+- host credential: a product credential for one private host, a registry login, a header, or GitHub git access to listed repositories, that the sandbox provider adds to requests outside the guest. Avoid: registry login, registry secret, private registry credential.
+- redirect host: an exact host that a credential host sends a download to. It joins the egress of every phase with no key. Avoid: download host, blob host, CDN host.
 - sandbox provider: one entry in the install settings, a Kiln host, an E2B account or a Sprites account, with its own live sandbox limit, size and priority. Avoid: sandbox backend, sandbox host.
 - spillover: a run that starts on a lower-priority sandbox provider because every better one is full. Avoid: overflow, failover, load balancing.
 - held slot: a live sandbox slot that a run reserves on its sandbox provider at start, for its peak of three sandboxes. Avoid: reservation, slot hold.
