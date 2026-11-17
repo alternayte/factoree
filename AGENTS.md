@@ -93,6 +93,7 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - set snapshot: a warm snapshot that holds every target of one set, keyed by the sorted list of repository and bootstrap key. Avoid: combined snapshot, product snapshot.
 - wired pair: a provider and a consumer whose consumer fake names the provider repository, so they run together in the check sprite. Avoid: linked services, integration pair.
 - in-between check: the check of each consumer at its base against the provider patches, the state between the two merges. Avoid: compatibility check, partial-merge test.
+- set check: the check sprite pass that verifies every target of a change set together, with each wired pair and the in-between check. Avoid: full check, joint check.
 - retro agent: the fresh agent role that reads the ended runs of a tenant's products on a schedule and proposes findings. Avoid: review agent, improvement agent, meta agent.
 - retro: one pass of the retro agent, run as its own workflow outside any run. Avoid: retrospective run, improvement pass, analysis run.
 - retro finding: one proposed improvement that targets one product and cites its runs, and that becomes a Linear issue only when a human creates it. Avoid: insight, recommendation, lesson.
