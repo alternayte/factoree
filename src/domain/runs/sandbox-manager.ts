@@ -38,7 +38,7 @@ import { bootstrapAllowListOf } from "./project-runtime-config.js";
 import {
   composeProjectOf,
   ensureDocker,
-  listFakes,
+  listStack,
   listRepositoryFiles,
   pauseServices,
   seedServices,
@@ -49,6 +49,7 @@ import {
 import {
   checkGroupsOf,
   pairsIn,
+  hostAddressOf,
   startGroup,
   stopGroup,
   wireTargets,
@@ -1179,12 +1180,15 @@ export class SandboxManager {
         accounts: target.runtime.accounts ?? [],
         ...(target.runtime.browserLimits === undefined ? {} : { browserLimits: target.runtime.browserLimits }),
         environment: target.environment,
-        fakes: services === null ? [] : await listFakes(sandbox, ref, target.checkout.path, services),
+        ...(services === null ? { fakes: [] } : await listStack(sandbox, ref, target.checkout.path, services)),
         bootstrapCommand: target.runtime.bootstrapCommand,
         verifyCommands: verifyCommands.filter((command) => command.workingDirectory === target.checkout.path),
       });
     }
-    return { targets: checkTargets, ...wireTargets(checkTargets, unwired) };
+    // DI-21.150. The sandbox address serves the path by the fake's service name.
+    const labelled = checkTargets.some((target) => target.fakes.some((fake) => fake.repository !== undefined));
+    const hostAddress = labelled ? await hostAddressOf(sandbox, ref) : null;
+    return { targets: checkTargets, ...wireTargets(checkTargets, unwired, hostAddress) };
   }
 
   /**

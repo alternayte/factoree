@@ -2,7 +2,7 @@ import type { AccountConfig, PreviewConfig, ServicesConfig, VerificationCommand 
 import type { BrowserLimits } from "~/domain/validation/browser-limits.js";
 import type { PlanTargetRules } from "~/domain/validation/validation-plan.js";
 import type { ProcessRef, Sandbox, SandboxRef } from "./sandbox.js";
-import { pauseServices, startServices, type FakeService } from "./services.js";
+import { pauseServices, startServices, type FakeService, type StackHosts } from "./services.js";
 import { PreviewStartError, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "./preview.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
@@ -26,6 +26,11 @@ export interface SetCheckTarget {
   environment: Record<string, string>;
   /** The fakes of the stack of the target. */
   fakes: FakeService[];
+  /**
+   * DI-21.150. The compose services of the stack that can take `/etc/hosts` entries. Absent in a
+   * fact an older worker recorded.
+   */
+  hostServices?: string[];
   /** The bootstrap command, which the in-between check runs again at the base of a consumer. */
   bootstrapCommand: string | null;
   /** The verify commands of the target, named `<owner/repo>: <name>`, with its folder. */
@@ -44,6 +49,13 @@ export interface WiredPair {
   fake: string;
   /** The host ports the fake publishes, which forward to the provider preview. */
   ports: number[];
+  /**
+   * DI-21.150. The path under the service name of the fake: each consumer service resolves the
+   * fake's name to `address`, the sandbox address the containers reach, and a forward on each of
+   * `ports`, the fake's container ports, answers there for the provider preview. Absent when the
+   * fake declares no container port or the sandbox has no such address.
+   */
+  byName?: { address: string; ports: number[] };
 }
 
 /** DI-21.148. A labelled pair that runs alone, each target with its own stack, and why. */
@@ -60,6 +72,18 @@ export interface SetCheckFacts {
   pairs: WiredPair[];
   alone: UnwiredPair[];
 }
+
+/**
+ * DI-21.150. The first global IPv4 address of the sandbox, which a container reaches through the
+ * rootless network (slirp4netns) and which a forward of the sandbox can listen on. Null when none.
+ * Rootless Docker refuses the loopback of the sandbox to a container, so `host-gateway` does not serve.
+ */
+export const hostAddressOf = async (sandbox: Sandbox, ref: SandboxRef): Promise<string | null> => {
+  const result = await sandbox.exec(ref, { file: "ip", args: ["-4", "-o", "addr", "show", "scope", "global"], cwd: "/" });
+  if (result.exitCode !== 0) return null;
+  const match = /\binet (\d{1,3}(?:\.\d{1,3}){3})\//.exec(result.stdout);
+  return match?.[1] ?? null;
+};
 
 const sameName = (left: string, right: string): boolean => left.toLowerCase() === right.toLowerCase();
 
@@ -83,6 +107,8 @@ export const previewPortOf = (preview: PreviewConfig | null): number | null => {
 export const wireTargets = (
   targets: readonly SetCheckTarget[],
   unwired: readonly UnwiredPair[] = [],
+  /** DI-21.150. The sandbox address a container reaches, from `hostAddressOf`, or null. */
+  hostAddress: string | null = null,
 ): { pairs: WiredPair[]; alone: UnwiredPair[] } => {
   const pairs: WiredPair[] = [];
   const alone: UnwiredPair[] = [];
@@ -97,10 +123,19 @@ export const wireTargets = (
         alone.push({ ...pair, reason: known.reason });
       } else if (previewPortOf(provider.preview) === null) {
         alone.push({ ...pair, reason: `${provider.repository} configures no enabled preview with a port, so nothing can answer in place of the fake` });
-      } else if ((fake.ports ?? []).length === 0) {
-        alone.push({ ...pair, reason: `the fake "${fake.service}" publishes no port, so Factoree cannot point ${consumer.repository} at ${provider.repository}` });
       } else {
-        pairs.push({ ...pair, ports: fake.ports ?? [] });
+        // DI-21.150. Two paths reach the provider: the host ports the fake publishes, and the
+        // fake's service name inside the stack. One path is enough to wire the pair.
+        const byName = hostAddress !== null && (fake.containerPorts ?? []).length > 0 ? { address: hostAddress, ports: fake.containerPorts ?? [] } : null;
+        if ((fake.ports ?? []).length === 0 && byName === null) {
+          const why =
+            (fake.containerPorts ?? []).length === 0
+              ? `the fake "${fake.service}" publishes no port and declares no container port`
+              : `the fake "${fake.service}" publishes no port and the sandbox has no network address its containers can reach`;
+          alone.push({ ...pair, reason: `${why}, so Factoree cannot point ${consumer.repository} at ${provider.repository}` });
+        } else {
+          pairs.push({ ...pair, ports: fake.ports ?? [], ...(byName === null ? {} : { byName }) });
+        }
       }
     }
   }
@@ -122,6 +157,9 @@ export const wireTargets = (
     }
     for (const pair of pairs.filter((candidate) => group.includes(candidate.consumer))) {
       for (const port of pair.ports) claim(port, `the fake "${pair.fake}" of ${pair.consumer}`);
+      for (const port of serviceForwardPortsOf(pair, byName.get(pair.provider)?.preview ?? null)) {
+        claim(port, `the service name of the fake "${pair.fake}" of ${pair.consumer}`);
+      }
     }
     if (collision === null) continue;
     for (const pair of pairs.filter((candidate) => group.includes(candidate.consumer))) {
@@ -130,6 +168,29 @@ export const wireTargets = (
     wired = wired.filter((candidate) => !group.includes(candidate.consumer));
   }
   return { pairs: wired, alone };
+};
+
+/**
+ * DI-21.150. The container ports of a pair that get their own forward on the sandbox address: not
+ * a port the fake publishes, whose forward listens on every address already, and not the port of
+ * the provider preview, which answers there itself.
+ */
+export const serviceForwardPortsOf = (pair: WiredPair, providerPreview: PreviewConfig | null): number[] => {
+  const previewPort = previewPortOf(providerPreview);
+  return (pair.byName?.ports ?? []).filter((port) => !pair.ports.includes(port) && port !== previewPort);
+};
+
+/**
+ * DI-21.150. The `/etc/hosts` entries of a consumer stack in a wired group: each service of the
+ * stack, except the fakes the group replaces, resolves the name of each replaced fake that has a
+ * path by name to the sandbox address.
+ */
+export const stackHostsOf = (target: SetCheckTarget, pairs: readonly WiredPair[]): StackHosts | undefined => {
+  const own = pairs.filter((pair) => pair.consumer === target.repository);
+  const entries = own.flatMap((pair) => (pair.byName === undefined ? [] : [`${pair.fake}:${pair.byName.address}`]));
+  if (entries.length === 0) return undefined;
+  const replaced = new Set(own.map((pair) => pair.fake));
+  return { services: (target.hostServices ?? []).filter((service) => !replaced.has(service)), entries };
 };
 
 /**
@@ -188,11 +249,14 @@ export const aloneNotes = (alone: readonly UnwiredPair[]): string[] =>
       "Check the call between them yourself.",
   );
 
-/** DI-21.146. A small TCP forward in the sandbox's Node, from a fake's port to the provider preview. */
+/**
+ * DI-21.146, DI-21.150. A small TCP forward in the sandbox's Node, from a fake's port on an address
+ * to the provider preview.
+ */
 const FORWARD_SCRIPT =
-  "const net=require('net');const [from,to]=process.argv.slice(1).map(Number);" +
+  "const net=require('net');const [from,to]=process.argv.slice(1,3).map(Number);const host=process.argv[3]||'0.0.0.0';" +
   "net.createServer((c)=>{const u=net.connect(to,'127.0.0.1');c.pipe(u);u.pipe(c);" +
-  "c.on('error',()=>u.destroy());u.on('error',()=>c.destroy());}).listen(from,'0.0.0.0');";
+  "c.on('error',()=>u.destroy());u.on('error',()=>c.destroy());}).listen(from,host);";
 
 /** The time a forward gets to listen. */
 const FORWARD_WAIT = "for i in $(seq 1 100); do ss -ltnH \"sport = :$0\" | grep -q . && exit 0; sleep 0.1; done; exit 1";
@@ -234,16 +298,20 @@ export const startGroup = async (
     for (const target of targets) {
       if (target.services === null) continue;
       const replaced = inGroup.filter((pair) => pair.consumer === target.repository).map((pair) => pair.fake);
-      await startServices(dependencies.sandbox, ref, target.path, target.services, replaced);
+      await startServices(dependencies.sandbox, ref, target.path, target.services, replaced, stackHostsOf(target, inGroup));
     }
     for (const pair of inGroup) {
       const provider = targets.find((target) => target.repository === pair.provider);
       const to = previewPortOf(provider?.preview ?? null);
       if (to === null) continue;
       starting = pair.provider;
-      for (const from of pair.ports) {
+      const listens = [
+        ...pair.ports.map((port) => ({ from: port, host: "0.0.0.0" })),
+        ...serviceForwardPortsOf(pair, provider?.preview ?? null).map((port) => ({ from: port, host: pair.byName?.address ?? "0.0.0.0" })),
+      ];
+      for (const { from, host } of listens) {
         running.forwards.push(
-          await dependencies.sandbox.startProcess(ref, { file: "node", args: ["-e", FORWARD_SCRIPT, String(from), String(to)], cwd: "/" }),
+          await dependencies.sandbox.startProcess(ref, { file: "node", args: ["-e", FORWARD_SCRIPT, String(from), String(to), host], cwd: "/" }),
         );
         const listening = await dependencies.sandbox.exec(ref, { file: "sh", args: ["-c", FORWARD_WAIT, String(from)], cwd: "/" });
         if (listening.exitCode !== 0) {
@@ -267,6 +335,19 @@ export const startGroup = async (
           probe: dependencies.probe,
           redactor: dependencies.redactor,
         }),
+      );
+    }
+    // DI-21.150. A fake whose container port is the provider preview port: the preview listens
+    // first, and a forward on the sandbox address serves a preview that listens on the loopback
+    // only. When the preview listens on every address, the forward cannot listen and the preview
+    // answers itself.
+    for (const pair of inGroup) {
+      const provider = targets.find((target) => target.repository === pair.provider);
+      const port = previewPortOf(provider?.preview ?? null);
+      if (port === null || pair.byName === undefined || !pair.byName.ports.includes(port) || pair.ports.includes(port)) continue;
+      starting = pair.provider;
+      running.forwards.push(
+        await dependencies.sandbox.startProcess(ref, { file: "node", args: ["-e", FORWARD_SCRIPT, String(port), String(port), pair.byName.address], cwd: "/" }),
       );
     }
   } catch (error) {

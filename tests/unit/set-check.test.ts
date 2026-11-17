@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkGroupsOf, setServerOf, wireTargets, type SetCheckTarget } from "~/domain/runs/set-check.js";
-import { fakesOfComposeConfig } from "~/domain/runs/services.js";
+import { checkGroupsOf, serviceForwardPortsOf, setServerOf, stackHostsOf, wireTargets, type SetCheckTarget } from "~/domain/runs/set-check.js";
+import { fakesOfComposeConfig, stackOfComposeConfig } from "~/domain/runs/services.js";
 import { parseValidationPlan, ValidationPlanInvalidError, type PlanTargetRules } from "~/domain/validation/validation-plan.js";
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import { runSetUserValidation, inBetweenConsumersOf } from "~/domain/validation/set-validation.js";
@@ -35,7 +35,7 @@ describe("the compose fakes of a change set (docs/specs/change-sets.md, DI-21.14
       },
     });
     expect(fakesOfComposeConfig(json)).toEqual([
-      { service: "api", name: "Acme API", repository: "acme/api", ports: [4010] },
+      { service: "api", name: "Acme API", repository: "acme/api", ports: [4010], containerPorts: [8080] },
       { service: "mail", name: "Mailgun" },
     ]);
   });
@@ -65,6 +65,46 @@ describe("wireTargets (DI-21.146, DI-21.148)", () => {
     expect(collides.pairs).toEqual([]);
     expect(collides.alone[0]?.reason).toContain("both use port 5000");
     expect(setServerOf({ targets: [api, web], pairs: collides.pairs })).toBeNull();
+  });
+});
+
+describe("the path by the fake's service name (DI-21.150)", () => {
+  const api = target("acme/api", { preview: preview(5000) });
+  const byNameOnly = { service: "api-fake", name: "Acme API", repository: "acme/api", containerPorts: [8080] };
+
+  it("reads the container ports of a fake and the services that take host entries", () => {
+    const json = JSON.stringify({
+      services: {
+        app: {},
+        sidecar: { network_mode: "service:app" },
+        "api-fake": { labels: { "factoree.fake": "Acme API" }, ports: [{ target: 8080, published: "4010" }], expose: ["9090/tcp"] },
+      },
+    });
+    expect(stackOfComposeConfig(json)).toEqual({
+      fakes: [{ service: "api-fake", name: "Acme API", ports: [4010], containerPorts: [8080, 9090] }],
+      hostServices: ["api-fake", "app"],
+    });
+  });
+
+  it("wires a fake that publishes no port through its service name, and only when the sandbox has an address", () => {
+    const web = target("acme/web", { preview: preview(3000), fakes: [byNameOnly], hostServices: ["api-fake", "app", "worker"] });
+    const wired = wireTargets([api, web], [], "10.0.0.7");
+    expect(wired).toEqual({
+      pairs: [{ provider: "acme/api", consumer: "acme/web", fake: "api-fake", ports: [], byName: { address: "10.0.0.7", ports: [8080] } }],
+      alone: [],
+    });
+    expect(stackHostsOf(web, wired.pairs)).toEqual({ services: ["app", "worker"], entries: ["api-fake:10.0.0.7"] });
+    expect(wireTargets([api, web]).alone[0]?.reason).toContain("no network address");
+    const silent = target("acme/web", { fakes: [{ ...byNameOnly, containerPorts: [] }] });
+    expect(wireTargets([api, silent], [], "10.0.0.7").alone[0]?.reason).toContain("declares no container port");
+  });
+
+  it("forwards each container port that no published forward and no preview already serves", () => {
+    const pair = { provider: "acme/api", consumer: "acme/web", fake: "api-fake", ports: [4010], byName: { address: "10.0.0.7", ports: [4010, 5000, 8080] } };
+    expect(serviceForwardPortsOf(pair, preview(5000))).toEqual([8080]);
+    const collides = wireTargets([api, target("acme/web", { preview: preview(8080), fakes: [{ ...byNameOnly, containerPorts: [8080] }] })], [], "10.0.0.7");
+    expect(collides.pairs).toEqual([]);
+    expect(collides.alone[0]?.reason).toContain("both use port 8080");
   });
 });
 
@@ -222,7 +262,7 @@ describe("runSetUserValidation (DI-21.146, DI-21.149)", () => {
       {
         sandbox,
         browser: {} as UserValidatorDependencies["browser"],
-        fetchImpl: (() => Promise.reject(new Error("no fetch"))) as unknown as UserValidatorDependencies["fetchImpl"],
+        fetchImpl: () => Promise.reject(new Error("no fetch")),
         probe: () => Promise.resolve(null),
         redactor,
         logger: createLogger({ level: "error", redactor }),

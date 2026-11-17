@@ -104,12 +104,14 @@ const composeArguments = async (
   ref: SandboxRef,
   primaryPath: string,
   services: ServicesConfig,
+  extraFiles: readonly string[] = [],
 ): Promise<string[]> => {
   const files = [services.compose];
   if (services.compose !== FACTOREE_COMPOSE_OVERLAY) {
     const overlay = await sandbox.exec(ref, { file: "test", args: ["-f", FACTOREE_COMPOSE_OVERLAY], cwd: primaryPath });
     if (overlay.exitCode === 0) files.push(FACTOREE_COMPOSE_OVERLAY);
   }
+  files.push(...extraFiles);
   return [
     "compose",
     ...(services.project === undefined ? [] : ["-p", services.project]),
@@ -132,9 +134,20 @@ export const startServices = async (
    * provider answers for. `--scale 0` removes a running one, so its published port is free.
    */
   without: readonly string[] = [],
+  /**
+   * docs/specs/change-sets.md, DI-21.150. Host names each listed service resolves in its
+   * `/etc/hosts`: a wired consumer reaches the provider under the name of the fake it replaces.
+   */
+  hosts?: StackHosts,
 ): Promise<void> => {
+  const extraFiles: string[] = [];
+  if (hosts !== undefined && hosts.services.length > 0 && hosts.entries.length > 0) {
+    const file = `/tmp/factoree-hosts-${composeProjectOf(services.project ?? primaryPath)}.json`;
+    await sandbox.writeFile(ref, file, hostsOverlayOf(hosts));
+    extraFiles.push(file);
+  }
   const args = [
-    ...(await composeArguments(sandbox, ref, primaryPath, services)),
+    ...(await composeArguments(sandbox, ref, primaryPath, services, extraFiles)),
     "up",
     "-d",
     "--wait",
@@ -219,7 +232,24 @@ export interface FakeService {
   repository?: string;
   /** DI-21.146. The host ports the service publishes, in order. Empty when it publishes none. */
   ports?: number[];
+  /**
+   * DI-21.150. The container ports of the service, from `ports` and `expose`, in order: the ports
+   * another container of the stack calls under the service name. Absent when it declares none.
+   */
+  containerPorts?: number[];
 }
+
+/** docs/specs/change-sets.md, DI-21.150. The `/etc/hosts` entries of the services of one stack. */
+export interface StackHosts {
+  /** The compose services that get the entries. */
+  services: string[];
+  /** `<host name>:<address>`, the compose `extra_hosts` form. */
+  entries: string[];
+}
+
+/** DI-21.150. The compose file, in JSON, that gives each listed service the host entries. */
+export const hostsOverlayOf = (hosts: StackHosts): string =>
+  JSON.stringify({ services: Object.fromEntries(hosts.services.map((service) => [service, { extra_hosts: hosts.entries }])) });
 
 /** The compose label that marks a fake. */
 export const FAKE_LABEL = "factoree.fake";
@@ -251,6 +281,38 @@ const publishedPortsOf = (ports: unknown): number[] => {
   return published;
 };
 
+/** DI-21.150. The container ports of one service: each `target` of `ports`, then each `expose`. */
+const containerPortsOf = (ports: unknown, expose: unknown): number[] => {
+  const found: number[] = [];
+  const add = (value: unknown): void => {
+    const port = Number(typeof value === "string" ? value.split("/")[0] : value);
+    if (Number.isInteger(port) && port > 0 && port < 65536 && !found.includes(port)) found.push(port);
+  };
+  if (Array.isArray(ports)) {
+    for (const port of ports) if (typeof port === "object" && port !== null) add((port as { target?: unknown }).target);
+  }
+  if (Array.isArray(expose)) for (const port of expose) add(port);
+  return found;
+};
+
+/** A compose service as `docker compose config --format json` writes it. */
+interface ComposeServiceDefinition {
+  labels?: unknown;
+  ports?: unknown;
+  expose?: unknown;
+  network_mode?: unknown;
+}
+
+/** One stack: its fakes, and the services that can take `/etc/hosts` entries. */
+export interface ComposeStack {
+  fakes: FakeService[];
+  /**
+   * DI-21.150. The services, sorted, without one that shares the network of another service or
+   * container (`network_mode: service:` or `container:`), which Docker gives no host entry.
+   */
+  hostServices: string[];
+}
+
 /**
  * Reads the fakes of the stack from the merged compose configuration, the repository file and the
  * Factoree overlay together, so a fake the overlay adds counts.
@@ -260,25 +322,49 @@ export const listFakes = async (
   ref: SandboxRef,
   primaryPath: string,
   services: ServicesConfig,
-): Promise<FakeService[]> => {
+): Promise<FakeService[]> => (await listStack(sandbox, ref, primaryPath, services)).fakes;
+
+/** The fakes and the host-entry services of the stack, from the merged compose configuration. */
+export const listStack = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  primaryPath: string,
+  services: ServicesConfig,
+): Promise<ComposeStack> => {
   const args = [...(await composeArguments(sandbox, ref, primaryPath, services)), "config", "--format", "json"];
   const result = await sandbox.exec(ref, { file: "docker", args, cwd: primaryPath });
   if (result.exitCode !== 0) {
     throw new RunConfigurationError(`docker compose config failed with exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
   }
-  return fakesOfComposeConfig(result.stdout);
+  return stackOfComposeConfig(result.stdout);
 };
 
 /** The fakes of one merged compose configuration, sorted by service name. */
-export const fakesOfComposeConfig = (json: string): FakeService[] => {
-  const document = JSON.parse(json) as { services?: Record<string, { labels?: unknown; ports?: unknown }> };
+export const fakesOfComposeConfig = (json: string): FakeService[] => stackOfComposeConfig(json).fakes;
+
+/** The stack of one merged compose configuration. */
+export const stackOfComposeConfig = (json: string): ComposeStack => {
+  const document = JSON.parse(json) as { services?: Record<string, ComposeServiceDefinition> };
   const fakes: FakeService[] = [];
+  const hostServices: string[] = [];
   for (const [service, definition] of Object.entries(document.services ?? {})) {
+    const mode = typeof definition.network_mode === "string" ? definition.network_mode : "";
+    if (!mode.startsWith("service:") && !mode.startsWith("container:")) hostServices.push(service);
     const name = labelOf(definition.labels, FAKE_LABEL);
     if (name === null) continue;
     const repository = labelOf(definition.labels, FAKE_REPOSITORY_LABEL);
     const ports = publishedPortsOf(definition.ports);
-    fakes.push({ service, name, ...(repository === null ? {} : { repository }), ...(ports.length === 0 ? {} : { ports }) });
+    const containerPorts = containerPortsOf(definition.ports, definition.expose);
+    fakes.push({
+      service,
+      name,
+      ...(repository === null ? {} : { repository }),
+      ...(ports.length === 0 ? {} : { ports }),
+      ...(containerPorts.length === 0 ? {} : { containerPorts }),
+    });
   }
-  return fakes.sort((left, right) => (left.service < right.service ? -1 : 1));
+  return {
+    fakes: fakes.sort((left, right) => (left.service < right.service ? -1 : 1)),
+    hostServices: hostServices.sort(),
+  };
 };
