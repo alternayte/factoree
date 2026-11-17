@@ -181,6 +181,12 @@ export const overlayPullRequestHead = async (
   primary: CheckedOutRepository,
   headSha: string,
   credential?: RepositoryCredential,
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.119. True when the base is a new base:
+   * the worktree takes the merge of the head into it, as `git merge-tree` writes it. A conflicting
+   * file holds its conflict markers. False keeps the diff from the base to the head (D2).
+   */
+  merge = false,
 ): Promise<void> => {
   if (!SHA.test(headSha)) throw new Error(`the pull request head is not forty hexadecimal characters: "${headSha}"`);
   const credentialEnv = credentialEnvironment(primary.url, credential);
@@ -197,16 +203,15 @@ export const overlayPullRequestHead = async (
     true,
   );
   const patchPath = `${ref.workspacePath}/pull-request.diff`;
+  // The merge tree is the first line of `git merge-tree`. Exit code 1 is a conflict, whose tree holds
+  // the conflict markers, and any other code is a fault.
+  const target = merge
+    ? 'tree=$(git -C "$0" merge-tree --write-tree --no-messages "$2" "$1" | head -n 1); ' +
+      '[ -n "$tree" ] || exit 2; git -C "$0" -c core.quotePath=true -c diff.external= diff --binary --no-renames --no-ext-diff --no-textconv --no-color "$1" "$tree" > "$3"'
+    : 'git -C "$0" -c core.quotePath=true -c diff.external= diff --binary --no-renames --no-ext-diff --no-textconv --no-color "$1" "$2" > "$3"';
   await run(sandbox, ref, {
     file: "sh",
-    args: [
-      "-c",
-      'git -C "$0" -c core.quotePath=true -c diff.external= diff --binary --no-renames --no-ext-diff --no-textconv --no-color "$1" "$2" > "$3"',
-      primary.path,
-      primary.baseSha,
-      headSha,
-      patchPath,
-    ],
+    args: ["-c", target, primary.path, primary.baseSha, headSha, patchPath],
   });
   await run(sandbox, ref, { file: "git", args: ["-C", primary.path, "apply", "--binary", "--whitespace=nowarn", patchPath] }, true);
   await run(sandbox, ref, { file: "rm", args: ["-f", patchPath] });

@@ -74,6 +74,14 @@ describe("PrismaPullRequestStore", () => {
         [recorded.id, "main"],
       ]);
 
+      // DI-21.114. The count takes each run id once, so a retry after a successful write counts nothing.
+      expect(await store.countReviewerFollowUp(tenantId, recorded.id, "run-2")).toBe(1);
+      expect(await store.countReviewerFollowUp(tenantId, recorded.id, "run-2")).toBe(1);
+      expect(await store.countReviewerFollowUp(tenantId, recorded.id, "run-3")).toBe(2);
+      // DI-21.117. A push to the base branch reaches each open pull request that targets it.
+      expect((await store.listOpenByBase(tenantId, "acme/api", "main")).map((entry) => entry.id)).toEqual([recorded.id]);
+      expect(await store.listOpenByBase(tenantId, "acme/api", "develop")).toEqual([]);
+
       const closed = await store.markClosed(tenantId, recorded.id, { merged: true, mergeCommitSha: "merge-1", closedAt: new Date() });
       expect(closed.state).toBe("merged");
       expect((await store.findByCommit(tenantId, "acme/api", "merge-1")).map((entry) => entry.id)).toEqual([recorded.id]);

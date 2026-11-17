@@ -16,7 +16,8 @@ export type PullRequestEvent =
   | PullRequestReviewEvent
   | PullRequestCheckRunEvent
   | PullRequestCommitStatusEvent
-  | PullRequestDeploymentStatusEvent;
+  | PullRequestDeploymentStatusEvent
+  | PullRequestBasePushedEvent;
 
 export type PullRequestEventKind = PullRequestEvent["kind"];
 
@@ -124,6 +125,19 @@ export interface PullRequestDeploymentStatusEvent {
   logUrl: string | null;
 }
 
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.117. `push` to the base branch of the
+ * pull request. GitHub sends no pull request event when its base moves, and a moved base is what
+ * makes a conflict, or a branch that is behind.
+ */
+export interface PullRequestBasePushedEvent {
+  kind: "base_pushed";
+  deliveryId: string;
+  baseBranch: string;
+  /** The new head of the base branch. */
+  sha: string;
+}
+
 /** The commit an event names, or null when it names none. */
 export const eventHeadSha = (event: PullRequestEvent): string | null => {
   switch (event.kind) {
@@ -139,6 +153,9 @@ export const eventHeadSha = (event: PullRequestEvent): string | null => {
     case "commit_status":
     case "deployment_status":
       return event.sha;
+    case "base_pushed":
+      // A commit of the base branch is no head of the pull request.
+      return null;
   }
 };
 

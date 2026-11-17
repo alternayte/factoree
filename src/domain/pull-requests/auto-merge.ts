@@ -25,6 +25,12 @@ export interface AutoMergeGate {
    * merge, and `branch_protection` for a classic protection rule.
    */
   baseRequirements: string[];
+  /**
+   * DI-21.115. True when an active ruleset rule of the base branch requires the branch to be up to
+   * date before the merge: `required_status_checks` with the strict policy. A classic protection
+   * rule shows this only to Administration read, so GitHub's `behind` state stands for it.
+   */
+  requiresUpToDate: boolean;
 }
 
 /** The pull request as GitHub answers it now. */
@@ -33,8 +39,10 @@ export interface PullRequestOnGitHub {
   headSha: string;
   open: boolean;
   draft: boolean;
-  /** GitHub's mergeable state, such as clean, blocked, behind or unknown. */
+  /** GitHub's mergeable state, such as clean, blocked, behind, dirty or unknown. */
   mergeableState: string | null;
+  /** False when the branch conflicts with its base. Null while GitHub computes it. */
+  mergeable: boolean | null;
   /** True while auto-merge is on, whoever turned it on. */
   autoMergeEnabled: boolean;
   baseBranch: string;
@@ -66,6 +74,8 @@ export interface AutoMergePort {
   reviews(slug: string, number: number, installationId: string): Promise<ReviewOnGitHub[]>;
   enable(slug: string, pullRequest: PullRequestOnGitHub, method: MergeMethod, installationId: string): Promise<EnableAutoMergeOutcome>;
   disable(slug: string, pullRequest: PullRequestOnGitHub, installationId: string): Promise<void>;
+  /** DI-21.115. The number of commits of the base branch that the head commit does not hold. */
+  behindBy(slug: string, baseBranch: string, headSha: string, installationId: string): Promise<number>;
   /** Merges the pull request only while its head is `sha`. */
   merge(slug: string, number: number, sha: string, method: MergeMethod, installationId: string): Promise<MergeOutcome>;
 }
@@ -197,4 +207,23 @@ export const decideAutoMerge = (input: {
   if (input.pullRequest.autoMergeEnabled) return { kind: "none", reason: null };
   if (input.pullRequest.mergeableState !== null && MERGEABLE_NOW.has(input.pullRequest.mergeableState)) return { kind: "merge" };
   return { kind: "enable" };
+};
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, slice 4. Why Factoree brings a pull request current:
+ * GitHub reports a conflict, or the base branch requires the branch up to date before an L4 merge.
+ */
+export type BringCurrentReason = "conflict" | "up_to_date";
+
+/** DI-21.115. What GitHub's merge state says about a conflict with the base. */
+export type Mergeability = "conflict" | "clean" | "unknown";
+
+/**
+ * DI-21.115. GitHub reports a conflict as `mergeable: false` or the state `dirty`. A null mergeable
+ * with an `unknown` state means that GitHub still computes it.
+ */
+export const mergeabilityOf = (pullRequest: { mergeable: boolean | null; mergeableState: string | null }): Mergeability => {
+  if (pullRequest.mergeable === false || pullRequest.mergeableState === "dirty") return "conflict";
+  if (pullRequest.mergeable === null && (pullRequest.mergeableState === null || pullRequest.mergeableState === "unknown")) return "unknown";
+  return "clean";
 };

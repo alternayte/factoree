@@ -36,6 +36,8 @@ const pullRequest = (overrides: Partial<PublishedPullRequest> = {}): PublishedPu
   verifiedBaseSha: "base-1",
   verifiedRunId: "run-1",
   reviewerHandledKey: null,
+  reviewerFollowUpKeys: [],
+  bringCurrentHeadSha: null,
   workflowId: "pr:tenant-1:acme/api#12",
   ...overrides,
 });
@@ -58,6 +60,8 @@ const build = (records: PublishedPullRequest[]) => {
       findByNumber: (_tenantId, _repository, number) => Promise.resolve(records.find((record) => record.number === number) ?? null),
       findByCommit: (_tenantId, _repository, sha) =>
         Promise.resolve(records.filter((record) => record.headSha === sha || record.mergeCommitSha === sha)),
+      listOpenByBase: (_tenantId, _repository, baseBranch) =>
+        Promise.resolve(records.filter((record) => record.state === "open" && record.baseBranch === baseBranch)),
       recordEvent: (_tenantId, pullRequestId, event) => {
         recorded.push({ pullRequestId, event });
         return Promise.resolve({ isNew: true, pullRequest: records.find((record) => record.id === pullRequestId) as PublishedPullRequest });

@@ -67,6 +67,8 @@ describe("pullRequestWorkflow", () => {
         },
         // A COMMENTED review starts no PR follow-up run.
         planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
+        // Slice 4. The new head does not conflict with its base.
+        readPullRequestMergeability: async () => ({ mergeability: "clean" }),
       },
     });
 
@@ -117,6 +119,7 @@ describe("pullRequestWorkflow", () => {
         },
         steerAutoMerge: async () => ({ state: "off" }),
         planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
+        readPullRequestMergeability: async () => ({ mergeability: "clean" }),
       },
     });
     // The record already holds the close, so the workflow skips the copy and waits.
@@ -134,5 +137,71 @@ describe("pullRequestWorkflow", () => {
       expect(closes).toBe(0);
       await handle.terminate("test done");
     });
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.117 to DI-21.119.
+  it("brings a conflicting pull request current, and starts a PR follow-up run with the conflict", async () => {
+    const taskQueue = `pr-${randomUUID()}`;
+    const taken: string[] = [];
+    const plannedUpdates: { reason: string; triggerKey: string }[] = [];
+    const marked: string[] = [];
+    const followUps: Record<string, unknown>[] = [];
+    let state: PullRequestState = "open";
+    let headSha = "head-1";
+    const bringCurrentId = `bring-current-${randomUUID()}`;
+    const followUpId = `pr-follow-up-${randomUUID()}`;
+    const worker = await Worker.create({
+      connection: environment.nativeConnection,
+      taskQueue,
+      workflowsPath: new URL("./support/pr-with-fake-runs.workflows.ts", import.meta.url).pathname,
+      activities: {
+        takePullRequestEvent: async (input: { event: PullRequestEvent }) => {
+          const isNew = !taken.includes(input.event.deliveryId);
+          if (isNew) taken.push(input.event.deliveryId);
+          if (isNew && input.event.kind === "synchronized") headSha = input.event.headSha;
+          return { isNew, state, headSha };
+        },
+        closePullRequestOfRecord: async () => {
+          state = "closed";
+          return state;
+        },
+        steerAutoMerge: async () => ({ state: "off" }),
+        planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
+        readPullRequestMergeability: async () => ({ mergeability: "conflict" }),
+        planBringCurrent: async (input: { reason: string; triggerKey: string }) => {
+          plannedUpdates.push({ reason: input.reason, triggerKey: input.triggerKey });
+          return { kind: "start", workflowId: bringCurrentId, input: { bringCurrent: { headSha } } };
+        },
+        markBringCurrentTried: async (input: { headSha: string }) => {
+          marked.push(input.headSha);
+        },
+        planBaseUpdateFollowUp: async (input: Record<string, unknown>) => {
+          followUps.push(input);
+          return { kind: "start", workflowId: followUpId, input: { prFollowUp: {} } };
+        },
+      },
+    });
+
+    const result = await worker.runUntil(async () => {
+      const handle = await environment.client.workflow.signalWithStart(pullRequestWorkflow, {
+        taskQueue,
+        workflowId: `pr:tenant-1:acme/api#${randomUUID()}`,
+        args: [{ tenantId: "tenant-1", pullRequestId: "pr-3" }],
+        signal: pullRequestEventSignal,
+        signalArgs: [synchronize],
+      });
+      await waitFor(async () => followUps.length === 1 && (await handle.query(pullRequestStateQuery)).followUp === null, "the base follow-up run");
+      expect(await environment.client.workflow.getHandle(followUpId).result()).toMatchObject({ status: "READY_FOR_HUMAN" });
+      await handle.signal(pullRequestEventSignal, { ...merge, merged: false, mergeCommitSha: null, deliveryId: "github:close-3" });
+      return handle.result();
+    });
+
+    expect(result).toBe("closed");
+    expect(plannedUpdates).toEqual([{ reason: "conflict", triggerKey: "github:sync-1" }]);
+    // DI-21.118. The update pushed nothing, so its head takes no second update until the base moves.
+    expect(marked).toEqual(["head-2"]);
+    expect(followUps).toEqual([
+      expect.objectContaining({ headSha: "head-2", baseSha: "base-2", conflicts: ["a.ts"], failure: null, bringCurrentWorkflowId: bringCurrentId }),
+    ]);
   });
 });

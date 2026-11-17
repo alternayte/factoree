@@ -1,5 +1,6 @@
 import type { ValidationEvidenceKind, ValidationMethod } from "~/domain/validation/validation-contract.js";
 import type { ForYourEyeCapture } from "~/domain/validation/for-your-eye.js";
+import type { ValidationPlan } from "~/domain/validation/validation-plan.js";
 
 /**
  * SDD section 36 lists the first four. docs/specs/run-recovery.md adds UNSTABLE: a browser
@@ -42,6 +43,11 @@ export interface UserValidationOutcome {
    * counts in no assertion total and decides nothing about `passed`.
    */
   forYourEye?: ForYourEyeCapture[];
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D1. The Validation Plan as the pass ran it, with each
+   * entry the selector re-check corrected. Absent when the pass had no plan it could run.
+   */
+  plan?: ValidationPlan;
 }
 
 /**

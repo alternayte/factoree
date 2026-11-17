@@ -5,7 +5,7 @@ import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
-import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
+import type { ValidationContractStore, ValidationPlanStore } from "~/domain/validation/validation-contract-store.js";
 import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
 import { buildValidationContract } from "~/domain/validation/validation-contract-builder.js";
 import { validateValidationContract } from "~/domain/validation/validation-contract.js";
@@ -112,6 +112,8 @@ export interface ValidationActivityDependencies {
   logger: Logger;
   /** Present whenever this activity set also serves `userValidate`. SDD section 63. */
   userValidation?: UserValidationActivityDependencies;
+  /** docs/specs/pr-review-merge-and-deploy.md, D1. The passing plans and the contract adoption. */
+  plans?: ValidationPlanStore | undefined;
 }
 
 export interface UserValidateActivityInput {
@@ -154,6 +156,11 @@ export interface UserValidateActivityInput {
    * pass captures one screenshot of each route. Absent in a history recorded before they existed.
    */
   forYourEye?: ForYourEyeCriterion[];
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D1. True for the check of a bring-current run: the pass
+   * replays the stored passing plan of the run, and no validator session writes one.
+   */
+  replay?: boolean;
 }
 
 export interface UserValidateActivityOutput {
@@ -262,6 +269,28 @@ const planRejectionOf = (planText: string, contract: ValidationContract, account
 
 /** SDD section 63 names this file. */
 export const createValidationActivities = (dependencies: ValidationActivityDependencies) => ({
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4, D1, DI-21.116. A bring-current run checks the
+   * frozen contract of the verified head: it freezes the same contract, with its passing plan, as its
+   * own, so the replay and the evidence rows belong to it. A retry returns the stored copy.
+   */
+  async adoptValidationContract(input: {
+    tenantId: string;
+    runId: string;
+    fromRunId: string;
+  }): Promise<{ sha256: string; goal: string; hasPlan: boolean; automatedAssertions: number } | null> {
+    if (dependencies.plans === undefined) throw new Error("adoptValidationContract requires ValidationActivityDependencies.plans");
+    const adopted = await dependencies.plans.adopt(input.tenantId, input.fromRunId, input.runId);
+    if (adopted === null) return null;
+    await dependencies.runs.setValidationContractVersion(input.tenantId, input.runId, adopted.contract.sha256);
+    return {
+      sha256: adopted.contract.sha256,
+      goal: adopted.contract.goal,
+      hasPlan: adopted.hasPlan,
+      automatedAssertions: adopted.contract.assertions.filter((assertion) => assertion.method !== "manual" && assertion.method !== "code_review").length,
+    };
+  },
+
   async buildValidationContract(
     input: BuildValidationContractActivityInput,
   ): Promise<BuildValidationContractActivityOutput> {
@@ -617,100 +646,113 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
       // The duration of each part reaches the log, so a slow validation names its slow part.
       const sessionStarted = Date.now();
-      const sessionResult: AgentRunResult = await cancellable(() =>
-        runner.run({
-          runId: input.runId,
+      // docs/specs/pr-review-merge-and-deploy.md, D1, DI-21.116. A replay runs the stored passing plan
+      // of the run with no validator session. Only a selector re-check starts one fresh session.
+      const replay = input.replay === true;
+      let invocations: AgentRunResult[] = [];
+      let planResult: CommandResult = { exitCode: 1, stdout: "", stderr: "", timedOut: false, durationMs: 0 };
+      let passSessionId = "replay";
+      let replayText: string | null = null;
+      if (replay) {
+        const stored = dependencies.plans === undefined ? null : await dependencies.plans.passingPlan(input.tenantId, input.runId);
+        replayText = stored === null ? null : JSON.stringify(stored);
+      } else {
+        const sessionResult: AgentRunResult = await cancellable(() =>
+          runner.run({
+            runId: input.runId,
+            tenantId: input.tenantId,
+            role: "validator",
+            sandbox: uv.sandbox,
+            ref,
+            workingDirectory: validationDirectory,
+            // The session reads its model and its provider timeouts from the repository.
+            repositoryPath: input.primaryPath,
+            prompt: validatorInput.prompt,
+            promptVersion: validatorInput.promptVersion,
+            environment: validatorInput.environment,
+            actionPolicy,
+            timeoutMs: input.timeoutMs,
+          }),
+        );
+
+        // Step 7. One AgentExecution row per validator pass.
+        await uv.executions.record({
           tenantId: input.tenantId,
-          role: "validator",
-          sandbox: uv.sandbox,
-          ref,
-          workingDirectory: validationDirectory,
-          // The session reads its model and its provider timeouts from the repository.
-          repositoryPath: input.primaryPath,
-          prompt: validatorInput.prompt,
-          promptVersion: validatorInput.promptVersion,
-          environment: validatorInput.environment,
-          actionPolicy,
-          timeoutMs: input.timeoutMs,
-        }),
-      );
-
-      // Step 7. One AgentExecution row per validator pass.
-      await uv.executions.record({
-        tenantId: input.tenantId,
-        runId: input.runId,
-        role: "validator",
-        runner: runner.name,
-        model: null,
-        sessionRef: sessionResult.session.sessionId,
-        promptVersion: validatorInput.promptVersion,
-        durationMs: sessionResult.durationMs,
-        finalResult: {
-          completed: sessionResult.completed,
-          exitCode: sessionResult.exitCode,
-          cancelled: sessionResult.cancelled,
-          summary: sessionResult.summary,
-        },
-        idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
-      });
-      const invocations: AgentRunResult[] = [sessionResult];
-
-      // Step 8. A missing or unreadable plan gives `planText = null`.
-      let planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
-
-      // A session that answers without writing its plan blocks every automated assertion, and
-      // the Run then proves nothing although the change may be correct. A measured session wrote
-      // the file on one pass and not on the next, from the same prompt. One reminder costs a few
-      // seconds and recovers the pass, so the session is asked once more before the Run gives up.
-      // A hung session gets no reminder. The workflow starts one fresh session instead.
-      if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung") {
-        dependencies.logger.warn("the validator wrote no plan, asking once more", {
-          tenant_id: input.tenantId,
-          product_id: input.productId,
-          run_id: input.runId,
-          step: "user_validate",
-        });
-        const reminder = await runner.resume(sessionResult.session, {
-          prompt:
-            `You wrote no Validation Plan. Write the plan now, as one JSON document, to ${planPath}. ` +
-            "Write the file and nothing else. Do not answer with the plan in a message.",
-          timeoutMs: input.timeoutMs,
-        });
-        invocations.push(reminder);
-        planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
-      }
-
-      await recordAgentSession(
-        { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
-        {
-          tenantId: input.tenantId,
-          productId: input.productId,
           runId: input.runId,
           role: "validator",
-          attempt: input.attempt,
           runner: runner.name,
+          model: null,
+          sessionRef: sessionResult.session.sessionId,
+          promptVersion: validatorInput.promptVersion,
+          durationMs: sessionResult.durationMs,
+          finalResult: {
+            completed: sessionResult.completed,
+            exitCode: sessionResult.exitCode,
+            cancelled: sessionResult.cancelled,
+            summary: sessionResult.summary,
+          },
           idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
-          sandboxId: input.spriteId,
-        },
-        invocations,
-      );
+        });
+        invocations = [sessionResult];
+        passSessionId = sessionResult.session.sessionId;
 
-      // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
-      // runs no check and records no result. The `finally` below stops the early preview.
-      const hang = hangOf(invocations);
-      if (hang !== null) {
-        return {
-          passed: false,
-          results: [],
-          hasFailure: false,
-          hasManual: false,
-          hasBlocked: false,
-          summary: `The User Validator session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, so Factoree stopped it.`,
-          failures: [],
-          sessionId: sessionResult.session.sessionId,
-          previewUrl: null,
-          hang,
-        };
+        // Step 8. A missing or unreadable plan gives `planText = null`.
+        planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
+
+        // A session that answers without writing its plan blocks every automated assertion, and
+        // the Run then proves nothing although the change may be correct. A measured session wrote
+        // the file on one pass and not on the next, from the same prompt. One reminder costs a few
+        // seconds and recovers the pass, so the session is asked once more before the Run gives up.
+        // A hung session gets no reminder. The workflow starts one fresh session instead.
+        if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung") {
+          dependencies.logger.warn("the validator wrote no plan, asking once more", {
+            tenant_id: input.tenantId,
+            product_id: input.productId,
+            run_id: input.runId,
+            step: "user_validate",
+          });
+          const reminder = await runner.resume(sessionResult.session, {
+            prompt:
+              `You wrote no Validation Plan. Write the plan now, as one JSON document, to ${planPath}. ` +
+              "Write the file and nothing else. Do not answer with the plan in a message.",
+            timeoutMs: input.timeoutMs,
+          });
+          invocations.push(reminder);
+          planResult = await uv.sandbox.exec(ref, { file: "cat", args: [planPath] });
+        }
+
+        await recordAgentSession(
+          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
+          {
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runId: input.runId,
+            role: "validator",
+            attempt: input.attempt,
+            runner: runner.name,
+            idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+            sandboxId: input.spriteId,
+          },
+          invocations,
+        );
+
+        // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
+        // runs no check and records no result. The `finally` below stops the early preview.
+        const hang = hangOf(invocations);
+        if (hang !== null) {
+          return {
+            passed: false,
+            results: [],
+            hasFailure: false,
+            hasManual: false,
+            hasBlocked: false,
+            summary: `The User Validator session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, so Factoree stopped it.`,
+            failures: [],
+            sessionId: passSessionId,
+            previewUrl: null,
+            hang,
+          };
+        }
       }
 
       /**
@@ -806,10 +848,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         assertions: storedContract.assertions,
       };
 
-      let planText = planResult.exitCode === 0 ? planResult.stdout : null;
+      let planText = replay ? replayText : planResult.exitCode === 0 ? planResult.stdout : null;
       let rejectedPlanReason: string | undefined;
       // The live CLI session of the pass, which a later round resumes.
-      let liveSession = invocations.at(-1)!.session;
+      // A replay has no live session, so a selector re-check starts one fresh session.
+      let liveSession: AgentSessionRef = invocations.at(-1)?.session ?? { sessionId: "replay", processId: "replay", runner: runner.name };
 
       // DI-15.23, amending SDD section 36. A plan the rules reject proves nothing, although the
       // change may be correct (FAC-63). Factoree asks the validator once for a corrected plan, with
@@ -817,7 +860,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // are, and the repair budget is not touched. A stop gets no correction round.
       const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames);
       const stopped = context.cancellationSignal.aborted || invocations.some((result) => result.cancelled);
-      if (firstRejection !== null && !stopped) {
+      // A replayed plan passed once, so it gets no correction round: a rejection blocks the pass.
+      if (firstRejection !== null && !stopped && !replay) {
         const reasons = firstRejection.map((reason) => uv.redactor.redactText(reason));
         rejectedPlanReason = reasons.join(" ");
         const logFields = {
@@ -881,7 +925,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             hasBlocked: false,
             summary: `The User Validator session wrote no output for ${describeSilenceLimit(correctionHang.silenceLimitMs)} while it corrected its plan, so Factoree stopped it.`,
             failures: [],
-            sessionId: sessionResult.session.sessionId,
+            sessionId: passSessionId,
             previewUrl: null,
             hang: correctionHang,
           };
@@ -1055,6 +1099,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         });
       }
 
+      // docs/specs/pr-review-merge-and-deploy.md, D1, DI-21.116. The plan of a pass that passed is
+      // stored for the run, so a bring-current check replays it with no agent.
+      if (outcome.passed && outcome.plan !== undefined && dependencies.plans !== undefined) {
+        await dependencies.plans.savePassingPlan(input.tenantId, input.runId, outcome.plan);
+      }
+
       dependencies.logger.info("user validation finished", {
         tenant_id: input.tenantId,
         product_id: input.productId,
@@ -1081,7 +1131,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         hasUnstable: outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "UNSTABLE"),
         summary: outcome.summary,
         failures: outcome.failures,
-        sessionId: sessionResult.session.sessionId,
+        sessionId: passSessionId,
         previewUrl: previewBaseUrl,
         hang: null,
         fakes,

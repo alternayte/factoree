@@ -90,6 +90,12 @@ export interface PrepareSandboxInput {
    * other sandbox.
    */
   pullRequestHead?: string;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.119. True when the base is a new base
+   * that the head does not hold: the work sprite merges the head into it, and a conflict leaves its
+   * markers in the worktree for the implementer.
+   */
+  pullRequestMerge?: boolean;
 }
 
 /** docs/specs/run-speed.md. What one build-ahead did. */
@@ -497,7 +503,7 @@ export class SandboxManager {
       }
 
       if (input.pullRequestHead !== undefined) {
-        await overlayPullRequestHead(sandbox, ref, primary, input.pullRequestHead, input.repositoryCredential);
+        await overlayPullRequestHead(sandbox, ref, primary, input.pullRequestHead, input.repositoryCredential, input.pullRequestMerge === true);
       }
       if (beforeBootstrap !== undefined) await beforeBootstrap(ref, primary.path);
 

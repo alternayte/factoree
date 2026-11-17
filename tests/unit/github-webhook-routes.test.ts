@@ -128,6 +128,12 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
         routed.push({ by: "commit", tenantId, repositoryFullName, key: sha, event });
         return Promise.resolve("routed");
       },
+      // Slice 4. Only the branch release is the base of a recorded pull request.
+      byBase: (tenantId, repositoryFullName, baseBranch, event) => {
+        if (baseBranch !== "release") return Promise.resolve("unmatched");
+        routed.push({ by: "base", tenantId, repositoryFullName, key: baseBranch, event });
+        return Promise.resolve("routed");
+      },
     },
     logger,
   });
@@ -266,6 +272,35 @@ describe("GitHub webhook route", () => {
       },
     });
     expect(synced).toEqual([]);
+    expect(pushes).toEqual([]);
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.117. GitHub sends no pull request event when the base moves.
+  it("routes a push to the base branch of an open pull request to its PR workflow", async () => {
+    const { app, routed, pushes } = build({});
+    const after = "a".repeat(40);
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "push", "x-github-delivery": "d-9" },
+      payload: {
+        ref: "refs/heads/release",
+        after,
+        installation: { id: 42 },
+        repository: { full_name: "acme/api", default_branch: "main" },
+        commits: [{ modified: ["src/index.ts"], added: [], removed: [] }],
+      },
+    });
+    expect(response.json()).toEqual({ status: "handled" });
+    expect(routed).toEqual([
+      {
+        by: "base",
+        tenantId: TENANT.id,
+        repositoryFullName: "acme/api",
+        key: "release",
+        event: { kind: "base_pushed", deliveryId: "github:d-9", baseBranch: "release", sha: after },
+      },
+    ]);
     expect(pushes).toEqual([]);
   });
 

@@ -76,6 +76,7 @@ export class GitHubAutoMerge implements AutoMergePort {
       open: body.state === "open" && body.merged !== true,
       draft: body.draft === true,
       mergeableState: typeof body.mergeable_state === "string" ? body.mergeable_state : null,
+      mergeable: typeof body.mergeable === "boolean" ? body.mergeable : null,
       autoMergeEnabled: isRecord(body.auto_merge),
       baseBranch: base.ref,
     };
@@ -99,9 +100,19 @@ export class GitHubAutoMerge implements AutoMergePort {
     const branch = encodeURIComponent(baseBranch);
     const rules = await this.rest(slug, `/rules/branches/${branch}?per_page=100`, { method: "GET" }, installationId, READ_SCOPE);
     const requirements = new Set<string>();
+    let requiresUpToDate = false;
     if (Array.isArray(rules)) {
       for (const rule of rules) {
         if (isRecord(rule) && typeof rule.type === "string" && MERGE_GATING_RULES.includes(rule.type)) requirements.add(rule.type);
+        // DI-21.115. "Require branches to be up to date before merging" of a ruleset.
+        if (
+          isRecord(rule) &&
+          rule.type === "required_status_checks" &&
+          isRecord(rule.parameters) &&
+          rule.parameters.strict_required_status_checks_policy === true
+        ) {
+          requiresUpToDate = true;
+        }
       }
     }
     let protectedBranch = false;
@@ -121,7 +132,21 @@ export class GitHubAutoMerge implements AutoMergePort {
         allowRebase: repository.rebaseMergeAllowed === true,
       },
       baseRequirements: [...requirements].sort(),
+      requiresUpToDate,
     };
+  }
+
+  /** DI-21.115. The compare of the base branch with the head names how far the head is behind. */
+  async behindBy(slug: string, baseBranch: string, headSha: string, installationId: string): Promise<number> {
+    const body = await this.rest(
+      slug,
+      `/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(headSha)}?per_page=1`,
+      { method: "GET" },
+      installationId,
+      READ_SCOPE,
+    );
+    if (!isRecord(body) || typeof body.behind_by !== "number") throw new Error(`GitHub answered no compare of ${slug} ${baseBranch}...${headSha}`);
+    return body.behind_by;
   }
 
   /**

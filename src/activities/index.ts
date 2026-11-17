@@ -19,7 +19,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import type { ContextResolver } from "~/domain/context/context-resolver.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
-import type { ValidationContractStore } from "~/domain/validation/validation-contract-store.js";
+import type { ValidationContractStore, ValidationPlanStore } from "~/domain/validation/validation-contract-store.js";
 import type { ContextDeliverySourceProvider, ContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
@@ -119,6 +119,8 @@ export interface ActivityDependencies {
   /** docs/specs/external-context-delivery.md. The configured sources the work sprite delivery reads. */
   contextDelivery?: ContextDeliverySourceProvider | undefined;
   validationContracts: ValidationContractStore;
+  /** docs/specs/pr-review-merge-and-deploy.md, D1. The passing Validation Plans and the contract adoption. */
+  validationPlans?: ValidationPlanStore | undefined;
   repositoryReader: RepositoryReader;
   browser: BrowserDriver;
   httpValidationFetch: HttpValidationFetch;
@@ -231,6 +233,8 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   originFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
   markReviewerHandled: () => Promise.reject(new Error("this worker holds no pull request store")),
   countReviewerFollowUp: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markBringCurrentTried: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listOpenByBase: () => Promise.reject(new Error("this worker holds no pull request store")),
   listEvents: () => Promise.reject(new Error("this worker holds no pull request store")),
 };
 
@@ -255,6 +259,7 @@ const NO_AUTO_MERGE: AutoMergePort = {
   reviews: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   enable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   disable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  behindBy: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   merge: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
 };
 
@@ -359,6 +364,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     contracts: dependencies.validationContracts,
     runs: dependencies.runs,
     logger: dependencies.logger,
+    plans: dependencies.validationPlans,
     userValidation: {
       sandbox: dependencies.sandbox,
       runners: dependencies.runners,

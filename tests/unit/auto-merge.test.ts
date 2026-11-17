@@ -16,6 +16,7 @@ const pullRequest = (overrides: Partial<PullRequestOnGitHub> = {}): PullRequestO
   open: true,
   draft: false,
   mergeableState: "blocked",
+  mergeable: true,
   autoMergeEnabled: false,
   baseBranch: "main",
   ...overrides,
@@ -24,6 +25,7 @@ const pullRequest = (overrides: Partial<PullRequestOnGitHub> = {}): PullRequestO
 const gate = (overrides: Partial<AutoMergeGate["settings"]> = {}, baseRequirements = ["pull_request"]): AutoMergeGate => ({
   settings: { allowAutoMerge: true, allowSquash: true, allowMergeCommit: true, allowRebase: true, ...overrides },
   baseRequirements,
+  requiresUpToDate: false,
 });
 
 const holding = {

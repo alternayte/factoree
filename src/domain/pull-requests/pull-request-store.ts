@@ -43,6 +43,10 @@ export interface PublishedPullRequest {
   verifiedRunId: string | null;
   /** DI-21.108. The failed PR reviewer check that last started a triage or a limit notice. */
   reviewerHandledKey: string | null;
+  /** DI-21.114. The run ids that `reviewerFollowUps` counted. */
+  reviewerFollowUpKeys: string[];
+  /** DI-21.118. The head commit of the last bring-current update that pushed nothing, until the base moves. */
+  bringCurrentHeadSha: string | null;
   workflowId: string;
 }
 
@@ -120,8 +124,15 @@ export interface PullRequestStore {
   originFacts(tenantId: string, pullRequestId: string): Promise<PullRequestOriginFacts>;
   /** DI-21.108. Marks one failed PR reviewer check as handled. False when it already was. */
   markReviewerHandled(tenantId: string, pullRequestId: string, key: string): Promise<boolean>;
-  /** Counts one PR follow-up run from the PR reviewer, and answers the new count. */
-  countReviewerFollowUp(tenantId: string, pullRequestId: string): Promise<number>;
+  /**
+   * DI-21.114. Counts one PR follow-up run from the PR reviewer once per key, the run id, and answers
+   * the count. A second call with the same key writes nothing.
+   */
+  countReviewerFollowUp(tenantId: string, pullRequestId: string, key: string): Promise<number>;
+  /** DI-21.118. Records the head of a bring-current update that pushed nothing. */
+  markBringCurrentTried(tenantId: string, pullRequestId: string, headSha: string): Promise<void>;
+  /** DI-21.117. The open pull requests of a repository that target that base branch. */
+  listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]>;
   /** The recorded events of one kind, oldest first. */
   listEvents(tenantId: string, pullRequestId: string, kind: PullRequestEvent["kind"]): Promise<PullRequestEvent[]>;
 }

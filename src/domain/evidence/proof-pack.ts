@@ -252,8 +252,8 @@ export interface ProofPackInput {
 
 export interface ProofPackPullRequestFollowUp {
   contractRevision: number;
-  trigger: "reviewer" | "human";
-  /** The human who requested changes, or the PR reviewer as `slug (check name)`. */
+  trigger: "reviewer" | "human" | "base";
+  /** The human who requested changes, the PR reviewer as `slug (check name)`, or the base branch. */
   startedBy: string;
   kept: Array<{ evidence: string; defect: string; rule: string }>;
   dropped: number;
@@ -593,7 +593,10 @@ const followUpLines = (input: ProofPackInput): string[] => {
     `The head commit \`${input.commitSha.slice(0, 7)}\` holds contract revision ${String(followUp.contractRevision)}.`,
     followUp.trigger === "human"
       ? `${line(followUp.startedBy)} requested changes. Factoree followed the review as a decision, with no triage.`
-      : `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree kept ${String(followUp.kept.length)} ` +
+      : followUp.trigger === "base"
+        ? `Factoree brought the pull request current with ${line(followUp.startedBy)}, and the update conflicted or failed its check. ` +
+          "This commit merges the new base into the branch."
+        : `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree kept ${String(followUp.kept.length)} ` +
         `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`,
     ...followUp.kept.map((kept) => `- ${line(kept.evidence)}: ${line(kept.defect)} Rule: ${line(kept.rule)}.`),
     "",

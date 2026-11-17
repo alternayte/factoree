@@ -41,3 +41,20 @@ export interface ValidationContractStore {
   save(input: SaveValidationContractInput): Promise<StoredValidationContract>;
   findByRun(tenantId: string, runId: string): Promise<StoredValidationContract | null>;
 }
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D1, DI-21.116. The passing Validation Plan of a run, and
+ * the frozen contract a bring-current run adopts from the run of the verified head.
+ */
+export interface ValidationPlanStore {
+  /** Stores the plan of the last passing user validation pass of the run. A later pass replaces it. */
+  savePassingPlan(tenantId: string, runId: string, plan: unknown): Promise<void>;
+  /** The stored passing plan of the run, or null when no pass of it passed. */
+  passingPlan(tenantId: string, runId: string): Promise<unknown>;
+  /**
+   * Freezes the contract of `fromRunId`, with its passing plan, as the contract of `toRunId`: the same
+   * document, hash and assertions, and new assertion rows. A second call returns the stored copy.
+   * Null when `fromRunId` holds no contract.
+   */
+  adopt(tenantId: string, fromRunId: string, toRunId: string): Promise<{ contract: StoredValidationContract; hasPlan: boolean } | null>;
+}

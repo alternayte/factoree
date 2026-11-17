@@ -48,6 +48,9 @@ const pushCommitSchema = z.object({
  */
 export const pushEventSchema = z.object({
   ref: z.string(),
+  /** docs/specs/pr-review-merge-and-deploy.md, slice 4. The new head of the pushed branch. */
+  after: z.string().optional(),
+  deleted: z.boolean().optional(),
   installation: z.object({ id: z.number() }),
   repository: z.object({
     full_name: z.string(),

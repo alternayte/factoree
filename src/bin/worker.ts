@@ -482,6 +482,7 @@ const pullRequestClose = new PullRequestCloseHandler({
   },
 });
 
+const validationContracts = new PrismaValidationContractStore(prisma, logger);
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.FACTOREE_TEMPORAL_NAMESPACE,
@@ -531,7 +532,9 @@ const worker = await Worker.create({
     // docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR follow-up runs.
     pullRequestReviews: new GitHubPullRequestReviews({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
-    validationContracts: new PrismaValidationContractStore(prisma, logger),
+    validationContracts,
+    // docs/specs/pr-review-merge-and-deploy.md, D1. The same store holds the passing plans.
+    validationPlans: validationContracts,
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),
     httpValidationFetch,

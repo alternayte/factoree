@@ -8,7 +8,9 @@ import { createLogger } from "~/telemetry/logger.js";
 
 const reject = () => Promise.reject(new Error("not used"));
 
-const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGitHub>; autoMerge?: PublishedPullRequest["autoMerge"] } = {}) => {
+const build = (
+  options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGitHub>; autoMerge?: PublishedPullRequest["autoMerge"]; behindBy?: number } = {},
+) => {
   const record: PublishedPullRequest = {
     id: "pr-1",
     tenantId: "tenant-1",
@@ -32,6 +34,8 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
     verifiedBaseSha: "base-1",
     verifiedRunId: "run-1",
     reviewerHandledKey: null,
+    reviewerFollowUpKeys: [],
+    bringCurrentHeadSha: null,
     workflowId: "pr:tenant-1:acme/api#12",
   };
   const github: PullRequestOnGitHub = {
@@ -40,12 +44,14 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
     open: true,
     draft: false,
     mergeableState: "blocked",
+    mergeable: true,
     autoMergeEnabled: false,
     baseBranch: "main",
     ...options.github,
   };
   const calls: string[] = [];
   const said: string[] = [];
+  const counted: string[] = [];
   const store: PullRequestStore = {
     recordPublished: reject,
     findByNumber: reject,
@@ -55,7 +61,14 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
     listAutoMergeUnavailable: reject,
     originFacts: reject,
     markReviewerHandled: reject,
-    countReviewerFollowUp: reject,
+    countReviewerFollowUp: (_tenantId: string, _id: string, key: string) => {
+      counted.push(key);
+      record.reviewerFollowUps += 1;
+      record.reviewerFollowUpKeys = [...record.reviewerFollowUpKeys, key];
+      return Promise.resolve(record.reviewerFollowUps);
+    },
+    markBringCurrentTried: reject,
+    listOpenByBase: reject,
     listEvents: reject,
     find: () => Promise.resolve({ ...record }),
     steeringFacts: () => Promise.resolve({ productId: "product-1", githubInstallationId: "42", linearAgentSessionId: "session-1" }),
@@ -74,6 +87,7 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
         options.gate ?? {
           settings: { allowAutoMerge: true, allowSquash: true, allowMergeCommit: true, allowRebase: false },
           baseRequirements: ["pull_request"],
+          requiresUpToDate: false,
         },
       ),
     reviewerVerdict: () => Promise.resolve("passed"),
@@ -88,6 +102,7 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
       github.autoMergeEnabled = false;
       return Promise.resolve();
     },
+    behindBy: () => Promise.resolve(options.behindBy ?? 0),
     merge: (_slug: string, _number: number, sha: string, method: MergeMethod) => {
       calls.push(`merge ${sha} ${method}`);
       return Promise.resolve({ kind: "merged" });
@@ -110,9 +125,9 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
   });
-  const steer = (trigger: "start" | "new_head" | "auto_merge_disabled" | "event", eventHeadSha: string | null = null) =>
+  const steer = (trigger: "start" | "new_head" | "auto_merge_disabled" | "event" | "base_moved", eventHeadSha: string | null = null) =>
     activities.steerAutoMerge({ tenantId: "tenant-1", pullRequestId: "pr-1", trigger, eventHeadSha });
-  return { steer, record, github, calls, said };
+  return { steer, record, github, calls, said, counted, activities };
 };
 
 /** docs/specs/pr-review-merge-and-deploy.md, D5, DI-21.104 to DI-21.106. */
@@ -128,7 +143,7 @@ describe("steerAutoMerge", () => {
 
   it("keeps the pull request as L3 and posts Needs your attention once when the gate fails", async () => {
     const { steer, calls, said } = build({
-      gate: { settings: { allowAutoMerge: false, allowSquash: true, allowMergeCommit: false, allowRebase: false }, baseRequirements: [] },
+      gate: { settings: { allowAutoMerge: false, allowSquash: true, allowMergeCommit: false, allowRebase: false }, baseRequirements: [], requiresUpToDate: false },
     });
     expect(await steer("start")).toEqual({ state: "unavailable" });
     expect(await steer("event")).toEqual({ state: "unavailable" });
@@ -162,5 +177,52 @@ describe("steerAutoMerge", () => {
     const { steer, calls } = build({ github: { mergeableState: "clean" } });
     await steer("start");
     expect(calls).toEqual(["merge head-1 squash"]);
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.115.
+  it("asks for a bring-current update before an L4 merge when the base requires the branch up to date", async () => {
+    const strict = {
+      settings: { allowAutoMerge: true, allowSquash: true, allowMergeCommit: false, allowRebase: false },
+      baseRequirements: ["required_status_checks"],
+      requiresUpToDate: true,
+    };
+    const behind = build({ gate: strict, behindBy: 2 });
+    expect(await behind.steer("start")).toEqual({ state: "off", bringCurrent: "up_to_date" });
+    expect(behind.calls).toEqual([]);
+
+    const current = build({ gate: strict, behindBy: 0 });
+    expect(await current.steer("start")).toEqual({ state: "enabled" });
+    expect(current.calls).toEqual(["enable head-1 squash"]);
+  });
+
+  it("asks for a bring-current update instead of a merge when the branch conflicts", async () => {
+    const { steer, calls } = build({ github: { mergeable: false, mergeableState: "dirty" } });
+    expect(await steer("start")).toEqual({ state: "off", bringCurrent: "conflict" });
+    expect(calls).toEqual([]);
+  });
+
+  it("checks an auto-merge that is on again when the base branch moves", async () => {
+    const strict = {
+      settings: { allowAutoMerge: true, allowSquash: true, allowMergeCommit: false, allowRebase: false },
+      baseRequirements: ["required_status_checks"],
+      requiresUpToDate: true,
+    };
+    const built = build({ gate: strict });
+    await built.steer("start");
+    built.github.mergeableState = "behind";
+    expect(await built.steer("event")).toEqual({ state: "enabled" });
+    expect(await built.steer("base_moved")).toEqual({ state: "enabled", bringCurrent: "up_to_date" });
+  });
+});
+
+/** DI-21.114. An activity retry after a successful write must not count a PR reviewer follow-up run twice. */
+describe("countReviewerFollowUp", () => {
+  it("counts one PR follow-up run once per run id", async () => {
+    const { activities, counted } = build();
+    const count = (runId: string) => activities.countReviewerFollowUp({ tenantId: "tenant-1", pullRequestId: "pr-1", runId });
+    expect(await count("run-2")).toEqual({ count: 1 });
+    expect(await count("run-2")).toEqual({ count: 1 });
+    expect(await count("run-3")).toEqual({ count: 2 });
+    expect(counted).toEqual(["run-2", "run-3"]);
   });
 });

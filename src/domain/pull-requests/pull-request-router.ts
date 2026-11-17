@@ -11,7 +11,7 @@ export interface PullRequestSignal {
 }
 
 export interface PullRequestEventRouterDependencies {
-  pullRequests: Pick<PullRequestStore, "findByNumber" | "findByCommit" | "recordEvent">;
+  pullRequests: Pick<PullRequestStore, "findByNumber" | "findByCommit" | "recordEvent" | "listOpenByBase">;
   /** Signal-with-start: it reaches the PR workflow that runs, or starts it. */
   signal: (input: PullRequestSignal) => Promise<void>;
   logger: Logger;
@@ -48,6 +48,16 @@ export class PullRequestEventRouter {
       if (delivered === "routed" || outcome === "unmatched") outcome = delivered;
     }
     return outcome;
+  }
+
+  /**
+   * Slice 4, DI-21.117. A push to a branch reaches every open pull request that targets it. A
+   * pull request that ended takes no push.
+   */
+  async byBase(tenantId: string, repositoryFullName: string, baseBranch: string, event: PullRequestEvent): Promise<PullRequestRouteOutcome> {
+    const pullRequests = await this.dependencies.pullRequests.listOpenByBase(tenantId, repositoryFullName, baseBranch);
+    for (const pullRequest of pullRequests) await this.deliver(pullRequest, event);
+    return pullRequests.length === 0 ? "unmatched" : "routed";
   }
 
   private async deliver(pullRequest: PublishedPullRequest, event: PullRequestEvent): Promise<PullRequestRouteOutcome> {

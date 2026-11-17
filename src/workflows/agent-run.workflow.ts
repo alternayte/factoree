@@ -33,7 +33,9 @@ import type { ReviewActivityOutput } from "~/activities/review.activities.js";
 import type { ResolveContextActivityOutput } from "~/activities/context.activities.js";
 import type { ReadWorkItemContentActivityOutput } from "~/activities/work-item.activities.js";
 import type {
+  BringCurrentMergeActivityOutput,
   PublishActivityOutput,
+  PushBringCurrentMergeActivityOutput,
 } from "~/activities/publishing.activities.js";
 import type { PublishProofPackActivityOutput } from "~/activities/evidence.activities.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
@@ -76,6 +78,7 @@ import { allowListCovers } from "../domain/runs/sandbox.js";
 import { endsWithoutPullRequest } from "../domain/runs/issue-status.js";
 // The workflow bundler resolves a relative path only. The module imports nothing at run time.
 import {
+  baseUpdateFindingLines,
   findingPlace,
   keptFindingLines,
   renderPrFollowUpDescription,
@@ -83,6 +86,7 @@ import {
   type TriagedFinding,
 } from "../domain/pull-requests/pr-follow-up.js";
 import type { TriageActivityOutput } from "~/activities/review.activities.js";
+import type { BringCurrentInput, BringCurrentOutcome } from "../domain/pull-requests/bring-current.js";
 // The workflow bundler resolves a relative path only. The module imports nothing.
 import {
   describeAgentRole,
@@ -176,11 +180,18 @@ export interface AgentRunWorkflowInput {
    * run changes, and the review that started it. Absent for every other run.
    */
   prFollowUp?: PrFollowUpInput;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4. The pull request this bring-current run
+   * merges its base into. Absent for every other run.
+   */
+  bringCurrent?: BringCurrentInput;
 }
 
 export interface AgentRunWorkflowResult {
   runId: string;
   status: RunStatus;
+  /** Slice 4. What a bring-current run did. The PR workflow reads it. Absent for every other run. */
+  bringCurrent?: BringCurrentOutcome;
 }
 
 export interface RunSnapshot {
@@ -577,6 +588,20 @@ const pullRequestReplyActivities = proxyActivities<Activities>({
   retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
 });
 
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, slice 4. The trusted merge of the base clones the
+ * repository and sends no heartbeat, so it takes the publication bounds without a heartbeat timeout.
+ */
+const bringCurrentActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "15 minutes",
+  retry: {
+    maximumAttempts: 3,
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    nonRetryableErrorTypes: [RUN_CONFIGURATION_ERROR_TYPE, "PATCH_HASH_MISMATCH", "EMPTY_PATCH", "PUBLICATION_FAILED"],
+  },
+});
+
 // The cancellation of a live Implementer session runs after the Run budget has ended, so it
 // needs its own short timeout.
 const cancelActivities = proxyActivities<Activities>({
@@ -677,11 +702,14 @@ export async function agentRunWorkflow(
   const prFollowUp = input.prFollowUp ?? null;
   // The work item text the run refines. A PR follow-up run adds the review to it.
   let workItemDescription =
-    prFollowUp !== null && prFollowUp.trigger === "human"
+    prFollowUp !== null && prFollowUp.trigger !== "reviewer"
       ? renderPrFollowUpDescription({ description: input.workItem.description, followUp: prFollowUp, kept: [] })
       : input.workItem.description;
   // The findings the first implementer attempt repairs: the PR reviewer findings the triage kept.
-  let initialRepairFindings: string[] = [];
+  // Slice 4. A base update names the conflict or the failed check at once.
+  let initialRepairFindings: string[] = prFollowUp?.baseUpdate === undefined ? [] : baseUpdateFindingLines(prFollowUp.baseUpdate);
+  // docs/specs/pr-review-merge-and-deploy.md, slice 4. The pull request a bring-current run updates.
+  const bringCurrent = input.bringCurrent ?? null;
   let triagedFindings: TriagedFinding[] = [];
   // DI-19.04. A human review is a decision, as a Linear reply is, so the implementer follows it.
   if (prFollowUp !== null && prFollowUp.trigger === "human") {
@@ -697,7 +725,7 @@ export async function agentRunWorkflow(
   // placeholder feeds Refinement only, and the pass-through echo never reaches the sandbox. The
   // target-selection step corrects `primaryRepositorySlug` once the target is known.
   const targetRepositories = input.product.repositories;
-  let primaryRepositorySlug = prFollowUp?.repositoryFullName ?? targetRepositories[0]?.fullName ?? "";
+  let primaryRepositorySlug = prFollowUp?.repositoryFullName ?? bringCurrent?.repositoryFullName ?? targetRepositories[0]?.fullName ?? "";
   // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
   // can record its per-target facts as they become known.
   let primaryRepositoryId = targetRepositories[0]?.id ?? "";
@@ -900,7 +928,7 @@ export async function agentRunWorkflow(
     // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run takes no Linear reply and no
     // draft: the pull request it follows is open already, and a review there starts the next one.
     const kind =
-      prFollowUp !== null
+      prFollowUp !== null || bringCurrent !== null
         ? null
         : status === "FAILED" || status === "FAILED_REVIEW"
           ? patched(FAILURE_POST_PATCH)
@@ -921,8 +949,9 @@ export async function agentRunWorkflow(
         `${message}\n\nThis PR follow-up run pushed nothing to ${prFollowUp.url}. Request changes on the pull request, ` +
         "or run the PR reviewer check again, to start another PR follow-up run.";
     }
+    if (bringCurrent !== null) post = `${message}\n\nThis bring-current run pushed nothing to ${bringCurrent.url}.`;
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
-    if (prFollowUp === null && patched(DRAFT_OFFER_PATCH)) {
+    if (prFollowUp === null && bringCurrent === null && patched(DRAFT_OFFER_PATCH)) {
       await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
     }
     return { runId: id, status };
@@ -1222,6 +1251,8 @@ export async function agentRunWorkflow(
     attempt: number;
     /** docs/specs/agent-session-usage-and-hangs.md. The one fresh session after a hang. */
     afterHang?: boolean;
+    /** Slice 4, D1. Replays the stored passing plan of the run with no validator session. */
+    replay?: boolean;
   }): Promise<UserValidateActivityOutput | null> => {
     const budgetMs = remainingMs();
     const userValidateActivities = buildUserValidateActivities(budgetMs);
@@ -1251,6 +1282,7 @@ export async function agentRunWorkflow(
         egress: egressOf(attemptInput.prepared),
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
         ...(forYourEye.length === 0 ? {} : { forYourEye }),
+        ...(attemptInput.replay === true ? { replay: true } : {}),
       }),
     );
   };
@@ -1414,11 +1446,17 @@ export async function agentRunWorkflow(
     await activities.acknowledgeSession({
       sessionId: input.agentSessionId,
       message:
-        prFollowUp === null
-          ? "Factoree accepted the work and started a Run."
-          : prFollowUp.trigger === "human"
-            ? `${prFollowUp.reviewerLogin ?? "A human"} requested changes on ${prFollowUp.url}, so Factoree started a PR follow-up run.`
-            : `The PR reviewer check failed on ${prFollowUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`,
+        bringCurrent !== null
+          ? bringCurrent.reason === "conflict"
+            ? `${bringCurrent.url} conflicts with ${bringCurrent.baseBranch}, so Factoree brings it current. It merges the base and checks the merge with no agent.`
+            : `${bringCurrent.baseBranch} requires ${bringCurrent.url} to be up to date before the merge, so Factoree brings it current. It merges the base and checks the merge with no agent.`
+          : prFollowUp === null
+            ? "Factoree accepted the work and started a Run."
+            : prFollowUp.trigger === "human"
+              ? `${prFollowUp.reviewerLogin ?? "A human"} requested changes on ${prFollowUp.url}, so Factoree started a PR follow-up run.`
+              : prFollowUp.trigger === "base"
+                ? `Factoree could not bring ${prFollowUp.url} current with ${prFollowUp.baseBranch} on its own, so it started a PR follow-up run.`
+                : `The PR reviewer check failed on ${prFollowUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`,
     });
 
     status = "RECEIVED";
@@ -1429,9 +1467,282 @@ export async function agentRunWorkflow(
     // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run moves no issue: the run that opened
     // the pull request owns its issue status, and the merge completes it through the record.
     const startedIssueId = input.workItem.issueId;
-    if (prFollowUp === null && startedIssueId !== null && patched(ISSUE_STATUS_PATCH)) {
+    if (prFollowUp === null && bringCurrent === null && startedIssueId !== null && patched(ISSUE_STATUS_PATCH)) {
       issueStatusTracked = true;
       await notify(() => activities.startIssueWork({ tenantId: input.tenantId, runId: id, issueId: startedIssueId }));
+    }
+
+    // docs/specs/pr-review-merge-and-deploy.md, slice 4, D1, DI-21.117. A bring-current run: Factoree
+    // merges the base into the verified head on its trusted checkout, checks the merge in a check
+    // sprite against the frozen contract with no agent (verify, then a replay of the passing plan),
+    // and pushes the merge commit only after both pass. It takes a run slot and its sandbox slots like
+    // any run. A conflict or a failed check pushes nothing, and the PR workflow starts a PR follow-up
+    // run with it as a finding.
+    if (bringCurrent !== null) {
+      const update = bringCurrent;
+      const ended = (result: AgentRunWorkflowResult, outcome: BringCurrentOutcome): AgentRunWorkflowResult => ({ ...result, bringCurrent: outcome });
+      const endedWithoutOutcome = async (result: Promise<AgentRunWorkflowResult>) => ended(await result, { kind: "ended" });
+      if (remainingMs() === 0) return endedWithoutOutcome(failRun("RUN_TIMEOUT", timeoutMessage));
+      const stoppedInQueue = await waitForRunSlot();
+      if (stoppedInQueue !== null) return ended(stoppedInQueue, { kind: "ended" });
+      status = "PREPARING";
+      await activities.setRunStatus({ runId: id, status });
+      const repository = targetRepositories.find((candidate) => candidate.id === update.repositoryId);
+      if (repository === undefined) {
+        return endedWithoutOutcome(
+          failRun(
+            "TARGET_UNRESOLVED",
+            `The repository ${update.repositoryFullName} of ${update.url} is no longer part of this product, so Factoree cannot bring it current.`,
+          ),
+        );
+      }
+      await activities.recordRunTarget({ tenantId: input.tenantId, runId: id, repositoryId: repository.id, selectionReason: `the repository of ${update.url}` });
+      const mergeInput = {
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        repositorySlug: repository.fullName,
+        repositoryBaseUrl: input.product.repositoryBaseUrl,
+        githubInstallationId: repository.githubInstallationId,
+        branch: update.headBranch,
+        pullRequestNumber: update.number,
+        pullRequestUrl: update.url,
+        headSha: update.headSha,
+        baseBranch: update.baseBranch,
+        contractRevision: update.contractRevision,
+      };
+      let merge: BringCurrentMergeActivityOutput;
+      try {
+        merge = await bringCurrentActivities.mergeBaseIntoPullRequest(mergeInput);
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (isConfigurationFault(error)) {
+          return endedWithoutOutcome(failRun("CONFIGURATION_INVALID", withCause(`Factoree could not merge ${update.baseBranch} into ${update.url}.`, error)));
+        }
+        return endedWithoutOutcome(
+          failRun(publicationFailureReasonOf(error), withCause(`Factoree could not merge ${update.baseBranch} into ${update.url} on its trusted checkout.`, error)),
+        );
+      }
+      if (merge.kind === "current") {
+        return ended(
+          await endReported(`${update.url} holds ${update.baseBranch} at ${merge.baseSha.slice(0, 12)} already, so Factoree changed nothing.`),
+          { kind: "current" },
+        );
+      }
+      if (merge.kind === "moved") {
+        return ended(
+          await endReported(`The branch of ${update.url} moved since Factoree read it, so Factoree did not bring it current. The new head gets its own checks.`),
+          { kind: "moved" },
+        );
+      }
+      if (merge.kind === "conflict") {
+        return ended(
+          await endReported(
+            [
+              "## Bring current",
+              "",
+              `The merge of ${update.baseBranch} at ${merge.baseSha.slice(0, 12)} into ${update.url} conflicts in ` +
+                `${String(merge.conflicts.length)} ${merge.conflicts.length === 1 ? "file" : "files"}, so Factoree pushed nothing. ` +
+                "It starts a PR follow-up run that resolves the conflict.",
+              "",
+              ...merge.conflicts.slice(0, 20).map((file) => `- ${file}`),
+              ...(merge.conflicts.length > 20 ? [`- ${String(merge.conflicts.length - 20)} more files`] : []),
+            ].join("\n"),
+          ),
+          { kind: "conflict", baseSha: merge.baseSha, conflicts: merge.conflicts },
+        );
+      }
+      const merged = merge;
+      /** A failed check of the clean merge. The PR workflow starts a PR follow-up run with the failure. */
+      const checkFailed = async (
+        reason: "VERIFICATION_FAILED" | "VALIDATION_FAILED" | "VALIDATION_UNRESOLVED",
+        message: string,
+        failure: string,
+      ): Promise<AgentRunWorkflowResult> =>
+        ended(await failRun(reason, `${message} Factoree starts a PR follow-up run that repairs it.`), {
+          kind: "failed",
+          baseSha: merged.baseSha,
+          failure,
+        });
+
+      // D1. The run checks the frozen contract of the verified head, as its own.
+      const adopted = await validationActivities.adoptValidationContract({ tenantId: input.tenantId, runId: id, fromRunId: update.contractRunId });
+      if (adopted === null) {
+        return checkFailed(
+          "VALIDATION_UNRESOLVED",
+          `The run of the verified head of ${update.url} holds no frozen Validation Contract, so Factoree cannot check the merge with no agent.`,
+          "Factoree holds no frozen Validation Contract for the verified head, so it could not check the merge with no agent. Run every check on the merge.",
+        );
+      }
+      validationContractVersion = adopted.sha256;
+      if (adopted.automatedAssertions > 0 && !adopted.hasPlan) {
+        return checkFailed(
+          "VALIDATION_UNRESOLVED",
+          `The run of the verified head of ${update.url} stored no passing Validation Plan, so Factoree cannot replay the contract with no agent.`,
+          "Factoree holds no passing Validation Plan for the verified head, so it could not check the merge with no agent. Run every check on the merge.",
+        );
+      }
+
+      const checkInput = {
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        primary: { url: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.fullName), ref: merged.baseSha },
+        references: [],
+        defaults: {
+          stagingRead: input.product.stagingRead,
+          spriteRetentionHours: input.product.spriteRetentionHours,
+          allowedDomains: input.product.allowedDomains,
+        },
+        environment: {},
+        organizationSkills: null,
+        githubInstallationId: repository.githubInstallationId,
+        skillRegistry: null,
+        patchSha256: merged.patchSha256,
+      };
+      let checked: PrepareCheckSandboxActivityOutput | null;
+      try {
+        checked = await withSandboxSlot(async (budgetMs) => {
+          await buildSandboxActivities(budgetMs).selectSandboxProvider({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            repositoryUrl: checkInput.primary.url,
+          });
+          return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareBringCurrentSandbox(checkInput);
+        });
+      } catch (error) {
+        if (isConfigurationFault(error)) {
+          return endedWithoutOutcome(
+            failRun("CONFIGURATION_INVALID", withCause(`Factoree could not prepare the check sandbox of the merge of ${update.baseBranch} into ${update.url}.`, error)),
+          );
+        }
+        if (remainingMs() > 0) throw error;
+        return endedWithoutOutcome(failRun("RUN_TIMEOUT", timeoutMessage));
+      }
+      if (checked === null) {
+        if (stopRequested) return ended(await cancelRun(), { kind: "ended" });
+        return endedWithoutOutcome(failRun("RUN_TIMEOUT", timeoutMessage));
+      }
+      checkSandbox = checked;
+      const sprite = checked;
+      if (stopRequested) return ended(await cancelRun(), { kind: "ended" });
+
+      status = "VERIFYING";
+      await activities.setRunStatus({ runId: id, status });
+      let verification: VerifyActivityOutput;
+      try {
+        verification = await buildVerifyActivities(remainingMs()).verify({
+          runId: id,
+          tenantId: input.tenantId,
+          productId: input.productId,
+          spriteId: sprite.spriteId,
+          adapter: sprite.adapter,
+          workspacePath: sprite.workspacePath,
+          primaryPath: sprite.primaryPath,
+          commands: sprite.verifyCommands,
+          timeoutMs: remainingMs(),
+          attempt: 1,
+        });
+      } catch (error) {
+        if (remainingMs() > 0) throw error;
+        return endedWithoutOutcome(failRun("RUN_TIMEOUT", timeoutMessage));
+      }
+      await notify(() => activities.postProgress({ sessionId: input.agentSessionId, message: verification.summary }));
+      if (stopRequested) return ended(await cancelRun(), { kind: "ended" });
+      if (!verification.passed) {
+        return checkFailed(
+          "VERIFICATION_FAILED",
+          `Deterministic verification did not pass on the merge of ${update.baseBranch} into ${update.url}. ${verification.summary}`,
+          [verification.summary, ...verification.failures].join("\n"),
+        );
+      }
+
+      status = "USER_VALIDATING";
+      await activities.setRunStatus({ runId: id, status });
+      let replayed: UserValidateActivityOutput | null;
+      try {
+        replayed = await runUserValidate({ prepared: sprite, goal: adopted.goal, attempt: 1, replay: true });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (isConfigurationFault(error)) {
+          return endedWithoutOutcome(failRun("CONFIGURATION_INVALID", withCause("Factoree could not replay the Validation Plan on the merge.", error)));
+        }
+        if (remainingMs() > 0) throw error;
+        return endedWithoutOutcome(failRun("RUN_TIMEOUT", timeoutMessage));
+      }
+      if (stopRequested) return ended(await cancelRun(), { kind: "ended" });
+      if (replayed === null) {
+        if (remainingMs() === 0) return endedWithoutOutcome(failRun("RUN_TIMEOUT", timeoutMessage));
+        throw ApplicationFailure.nonRetryable("the userValidate activity returned no result");
+      }
+      if (!replayed.passed) {
+        return checkFailed(
+          "VALIDATION_FAILED",
+          `The replay of the frozen Validation Contract did not pass on the merge of ${update.baseBranch} into ${update.url}. ${replayed.summary}`,
+          [replayed.summary, ...replayed.failures].join("\n"),
+        );
+      }
+
+      status = "PUBLISHING";
+      await activities.setRunStatus({ runId: id, status });
+      if (stopRequested) return ended(await cancelRun(), { kind: "ended" });
+      let pushed: PushBringCurrentMergeActivityOutput;
+      try {
+        pushed = await bringCurrentActivities.pushBringCurrentMerge({ ...mergeInput, baseSha: merged.baseSha, verifiedPatchSha256: sprite.patchSha256 });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (isConfigurationFault(error)) {
+          return endedWithoutOutcome(failRun("CONFIGURATION_INVALID", withCause(`Factoree could not push the merge commit to ${update.url}.`, error)));
+        }
+        return endedWithoutOutcome(failRun(publicationFailureReasonOf(error), withCause(`Factoree could not push the merge commit to ${update.url}.`, error)));
+      }
+      if (pushed.kind === "moved") {
+        return ended(
+          await endReported(`The branch of ${update.url} moved while Factoree checked the merge, so Factoree pushed nothing. The new head gets its own checks.`),
+          { kind: "moved" },
+        );
+      }
+      publishedPullRequestUrl = update.url;
+      await activities.recordRunTargetFacts({
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: repository.id,
+        baseSha: merged.baseSha,
+        patchSha256: pushed.patchSha256,
+        commitSha: pushed.commitSha,
+        pullRequestUrl: update.url,
+      });
+      // DI-21.104, D2. The merge commit is the verified head, and the new base is its base. The level
+      // and the contract revision of the head stay, because the contract did not change.
+      await activities.recordPullRequest({
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: repository.id,
+        number: update.number,
+        url: update.url,
+        headBranch: update.headBranch,
+        headSha: pushed.commitSha,
+        baseBranch: update.baseBranch,
+        autonomyLevel: update.autonomyLevel,
+        baseSha: merged.baseSha,
+        contractRevision: update.contractRevision,
+      });
+      return ended(
+        await endReported(
+          [
+            "## Bring current",
+            "",
+            `Factoree merged ${update.baseBranch} at ${merged.baseSha.slice(0, 12)} into ${update.url} and pushed the merge commit ` +
+              `${pushed.commitSha.slice(0, 12)}. It did not force-push.`,
+            "",
+            `- Verified patch: ${pushed.patchSha256}, the diff from the new base to the merge.`,
+            `- Verification: ${verification.summary}`,
+            `- Validation Contract ${adopted.sha256.slice(0, 12)} (contract revision ${String(update.contractRevision)}), replayed with no agent: ${replayed.summary}`,
+          ].join("\n"),
+        ),
+        { kind: "pushed", commitSha: pushed.commitSha, baseSha: merged.baseSha },
+      );
     }
 
     // docs/specs/pr-review-merge-and-deploy.md, DI-21.110. A failed PR reviewer check: a fresh reviewer
@@ -1584,7 +1895,7 @@ export async function agentRunWorkflow(
         );
       }
       await notify(() => activities.postProgress({ sessionId: input.agentSessionId, message: triageLine }));
-      await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: prFollowUp.pullRequestId });
+      await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: prFollowUp.pullRequestId, runId: id });
       workItemDescription = renderPrFollowUpDescription({ description: input.workItem.description, followUp: prFollowUp, kept });
       initialRepairFindings = keptFindingLines(kept);
     }
@@ -2047,7 +2358,11 @@ export async function agentRunWorkflow(
 
       // D2. The work sprite of a PR follow-up run holds the full change of the pull request: the
       // verified base, with the diff to the head the run read. A check sprite takes the captured patch.
-      const workInput = prFollowUp === null ? prepareInput : { ...prepareInput, pullRequestHead: prFollowUp.headSha };
+      // Slice 4, DI-21.119. A base update merges the head into the new base, conflict markers and all.
+      const workInput =
+        prFollowUp === null
+          ? prepareInput
+          : { ...prepareInput, pullRequestHead: prFollowUp.headSha, ...(prFollowUp.baseUpdate === undefined ? {} : { pullRequestMerge: true }) };
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
       // retention window of SDD section 51 has passed.
@@ -3093,6 +3408,8 @@ export async function agentRunWorkflow(
             ...publishInput,
             branch: prFollowUp.headBranch,
             parentSha: prFollowUp.headSha,
+            // Slice 4, DI-21.119. The commit merges the new base into the branch.
+            ...(prFollowUp.baseUpdate === undefined ? {} : { mergeParentSha: prFollowUp.baseSha }),
             pullRequestUrl: prFollowUp.url,
             pullRequestNumber: prFollowUp.number,
             contractRevision: prFollowUp.contractRevision,
@@ -3276,7 +3593,9 @@ export async function agentRunWorkflow(
                   contractRevision: prFollowUp.contractRevision,
                   trigger: prFollowUp.trigger,
                   startedBy:
-                    prFollowUp.trigger === "human"
+                    prFollowUp.trigger === "base"
+                      ? prFollowUp.baseBranch
+                      : prFollowUp.trigger === "human"
                       ? (prFollowUp.reviewerLogin ?? "A human")
                       : prFollowUp.reviewer === null
                         ? "PR reviewer"

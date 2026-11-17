@@ -44,6 +44,8 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   verifiedBaseSha: row.verifiedBaseSha,
   verifiedRunId: row.verifiedRunId,
   reviewerHandledKey: row.reviewerHandledKey,
+  reviewerFollowUpKeys: row.reviewerFollowUpKeys,
+  bringCurrentHeadSha: row.bringCurrentHeadSha,
   workflowId: row.workflowId,
 });
 
@@ -56,6 +58,9 @@ const factsOf = (event: PullRequestEvent): Prisma.PullRequestUpdateManyMutationI
       return { state: "open", closedAt: null, mergeCommitSha: null, headSha: event.headSha };
     case "edited":
       return { baseBranch: event.baseBranch };
+    case "base_pushed":
+      // DI-21.118. A moved base may resolve what an earlier update could not.
+      return { bringCurrentHeadSha: null };
     default:
       return null;
   }
@@ -251,14 +256,31 @@ export class PrismaPullRequestStore implements PullRequestStore {
     return updated.count > 0;
   }
 
-  async countReviewerFollowUp(tenantId: string, pullRequestId: string): Promise<number> {
-    const updated = await this.prisma.pullRequest.updateMany({
-      where: { id: pullRequestId, tenantId },
-      data: { reviewerFollowUps: { increment: 1 } },
+  async countReviewerFollowUp(tenantId: string, pullRequestId: string, key: string): Promise<number> {
+    // DI-21.114. One conditional write: the key joins the list and the count moves only when the
+    // list does not hold the key yet, so a retry after a successful write counts nothing.
+    await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId, NOT: { reviewerFollowUpKeys: { has: key } } },
+      data: { reviewerFollowUps: { increment: 1 }, reviewerFollowUpKeys: { push: key } },
     });
-    if (updated.count === 0) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
-    const row = await this.prisma.pullRequest.findFirstOrThrow({ where: { id: pullRequestId, tenantId }, select: { reviewerFollowUps: true } });
+    const row = await this.prisma.pullRequest.findFirst({ where: { id: pullRequestId, tenantId }, select: { reviewerFollowUps: true } });
+    if (row === null) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
     return row.reviewerFollowUps;
+  }
+
+  async markBringCurrentTried(tenantId: string, pullRequestId: string, headSha: string): Promise<void> {
+    const updated = await this.prisma.pullRequest.updateMany({ where: { id: pullRequestId, tenantId }, data: { bringCurrentHeadSha: headSha } });
+    if (updated.count === 0) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+  }
+
+  async listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]> {
+    const rows = await this.prisma.pullRequest.findMany({
+      where: { tenantId, state: "open", baseBranch, repository: { fullName: { equals: repositoryFullName, mode: "insensitive" } } },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+      include,
+    });
+    return rows.map(toRecord);
   }
 
   async listEvents(tenantId: string, pullRequestId: string, kind: PullRequestEvent["kind"]): Promise<PullRequestEvent[]> {

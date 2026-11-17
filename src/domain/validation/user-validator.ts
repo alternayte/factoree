@@ -570,6 +570,8 @@ const validate = async (
     ? "the repository configures no enabled preview in .factoree/config.yaml"
     : null;
   const recheckCandidates: RecheckCandidate[] = [];
+  // D1. The entries the selector re-check corrected and ran, so the plan that passed holds them.
+  const correctedEntries = new Map<string, BrowserPlanEntry>();
   const captures: ForYourEyeCapture[] = [];
   try {
     if (previewRequired && !previewMisconfigured) {
@@ -737,7 +739,7 @@ const validate = async (
     // entry ran, so one resumed session corrects every selector-only failure at once.
     if (recheckCandidates.length > 0 && input.selectorRecheck !== undefined) {
       input.signal?.throwIfAborted();
-      for (const [id, outcome] of await recheckSelectors(dependencies, input, input.selectorRecheck, recheckCandidates, outcomesById)) {
+      for (const [id, outcome] of await recheckSelectors(dependencies, input, input.selectorRecheck, recheckCandidates, outcomesById, correctedEntries)) {
         outcomesById.set(id, outcome);
       }
     }
@@ -773,7 +775,9 @@ const validate = async (
 
   // Rule 12. Summarize in contract order.
   const outcomes = contract.assertions.map((assertion) => outcomesById.get(assertion.id)!);
-  return { ...summarizeUserValidation(outcomes), forYourEye: captures };
+  // docs/specs/pr-review-merge-and-deploy.md, D1. The plan as it ran, with each corrected entry.
+  const ran: ValidationPlan = { ...plan!, entries: plan!.entries.map((entry) => correctedEntries.get(entry.assertionId) ?? entry) };
+  return { ...summarizeUserValidation(outcomes), forYourEye: captures, plan: ran };
 };
 
 /** A browser entry that waits for the re-check, and the run of its corrected entry. */
@@ -813,6 +817,7 @@ const recheckSelectors = async (
   recheck: SelectorRecheck,
   candidates: RecheckCandidate[],
   outcomesById: ReadonlyMap<string, AssertionOutcome>,
+  correctedEntries: Map<string, BrowserPlanEntry>,
 ): Promise<Map<string, AssertionOutcome>> => {
   const logFields = { run_id: input.runId, step: "user_validate" };
   dependencies.logger.info("selector re-check started", {
@@ -853,6 +858,7 @@ const recheckSelectors = async (
     }
     input.signal?.throwIfAborted();
     const rerun = await candidate.run(checked.entry);
+    correctedEntries.set(id, checked.entry);
     dependencies.logger.info("selector re-check finished", { ...logFields, assertion_id: id, result: rerun.result });
     results.set(id, { ...rerun, reason: `After one selector re-check: ${rerun.reason}` });
   }

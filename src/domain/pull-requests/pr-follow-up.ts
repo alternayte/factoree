@@ -7,8 +7,24 @@
  */
 import type { PullRequestEvent } from "./pull-request-event.js";
 
-/** What started a PR follow-up run. */
-export type PrFollowUpTrigger = "reviewer" | "human";
+/**
+ * What started a PR follow-up run. base: a bring-current update that conflicted or failed its check
+ * (slice 4). It does not count toward the limit of PR reviewer follow-up runs.
+ */
+export type PrFollowUpTrigger = "reviewer" | "human" | "base";
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.119. The bring-current update that a
+ * PR follow-up run finishes: the base it merges in, and the conflict or the failed check.
+ */
+export interface PrBaseUpdate {
+  /** The verified base of the pull request before the update. */
+  previousBaseSha: string;
+  /** The files where the merge of the base into the branch conflicts. Empty for a failed check. */
+  conflicts: string[];
+  /** The failed check after a clean update, or null for a conflict. */
+  failure: string | null;
+}
 
 /** The spec: each pull request takes at most 3 PR follow-up runs from the PR reviewer. Human reviews have no limit. */
 export const MAX_REVIEWER_FOLLOW_UPS = 3;
@@ -63,7 +79,10 @@ export interface PrFollowUpInput {
   headBranch: string;
   /** D2. The head commit this run read. The new commit's parent is this commit. */
   headSha: string;
-  /** D2. The verified base of the pull request. The work sprite starts here, with base..head applied. */
+  /**
+   * D2. The verified base of the pull request. The work sprite starts here, with base..head applied.
+   * For the base trigger it is the new base, and the work sprite merges the head into it.
+   */
   baseSha: string;
   baseBranch: string;
   /** The contract revision this run freezes. The proof pack names it, and the record takes it at publication. */
@@ -79,6 +98,8 @@ export interface PrFollowUpInput {
   omittedFindings: number;
   /** Plain comments and suggestions on the pull request that started nothing. The proof pack lists them. */
   plainComments: string[];
+  /** Slice 4. The bring-current update this run finishes, for the base trigger. Absent otherwise. */
+  baseUpdate?: PrBaseUpdate;
 }
 
 /** The verdict of the PR reviewer that one check run event or commit status event reports. */
@@ -150,6 +171,9 @@ export const renderPrFollowUpDescription = (input: {
       "The work starts from the full change of the pull request. Keep every part of it that the review below does not ask to change.",
     "",
   ];
+  if (followUp.trigger === "base" && followUp.baseUpdate !== undefined) {
+    return [...header, ...baseUpdateSection(followUp.baseBranch, followUp.baseSha, followUp.baseUpdate)].join("\n");
+  }
   if (followUp.trigger === "human") {
     return [
       ...header,
@@ -176,6 +200,31 @@ export const renderPrFollowUpDescription = (input: {
     }),
   ].join("\n");
 };
+
+/** Slice 4. The work item section of a PR follow-up run that finishes a bring-current update. */
+const baseUpdateSection = (baseBranch: string, baseSha: string, update: PrBaseUpdate): string[] => [
+  `## The base branch ${baseBranch} moved`,
+  "",
+  `The work starts from ${baseBranch} at ${baseSha.slice(0, 12)}, with the pull request merged into it. ` +
+    "Factoree publishes the result as a merge commit of the pull request head and this base.",
+  "",
+  ...(update.conflicts.length > 0
+    ? [
+        "The merge conflicts in these files. Each one holds conflict markers. Resolve every conflict, and keep the intent of both sides:",
+        ...update.conflicts.map((file) => `- ${file}`),
+      ]
+    : [
+        "The merge is clean, and the frozen checks failed on it. Repair the change so that every check passes on the new base:",
+        "",
+        oneLine(update.failure ?? "A check failed.", MAX_FINDING_BODY_CHARACTERS),
+      ]),
+];
+
+/** Slice 4. The repair finding lines the first implementer attempt of a base follow-up receives. */
+export const baseUpdateFindingLines = (update: PrBaseUpdate): string[] =>
+  update.conflicts.length > 0
+    ? update.conflicts.map((file) => `The merge of the new base conflicts in ${file}. Resolve the conflict markers in it.`)
+    : [`The frozen checks failed after the merge of the new base: ${oneLine(update.failure ?? "A check failed.", MAX_FINDING_BODY_CHARACTERS)}`];
 
 /** The repair finding lines the first implementer attempt of a reviewer follow-up receives. */
 export const keptFindingLines = (kept: readonly TriagedFinding[]): string[] =>

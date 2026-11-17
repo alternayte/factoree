@@ -20,19 +20,29 @@ import type { WorkItemPort } from "~/domain/runs/ports.js";
 import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
 import { buildPrFollowUpWorkflowId, parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
-import type { PullRequestStore, RecordPublishedPullRequestInput } from "~/domain/pull-requests/pull-request-store.js";
+import type {
+  PublishedPullRequest,
+  PullRequestOriginFacts,
+  PullRequestStore,
+  RecordPublishedPullRequestInput,
+} from "~/domain/pull-requests/pull-request-store.js";
+import { MAX_CONFLICT_FILES, type BringCurrentInput } from "~/domain/pull-requests/bring-current.js";
 import type { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 import type { AutoMergeState } from "~/domain/pull-requests/pull-request-store.js";
-import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { ProductRecord, ProductRegistry } from "~/domain/products/product-registry.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
 import {
   decideAutoMerge,
   gateGaps,
+  mergeabilityOf,
   mergeMethodOf,
   openChangeRequests,
   unmetConditions,
+  type AutoMergeGate,
   type AutoMergePort,
+  type BringCurrentReason,
+  type Mergeability,
 } from "~/domain/pull-requests/auto-merge.js";
 
 export interface PullRequestActivityDependencies {
@@ -82,7 +92,13 @@ const plainCommentLines = (events: readonly PullRequestEvent[], exclude: { login
  * What made the PR workflow steer auto-merge: the start of the workflow, a new head commit, an
  * auto-merge that GitHub reports off, or any other event of the pull request.
  */
-export type AutoMergeTrigger = "start" | "new_head" | "auto_merge_disabled" | "event";
+export type AutoMergeTrigger = "start" | "new_head" | "auto_merge_disabled" | "event" | "base_moved";
+
+/** What one steer did, and the bring-current update it asks the PR workflow for (slice 4). */
+export interface SteerAutoMergeOutput {
+  state: AutoMergeState;
+  bringCurrent?: BringCurrentReason;
+}
 
 export interface SteerAutoMergeInput {
   tenantId: string;
@@ -99,6 +115,67 @@ export interface TakePullRequestEventOutput {
   state: PullRequestState;
   headSha: string;
 }
+
+/**
+ * The workflow id and the input of a run that the PR workflow starts on its pull request: a PR
+ * follow-up run or a bring-current run. It shares the agent session of the origin run (D6), and
+ * reads the issue text from Linear, which is context only.
+ */
+const runStartOf = async (
+  dependencies: PullRequestActivityDependencies,
+  input: {
+    tenantId: string;
+    record: PublishedPullRequest;
+    origin: PullRequestOriginFacts;
+    product: ProductRecord;
+    /** Hashed into the workflow id, so a retry of the plan names the same run. */
+    key: string;
+    log: Record<string, unknown>;
+    extra: Pick<AgentRunWorkflowInput, "prFollowUp" | "bringCurrent">;
+  },
+): Promise<{ workflowId: string; input: AgentRunWorkflowInput }> => {
+  const { origin, product, record } = input;
+  const { workspaceId } = parseWorkflowId(origin.originWorkflowId);
+  let title = origin.workItemTitle ?? "";
+  let description = "";
+  let url = origin.workItemUrl;
+  if (origin.linearIssueId !== null) {
+    try {
+      const facts = await dependencies.workItems.facts(origin.linearAgentSessionId, origin.linearIssueId);
+      title = facts.title ?? title;
+      description = facts.description ?? "";
+      url = facts.url ?? url;
+    } catch (error) {
+      // The issue text is context. The review or the update is the change, so the run still starts.
+      dependencies.logger.warn("the issue text of the run was not read", { ...input.log, error: String(error) });
+    }
+  }
+  const defaultAutonomy = product.status === "pending" ? "L0" : product.defaultAutonomy;
+  const key = createHash("sha256").update(input.key).digest("hex").slice(0, 32);
+  return {
+    workflowId: buildPrFollowUpWorkflowId(workspaceId, origin.linearAgentSessionId, key),
+    input: {
+      tenantId: input.tenantId,
+      workspaceId,
+      productId: product.id,
+      linearIssueId: origin.linearIssueId,
+      agentSessionId: origin.linearAgentSessionId,
+      autonomyLevel: defaultAutonomy,
+      maxRunMinutes: product.maxRunMinutes,
+      workItem: { issueId: origin.linearIssueId, title, description, url, labels: [] },
+      product: agentRunProductInput({
+        product,
+        defaultAutonomy,
+        repositories: await dependencies.repositories.listByProduct(product.id),
+        repositoryBaseUrl: await dependencies.repositoryBaseUrl(),
+        productPageUrl: dependencies.productPageUrl === undefined ? null : dependencies.productPageUrl(product.id),
+      }),
+      followUpOfRunId: record.verifiedRunId ?? record.originRunId,
+      delegatedAt: new Date().toISOString(),
+      ...input.extra,
+    },
+  };
+};
 
 /** docs/specs/pr-review-merge-and-deploy.md. The activities of publication and of the PR workflow. */
 export const createPullRequestActivities = (dependencies: PullRequestActivityDependencies) => ({
@@ -252,22 +329,6 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       await say(`Factoree cannot start a PR follow-up run on ${record.url}, because it holds no verified base for it.`);
       return { kind: "none", reason: "no verified base" };
     }
-    const { workspaceId } = parseWorkflowId(origin.originWorkflowId);
-    let title = origin.workItemTitle ?? "";
-    let description = "";
-    let url = origin.workItemUrl;
-    if (origin.linearIssueId !== null) {
-      try {
-        const facts = await dependencies.workItems.facts(origin.linearAgentSessionId, origin.linearIssueId);
-        title = facts.title ?? title;
-        description = facts.description ?? "";
-        url = facts.url ?? url;
-      } catch (error) {
-        // The issue text is context. The review is the change, so the run still starts.
-        dependencies.logger.warn("the issue text of the PR follow-up run was not read", { ...log, error: String(error) });
-      }
-    }
-    const defaultAutonomy = product.status === "pending" ? "L0" : product.defaultAutonomy;
     const followUp: PrFollowUpInput = {
       pullRequestId: record.id,
       repositoryId: record.repositoryId,
@@ -292,33 +353,154 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     if (handledKey !== null && !(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) {
       return { kind: "none", reason: "the check already started a triage" };
     }
-    const key = createHash("sha256").update(`${record.id}\n${event.deliveryId}`).digest("hex").slice(0, 32);
-    const workflowId = buildPrFollowUpWorkflowId(workspaceId, origin.linearAgentSessionId, key);
-    dependencies.logger.info("a PR follow-up run starts", { ...log, trigger, workflow_id: workflowId, findings: findings.length });
-    return {
-      kind: "start",
-      workflowId,
-      input: {
-        tenantId: input.tenantId,
-        workspaceId,
-        productId: product.id,
-        linearIssueId: origin.linearIssueId,
-        agentSessionId: origin.linearAgentSessionId,
-        autonomyLevel: defaultAutonomy,
-        maxRunMinutes: product.maxRunMinutes,
-        workItem: { issueId: origin.linearIssueId, title, description, url, labels: [] },
-        product: agentRunProductInput({
-          product,
-          defaultAutonomy,
-          repositories: await dependencies.repositories.listByProduct(product.id),
-          repositoryBaseUrl: await dependencies.repositoryBaseUrl(),
-          productPageUrl: dependencies.productPageUrl === undefined ? null : dependencies.productPageUrl(product.id),
-        }),
-        followUpOfRunId: record.verifiedRunId ?? record.originRunId,
-        delegatedAt: new Date().toISOString(),
-        prFollowUp: followUp,
+    const start = await runStartOf(dependencies, {
+      tenantId: input.tenantId,
+      record,
+      origin,
+      product,
+      key: `${record.id}\n${event.deliveryId}`,
+      log,
+      extra: { prFollowUp: followUp },
+    });
+    dependencies.logger.info("a PR follow-up run starts", { ...log, trigger, workflow_id: start.workflowId, findings: findings.length });
+    return { kind: "start", ...start };
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.115. Reads whether the branch conflicts
+   * with its base, as GitHub answers it now. `unknown` while GitHub computes it: the PR workflow
+   * reads again later.
+   */
+  async readPullRequestMergeability(input: { tenantId: string; pullRequestId: string }): Promise<{ mergeability: Mergeability | "ended" }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { mergeability: "ended" };
+    const facts = await dependencies.pullRequests.steeringFacts(input.tenantId, input.pullRequestId);
+    const pullRequest = await dependencies.autoMerge.pullRequest(record.repositoryFullName, record.number, facts.githubInstallationId);
+    if (!pullRequest.open) return { mergeability: "ended" };
+    return { mergeability: mergeabilityOf(pullRequest) };
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.117 and DI-21.118. Decides whether a
+   * bring-current run starts, and builds its input. It starts only on the verified head, with a
+   * frozen contract to replay, and once per head that an earlier update did not move.
+   */
+  async planBringCurrent(input: {
+    tenantId: string;
+    pullRequestId: string;
+    reason: BringCurrentReason;
+    /** The delivery that asked for the update, or `start`. It keys the run. */
+    triggerKey: string;
+  }): Promise<PullRequestFollowUpPlan> {
+    const store = dependencies.pullRequests;
+    const record = await store.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { kind: "none", reason: "the pull request is not open" };
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    const log = { pull_request: label, step: "bring_current", reason: input.reason };
+    if (record.verifiedHeadSha === null || record.headSha !== record.verifiedHeadSha) {
+      dependencies.logger.info("the head is not the verified head, so Factoree does not bring it current", log);
+      return { kind: "none", reason: "the head is not verified" };
+    }
+    if (record.bringCurrentHeadSha === record.headSha) return { kind: "none", reason: "an update of this head already pushed nothing" };
+    if (record.verifiedBaseSha === null || record.verifiedRunId === null) return { kind: "none", reason: "no verified base" };
+    const origin = await store.originFacts(input.tenantId, record.id);
+    const product = await dependencies.products.findById(input.tenantId, origin.productId);
+    if (product === null) return { kind: "none", reason: "the product is gone" };
+    const bringCurrent: BringCurrentInput = {
+      pullRequestId: record.id,
+      repositoryId: record.repositoryId,
+      repositoryFullName: record.repositoryFullName,
+      number: record.number,
+      url: record.url,
+      headBranch: record.headBranch,
+      headSha: record.headSha,
+      baseSha: record.verifiedBaseSha,
+      baseBranch: record.baseBranch,
+      contractRunId: record.verifiedRunId,
+      contractRevision: record.contractRevision,
+      // DI-21.104. An unknown level never takes auto-merge, and neither does L3.
+      autonomyLevel: record.autonomyLevel ?? "L3",
+      reason: input.reason,
+    };
+    const start = await runStartOf(dependencies, {
+      tenantId: input.tenantId,
+      record,
+      origin,
+      product,
+      key: `${record.id}\nbring-current\n${input.triggerKey}`,
+      log,
+      extra: { bringCurrent },
+    });
+    dependencies.logger.info("a bring-current run starts", { ...log, workflow_id: start.workflowId });
+    return { kind: "start", ...start };
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.119. A conflict, or a failed check after
+   * a clean update, starts a PR follow-up run with the conflict or the failure as a finding. It does
+   * not count toward the limit of PR reviewer follow-up runs.
+   */
+  async planBaseUpdateFollowUp(input: {
+    tenantId: string;
+    pullRequestId: string;
+    /** The head the bring-current run started from. */
+    headSha: string;
+    baseSha: string;
+    conflicts: string[];
+    failure: string | null;
+    /** The workflow id of the bring-current run. It keys the PR follow-up run. */
+    bringCurrentWorkflowId: string;
+  }): Promise<PullRequestFollowUpPlan> {
+    const store = dependencies.pullRequests;
+    const record = await store.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { kind: "none", reason: "the pull request is not open" };
+    if (record.headSha !== input.headSha) return { kind: "none", reason: "the head moved" };
+    if (record.verifiedBaseSha === null) return { kind: "none", reason: "no verified base" };
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    const log = { pull_request: label, step: "pr_follow_up", trigger: "base" };
+    const origin = await store.originFacts(input.tenantId, record.id);
+    const product = await dependencies.products.findById(input.tenantId, origin.productId);
+    if (product === null) return { kind: "none", reason: "the product is gone" };
+    const followUp: PrFollowUpInput = {
+      pullRequestId: record.id,
+      repositoryId: record.repositoryId,
+      repositoryFullName: record.repositoryFullName,
+      number: record.number,
+      url: record.url,
+      headBranch: record.headBranch,
+      headSha: record.headSha,
+      // The work starts at the new base, with the head merged into it.
+      baseSha: input.baseSha,
+      baseBranch: record.baseBranch,
+      contractRevision: record.contractRevision + 1,
+      trigger: "base",
+      reviewer: null,
+      reviewerLogin: null,
+      findings: [],
+      omittedFindings: 0,
+      plainComments: plainCommentLines(await store.listEvents(input.tenantId, record.id, "review"), null),
+      baseUpdate: {
+        previousBaseSha: record.verifiedBaseSha,
+        conflicts: input.conflicts.slice(0, MAX_CONFLICT_FILES),
+        failure: input.failure,
       },
     };
+    const start = await runStartOf(dependencies, {
+      tenantId: input.tenantId,
+      record,
+      origin,
+      product,
+      key: `${record.id}\nbase\n${input.bringCurrentWorkflowId}`,
+      log,
+      extra: { prFollowUp: followUp },
+    });
+    dependencies.logger.info("a PR follow-up run starts", { ...log, workflow_id: start.workflowId, conflicts: input.conflicts.length });
+    return { kind: "start", ...start };
+  },
+
+  /** DI-21.118. Records that a bring-current update of this head pushed nothing. */
+  async markBringCurrentTried(input: { tenantId: string; pullRequestId: string; headSha: string }): Promise<void> {
+    await dependencies.pullRequests.markBringCurrentTried(input.tenantId, input.pullRequestId, input.headSha);
   },
 
   /**
@@ -354,9 +536,15 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     return { answered };
   },
 
-  /** The spec: counts one PR follow-up run from the PR reviewer, once its triage kept a finding. */
-  async countReviewerFollowUp(input: { tenantId: string; pullRequestId: string }): Promise<{ count: number }> {
-    return { count: await dependencies.pullRequests.countReviewerFollowUp(input.tenantId, input.pullRequestId) };
+  /**
+   * The spec, DI-21.114: counts one PR follow-up run from the PR reviewer, once its triage kept a
+   * finding. The run id keys the count, so a retry after a successful write counts nothing.
+   */
+  async countReviewerFollowUp(input: { tenantId: string; pullRequestId: string; runId: string }): Promise<{ count: number }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null) throw new Error(`no pull request "${input.pullRequestId}" of tenant "${input.tenantId}"`);
+    if (record.reviewerFollowUpKeys.includes(input.runId)) return { count: record.reviewerFollowUps };
+    return { count: await dependencies.pullRequests.countReviewerFollowUp(input.tenantId, input.pullRequestId, input.runId) };
   },
 
   /**
@@ -364,7 +552,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
    * or off for an L4 pull request, from what GitHub answers now. A retry reads GitHub again and
    * decides again, so it never acts twice on one state.
    */
-  async steerAutoMerge(input: SteerAutoMergeInput): Promise<{ state: AutoMergeState }> {
+  async steerAutoMerge(input: SteerAutoMergeInput): Promise<SteerAutoMergeOutput> {
     const store = dependencies.pullRequests;
     const record = await store.find(input.tenantId, input.pullRequestId);
     if (record === null || record.state !== "open") return { state: record?.autoMerge ?? "off" };
@@ -456,6 +644,38 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       return { state: next };
     };
 
+    // docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.115. Just before an L4 merge, a branch
+    // that conflicts, or that the base branch requires up to date and that is behind, is brought
+    // current first. An auto-merge that is on already is checked when the base branch moved, because
+    // GitHub then holds it back for ever.
+    let gate: AutoMergeGate | null = null;
+    const mergesSoon =
+      action.kind === "enable" ||
+      action.kind === "merge" ||
+      (action.kind === "none" &&
+        unmet.length === 0 &&
+        state === "enabled" &&
+        pullRequest.autoMergeEnabled &&
+        (input.trigger === "base_moved" || input.trigger === "start"));
+    if (mergesSoon) {
+      if (mergeabilityOf(pullRequest) === "conflict") {
+        dependencies.logger.info("the pull request conflicts with its base, so Factoree brings it current first", log);
+        return { ...(await write(state, "The branch conflicts with its base, so Factoree brings it current first.")), bringCurrent: "conflict" };
+      }
+      gate = await port.gate(slug, pullRequest.baseBranch, installationId);
+      if (gate.requiresUpToDate || pullRequest.mergeableState === "behind") {
+        const behind =
+          pullRequest.mergeableState === "behind" || (await port.behindBy(slug, pullRequest.baseBranch, pullRequest.headSha, installationId)) > 0;
+        if (behind) {
+          dependencies.logger.info("the base branch requires the branch up to date, so Factoree brings it current first", log);
+          return {
+            ...(await write(state, `The base branch ${pullRequest.baseBranch} requires the branch up to date, so Factoree brings it current first.`)),
+            bringCurrent: "up_to_date",
+          };
+        }
+      }
+    }
+
     switch (action.kind) {
       case "none":
         return write(state, action.reason ?? (state === "enabled" ? reason : null));
@@ -467,8 +687,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       case "merge": {
         // The merge method is read when Factoree turns auto-merge on, because a repository can
         // change it after the gate read.
-        const gate = await port.gate(slug, pullRequest.baseBranch, installationId);
-        const method = mergeMethodOf(gate.settings);
+        const method = mergeMethodOf((gate ?? (await port.gate(slug, pullRequest.baseBranch, installationId))).settings);
         if (method === null) {
           await say(`${NEEDS_ATTENTION}\n\n${slug} allows no merge method, so Factoree did not turn on auto-merge for ${record.url}.`);
           return write("unavailable", `${slug} allows no merge method.`);

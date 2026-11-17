@@ -61,7 +61,7 @@ export interface GitHubWebhookDependencies {
    * docs/specs/pr-review-merge-and-deploy.md. Routes each event of a recorded pull request to its PR
    * workflow. A close of a pull request with no record takes `pullRequestClosed`.
    */
-  pullRequestEvents?: Pick<PullRequestEventRouter, "byNumber" | "byCommit">;
+  pullRequestEvents?: Pick<PullRequestEventRouter, "byNumber" | "byCommit" | "byBase">;
 }
 
 /** The reply of a routed event. */
@@ -158,8 +158,25 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
       if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
 
       const { ref, repository, commits, installation } = parsed.data;
+      // docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.117. A push to a branch moves the
+      // base of each open pull request that targets it, so its PR workflow checks for a conflict and
+      // for a branch that is behind.
+      let baseRouted: PullRequestRouteOutcome = "unmatched";
+      const after = parsed.data.after ?? "";
+      if (dependencies.pullRequestEvents !== undefined && ref.startsWith("refs/heads/") && parsed.data.deleted !== true && /^[0-9a-f]{40}$/.test(after)) {
+        const tenantId = await resolveTenantId(dependencies, installation.id, undefined);
+        if (tenantId !== null) {
+          const baseBranch = ref.slice("refs/heads/".length);
+          baseRouted = await dependencies.pullRequestEvents.byBase(tenantId, repository.full_name, baseBranch, {
+            kind: "base_pushed",
+            deliveryId: deliveryIdOr(`push:${repository.full_name}:${baseBranch}:${after}`),
+            baseBranch,
+            sha: after,
+          });
+        }
+      }
       if (ref !== `refs/heads/${repository.default_branch}`) {
-        return reply.code(200).send({ status: "ignored", reason: "not the default branch" });
+        return reply.code(200).send(baseRouted === "unmatched" ? { status: "ignored", reason: "not the default branch" } : { status: "handled" });
       }
 
       let added = false;
