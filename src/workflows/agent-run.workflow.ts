@@ -318,6 +318,11 @@ const CHANGE_SET_PATCH = "change-sets";
  * not-built decision. An older history adds nothing after the refiner.
  */
 const CHANGE_SET_REFINER_PATCH = "change-set-refiner-targets";
+/**
+ * docs/specs/change-sets.md, DI-21.143. A target the refiner adds resolves the context again for the
+ * whole set, and freezes a new Context Contract revision that lists every target.
+ */
+const CHANGE_SET_CONTEXT_PATCH = "change-set-context-refreeze";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -2287,98 +2292,119 @@ export async function agentRunWorkflow(
 
       // SDD section 23. A conflict without an authority winner blocks the Run. The bounded
       // rounds end this loop, and the Run budget ends it as well.
-      let resolvedContext: ResolveContextActivityOutput;
-      for (;;) {
-        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+      // docs/specs/change-sets.md, DI-21.143. A target the refiner adds resolves the context again
+      // for the whole set, with `supersedes`, so the run's contract lists every target.
+      type ContextScope = {
+        primaryRepository: { slug: string; url: string; ref: string };
+        referenceRepositories: Array<{ slug: string; url: string; ref: string }>;
+        targetRepositories: Array<{ slug: string; url: string; ref: string; githubInstallationId: string }>;
+        supersedes?: string;
+      };
+      const resolveContextLoop = async (
+        scope: ContextScope,
+      ): Promise<{ resolved: ResolveContextActivityOutput } | { ended: AgentRunWorkflowResult }> => {
+        for (;;) {
+          if (remainingMs() === 0) return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
 
-        status = "RESOLVING_CONTEXT";
-        await activities.setRunStatus({ runId: id, status });
+          status = "RESOLVING_CONTEXT";
+          await activities.setRunStatus({ runId: id, status });
 
-        try {
-          resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
-            runId: id,
-            tenantId: input.tenantId,
-            productId: input.productId,
-            goal: refined.goal,
-            acceptanceCriteria: refined.acceptanceCriteria,
-            // D2. A PR follow-up run reads its context at the verified base of the pull request.
-            primaryRepository:
-              prFollowUp === null
-                ? repositoryRef(refined.primaryRepository)
-                : { ...repositoryRef(refined.primaryRepository), ref: prFollowUp.baseSha },
-            referenceRepositories: refined.referenceRepositories.map(repositoryRef),
-            // docs/specs/change-sets.md. The other targets of a change set, each at its default branch.
-            ...(runTargets.length > 1
-              ? {
-                  targetRepositories: runTargets
-                    .slice(1)
-                    .map((target) => ({ ...repositoryRef(target.fullName), githubInstallationId: target.githubInstallationId })),
-                }
-              : {}),
-            workItemReferences: refined.workItemReferences,
-            decisions,
-            githubInstallationId: primaryRepositoryInstallationId,
-            // docs/specs/work-item-images-and-links.md. An activity input adds no workflow command.
-            ...(workItemContent === null
-              ? {}
-              : {
-                  workItemContent: {
-                    comments: workItemContent.comments,
-                    images: workItemContent.images,
-                    links: workItemContent.links,
-                    skippedImages: workItemContent.skippedImages,
-                    linksNotRead: workItemContent.linksNotRead,
-                  },
-                }),
-          });
-        } catch (error) {
-          // SDD section 49. A repository reference that resolves to nothing is a semantic
-          // failure, so it drives a workflow decision. The retry policy already denied a second
-          // attempt. A transport fault is not this type, so it still retries.
-          if (isConfigurationFault(error)) {
-            return await failRun(
-              "CONFIGURATION_INVALID",
-              withCause(
-                "Factoree could not resolve the context, because the Run configuration is invalid. " +
-                  "Repair the repository reference, the reference repositories, or the default branch.",
-                error,
-              ),
-            );
+          let resolution: ResolveContextActivityOutput;
+          try {
+            resolution = await buildContextActivities(remainingMs()).resolveContext({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              goal: refined.goal,
+              acceptanceCriteria: refined.acceptanceCriteria,
+              primaryRepository: scope.primaryRepository,
+              referenceRepositories: scope.referenceRepositories,
+              // docs/specs/change-sets.md. The other targets of a change set, each at its default branch.
+              ...(scope.targetRepositories.length > 0 ? { targetRepositories: scope.targetRepositories } : {}),
+              ...(scope.supersedes === undefined ? {} : { supersedes: scope.supersedes }),
+              workItemReferences: refined.workItemReferences,
+              decisions,
+              githubInstallationId: primaryRepositoryInstallationId,
+              // docs/specs/work-item-images-and-links.md. An activity input adds no workflow command.
+              ...(workItemContent === null
+                ? {}
+                : {
+                    workItemContent: {
+                      comments: workItemContent.comments,
+                      images: workItemContent.images,
+                      links: workItemContent.links,
+                      skippedImages: workItemContent.skippedImages,
+                      linksNotRead: workItemContent.linksNotRead,
+                    },
+                  }),
+            });
+          } catch (error) {
+            // SDD section 49. A repository reference that resolves to nothing is a semantic
+            // failure, so it drives a workflow decision. The retry policy already denied a second
+            // attempt. A transport fault is not this type, so it still retries.
+            if (isConfigurationFault(error)) {
+              return {
+                ended: await failRun(
+                  "CONFIGURATION_INVALID",
+                  withCause(
+                    "Factoree could not resolve the context, because the Run configuration is invalid. " +
+                      "Repair the repository reference, the reference repositories, or the default branch.",
+                    error,
+                  ),
+                ),
+              };
+            }
+            throw error;
           }
-          throw error;
-        }
-        // SDD section 21. Only a frozen Context Contract has a version. A resolution that still
-        // holds an unresolved conflict stored nothing, so the snapshot reports no version.
-        contextContractVersion =
-          resolvedContext.unresolvedConflict === null ? resolvedContext.sha256 : null;
+          // SDD section 21. Only a frozen Context Contract has a version. A resolution that still
+          // holds an unresolved conflict stored nothing, so the snapshot reports no version.
+          contextContractVersion =
+            resolution.unresolvedConflict === null ? resolution.sha256 : null;
 
-        await notify(() =>
-          activities.postProgress({
-            sessionId: input.agentSessionId,
-            message: resolvedContext.summary,
-          }),
-        );
-
-        const conflict = resolvedContext.unresolvedConflict;
-        if (conflict === null) break;
-
-        // SDD section 23. No safe resolution exists, so implementation must not start.
-        const proceeded = await askAndWait(
-          conflict.id,
-          conflict.question,
-          conflict.subject,
-          conflict.domain,
-        );
-        if (stopRequested) return await cancelRun();
-        if (!proceeded) {
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-          return await failRun(
-            "CONTEXT_UNRESOLVED",
-            "Factoree could not start, because two equally authoritative sources disagree: " +
-              `${conflict.question} Factoree published nothing.`,
+          await notify(() =>
+            activities.postProgress({
+              sessionId: input.agentSessionId,
+              message: resolution.summary,
+            }),
           );
+
+          const conflict = resolution.unresolvedConflict;
+          if (conflict === null) return { resolved: resolution };
+
+          // SDD section 23. No safe resolution exists, so implementation must not start.
+          const proceeded = await askAndWait(
+            conflict.id,
+            conflict.question,
+            conflict.subject,
+            conflict.domain,
+          );
+          if (stopRequested) return { ended: await cancelRun() };
+          if (!proceeded) {
+            if (remainingMs() === 0) return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
+            return {
+              ended: await failRun(
+                "CONTEXT_UNRESOLVED",
+                "Factoree could not start, because two equally authoritative sources disagree: " +
+                  `${conflict.question} Factoree published nothing.`,
+              ),
+            };
+          }
         }
-      }
+      };
+      const firstContext = await resolveContextLoop({
+        // D2. A PR follow-up run reads its context at the verified base of the pull request.
+        primaryRepository:
+          prFollowUp === null
+            ? repositoryRef(refined.primaryRepository)
+            : { ...repositoryRef(refined.primaryRepository), ref: prFollowUp.baseSha },
+        referenceRepositories: refined.referenceRepositories.map(repositoryRef),
+        targetRepositories:
+          runTargets.length > 1
+            ? runTargets.slice(1).map((target) => ({ ...repositoryRef(target.fullName), githubInstallationId: target.githubInstallationId }))
+            : [],
+      });
+      if ("ended" in firstContext) return firstContext.ended;
+      let resolvedContext: ResolveContextActivityOutput = firstContext.resolved;
 
       // A stop that arrived during the context work must prevent preparation.
       if (stopRequested) return await cancelRun();
@@ -2795,6 +2821,27 @@ export async function agentRunWorkflow(
         }
         if (joined > 0) {
           if (stopRequested) return await cancelRun();
+          // DI-21.143. The Context Contract of the run lists every target, so the context resolves
+          // again for the set before the Validation Contract freezes. Each repository stays at the
+          // SHA the run already pinned, and an added target at the SHA the refiner read.
+          if (patched(CHANGE_SET_CONTEXT_PATCH)) {
+            const pinnedOf = (slug: string, sha: string) => ({ ...repositoryRef(slug), ref: sha });
+            const setContext = await resolveContextLoop({
+              primaryRepository: pinnedOf(resolvedContext.primary.slug, resolvedContext.primary.sha),
+              referenceRepositories: resolvedContext.references.map((reference) => pinnedOf(reference.slug, reference.sha)),
+              targetRepositories: targetBases
+                .slice(1)
+                .map((target) => ({ ...pinnedOf(target.slug, target.sha), githubInstallationId: target.githubInstallationId })),
+              supersedes: resolvedContext.sha256,
+            });
+            if ("ended" in setContext) return setContext.ended;
+            resolvedContext = setContext.resolved;
+            if (stopRequested) return await cancelRun();
+            prepareInput = {
+              ...prepareInput,
+              ...(resolvedContext.deliveryRefs === undefined ? {} : { contextRefs: resolvedContext.deliveryRefs }),
+            };
+          }
           prepareInput = {
             ...prepareInput,
             targets: targetBases.map((target) => ({

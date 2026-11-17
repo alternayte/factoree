@@ -11,7 +11,10 @@ export class FakeContextContractStore implements ContextContractStore {
   save(input: SaveContextContractInput): Promise<StoredContextContract> {
     // SDD section 21. The contract is immutable, so an existing one wins and nothing changes.
     const existing = this.byRun.get(input.runId);
-    if (existing !== undefined) return Promise.resolve(existing);
+    // DI-21.143. A save that supersedes the newest contract adds a revision.
+    const superseded =
+      existing !== undefined && input.supersedes !== undefined && existing.sha256 === input.supersedes && existing.sha256 !== input.sha256;
+    if (existing !== undefined && !superseded) return Promise.resolve(existing);
     this.sequence += 1;
     const stored: StoredContextContract = {
       id: `ctx-${this.sequence}`,

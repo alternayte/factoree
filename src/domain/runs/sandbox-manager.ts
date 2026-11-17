@@ -8,6 +8,7 @@ import {
   movePrimaryToTarget,
   refreshPrimary,
   refreshTarget,
+  removeIgnoredFiles,
   removeReferences,
   withoutUrlCredentials,
 } from "./checkout.js";
@@ -695,6 +696,9 @@ export class SandboxManager {
               return null;
             }
             checkout = await refreshTarget(sandbox, ref, target, credential);
+            // DI-21.144. The dependency folders of the snapshot name `primary`, so the bootstrap of
+            // this target builds them again in its new folder.
+            await removeIgnoredFiles(sandbox, ref, checkout.path);
           }
           const resolved = toProjectRuntimeConfig(await readRepositoryConfig(sandbox, ref, checkout.path), input.defaults);
           // The key reads the configuration before the compose project name of the set, so it equals

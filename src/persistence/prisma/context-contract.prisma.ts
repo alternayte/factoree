@@ -148,14 +148,20 @@ export class PrismaContextContractStore implements ContextContractStore {
    * transaction.
    */
   async save(input: SaveContextContractInput): Promise<StoredContextContract> {
-    const existing = await this.findByRun(input.tenantId, input.runId);
-    if (existing !== null) return existing;
+    const existing = await this.newestRow(input.runId);
+    if (existing !== null) {
+      // DI-21.143. Only a save that supersedes the newest contract adds a revision. A retry of it
+      // finds the revision it wrote, which supersedes nothing it names.
+      const superseded = input.supersedes !== undefined && existing.sha256 === input.supersedes && existing.sha256 !== input.sha256;
+      if (!superseded) return toStored(existing);
+    }
 
     try {
       const row = await this.prisma.contextContract.create({
         data: {
           tenantId: input.tenantId,
           runId: input.runId,
+          revision: (existing?.revision ?? 0) + 1,
           version: input.contract.version,
           sha256: input.sha256,
           document: input.document,
@@ -192,19 +198,25 @@ export class PrismaContextContractStore implements ContextContractStore {
       });
       return toStored(row);
     } catch (error) {
-      // Two concurrent attempts can both miss the read above. The unique index on `runId` decides
-      // the race. The loser reads the contract the winner wrote, and does not fail the Run.
-      const row = await this.findByRun(input.tenantId, input.runId);
-      if (row !== null) return row;
+      // Two concurrent attempts can both miss the read above. The unique index on the run and the
+      // revision decides the race. The loser reads the contract the winner wrote, and does not
+      // fail the Run.
+      const row = await this.newestRow(input.runId);
+      if (row !== null && row.revision > (existing?.revision ?? 0)) return toStored(row);
       throw error;
     }
   }
 
-  async findByRun(tenantId: string, runId: string): Promise<StoredContextContract | null> {
-    const row = await this.prisma.contextContract.findUnique({
+  private newestRow(runId: string) {
+    return this.prisma.contextContract.findFirst({
       where: { runId },
+      orderBy: { revision: "desc" },
       include: { items: true, conflicts: true },
     });
+  }
+
+  async findByRun(tenantId: string, runId: string): Promise<StoredContextContract | null> {
+    const row = await this.newestRow(runId);
     // SDD section 52. The read applies the tenant boundary as well as the write.
     if (row === null || row.tenantId !== tenantId) return null;
     return toStored(row);

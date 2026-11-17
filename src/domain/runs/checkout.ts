@@ -207,6 +207,17 @@ export const movePrimaryToTarget = async (sandbox: Sandbox, ref: SandboxRef, rep
   return path;
 };
 
+/**
+ * docs/specs/change-sets.md, DI-21.144. Removes every ignored file of a checkout that moved from
+ * `primary` to its target folder. The dependency folders the bootstrap built there, such as a
+ * Python `.venv` or a `node_modules/.bin` link, can hold the absolute path of `primary`, so the
+ * bootstrap that follows builds them again in the new folder. The caches outside the checkout and
+ * the images stay, so the rebuild downloads little.
+ */
+export const removeIgnoredFiles = async (sandbox: Sandbox, ref: SandboxRef, path: string): Promise<void> => {
+  await run(sandbox, ref, { file: "git", args: ["-C", path, "clean", "-ffdqX"] });
+};
+
 const refreshCheckout = async (
   sandbox: Sandbox,
   ref: SandboxRef,

@@ -177,6 +177,12 @@ describe("target selection and the RunTarget row", () => {
       expect(targetsOf("run-ses-target-refiner-adds").map((target) => target.repositoryId)).toEqual(["repository-api", "repository-web"]);
       expect(identityCallsOf("run-ses-target-refiner-adds").map((call) => call.baseSha).at(-1)).toBe(sha);
       expect(recordRunTargetEdgesCalls.filter((call) => call.runId === "run-ses-target-refiner-adds").map((call) => call.edges)).toEqual([edges]);
+      // DI-21.143. The context resolves again for the set, and the new contract supersedes the first.
+      const resolutions = contextCallsOf("run-ses-target-refiner-adds");
+      expect(resolutions).toHaveLength(2);
+      expect(resolutions[0]?.supersedes).toBeUndefined();
+      expect(resolutions[1]?.supersedes).toEqual(expect.any(String));
+      expect(resolutions[1]?.targetRepositories?.map((repository) => [repository.slug, repository.ref])).toEqual([["acme/web", sha]]);
       const notices = noticesOf("run-ses-target-refiner-adds");
       expect(notices).toContainEqual(decision);
       expect(notices.some((notice) => notice.kind === "merge_order" && notice.statement === "set the merge order acme/api, then acme/web")).toBe(true);

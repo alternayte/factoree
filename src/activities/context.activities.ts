@@ -41,6 +41,11 @@ export interface ResolveContextActivityInput {
    * grants it. Absent for a run with one target.
    */
   targetRepositories?: Array<RepositoryRef & { githubInstallationId: string }>;
+  /**
+   * docs/specs/change-sets.md, DI-21.143. The hash of the frozen contract this resolution replaces,
+   * after the refiner added a target. Absent for the first resolution of a Run.
+   */
+  supersedes?: string;
   workItemReferences: string[];
   decisions: RecordedDecision[];
   /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
@@ -213,19 +218,30 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
         ? await dependencies.contracts.findByRun(input.tenantId, input.runId)
         : null;
 
+    // DI-21.143. A resolution that supersedes the frozen contract adds a new revision. The store
+    // keeps it idempotent: a retry finds the revision the first attempt wrote.
     const stored =
       resolved.unresolvedConflict === null
-        ? (existing ??
-          (await dependencies.contracts.save({
-            tenantId: input.tenantId,
-            runId: input.runId,
-            contract: resolved.contract,
-            sha256: resolved.sha256,
-            document: resolved.document,
-          })))
+        ? input.supersedes === undefined
+          ? (existing ??
+            (await dependencies.contracts.save({
+              tenantId: input.tenantId,
+              runId: input.runId,
+              contract: resolved.contract,
+              sha256: resolved.sha256,
+              document: resolved.document,
+            })))
+          : await dependencies.contracts.save({
+              tenantId: input.tenantId,
+              runId: input.runId,
+              contract: resolved.contract,
+              sha256: resolved.sha256,
+              document: resolved.document,
+              supersedes: input.supersedes,
+            })
         : null;
 
-    const froze = stored !== null && existing === null;
+    const froze = stored !== null && (existing === null || existing.sha256 !== stored.sha256);
 
     if (stored !== null) {
       await dependencies.runs.setContextContractVersion(input.tenantId, input.runId, stored.sha256);

@@ -410,6 +410,25 @@ describe("SandboxManager set snapshots (docs/specs/change-sets.md, DI-21.135, DI
     expect([...store.rows.keys()]).toEqual([`tenant-1|fake|${API}`]);
   });
 
+  it("removes the ignored files of the moved first target before its bootstrap runs again (DI-21.144)", async () => {
+    const store = new MemoryWarmSnapshotStore();
+    await store.save({ ...stored(KEY), repositoryUrl: API });
+    const sandbox = new WarmFakeSandbox();
+    await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(setInput);
+
+    const lines = sandbox.commands.map((command) => `${command.cwd ?? ""}|${command.file} ${command.args.join(" ")}`);
+    const moved = lines.findIndex((line) => line.includes("mv --"));
+    const refreshed = lines.findIndex((line) => line.includes("-C /workspace/targets/acme/api checkout --force --detach FETCH_HEAD"));
+    const cleaned = lines.findIndex((line) => line.endsWith("git -C /workspace/targets/acme/api clean -ffdqX"));
+    const bootstrapped = lines.findIndex((line) => line.startsWith("/workspace/targets/acme/api|sh -c") && line.includes("npm ci"));
+    expect(moved).toBeGreaterThanOrEqual(0);
+    expect(refreshed).toBeGreaterThan(moved);
+    expect(cleaned).toBeGreaterThan(refreshed);
+    expect(bootstrapped).toBeGreaterThan(cleaned);
+    // A target cloned cold holds no ignored file of another folder.
+    expect(lines.some((line) => line.includes("/workspace/targets/acme/web clean -ffdqX"))).toBe(false);
+  });
+
   it("starts the set cold when the first target's snapshot holds another bootstrap key", async () => {
     const store = new MemoryWarmSnapshotStore();
     await store.save({ ...stored("2222222222222222222222222222222222222222"), repositoryUrl: API });

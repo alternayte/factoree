@@ -159,7 +159,7 @@ model Run {
   skills                   RunSkill[]
   skillProposals           RunSkillProposal[]
   evidence                 Evidence[]
-  contextContract          ContextContract?
+  contextContracts         ContextContract[]
   validationContract       ValidationContract?
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
@@ -320,8 +320,11 @@ model Evidence {
 model ContextContract {
   id          String   @id @default(uuid())
   tenantId    String
-  runId       String   @unique
+  runId       String
   run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // docs/specs/change-sets.md, DI-21.143. A target the refiner adds freezes a new contract of the
+  // Run. Each one keeps its row, and the highest revision is the contract of the Run.
+  revision    Int      @default(1)
   // SDD section 21 fixes the document schema version. `Run.contextContractVersion` holds the
   // SHA-256 below, because that value identifies the exact contract. See DI-4.11.
   version     Int
@@ -333,6 +336,7 @@ model ContextContract {
   items       ContextItem[]
   conflicts   ContextConflict[]
 
+  @@unique([runId, revision])
   @@index([tenantId])
 }
 
