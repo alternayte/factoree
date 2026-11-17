@@ -19,6 +19,8 @@ Factoree works on its pull request after publication. A failed check from the PR
 - A conflict, or a failed check after the update, starts a PR follow-up run with the conflict or the failure as a finding. — The implementer resolves code. Factoree does not.
 - `PUT /admin/products/:id` accepts L4. Risk caps and the `factoree:l0` to `factoree:l2` labels still lower it. The default high-risk labels stay at L2. — A lower level stays the safe direction.
 - At L4, Factoree turns on GitHub auto-merge when these conditions all hold: the risk cap allows L4, the Factoree checks passed on the head, the PR reviewer check passed (if the product names one), and no "request changes" review is open. — GitHub enforces its ruleset for every PR, so Factoree adds no second policy engine.
+- L4 takes effect only on a repository that allows auto-merge and whose base branch has at least one rule or ruleset requirement. Factoree reads both when the PR opens, with Metadata read. When either is missing, the PR stays open as at L3, and "Needs your attention" and the product page name the missing setting. — GitHub refuses auto-merge without them, and an agent change must not reach main with no human-owned gate.
+- A PR follow-up run pushes to the branch of the PR it follows, not to a branch of its own run id. The new commit's parent is the PR head it read. — The review threads and the PR number stay.
 - A required human approval lives in the ruleset. Factoree cannot approve its own PR. A human turns off auto-merge to stop the merge. — Devops owns the merge gate, and the override is one click on the PR.
 - Factoree merges with squash when the repository allows it. Otherwise it uses the first method that the repository allows. — One commit per work item on the base branch.
 - A new verified commit turns auto-merge off, and Factoree turns it on again only when the conditions hold for the new head. — Auto-merge must never merge an unchecked head.
@@ -44,6 +46,7 @@ Factoree works on its pull request after publication. A failed check from the PR
 - A fourth failed PR reviewer check on one PR starts no run and posts "Needs your attention".
 - A conflicting push to main moves the PR to conflict. Factoree pushes a merge commit after a check sprite passes, or starts a PR follow-up run when the merge conflicts.
 - `PUT /admin/products/:id` with `"defaultAutonomy":"L4"` answers 200. A ticket labelled payments in that product still opens a draft PR.
+- An L4 run on a repository with "Allow auto-merge" off opens its PR without auto-merge, and the product page names the setting.
 - An L4 PR on a repository whose ruleset requires one approval shows "auto-merge enabled by factoree". It merges only after a human approves. The Linear issue moves to completed.
 - The deploy job on `production` succeeds. The proof pack and the Linear session show `production` with the commit SHA.
 - A failed `production` deploy moves the issue back from completed and posts the job log link. The reply "revert this" starts a follow-up run.
