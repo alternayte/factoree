@@ -16,6 +16,7 @@ const {
   heldProofPacks,
   publishCalls,
   recordPullRequestCalls,
+  pullRequestWorkflowRuns,
   activityOrder,
   input,
   runWorker,
@@ -58,12 +59,17 @@ describe("AT-30 — the Proof Pack completes a successful Run", () => {
   // docs/specs/pr-review-merge-and-deploy.md. The run ends READY_FOR_HUMAN while its PR workflow stays open.
   it("records the pull request and leaves its PR workflow open after the run ends", async () => {
     const runId = "run-ses-at30-pr";
+    pullRequestWorkflowRuns.add(runId);
     const { result, description } = await runWorker(async () => {
       const ended = await (await startRun("ses-at30-pr")).result();
       const recorded = recordPullRequestCalls.find((entry) => entry.runId === runId);
       if (recorded === undefined) throw new Error("the run recorded no pull request");
       const workflowId = `pr:${recorded.tenantId}:${recorded.repositoryId}#${String(recorded.number)}:${runId}`;
-      return { result: ended, description: await environment.client.workflow.getHandle(workflowId).describe() };
+      const child = environment.client.workflow.getHandle(workflowId);
+      const described = await child.describe();
+      // The child waits for GitHub events. It ends here, so it cannot hold the clock of a later test.
+      await child.terminate("the test ended");
+      return { result: ended, description: described };
     });
 
     expect(result.status).toBe("READY_FOR_HUMAN");

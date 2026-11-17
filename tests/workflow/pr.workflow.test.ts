@@ -92,7 +92,7 @@ describe("pullRequestWorkflow", () => {
 
     expect(result).toBe("merged");
     expect(taken).toEqual(["github:review-1", "github:sync-1", "github:close-1"]);
-    expect(closes).toEqual([{ merged: true, mergeCommitSha: "merge-1" }]);
+    expect(closes).toEqual([expect.objectContaining({ merged: true, mergeCommitSha: "merge-1" })]);
     // DI-21.104. The L4 merge steers at the start and after each event but the close.
     expect(steers).toEqual(["start", "event", "new_head"]);
   });

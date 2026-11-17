@@ -340,6 +340,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   }> = [];
   /** docs/specs/pr-review-merge-and-deploy.md. Every pull request publication recorded, in order. */
   const recordPullRequestCalls: RecordPublishedPullRequestInput[] = [];
+  /** The run ids whose run starts its PR workflow child. A test adds the id and terminates the child. */
+  const pullRequestWorkflowRuns = new Set<string>();
   /** Every recorded `recordDecision` call, in order. */
   const decisionCalls: Array<{ tenantId: string; runId: string; decision: FactoreeDecision }> = [];
   /** A run id in this map holds the publication open until the test resolves the promise. */
@@ -548,6 +550,13 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     // docs/specs/pr-review-merge-and-deploy.md. The run then starts the PR workflow, which waits for events.
     recordPullRequest: async (recordInput: RecordPublishedPullRequestInput) => {
       recordPullRequestCalls.push(recordInput);
+      // An abandoned PR workflow waits for GitHub events that never come here. While a test awaits
+      // a run result, the time-skipping test server then jumps to that workflow's default timeout,
+      // and the next test in the file finds the clock stuck. Only a run that a test names starts it;
+      // the run's best-effort `notify` takes this refusal for every other run.
+      if (!pullRequestWorkflowRuns.has(recordInput.runId)) {
+        throw ApplicationFailure.nonRetryable("this test starts no PR workflow", "NoPullRequestWorkflow");
+      }
       return {
         pullRequestId: `pull-request-${recordInput.runId}`,
         workflowId: `pr:${recordInput.tenantId}:${recordInput.repositoryId}#${String(recordInput.number)}:${recordInput.runId}`,
@@ -1106,6 +1115,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     recordRunTargetCalls,
     recordRunTargetFactsCalls,
     recordPullRequestCalls,
+    pullRequestWorkflowRuns,
     decisionCalls,
     targetIdentityOutcomes,
     targetIdentityCalls,
