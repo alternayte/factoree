@@ -23,6 +23,9 @@ import { BROWSER_SCENARIO_TIMEOUT_SECONDS, BROWSER_STEP_TIMEOUT_SECONDS } from "
 // defined meaning and stay rejected.
 const HOST_NAME = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
+export const PREVIEW_TIMEOUT_MAX_SECONDS = 600;
+export const SERVICES_WAIT_TIMEOUT_MAX_SECONDS = 600;
+
 /**
  * Keys a repository must never set. The file lives inside a repository that Factoree agents
  * write to, so it must never raise a privilege. Specification section 6 fixes this list.
@@ -122,7 +125,7 @@ const schema = z
         compose: REPOSITORY_PATH,
         profiles: z.array(z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/)).max(20).default([]),
         seed: z.string().min(1).nullable().default(null),
-        waitTimeoutSeconds: z.number().int().positive().max(600).default(180),
+        waitTimeoutSeconds: z.number().int().positive().max(SERVICES_WAIT_TIMEOUT_MAX_SECONDS).default(180),
       })
       .strict()
       .nullable()
@@ -158,7 +161,7 @@ const schema = z
         enabled: z.boolean(),
         command: z.string().min(1),
         readyUrl: z.string().url(),
-        timeoutSeconds: z.number().int().positive().max(600),
+        timeoutSeconds: z.number().int().positive().max(PREVIEW_TIMEOUT_MAX_SECONDS),
         // Issue #44, DI-21.69. A CSS selector that shows once the page takes input, for an app
         // that renders its markup before it attaches its handlers: Blazor Server, LiveView, Hotwire.
         readySelector: z.string().trim().min(1).max(500).optional(),
