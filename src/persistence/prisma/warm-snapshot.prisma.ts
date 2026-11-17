@@ -1,5 +1,7 @@
+import { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import type { RetiredWarmSnapshot, WarmSnapshot, WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
+import type { UnwiredPair } from "~/domain/runs/set-check.js";
 
 export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -49,6 +51,8 @@ export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
       warmCommandExitCode: snapshot.warmCommandExitCode,
       snapshotId: snapshot.snapshotId,
       repositoryUrls: snapshot.repositoryUrls ?? [],
+      // DI-21.148. A new snapshot replaces the record of the pairs the old one could not start.
+      unwiredPairs: snapshot.unwiredPairs === undefined || snapshot.unwiredPairs.length === 0 ? Prisma.DbNull : (snapshot.unwiredPairs as unknown as Prisma.InputJsonValue),
     };
     return this.prisma.$transaction(async (tx) => {
       const previous = await tx.warmSnapshot.findUnique({ where: { tenantId_adapter_repositoryUrl: key } });
@@ -105,6 +109,7 @@ const toSnapshot = (row: {
   warmCommandExitCode: number | null;
   snapshotId: string;
   repositoryUrls: string[];
+  unwiredPairs?: unknown;
 }): WarmSnapshot => ({
   tenantId: row.tenantId,
   adapter: row.adapter,
@@ -114,4 +119,16 @@ const toSnapshot = (row: {
   warmCommandExitCode: row.warmCommandExitCode,
   snapshotId: row.snapshotId,
   ...(row.repositoryUrls.length === 0 ? {} : { repositoryUrls: row.repositoryUrls }),
+  ...(unwiredPairsOf(row.unwiredPairs).length === 0 ? {} : { unwiredPairs: unwiredPairsOf(row.unwiredPairs) }),
 });
+
+/** DI-21.148. The stored pairs, each with its four names. A malformed entry is left out. */
+const unwiredPairsOf = (value: unknown): UnwiredPair[] =>
+  Array.isArray(value)
+    ? value.filter(
+        (entry): entry is UnwiredPair =>
+          typeof entry === "object" &&
+          entry !== null &&
+          ["provider", "consumer", "fake", "reason"].every((field) => typeof (entry as Record<string, unknown>)[field] === "string"),
+      )
+    : [];

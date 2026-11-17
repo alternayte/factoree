@@ -4,6 +4,7 @@ import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import { attachRunnerEnvironment, loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
@@ -77,6 +78,11 @@ export interface SetupActivityDependencies {
   credentialBindings?: CredentialBindingStore | undefined;
   /** docs/specs/host-credentials.md. The hosts the product's credentials reach, for the setup prompt. */
   credentialHosts?: ((tenantId: string, productId: string) => Promise<string[]>) | undefined;
+  /**
+   * docs/specs/change-sets.md, DI-21.145. The repositories of the product, so the setup agent can
+   * name the one that serves a fake. Absent means the prompt names none.
+   */
+  repositories?: Pick<RepositoryRegistry, "listByProduct"> | undefined;
 }
 
 /** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
@@ -516,8 +522,17 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           : (await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName))
               .filter((row) => row.outcome === null)
               .flatMap((row) => row.changes);
+      // DI-21.145. The other present repositories of the product, so a fake can name the one that serves it.
+      const productRepositories =
+        dependencies.repositories === undefined
+          ? []
+          : (await dependencies.repositories.listByProduct(setup.productId))
+              .filter((row) => row.tenantId === setup.tenantId && row.absentSince === null && row.fullName.toLowerCase() !== setup.repositoryFullName.toLowerCase())
+              .map((row) => row.fullName)
+              .sort();
       const prompt: SetupPromptInputs = {
         repository: setup.repositoryFullName,
+        productRepositories,
         productSlug: product.slug,
         linearTeamKey: product.linearTeamKey,
         testSecretNames,

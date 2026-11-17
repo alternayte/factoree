@@ -79,11 +79,13 @@ export const NEEDS_YOUR_EYE_HEADING = "### Needs your eye";
 export interface ProofPackFake {
   service: string;
   name: string;
+  /** docs/specs/change-sets.md. The target whose stack holds the fake. Absent for one target. */
+  target?: string;
 }
 
 /** One line per fake. A reviewer must know which data was not real. */
 export const fakeLine = (fake: ProofPackFake): string =>
-  `- FAKE ${fake.name}: the compose service "${fake.service}" answered for this API, so its data is not real.`;
+  `- FAKE ${fake.name}: the compose service "${fake.service}"${fake.target === undefined ? "" : ` of ${fake.target}`} answered for this API, so its data is not real.`;
 
 /** The mark one assertion line carries when its plan injected a failed request. */
 export const INJECTED_FAILURE_NOTE =
@@ -218,6 +220,11 @@ export interface ProofPackInput {
   needsYourEye?: ProofPackForYourEye[];
   /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
   fakes?: ProofPackFake[];
+  /**
+   * docs/specs/change-sets.md, DI-21.148. One line per pair of the set check that ran alone, with
+   * the reason. "Needs your attention" lists each one.
+   */
+  setCheckNotes?: string[];
   /** SDD section 18. Present only for a Run that a routed Product produced. */
   routing?: ProofPackRouting;
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
@@ -406,6 +413,8 @@ export const needsAttention = (input: ProofPackInput): string[] => {
     );
   }
   if (input.modelWarning !== undefined && input.modelWarning !== null) items.push(input.modelWarning);
+  // docs/specs/change-sets.md, DI-21.148. A slow or tight host tests a wired pair alone, and says so.
+  items.push(...(input.setCheckNotes ?? []));
   // docs/specs/own-proposals-and-parallel-runs.md. A conflict with the moved branch comes first,
   // because the pull request cannot merge until a human resolves it.
   const move = input.baseMove ?? null;

@@ -1,3 +1,4 @@
+import type { UnwiredPair } from "./set-check.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { ProjectRuntimeConfig, ServicesConfig } from "./project-runtime-config.js";
@@ -28,6 +29,11 @@ export interface WarmSnapshot {
   /** The exit code of a failed warm command, or null when it passed or none ran. */
   warmCommandExitCode: number | null;
   snapshotId: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.148. The wired pairs of a set snapshot that its build-ahead
+   * could not start within the sandbox size, with the reason. Absent when none.
+   */
+  unwiredPairs?: UnwiredPair[];
 }
 
 /** One file of a repository, by its path and its git blob SHA. */

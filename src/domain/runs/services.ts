@@ -127,6 +127,11 @@ export const startServices = async (
   ref: SandboxRef,
   primaryPath: string,
   services: ServicesConfig,
+  /**
+   * docs/specs/change-sets.md, DI-21.146. The compose services that do not run: the fakes a wired
+   * provider answers for. `--scale 0` removes a running one, so its published port is free.
+   */
+  without: readonly string[] = [],
 ): Promise<void> => {
   const args = [
     ...(await composeArguments(sandbox, ref, primaryPath, services)),
@@ -135,6 +140,7 @@ export const startServices = async (
     "--wait",
     "--wait-timeout",
     String(services.waitTimeoutSeconds),
+    ...without.flatMap((service) => ["--scale", `${service}=0`]),
   ];
   const result = await sandbox.exec(ref, {
     file: "docker",
@@ -166,6 +172,24 @@ export const stopServices = async (
   }
 };
 
+/**
+ * docs/specs/change-sets.md, DI-21.146. Stops the containers of a stack and keeps them, their
+ * volumes and their data, so the next `startServices` resumes the seeded stack. A check sprite of a
+ * change set runs one stack, or the stacks of one wired group, at a time.
+ */
+export const pauseServices = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  primaryPath: string,
+  services: ServicesConfig,
+): Promise<void> => {
+  const args = [...(await composeArguments(sandbox, ref, primaryPath, services)), "stop"];
+  const result = await sandbox.exec(ref, { file: "docker", args, cwd: primaryPath, timeoutMs: 600_000 });
+  if (result.exitCode !== 0) {
+    throw new Error(`the compose stack did not stop, exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
+  }
+};
+
 /** Runs the seed command once, after the bootstrap, so the stack holds the data the app needs. */
 export const seedServices = async (
   sandbox: Sandbox,
@@ -188,10 +212,44 @@ export interface FakeService {
   service: string;
   /** The API it answers for, from the `factoree.fake` label. */
   name: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.145. The `owner/repo` of the product repository that serves the
+   * API, from the `factoree.fake.repository` label. Absent when the label is absent.
+   */
+  repository?: string;
+  /** DI-21.146. The host ports the service publishes, in order. Empty when it publishes none. */
+  ports?: number[];
 }
 
 /** The compose label that marks a fake. */
 export const FAKE_LABEL = "factoree.fake";
+
+/** docs/specs/change-sets.md. The compose label that names the product repository that serves a fake. */
+export const FAKE_REPOSITORY_LABEL = "factoree.fake.repository";
+
+/** The value of one compose label, from the list form or the map form of `labels`. */
+const labelOf = (labels: unknown, name: string): string | null => {
+  let value: unknown;
+  if (Array.isArray(labels)) {
+    const entry = labels.find((label): label is string => typeof label === "string" && label.startsWith(`${name}=`));
+    value = entry?.slice(name.length + 1);
+  } else if (typeof labels === "object" && labels !== null) {
+    value = (labels as Record<string, unknown>)[name];
+  }
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+};
+
+/** The host ports of one service in `docker compose config --format json`, which writes the long form. */
+const publishedPortsOf = (ports: unknown): number[] => {
+  if (!Array.isArray(ports)) return [];
+  const published: number[] = [];
+  for (const port of ports) {
+    if (typeof port !== "object" || port === null) continue;
+    const value = Number((port as { published?: unknown }).published);
+    if (Number.isInteger(value) && value > 0 && value < 65536) published.push(value);
+  }
+  return published;
+};
 
 /**
  * Reads the fakes of the stack from the merged compose configuration, the repository file and the
@@ -208,18 +266,19 @@ export const listFakes = async (
   if (result.exitCode !== 0) {
     throw new RunConfigurationError(`docker compose config failed with exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
   }
-  const document = JSON.parse(result.stdout) as { services?: Record<string, { labels?: unknown }> };
+  return fakesOfComposeConfig(result.stdout);
+};
+
+/** The fakes of one merged compose configuration, sorted by service name. */
+export const fakesOfComposeConfig = (json: string): FakeService[] => {
+  const document = JSON.parse(json) as { services?: Record<string, { labels?: unknown; ports?: unknown }> };
   const fakes: FakeService[] = [];
   for (const [service, definition] of Object.entries(document.services ?? {})) {
-    const labels = definition.labels;
-    let name: unknown;
-    if (Array.isArray(labels)) {
-      const entry = labels.find((label): label is string => typeof label === "string" && label.startsWith(`${FAKE_LABEL}=`));
-      name = entry?.slice(FAKE_LABEL.length + 1);
-    } else if (typeof labels === "object" && labels !== null) {
-      name = (labels as Record<string, unknown>)[FAKE_LABEL];
-    }
-    if (typeof name === "string" && name.trim() !== "") fakes.push({ service, name: name.trim() });
+    const name = labelOf(definition.labels, FAKE_LABEL);
+    if (name === null) continue;
+    const repository = labelOf(definition.labels, FAKE_REPOSITORY_LABEL);
+    const ports = publishedPortsOf(definition.ports);
+    fakes.push({ service, name, ...(repository === null ? {} : { repository }), ...(ports.length === 0 ? {} : { ports }) });
   }
   return fakes.sort((left, right) => (left.service < right.service ? -1 : 1));
 };

@@ -719,6 +719,9 @@ export async function agentRunWorkflow(
   // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
   // validation, review and publication run there, never in the sprite the Implementer used.
   let checkSandbox: PrepareCheckSandboxActivityOutput | null = null;
+  // docs/specs/change-sets.md, DI-21.141, DI-21.149. The cited provider-to-consumer edges of the run,
+  // which the in-between check reads.
+  let runEdges: Array<{ provider: string; consumer: string }> = [];
   // docs/specs/run-speed.md. The check sprite of the reviewer of the current attempt, and the
   // reviewer that runs beside user validation.
   let reviewSandbox: PrepareCheckSandboxActivityOutput | null = null;
@@ -1346,6 +1349,17 @@ export async function agentRunWorkflow(
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
         ...(forYourEye.length === 0 ? {} : { forYourEye }),
         ...(attemptInput.replay === true ? { replay: true } : {}),
+        // docs/specs/change-sets.md, slice 6. The set check of a change set: its groups, its edges and
+        // the targets whose patch changes a file. An activity input adds no workflow command.
+        ...(attemptInput.prepared.setCheck === undefined
+          ? {}
+          : {
+              setCheck: attemptInput.prepared.setCheck,
+              edges: runEdges,
+              changedTargets: ((attemptInput.prepared as Partial<PrepareCheckSandboxActivityOutput>).checkedTargets ?? [])
+                .filter((target) => target.changedFiles.length > 0)
+                .map((target) => target.repository),
+            }),
       }),
     );
   };
@@ -2815,6 +2829,7 @@ export async function agentRunWorkflow(
         }
         const edges = proposal.edges ?? [];
         if (runTargets.length > 1 && edges.length > 0) {
+          runEdges = edges.map((edge) => ({ provider: edge.provider, consumer: edge.consumer }));
           const order = await activities.recordRunTargetEdges({ tenantId: input.tenantId, runId: id, edges });
           const decision = mergeOrderDecision(order, edges);
           if (decision !== null) await takeDecision(decision);
@@ -2995,7 +3010,9 @@ export async function agentRunWorkflow(
       // reaching a review. The Proof Pack reports this count to a human, so it must be exact.
       let reviewPasses = 0;
       let publishedPreviewUrl: string | null = null;
-      let publishedFakes: Array<{ service: string; name: string }> = [];
+      let publishedFakes: Array<{ service: string; name: string; target?: string }> = [];
+      // docs/specs/change-sets.md, DI-21.148. The pairs the last set check tested alone, with the reason.
+      let publishedSetCheckNotes: string[] = [];
       let publishedChangeDescription = "";
       // docs/specs/proof-pack-and-visual-evidence.md. The gap the human accepted at refinement.
       // docs/specs/run-recovery.md. A follow-up whose reply replaced the browser checks of the
@@ -3226,6 +3243,10 @@ export async function agentRunWorkflow(
             commands: checked.verifyCommands,
             timeoutMs: remainingMs(),
             attempt,
+            // docs/specs/change-sets.md, DI-21.146. Each target of a change set verifies with its own stack.
+            ...(checked.setCheck === undefined
+              ? {}
+              : { stacks: checked.setCheck.targets.map((target) => ({ repository: target.repository, path: target.path, services: target.services })) }),
           });
         } catch (error) {
           // Verification is bounded by the remaining budget, the same way preparation is. A
@@ -3615,6 +3636,7 @@ export async function agentRunWorkflow(
           publishedReviewAttempt = attempt;
           publishedPreviewUrl = userValidation.previewUrl;
           publishedFakes = userValidation.fakes ?? [];
+          publishedSetCheckNotes = userValidation.setCheckNotes ?? [];
           publishedChangeDescription = review.changeDescription;
           break;
         }
@@ -3929,6 +3951,7 @@ export async function agentRunWorkflow(
           patchByteLength: publication.patchByteLength,
           previewUrl: publishedPreviewUrl,
           fakes: publishedFakes,
+          ...(publishedSetCheckNotes.length === 0 ? {} : { setCheckNotes: publishedSetCheckNotes }),
           repairCount,
           repairLimit: maxRepairs,
           reviewVerdict: publishedReviewVerdict,

@@ -505,6 +505,9 @@ model WarmSnapshot {
   bootstrapKey  String
   // The exit code of a failed warm command, or null when it passed or none ran.
   warmCommandExitCode Int?
+  // docs/specs/change-sets.md, DI-21.148. The wired pairs of a set that its build-ahead could not
+  // start within the sandbox size, each with its reason. A run of the set tests them alone.
+  unwiredPairs  Json?    @map("unwired_pairs")
   snapshotId    String
   createdAt     DateTime @default(now())
 

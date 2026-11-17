@@ -40,6 +40,7 @@ import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { SkillRegistrySettings, SkillResolution } from "~/domain/runs/skill-registry.js";
 import { asRunFault, registryOf, type SkillRegistryFactory } from "./skill-registry.activities.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
+import type { SetCheckFacts } from "~/domain/runs/set-check.js";
 import type { ContextDeliverySourceProvider } from "~/domain/context/context-source-provider.js";
 import {
   CONTEXT_DELIVERY_DIRECTORY,
@@ -200,7 +201,7 @@ export interface PrepareSandboxActivityOutput {
   spriteId: string;
   adapter: string;
   workspacePath: string;
-  /** The primary checkout. In a change set, the target user validation runs in (DI-21.132). */
+  /** The primary checkout. In a change set, the target of the work sprite's self-check (DI-21.132, DI-21.147). */
   primaryPath: string;
   baseSha: string;
   /**
@@ -210,6 +211,11 @@ export interface PrepareSandboxActivityOutput {
   targets?: SandboxTarget[];
   /** DI-21.138. The read-only sibling clones of the work sprite. Absent when it holds none. */
   siblings?: SiblingCheckout[];
+  /**
+   * docs/specs/change-sets.md, DI-21.146. The set check facts of a check sprite of a change set:
+   * each target, the wired pairs and the pairs that run alone. Absent for every other sandbox.
+   */
+  setCheck?: SetCheckFacts;
   referencePaths: string[];
   /** SDD section 55 requires the recorded commit SHA of every repository. */
   referenceBaseShas: string[];
@@ -547,6 +553,7 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
   baseSha: prepared.checkout.primary.baseSha,
   targets: prepared.targets.map((target) => ({ repository: target.repository, path: target.checkout.path, baseSha: target.checkout.baseSha })),
   ...(prepared.siblings.length === 0 ? {} : { siblings: prepared.siblings }),
+  ...(prepared.setCheck === null ? {} : { setCheck: prepared.setCheck }),
   referencePaths: prepared.checkout.references.map((entry) => entry.path),
   // SDD section 55 requires the recorded SHA of every reference repository, not only the
   // primary one.

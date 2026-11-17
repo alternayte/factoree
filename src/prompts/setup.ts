@@ -1,10 +1,15 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@10";
+export const SETUP_PROMPT_VERSION = "setup@11";
 
 export interface SetupPromptFields {
   repository: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.145. The other repositories of the product, as `owner/repo`.
+   * A fake for the API of one of them names it. Absent in older setups.
+   */
+  productRepositories?: readonly string[];
   primaryRepositoryPath: string;
   productSlug: string;
   linearTeamKey: string;
@@ -149,6 +154,12 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "For each external API the app calls, choose one way:",
         "- When the product holds a test secret for it, use the real API: name the secret in secrets.require and map it to the variable the app reads.",
         "- Otherwise, add a fake: a WireMock service in `.factoree/compose.yaml` with mappings under `.factoree/fakes/`, built from the API documentation, with the label `factoree.fake: \"<API name>\"`. Point the app at the fake through its environment.",
+        ...((fields.productRepositories ?? []).length === 0
+          ? []
+          : [
+              `- When one of these repositories of the product serves the API, add the label \`factoree.fake.repository: "<owner/repo>"\` beside \`factoree.fake\` on its fake: ${(fields.productRepositories ?? []).join(", ")}. ` +
+                "Publish the fake's port on the host, and point the app at that host port, such as http://localhost:4010. When Factoree checks both repositories in one change, it answers that port with the real repository's preview in place of the fake.",
+            ]),
         "",
         `The product holds these test secrets: ${fields.testSecretNames.length === 0 ? "none" : fields.testSecretNames.join(", ")}.`,
       ].join("\n"),

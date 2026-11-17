@@ -164,16 +164,42 @@ export interface CommandPlanEntry {
   expectExitCode: number;
 }
 
+/**
+ * docs/specs/change-sets.md, DI-21.147. The target an entry of a change set runs against: the
+ * `owner/repo` name of one target, or `set` for the wired group of the run. Absent for one target.
+ */
+type EntryTarget = { target?: string | undefined };
+
 export type ValidationPlanEntry =
-  | { assertionId: string; kind: "http"; request: HttpPlanRequest }
-  | {
+  | ({ assertionId: string; kind: "http"; request: HttpPlanRequest } & EntryTarget)
+  | ({
       assertionId: string;
       kind: "browser";
       steps: BrowserStep[];
       /** docs/specs/repository-setup-and-services.md. The account the entry starts signed in as. */
       as?: string | undefined;
-    }
-  | { assertionId: string; kind: "command"; command: CommandPlanEntry };
+    } & EntryTarget)
+  | ({ assertionId: string; kind: "command"; command: CommandPlanEntry } & EntryTarget);
+
+/** docs/specs/change-sets.md, DI-21.147. The value of `target` that names the wired group of the run. */
+export const SET_TARGET = "set";
+
+/**
+ * docs/specs/change-sets.md, DI-21.147. What an entry of a change set may name. Each target lists
+ * its accounts. `setServer` is the target a `set` entry runs against, or null when no entry may
+ * name the set.
+ */
+export interface PlanTargetRules {
+  targets: ReadonlyArray<{ repository: string; accounts: readonly string[] }>;
+  setServer: string | null;
+}
+
+/** The target an entry runs against, in its canonical case, or null when it names none of them. */
+export const servedTargetOf = (target: string | undefined, rules: PlanTargetRules): string | null => {
+  if (target === undefined) return null;
+  if (target.trim().toLowerCase() === SET_TARGET) return rules.setServer;
+  return rules.targets.find((candidate) => candidate.repository.toLowerCase() === target.trim().toLowerCase())?.repository ?? null;
+};
 
 export interface ValidationPlan {
   version: 1;
@@ -269,13 +295,14 @@ const commandPlanEntrySchema = z
   .strict();
 
 const planEntrySchema = z.discriminatedUnion("kind", [
-  z.object({ assertionId: z.string().min(1), kind: z.literal("http"), request: httpRequestSchema }).strict(),
+  z.object({ assertionId: z.string().min(1), kind: z.literal("http"), request: httpRequestSchema, target: z.string().min(1).optional() }).strict(),
   z
     .object({
       assertionId: z.string().min(1),
       kind: z.literal("browser"),
       steps: z.array(browserStepSchema),
       as: z.string().min(1).optional(),
+      target: z.string().min(1).optional(),
     })
     .strict(),
   z
@@ -283,6 +310,7 @@ const planEntrySchema = z.discriminatedUnion("kind", [
       assertionId: z.string().min(1),
       kind: z.literal("command"),
       command: commandPlanEntrySchema,
+      target: z.string().min(1).optional(),
     })
     .strict(),
 ]);
@@ -313,6 +341,11 @@ export const parseValidationPlan = (
   contract: ValidationContract,
   /** docs/specs/repository-setup-and-services.md. The account names the config defines. */
   accounts: readonly string[] = [],
+  /**
+   * docs/specs/change-sets.md, DI-21.147. The targets of a change set. Each entry then names its
+   * target, and `as` names an account of that target. Absent for a run with one target.
+   */
+  rules?: PlanTargetRules,
 ): ValidationPlan => {
   let document: unknown;
   try {
@@ -365,12 +398,29 @@ export const parseValidationPlan = (
       );
     }
 
-    if (entry.kind === "browser" && entry.as !== undefined && !accounts.includes(entry.as)) {
+    // DI-21.147. In a change set an entry names its target, and signs in as an account of it.
+    let entryAccounts = accounts;
+    if (rules !== undefined) {
+      const served = servedTargetOf(entry.target, rules);
+      const names = rules.targets.map((target) => target.repository);
+      if (served === null) {
+        reasons.push(
+          entry.target === undefined
+            ? `The Validation Plan entry for "${entry.assertionId}" names no target. Set "target" to one of: ${[...names, ...(rules.setServer === null ? [] : [SET_TARGET])].join(", ")}.`
+            : entry.target.trim().toLowerCase() === SET_TARGET
+              ? `The Validation Plan entry for "${entry.assertionId}" names the set, but this run has no wired pair that a set entry can run against. Name one target: ${names.join(", ")}.`
+              : `The Validation Plan entry for "${entry.assertionId}" names the target "${entry.target}", which is not a target of this run. The targets are: ${names.join(", ")}.`,
+        );
+      }
+      entryAccounts = rules.targets.find((target) => target.repository === served)?.accounts ?? [];
+    }
+
+    if (entry.kind === "browser" && entry.as !== undefined && !entryAccounts.includes(entry.as)) {
       reasons.push(
         `The Validation Plan browser entry for "${entry.assertionId}" signs in as "${entry.as}", which ` +
-          (accounts.length === 0
+          (entryAccounts.length === 0
             ? "is not an account. The repository defines no account, so leave out as."
-            : `is not an account. The accounts are: ${accounts.join(", ")}.`),
+            : `is not an account. The accounts are: ${entryAccounts.join(", ")}.`),
       );
     }
 

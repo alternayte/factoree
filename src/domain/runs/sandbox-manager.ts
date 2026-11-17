@@ -38,12 +38,26 @@ import { bootstrapAllowListOf } from "./project-runtime-config.js";
 import {
   composeProjectOf,
   ensureDocker,
+  listFakes,
   listRepositoryFiles,
+  pauseServices,
   seedServices,
   startServices,
   stopServices,
   targetEnvironmentOf,
 } from "./services.js";
+import {
+  checkGroupsOf,
+  pairsIn,
+  startGroup,
+  stopGroup,
+  wireTargets,
+  type SetCheckFacts,
+  type SetCheckTarget,
+  type UnwiredPair,
+} from "./set-check.js";
+import type { ReadinessProbe } from "./preview.js";
+import type { Redactor } from "~/telemetry/redaction.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { credentialKeyOf, NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
@@ -166,8 +180,9 @@ const repositoryOfUrl = (url: string): string => {
 
 /**
  * docs/specs/change-sets.md, DI-21.132. The sandbox configuration of a change set from the file of
- * each target. User validation runs in one target until assertions name their target: the first
- * target with an enabled preview, else the first target. Its runtime is the base. The allow lists
+ * each target. The base runtime and the `primary` checkout come from the first target with an
+ * enabled preview, else the first target: the work sprite's self-check and the refiner read it.
+ * User validation runs each target with its own preview and accounts (DI-21.147). The allow lists
  * are the union of the targets' lists, each already capped by the product ceiling. The repair
  * budget is the smallest of the targets. Each verify command runs in its own target, named after it.
  */
@@ -212,14 +227,19 @@ export type BuildAheadOutcome =
 export interface PreparedSandbox {
   ref: SandboxRef;
   /**
-   * The primary checkout is the target user validation runs in. For a change set it is one of
-   * `targets` (DI-21.132).
+   * The primary checkout. For a change set it is one of `targets` (DI-21.132): the target of the
+   * work sprite's self-check. A check sprite validates each target in its own folder (DI-21.147).
    */
   checkout: CheckoutResult;
   /** docs/specs/change-sets.md. Every target, in set order. One entry, the primary, for one target. */
   targets: PreparedTarget[];
   /** DI-21.138. The read-only sibling clones of the refiner. Empty for every other sandbox. */
   siblings: SiblingCheckout[];
+  /**
+   * docs/specs/change-sets.md, DI-21.146. What a check sprite of a change set knows for its set
+   * check: each target, the wired pairs and the pairs that run alone. Null for every other sandbox.
+   */
+  setCheck: SetCheckFacts | null;
   baselineCheckpoint: CheckpointRef | null;
   /** Built from `.factoree/config.yaml` and the Project defaults. SDD sections 15 and 57. */
   runtime: ProjectRuntimeConfig;
@@ -331,6 +351,13 @@ export interface SandboxManagerOptions {
    * no set snapshot. Absent means no set snapshot is ever built.
    */
   requestSetBuildAhead?: (request: { tenantId: string; productId: string; repositoryFullNames: string[] }) => Promise<void>;
+  /**
+   * docs/specs/change-sets.md, DI-21.148. The readiness probe and the redactor the build-ahead of a
+   * set starts each wired group with, to learn whether it fits the sandbox size. Absent means the
+   * build-ahead records no pair as unwired.
+   */
+  previewProbe?: ReadinessProbe;
+  redactor?: Redactor;
 }
 
 /**
@@ -358,7 +385,7 @@ type WarmScope = "all" | "first";
  * exits with status 2, so `|| true` never runs. The option is therefore tried in a subshell
  * first, and set only where it exists. Such a shell keeps the old behaviour.
  */
-const bootstrapScript = (command: string): string =>
+export const bootstrapScript = (command: string): string =>
   `if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi\n${command}`;
 
 /** The output of a failed bootstrap. An installer reports its reason on either stream. */
@@ -784,12 +811,21 @@ export class SandboxManager {
       // docs/specs/repository-setup-and-services.md. Rootless Docker and the compose stack start
       // under policy two, before the bootstrap, so a bootstrap can migrate the database. A warm
       // sandbox already holds them, and both calls change nothing on a healthy stack.
+      // The seed fills the stack once. A warm sandbox holds the seeded data of its snapshot.
+      // DI-21.136. A change set that restored only its first target seeds every stack: the first
+      // stack starts again under the compose project of the set.
+      const seeds = warm === null || (setTargets !== null && scope === "first");
+      // docs/specs/change-sets.md, DI-21.146. A check sprite of a change set runs one stack at a
+      // time: each target starts its stack, runs its bootstrap and its seed, and pauses the stack.
+      const oneStackAtATime = setTargets !== null && beforeBootstrap !== undefined;
       if (runtime.docker === true) {
         const servicesStarted = Date.now();
         await ensureDocker(sandbox, ref);
-        for (const target of targets) {
-          const services = target.runtime.services ?? null;
-          if (services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+        if (!oneStackAtATime) {
+          for (const target of targets) {
+            const services = target.runtime.services ?? null;
+            if (services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+          }
         }
         this.options.logger?.info("the services are ready", {
           run_id: input.runId,
@@ -801,40 +837,25 @@ export class SandboxManager {
 
       // docs/specs/change-sets.md. Each target runs its own bootstrap in its own folder, in set order.
       for (const target of targets) {
-        const command = target.runtime.bootstrapCommand;
-        if (command === null) continue;
-        const result = await sandbox.exec(ref, {
-          file: "sh",
-          args: ["-c", bootstrapScript(command)],
-          cwd: target.checkout.path,
-          ...(Object.keys(target.environment).length === 0 ? {} : { env: target.environment }),
-        });
-        if (result.exitCode !== 0) {
-          // The bootstrap command comes from the repository configuration, so a failure of it is
-          // a configuration fault. A retry runs the same command and fails again.
-          throw new RunConfigurationError(
-            `${targets.length > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command"} failed with exit code ${result.exitCode}: ` +
-              withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
-          );
+        const services = runtime.docker === true ? (target.runtime.services ?? null) : null;
+        if (oneStackAtATime && services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+        await this.runBootstrap(sandbox, ref, target, targets.length);
+        if (oneStackAtATime && services !== null) {
+          if (seeds) await this.seed(sandbox, ref, target);
+          await pauseServices(sandbox, ref, target.checkout.path, services);
         }
+      }
+      if (seeds && !oneStackAtATime) {
+        for (const target of targets) await this.seed(sandbox, ref, target);
       }
 
-      // The seed fills the stack once. A warm sandbox holds the seeded data of its snapshot.
-      // DI-21.136. A change set that restored only its first target seeds every stack: the first
-      // stack starts again under the compose project of the set.
-      if (warm === null || (setTargets !== null && scope === "first")) {
-        for (const target of targets) {
-          const services = target.runtime.services ?? null;
-          if (services === null) continue;
-          await seedServices(
-            sandbox,
-            ref,
-            target.checkout.path,
-            services,
-            ...(Object.keys(target.environment).length === 0 ? [] : [target.environment]),
-          );
-        }
-      }
+      // docs/specs/change-sets.md, DI-21.145, DI-21.146. A check sprite of a change set, and the
+      // build-ahead of a set, learn each target's fakes and wire each pair a fake names. The pairs a
+      // set snapshot could not start run alone (DI-21.148).
+      const setCheck =
+        setTargets !== null && (oneStackAtATime || input.buildAhead === true)
+          ? await this.setCheckOf(sandbox, ref, targets, warm !== null && scope === "all" ? (warm.unwiredPairs ?? []) : [])
+          : null;
 
       const selfCheckReady = sandbox.capabilities.supportsCustomImage
         ? wantsBrowserTools
@@ -854,7 +875,10 @@ export class SandboxManager {
             : [{ path: target.checkout.path, command: target.runtime.warmCommand, environment: target.environment }],
         );
         const repositoryUrls = setTargets === null ? [input.primary.url] : setTargets.map((target) => target.url);
-        const saved = await this.saveWarmSnapshot(input, ref, repositoryUrls, warmCommands, bootstrapKey);
+        // DI-21.148. The build-ahead of a set starts each wired group once, and records the pairs
+        // that do not fit, so each run of the set tests them alone.
+        const unwired = input.buildAhead === true && setCheck !== null ? await this.tryWiredGroups(sandbox, ref, input, setCheck) : [];
+        const saved = await this.saveWarmSnapshot(input, ref, repositoryUrls, warmCommands, bootstrapKey, unwired);
         if (saved !== null) onSaved?.({ snapshotId: saved, bootstrapKey });
       }
 
@@ -923,6 +947,7 @@ export class SandboxManager {
         checkout,
         targets,
         siblings,
+        setCheck,
         baselineCheckpoint,
         runtime,
         verifyCommands,
@@ -1046,6 +1071,7 @@ export class SandboxManager {
     repositoryUrls: string[],
     warmCommands: Array<{ path: string; command: string; environment: Record<string, string> }>,
     bootstrapKey: string,
+    unwiredPairs: UnwiredPair[] = [],
   ): Promise<string | null> {
     // The ref names the provider that created the sandbox, and its snapshot belongs to that provider.
     const sandbox = await this.sandboxOf(input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter));
@@ -1069,6 +1095,7 @@ export class SandboxManager {
         bootstrapKey,
         warmCommandExitCode,
         snapshotId,
+        ...(unwiredPairs.length === 0 ? {} : { unwiredPairs }),
       });
       if (replaced !== null) {
         // The record comes first, so a remove that throws or that the provider refuses because a
@@ -1102,6 +1129,102 @@ export class SandboxManager {
         });
       }
     }
+  }
+
+  /** Runs the bootstrap of one target in its own folder. A failure is a configuration fault. */
+  private async runBootstrap(sandbox: Sandbox, ref: SandboxRef, target: PreparedTarget, count: number): Promise<void> {
+    const command = target.runtime.bootstrapCommand;
+    if (command === null) return;
+    const result = await sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", bootstrapScript(command)],
+      cwd: target.checkout.path,
+      ...(Object.keys(target.environment).length === 0 ? {} : { env: target.environment }),
+    });
+    if (result.exitCode !== 0) {
+      // The bootstrap command comes from the repository configuration, so a failure of it is
+      // a configuration fault. A retry runs the same command and fails again.
+      throw new RunConfigurationError(
+        `${count > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command"} failed with exit code ${result.exitCode}: ` +
+          withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
+      );
+    }
+  }
+
+  /** Runs the seed of one target's stack. A target with no stack seeds nothing. */
+  private async seed(sandbox: Sandbox, ref: SandboxRef, target: PreparedTarget): Promise<void> {
+    const services = target.runtime.services ?? null;
+    if (services === null) return;
+    await seedServices(
+      sandbox,
+      ref,
+      target.checkout.path,
+      services,
+      ...(Object.keys(target.environment).length === 0 ? [] : [target.environment]),
+    );
+  }
+
+  /** docs/specs/change-sets.md, DI-21.146. The set check facts of the targets of a sandbox. */
+  private async setCheckOf(sandbox: Sandbox, ref: SandboxRef, targets: PreparedTarget[], unwired: readonly UnwiredPair[]): Promise<SetCheckFacts> {
+    const { verifyCommands } = combineTargets(targets);
+    const checkTargets: SetCheckTarget[] = [];
+    for (const target of targets) {
+      const services = target.runtime.docker === true ? (target.runtime.services ?? null) : null;
+      checkTargets.push({
+        repository: target.repository,
+        path: target.checkout.path,
+        baseSha: target.checkout.baseSha,
+        services,
+        preview: target.preview,
+        accounts: target.runtime.accounts ?? [],
+        ...(target.runtime.browserLimits === undefined ? {} : { browserLimits: target.runtime.browserLimits }),
+        environment: target.environment,
+        fakes: services === null ? [] : await listFakes(sandbox, ref, target.checkout.path, services),
+        bootstrapCommand: target.runtime.bootstrapCommand,
+        verifyCommands: verifyCommands.filter((command) => command.workingDirectory === target.checkout.path),
+      });
+    }
+    return { targets: checkTargets, ...wireTargets(checkTargets, unwired) };
+  }
+
+  /**
+   * docs/specs/change-sets.md, DI-21.148. Starts each wired group of a set build-ahead with every
+   * preview of the group, and answers the pairs of each group that did not start, with the reason.
+   * Each stack then runs again as the work sprite holds it, so the snapshot holds the fakes too.
+   */
+  private async tryWiredGroups(sandbox: Sandbox, ref: SandboxRef, input: PrepareSandboxInput, facts: SetCheckFacts): Promise<UnwiredPair[]> {
+    const probe = this.options.previewProbe;
+    const redactor = this.options.redactor;
+    if (probe === undefined || redactor === undefined) return [];
+    const unwired: UnwiredPair[] = [];
+    for (const group of checkGroupsOf(facts.targets, facts.pairs).filter((candidate) => candidate.length > 1)) {
+      let problem: string | null = null;
+      try {
+        const running = await startGroup({ sandbox, probe, redactor }, ref, facts, group, { previews: "all", environment: {} });
+        if (running.problem !== null) problem = `the preview of ${running.problem.repository} did not start: ${running.problem.reason}`;
+        await stopGroup(sandbox, ref, facts, running);
+      } catch (error) {
+        problem = withoutUrlCredentials(redactor.redactText(error instanceof Error ? error.message : String(error))).slice(0, 500);
+      }
+      for (const target of facts.targets.filter((candidate) => group.includes(candidate.repository))) {
+        if (target.services !== null) await startServices(sandbox, ref, target.path, target.services);
+      }
+      if (problem === null) continue;
+      this.options.logger?.warn("a wired group of the set did not start within the sandbox size, so its runs test the targets alone", {
+        run_id: input.runId,
+        repositories: group.join(", "),
+        detail: problem.slice(0, 500),
+      });
+      for (const pair of pairsIn(group, facts.pairs)) {
+        unwired.push({
+          provider: pair.provider,
+          consumer: pair.consumer,
+          fake: pair.fake,
+          reason: `the build-ahead of the set could not start them together within the sandbox size: ${problem.replace(/[.\s]+$/, "")}`,
+        });
+      }
+    }
+    return unwired;
   }
 
   /**

@@ -196,6 +196,10 @@ const sandboxManager = new SandboxManager({
   // docs/specs/change-sets.md, DI-21.136. A change set with no set snapshot asks for its build-ahead.
   // The client exists before the first run prepares a sandbox.
   requestSetBuildAhead: (request) => createBuildAheadRequester(blockerClient, env.FACTOREE_TEMPORAL_TASK_QUEUE)(setBuildAheadRequest(request)),
+  // docs/specs/change-sets.md, DI-21.148. The build-ahead of a set starts each wired group once.
+  // The probe is defined below, and the manager reads it only when a sandbox is prepared.
+  previewProbe: (url) => previewProbe(url),
+  redactor,
 });
 
 // docs/specs/claude-code-runner.md. The Product of the Run holds the runner, the model and the

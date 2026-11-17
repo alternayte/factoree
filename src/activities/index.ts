@@ -506,6 +506,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     hostCredentials: dependencies.hostCredentials?.access,
     credentialBindings: dependencies.hostCredentials?.bindings,
     credentialHosts: dependencies.hostCredentials?.hosts,
+    repositories: dependencies.repositories,
   }),
   ...createAppChangeActivities({
     setups: dependencies.setups ?? NO_SETUP_STORE,
