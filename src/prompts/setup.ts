@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@9";
+export const SETUP_PROMPT_VERSION = "setup@10";
 
 export interface SetupPromptFields {
   repository: string;
@@ -12,6 +12,11 @@ export interface SetupPromptFields {
   testSecretNames: string[];
   /** The ecosystem host list the sandbox can reach now. */
   ecosystemHosts: readonly string[];
+  /**
+   * docs/specs/host-credentials.md. The hosts the product's host credentials reach, their redirect
+   * hosts included. Factoree adds each credential outside the sandbox. Absent in older setups.
+   */
+  credentialHosts?: readonly string[];
   /** The file the agent writes the app changes it needs to. */
   appChangesPath: string;
   /** The text of the existing config, for a setup run that updates one, or null. */
@@ -152,7 +157,14 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
       "Network",
       `The sandbox reaches only these hosts, the ecosystem host list:\n${list(fields.ecosystemHosts, "None.")}\n\n` +
         "Factoree records the hosts the bootstrap reaches and writes sandbox.allowedDomains itself. " +
-        "When a download fails because a host is denied, leave the part out. Factoree reports each denied host itself, so never name a host in your app changes file.",
+        "When a download fails because a host is denied, leave the part out. Factoree reports each denied host itself, so never name a host in your app changes file." +
+        ((fields.credentialHosts ?? []).length === 0
+          ? ""
+          : "\n\nThe sandbox also reaches these private hosts, and Factoree adds their credentials to each request outside the sandbox:\n" +
+            list(fields.credentialHosts ?? [], "None.") +
+            "\n\nRestore private packages and pull private images from them with no login: no `docker login`, no `npm login`, no token. " +
+            "Commit no credential entry, such as `_authToken` in `.npmrc` or `<packageSourceCredentials>` in `nuget.config`. A file names the source and nothing more. " +
+            "A private git dependency on github.com fetches with no token too."),
     ),
     section(
       "What you cannot configure",

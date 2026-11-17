@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { TERMINAL_RUN_STATUSES } from "~/domain/runs/run-status.js";
 import type { RetainedSandbox, SandboxLeaseStore, SandboxReservation } from "~/domain/runs/sandbox-slots.js";
 import type { FactoreePrismaClient } from "./client.js";
+import type { CredentialBindingRecord, CredentialBindingStore } from "~/domain/runs/credential-egress.js";
 
 /** A reservation the create never bound. Its worker stopped between the reservation and the create. */
 const UNBOUND_LEASE_MS = 15 * 60_000;
@@ -119,7 +120,7 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
   }
 
   async bind(leaseId: string, sandboxId: string): Promise<void> {
-    await this.prisma.sandboxLease.update({ where: { id: leaseId }, data: { sandboxId } });
+    await this.prisma.sandboxLease.update({ where: { id: leaseId }, data: { sandboxId, bindingTenantId: null, bindingProductId: null, bindingHosts: [], bindingRepositories: [], bindingBoundAt: null } });
   }
 
   async abandon(leaseId: string): Promise<void> {
@@ -134,7 +135,7 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
       if (lease.held) {
         const run = await tx.run.findUnique({ where: { id: lease.runId }, select: { status: true } });
         if (run !== null && !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) {
-          await tx.sandboxLease.update({ where: { id: lease.id }, data: { sandboxId: null, evictingSince: null } });
+          await tx.sandboxLease.update({ where: { id: lease.id }, data: { sandboxId: null, evictingSince: null, bindingTenantId: null, bindingProductId: null, bindingHosts: [], bindingRepositories: [], bindingBoundAt: null } });
           return;
         }
       }
@@ -169,5 +170,60 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
       select: { adapter: true, sandboxId: true },
     });
     return rows.flatMap((row) => (row.sandboxId === null ? [] : [{ adapter: row.adapter, sandboxId: row.sandboxId }]));
+  }
+}
+
+/**
+ * docs/specs/host-credentials.md. The `github` binding of a live sandbox, on its lease. The worker
+ * binds a new token on each sandbox whose binding is older than the rebind age.
+ */
+export class PrismaCredentialBindingStore implements CredentialBindingStore {
+  constructor(private readonly prisma: FactoreePrismaClient) {}
+
+  async record(adapter: string, sandboxId: string, binding: Omit<CredentialBindingRecord, "adapter" | "sandboxId"> | null): Promise<void> {
+    await this.prisma.sandboxLease.updateMany({
+      where: { adapter, sandboxId },
+      data:
+        binding === null
+          ? { bindingTenantId: null, bindingProductId: null, bindingHosts: [], bindingRepositories: [], bindingBoundAt: null }
+          : {
+              bindingTenantId: binding.tenantId,
+              bindingProductId: binding.productId,
+              bindingHosts: binding.hosts,
+              bindingRepositories: binding.repositories,
+              bindingBoundAt: new Date(),
+            },
+    });
+  }
+
+  async due(boundBefore: Date, limit: number): Promise<CredentialBindingRecord[]> {
+    const rows = await this.prisma.sandboxLease.findMany({
+      where: { sandboxId: { not: null }, bindingProductId: { not: null }, bindingBoundAt: { lt: boundBefore } },
+      orderBy: { bindingBoundAt: "asc" },
+      take: limit,
+    });
+    // A retained sandbox of an ended run runs no fetch, and a rebind would wake a paused E2B sandbox.
+    const ended = new Set(
+      (
+        await this.prisma.run.findMany({
+          where: { id: { in: rows.map((row) => row.runId) }, status: { in: [...TERMINAL_RUN_STATUSES] } },
+          select: { id: true },
+        })
+      ).map((run) => run.id),
+    );
+    return rows.flatMap((row) =>
+      ended.has(row.runId) || row.sandboxId === null || row.bindingTenantId === null || row.bindingProductId === null
+        ? []
+        : [
+            {
+              adapter: row.adapter,
+              sandboxId: row.sandboxId,
+              tenantId: row.bindingTenantId,
+              productId: row.bindingProductId,
+              hosts: row.bindingHosts,
+              repositories: row.bindingRepositories,
+            },
+          ],
+    );
   }
 }

@@ -48,7 +48,7 @@ class WarmFakeSandbox extends FakeSandbox {
   };
 
   constructor(private readonly configYaml = CONFIG_YAML, supportsDocker = false) {
-    super({ enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: true, supportsCustomImage: true, supportsDocker });
+    super({ enforcesNetworkPolicy: true, supportsCheckpoints: false, supportsExposedServices: true, supportsCustomImage: true, supportsDocker, bindsCredentials: true });
     this.onExec = (command) => {
       const last = command.args[command.args.length - 1] ?? "";
       if (command.file === "cat" && last.endsWith(".factoree/config.yaml")) return { exitCode: 0, stdout: this.configYaml, stderr: "" };

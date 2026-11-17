@@ -10,8 +10,8 @@ import type { Redactor } from "~/telemetry/redaction.js";
  * who does not know the rule.
  */
 export const redactingTokens = (tokens: GitHubTokenProvider, redactor: Redactor): GitHubTokenProvider => ({
-  tokenForInstallation: async (githubInstallationId, scope, repositories) => {
-    const token = await tokens.tokenForInstallation(githubInstallationId, scope, repositories);
+  tokenForInstallation: async (githubInstallationId, scope, repositories, options) => {
+    const token = await tokens.tokenForInstallation(githubInstallationId, scope, repositories, options);
     redactor.addSecret(token);
     return token;
   },

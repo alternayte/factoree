@@ -1421,7 +1421,7 @@ export type ListProductSecretsResponses = {
   200: Array<{
     name: string;
     injectIntoImplementer: boolean;
-    kind: "test" | "runner_credential" | "repository_read" | "publish";
+    kind: "test" | "runner_credential" | "repository_read" | "publish" | "host_credential";
   }>;
 };
 
@@ -1440,6 +1440,12 @@ export type DeleteProductSecretData = {
 };
 
 export type DeleteProductSecretErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
   /**
    * Default Response
    */
@@ -1463,7 +1469,7 @@ export type PutProductSecretData = {
   body: {
     value: string;
     injectIntoImplementer?: boolean;
-    kind?: "test" | "runner_credential" | "repository_read" | "publish";
+    kind?: "test" | "runner_credential" | "repository_read" | "publish" | "host_credential";
   };
   path: {
     id: string;
@@ -1500,6 +1506,127 @@ export type PutProductSecretResponses = {
 };
 
 export type PutProductSecretResponse = PutProductSecretResponses[keyof PutProductSecretResponses];
+
+export type ListHostCredentialsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/host-credentials";
+};
+
+export type ListHostCredentialsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListHostCredentialsError = ListHostCredentialsErrors[keyof ListHostCredentialsErrors];
+
+export type ListHostCredentialsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    credentials: Array<{
+      kind: "registry" | "header" | "github";
+      host: string;
+      username: string | null;
+      headerName: string | null;
+      pathPrefix: string | null;
+      realmHost: string | null;
+      redirectHosts: Array<string>;
+      repositories: Array<string>;
+      hasSecret: boolean;
+    }>;
+    suggestedRedirectHosts: {
+      [key: string]: Array<string>;
+    };
+  };
+};
+
+export type ListHostCredentialsResponse = ListHostCredentialsResponses[keyof ListHostCredentialsResponses];
+
+export type PutHostCredentialsData = {
+  body: {
+    credentials: Array<{
+      kind: "registry" | "header" | "github";
+      host: string;
+      username?: string | null;
+      headerName?: string | null;
+      pathPrefix?: string | null;
+      redirectHosts?: Array<string>;
+      repositories?: Array<string>;
+      secret?: string | null;
+    }>;
+  };
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/host-credentials";
+};
+
+export type PutHostCredentialsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type PutHostCredentialsError = PutHostCredentialsErrors[keyof PutHostCredentialsErrors];
+
+export type PutHostCredentialsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    credentials: Array<{
+      kind: "registry" | "header" | "github";
+      host: string;
+      username: string | null;
+      headerName: string | null;
+      pathPrefix: string | null;
+      realmHost: string | null;
+      redirectHosts: Array<string>;
+      repositories: Array<string>;
+      hasSecret: boolean;
+    }>;
+    suggestedRedirectHosts: {
+      [key: string]: Array<string>;
+    };
+  };
+};
+
+export type PutHostCredentialsResponse = PutHostCredentialsResponses[keyof PutHostCredentialsResponses];
 
 export type GetModelCatalogData = {
   body?: never;

@@ -74,6 +74,7 @@ export class E2BSandbox implements Sandbox {
     supportsExposedServices: true,
     supportsCustomImage: true,
     supportsDocker: true,
+    bindsCredentials: true,
   };
   readonly image: string;
   readonly warmSnapshots: WarmSnapshots;
@@ -111,7 +112,14 @@ export class E2BSandbox implements Sandbox {
 
   async applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
     await this.keepAlive(ref);
-    await this.options.gateway.setEgress(ref.id, normalizeNetworkPolicy(policy).allowedDomains);
+    const normalized = normalizeNetworkPolicy(policy);
+    // docs/specs/host-credentials.md. E2B matches by host only, with no method or path, and its
+    // injected header replaces a guest header of the same name.
+    const headers: Record<string, Record<string, string>> = {};
+    for (const binding of normalized.credentials ?? []) {
+      headers[binding.host] = { ...(headers[binding.host] ?? {}), [binding.header]: binding.value };
+    }
+    await this.options.gateway.setEgress(ref.id, normalized.allowedDomains, headers);
   }
 
   async exec(ref: SandboxRef, command: Command): Promise<CommandResult> {

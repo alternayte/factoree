@@ -68,6 +68,9 @@ import type {
   ListContextSourcesData,
   ListContextSourcesErrors,
   ListContextSourcesResponses,
+  ListHostCredentialsData,
+  ListHostCredentialsErrors,
+  ListHostCredentialsResponses,
   ListLinearTeamsData,
   ListLinearTeamsErrors,
   ListLinearTeamsResponses,
@@ -102,6 +105,9 @@ import type {
   PutContextSourceData,
   PutContextSourceErrors,
   PutContextSourceResponses,
+  PutHostCredentialsData,
+  PutHostCredentialsErrors,
+  PutHostCredentialsResponses,
   PutLinearAppData,
   PutLinearAppErrors,
   PutLinearAppResponses,
@@ -548,6 +554,50 @@ export const putProductSecret = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/products/{id}/secrets/{name}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const listHostCredentials = <ThrowOnError extends boolean = false>(
+  options: Options<ListHostCredentialsData, ThrowOnError>,
+): RequestResult<ListHostCredentialsResponses, ListHostCredentialsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListHostCredentialsResponses, ListHostCredentialsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/host-credentials",
+    ...options,
+  });
+
+export const putHostCredentials = <ThrowOnError extends boolean = false>(
+  options: Options<PutHostCredentialsData, ThrowOnError>,
+): RequestResult<PutHostCredentialsResponses, PutHostCredentialsErrors, ThrowOnError> =>
+  (options.client ?? client).put<PutHostCredentialsResponses, PutHostCredentialsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/host-credentials",
     ...options,
     headers: {
       "Content-Type": "application/json",

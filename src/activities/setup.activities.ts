@@ -42,6 +42,8 @@ import { renderSetupPrompt, SETUP_PROMPT_VERSION, type SetupPromptFields } from 
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { PUBLICATION_COMMIT_TIMESTAMP } from "./publishing.activities.js";
+import { NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
+import { applyEgress, assertBindable, probeCredentialHosts, type CredentialBindingStore, type CredentialEgress } from "~/domain/runs/credential-egress.js";
 
 export interface SetupActivityDependencies {
   setups: RepositorySetupStore;
@@ -69,6 +71,12 @@ export interface SetupActivityDependencies {
   logger: Logger;
   /** docs/specs/setup-app-change-issues.md. The stored app-change issues, so the report names the ones already requested. */
   appChangeIssues?: Pick<AppChangeIssueStore, "listForRepository"> | undefined;
+  /** docs/specs/host-credentials.md. The host credentials of a product, with their bindings. */
+  hostCredentials?: ((tenantId: string, productId: string, checkoutRepositories: readonly string[]) => Promise<HostCredentialAccess>) | undefined;
+  /** docs/specs/host-credentials.md. Where a sandbox with a `github` binding is recorded for its refresh. */
+  credentialBindings?: CredentialBindingStore | undefined;
+  /** docs/specs/host-credentials.md. The hosts the product's credentials reach, for the setup prompt. */
+  credentialHosts?: ((tenantId: string, productId: string) => Promise<string[]>) | undefined;
 }
 
 /** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
@@ -100,6 +108,8 @@ export type SetupSessionOutput =
       proposal: string;
       observedHosts: string[];
       deniedHosts: string[];
+      /** docs/specs/host-credentials.md. The credential and redirect hosts the session reached. */
+      credentialHosts?: string[];
       egressRecorded: boolean;
       appChanges: string[];
       /** docs/specs/setup-speed-and-history.md. The session sandbox started from the warm snapshot. */
@@ -195,17 +205,30 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     return dependencies.sandbox.forProvider(providerId);
   };
 
+  /**
+   * docs/specs/host-credentials.md. The credentials of the product apply in every setup phase, as in
+   * a run. A provider that cannot bind them fails the setup before it creates a sandbox.
+   */
+  const credentialEgressOf = async (sandbox: Sandbox, tenantId: string, productId: string, repository: string): Promise<CredentialEgress> => {
+    // The setup repository may not be registered yet, and its checkout runs under the binding.
+    const repositories = [repository];
+    const access = dependencies.hostCredentials === undefined ? NO_HOST_CREDENTIALS : await dependencies.hostCredentials(tenantId, productId, repositories);
+    assertBindable(sandbox, access);
+    for (const binding of access.bindings) dependencies.redactor.addSecret(binding.value);
+    return { tenantId, productId, access, store: dependencies.credentialBindings, repositories };
+  };
+
   const createSandbox = async (
     sandbox: Sandbox,
     setupId: string,
-    tenantId: string,
-    productId: string,
+    egress: CredentialEgress,
     allowedDomains: string[],
   ): Promise<SandboxRef> => {
-    const ref = await sandbox.create({ runId: setupSandboxRunId(setupId), tenantId, productId });
-    await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, tenantId, productId);
-    await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains });
+    const ref = await sandbox.create({ runId: setupSandboxRunId(setupId), tenantId: egress.tenantId, productId: egress.productId });
+    await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, egress.tenantId, egress.productId);
+    await applyEgress(dependencies.sandbox, ref, allowedDomains, egress);
     await dependencies.sandbox.exec(ref, { file: "mkdir", args: ["-p", ref.workspacePath], cwd: "/" });
+    await probeCredentialHosts(dependencies.sandbox, ref, egress.access);
     return ref;
   };
 
@@ -215,12 +238,13 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
    * cold start. A full provider says nothing about the snapshot, so its error goes to the caller.
    */
   const startSessionSandbox = async (
-    setup: { id: string; tenantId: string; productId: string },
+    setup: { id: string; tenantId: string; productId: string; repositoryFullName: string },
     product: { sandboxProviderIds: string[] },
     url: string,
     allowedDomains: string[],
-  ): Promise<{ ref: SandboxRef; warm: boolean }> => {
+  ): Promise<{ ref: SandboxRef; warm: boolean; egress: CredentialEgress }> => {
     const sandbox = await sandboxOf(setup, product, url);
+    const egress = await credentialEgressOf(sandbox, setup.tenantId, setup.productId, setup.repositoryFullName);
     const provider = sandbox.warmSnapshots;
     const snapshot =
       provider === undefined || dependencies.warmSnapshots === undefined
@@ -230,8 +254,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       try {
         const ref = await provider.restore({ runId: setupSandboxRunId(setup.id), tenantId: setup.tenantId, productId: setup.productId }, snapshot.snapshotId);
         await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, setup.tenantId, setup.productId);
-        await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains });
-        return { ref, warm: true };
+        await applyEgress(dependencies.sandbox, ref, allowedDomains, egress);
+        await probeCredentialHosts(dependencies.sandbox, ref, egress.access);
+        return { ref, warm: true, egress };
       } catch (error) {
         if (error instanceof SandboxSlotUnavailableError) throw error;
         dependencies.logger.warn("the warm snapshot did not restore, so the setup sandbox starts cold", {
@@ -241,7 +266,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         });
       }
     }
-    return { ref: await createSandbox(sandbox, setup.id, setup.tenantId, setup.productId, allowedDomains), warm: false };
+    return { ref: await createSandbox(sandbox, setup.id, egress, allowedDomains), warm: false, egress };
   };
 
   /** The proof of one setup. proveAndPublishSetup times it. */
@@ -258,7 +283,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const readToken = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
       dependencies.redactor.addSecret(readToken);
       const repositoryHosts = hostsOf(url);
-      const ref = await createSandbox(await sandboxOf(setup, product, url), setup.id, setup.tenantId, setup.productId, repositoryHosts);
+      const proofSandbox = await sandboxOf(setup, product, url);
+      const egress = await credentialEgressOf(proofSandbox, setup.tenantId, setup.productId, setup.repositoryFullName);
+      const ref = await createSandbox(proofSandbox, setup.id, egress, repositoryHosts);
       const parts: SetupPartResult[] = [];
       const record = (part: SetupPartResult): void => {
         parts.push({ ...part, ...(part.logTail === undefined ? {} : { logTail: dependencies.redactor.redactText(withoutUrlCredentials(part.logTail)) }) });
@@ -281,7 +308,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }
 
         // Policy two: the bootstrap phase, with the repository hosts and the bootstrap allow list.
-        await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains: [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)])] });
+        await applyEgress(dependencies.sandbox, ref, [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)])], egress);
         const services = runtime.services ?? null;
         let servicesPassed = true;
         if (runtime.docker === true) {
@@ -319,7 +346,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
 
         if (bootstrapPassed) {
           // Policy three: the agent phase, with the repository allow list alone.
-          await dependencies.sandbox.applyNetworkPolicy(ref, { allowedDomains: runtime.allowedDomains });
+          await applyEgress(dependencies.sandbox, ref, runtime.allowedDomains, egress);
           const environment: Record<string, string> = {};
           for (const descriptor of await dependencies.secrets.list(setup.tenantId, setup.productId)) {
             if (descriptor.kind !== "test" || !descriptor.injectIntoImplementer) continue;
@@ -396,6 +423,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         parts: finalParts,
         observedHosts: session.observedHosts,
         deniedHosts: session.deniedHosts,
+        ...(session.credentialHosts === undefined || session.credentialHosts.length === 0 ? {} : { credentialHosts: session.credentialHosts }),
         egressRecorded: session.egressRecorded,
         fakes,
         appChanges: session.appChanges,
@@ -494,6 +522,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         linearTeamKey: product.linearTeamKey,
         testSecretNames,
         ecosystemHosts: ECOSYSTEM_HOSTS,
+        credentialHosts: (await dependencies.credentialHosts?.(setup.tenantId, setup.productId)) ?? [],
         existingConfig,
         previousNotProven: previousParts.filter((part) => !part.passed).map((part) => ({ kind: part.kind, name: part.name, reason: part.reason })),
         previousProven: previousParts.filter((part) => part.passed).map((part) => ({ kind: part.kind, name: part.name })),
@@ -543,7 +572,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         };
       }
       const claudeHost = runnerName === "claude" ? claudeApiHostOf(runnerEnvironment) : null;
-      const { ref, warm } = await startSessionSandbox(setup, product, url, [
+      const { ref, warm, egress } = await startSessionSandbox(setup, product, url, [
         ...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains, ...(claudeHost === null ? [] : [claudeHost])]),
       ]);
       await dependencies.setups.update(setup.id, { warm });
@@ -629,6 +658,10 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         // compose service, never a host the allow list could name.
         const deniedHosts =
           log === null ? [] : [...new Set(log.filter((record) => record.decision === "denied" && record.host.includes(".")).map((record) => record.host))].sort();
+        // docs/specs/host-credentials.md. Factoree adds the credential hosts in every phase, so they
+        // stay out of the config, and the report lists the ones the session reached.
+        const credentialHosts = new Set(egress.access.hosts);
+        const credentialHostsReached = log === null ? [] : [...new Set(reached.filter((host) => credentialHosts.has(host)))].sort();
         const document = parseDocument(proposalText);
         if (document.get("bootstrap") !== undefined) document.setIn(["bootstrap", "allowedDomains"], bootstrapHosts);
         const proposal = document.toString();
@@ -647,6 +680,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           proposal,
           observedHosts: bootstrapHosts,
           deniedHosts,
+          credentialHosts: credentialHostsReached,
           egressRecorded: log !== null,
           appChanges,
           warm,

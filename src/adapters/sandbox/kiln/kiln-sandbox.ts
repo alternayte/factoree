@@ -15,6 +15,7 @@ import type {
   WarmSnapshots,
 } from "~/domain/runs/sandbox.js";
 import { normalizeNetworkPolicy, SandboxError, type EgressRecord } from "~/domain/runs/sandbox.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { DEFAULT_KILN_SANDBOX_SIZE, type KilnSandboxSize } from "~/domain/settings/install-settings.js";
 import type { KilnClient, KilnTemplateRequest } from "./kiln-client.js";
 import { isKilnConflict, isKilnNotFound } from "./kiln-client.js";
@@ -88,6 +89,7 @@ export class KilnSandbox implements Sandbox {
     supportsExposedServices: true,
     supportsCustomImage: true,
     supportsDocker: true,
+    bindsCredentials: true,
   };
   readonly image: string;
   readonly warmSnapshots: WarmSnapshots;
@@ -145,8 +147,41 @@ export class KilnSandbox implements Sandbox {
     this.attached.set(ref.id, { ...environment });
   }
 
+  /**
+   * docs/specs/host-credentials.md. The egress list first, because Kiln refuses a binding whose
+   * host the list does not cover, then the whole binding list. Kiln refuses an egress list that
+   * drops a bound host, so a refused list clears the bindings and goes again.
+   */
   async applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
-    await this.options.client.setEgress(ref.id, normalizeNetworkPolicy(policy).allowedDomains);
+    const normalized = normalizeNetworkPolicy(policy);
+    const bindings = normalized.credentials ?? [];
+    try {
+      await this.options.client.setEgress(ref.id, normalized.allowedDomains);
+    } catch (error) {
+      if (!isKilnConflict(error)) throw error;
+      await this.options.client.setCredentials(ref.id, []);
+      await this.options.client.setEgress(ref.id, normalized.allowedDomains);
+    }
+    if (bindings.length === 0) return;
+    try {
+      await this.options.client.setCredentials(
+        ref.id,
+        bindings.map((binding) => ({
+          name: binding.name,
+          host: binding.host,
+          header: binding.header,
+          value: binding.value,
+          ...(binding.path === undefined ? {} : { path: binding.path }),
+          methods: binding.methods,
+        })),
+      );
+    } catch (error) {
+      if (!isKilnConflict(error)) throw error;
+      throw new RunConfigurationError(
+        `The sandbox provider ${this.name} cannot bind the product's host credentials: its Kiln template was built before ` +
+          "credential injection. Rebuild the template on the Kiln host, or remove the host credentials.",
+      );
+    }
   }
 
   async egressLog(ref: SandboxRef): Promise<EgressRecord[]> {

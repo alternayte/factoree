@@ -1,3 +1,6 @@
+import { createHostCredentialWiring, rebindGitHubTokens } from "./host-credential-wiring.js";
+import { PrismaCredentialBindingStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
+import { GITHUB_REBIND_INTERVAL_MS } from "~/domain/products/host-credentials.js";
 import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import { PrismaAppChangeIssueStore } from "~/persistence/prisma/app-change-issue.prisma.js";
 import { createLinearIssues } from "~/adapters/linear/linear-issues.js";
@@ -168,11 +171,17 @@ try {
 const warmSnapshots = new PrismaWarmSnapshotStore(prisma);
 // docs/specs/run-speed.md. One row per stage of each run.
 const stages = new PrismaRunStageStore(prisma);
+// docs/specs/host-credentials.md. The secrets and the token provider are built further down, and
+// a credential is read only when a sandbox is prepared.
+const hostCredentials = createHostCredentialWiring({ prisma, secrets: () => secrets, tokens: () => githubTokens });
+const credentialBindings = new PrismaCredentialBindingStore(prisma);
 const sandboxManager = new SandboxManager({
   sandbox,
   logger,
   warmSnapshots,
   stages,
+  hostCredentials: hostCredentials.access,
+  credentialBindings,
   // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
   // The sandbox name is the provider id, so the type of the provider decides.
   installBrowserTools: (sandboxName) =>
@@ -442,6 +451,7 @@ const worker = await Worker.create({
   // The worker bundles one file per `workflowsPath`, so the barrel re-exports both.
   workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
   activities: createActivities({
+    hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings },
     runs,
     runSlots: new PrismaRunSlots(prisma),
     products,
@@ -552,6 +562,25 @@ const reapTimer = setInterval(() => {
 }, REAP_INTERVAL_MS);
 reapTimer.unref();
 
+// docs/specs/host-credentials.md. A `github` installation token expires after 1 hour, so the
+// worker binds a new one on each live sandbox that holds it. One pass at a time.
+let rebinding = false;
+const rebindTimer = setInterval(() => {
+  if (rebinding) return;
+  rebinding = true;
+  void rebindGitHubTokens({ bindings: credentialBindings, access: hostCredentials.access, sandbox, logger })
+    .then((count) => {
+      if (count > 0) logger.info("github tokens bound again", { count, step: "host_credentials" });
+    })
+    .catch((error: unknown) => {
+      logger.error("the github token rebind failed", { error: String(error), step: "host_credentials" });
+    })
+    .finally(() => {
+      rebinding = false;
+    });
+}, GITHUB_REBIND_INTERVAL_MS);
+rebindTimer.unref();
+
 // docs/specs/blocked-by-wait.md. The sweep reads the blockers of every waiting run every minute, with
 // one batched Linear query per tenant, and starts each run that no open blocker holds.
 const BLOCKER_SWEEP_INTERVAL_MS = 60_000;
@@ -604,6 +633,7 @@ try {
       readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
       listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
       repositoryBaseUrl: githubBaseUrl(settings),
+      credentialKey: hostCredentials.key,
       logger,
     }).afterTemplateChange();
     await temporal.connection.close();

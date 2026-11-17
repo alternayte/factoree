@@ -12,11 +12,14 @@
  *   an existing stored row keeps its kind rather than silently becoming `test`, which is the one
  *   kind the injection mark permits.
  * - `publish`: retired, for the same reason and the same guard as `repository_read`.
+ * - `host_credential`: docs/specs/host-credentials.md. The secret of one host credential. Only the
+ *   sandbox provider holds it, outside the guest. It never reaches an environment or a prompt, and
+ *   only the host credentials route writes or removes it.
  *
  * A secret of any kind other than `test` must not carry the injection mark. The store rejects
  * that combination, so a credential cannot reach the Implementer path by a configuration slip.
  */
-export const PROJECT_SECRET_KINDS = ["test", "runner_credential", "repository_read", "publish"] as const;
+export const PROJECT_SECRET_KINDS = ["test", "runner_credential", "repository_read", "publish", "host_credential"] as const;
 
 export type ProjectSecretKind = (typeof PROJECT_SECRET_KINDS)[number];
 

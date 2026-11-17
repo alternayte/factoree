@@ -23,6 +23,9 @@ import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { verifyGitHubSignature } from "~/adapters/github/webhook-verifier.js";
 import { registerHealthRoutes, registerMetricsRoute } from "./health.routes.js";
 import { registerProductRoutes, type ProductRouteDependencies } from "./admin/products.routes.js";
+import { registerHostCredentialRoutes } from "./admin/host-credentials.routes.js";
+import { checkRegistryLogin } from "~/adapters/registry/registry-login-check.js";
+import { PrismaHostCredentialStore } from "~/persistence/prisma/host-credential.prisma.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerTemporalUi } from "./admin/temporal-ui.routes.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
@@ -195,6 +198,19 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         ...(dependencies.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: dependencies.checkSkillRegistry }),
         ...(dependencies.modelCatalog === undefined ? {} : { modelCatalog: dependencies.modelCatalog }),
         sandboxProviders,
+      });
+      // docs/specs/host-credentials.md.
+      registerHostCredentialRoutes(admin, {
+        products: dependencies.products,
+        tenants: dependencies.tenants,
+        secrets: dependencies.secrets,
+        credentials: new PrismaHostCredentialStore(dependencies.prisma),
+        checkRegistryLogin: (host, username, secret) => checkRegistryLogin(host, username, secret),
+        installations: async (tenantId) =>
+          (await dependencies.prisma.gitHubInstallation.findMany({ where: { tenantId } })).map((row) => row.githubInstallationId),
+        listInstallationRepositories:
+          dependencies.repositorySetup?.listInstallationRepositories ?? (() => Promise.reject(new Error("this server lists no repository"))),
+        buildAhead: dependencies.buildAhead,
       });
       registerModelCatalogRoutes(admin, { modelCatalog: dependencies.modelCatalog });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);

@@ -55,6 +55,7 @@ export class FakeSandbox implements Sandbox {
     supportsExposedServices: true,
     supportsCustomImage: false,
     supportsDocker: false,
+    bindsCredentials: true,
   }) {}
 
   /** The first matcher whose pattern matches `file` plus its arguments wins. */

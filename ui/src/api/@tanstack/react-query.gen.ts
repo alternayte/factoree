@@ -33,6 +33,7 @@ import {
   getSetupStatus,
   listApiKeys,
   listContextSources,
+  listHostCredentials,
   listLinearTeams,
   listProductAgentSessions,
   listProducts,
@@ -46,6 +47,7 @@ import {
   type Options,
   publishRunDraft,
   putContextSource,
+  putHostCredentials,
   putLinearApp,
   putProductSecret,
   putSandbox,
@@ -125,6 +127,9 @@ import type {
   ListContextSourcesData,
   ListContextSourcesError,
   ListContextSourcesResponse,
+  ListHostCredentialsData,
+  ListHostCredentialsError,
+  ListHostCredentialsResponse,
   ListLinearTeamsData,
   ListLinearTeamsError,
   ListLinearTeamsResponse,
@@ -159,6 +164,9 @@ import type {
   PutContextSourceData,
   PutContextSourceError,
   PutContextSourceResponse,
+  PutHostCredentialsData,
+  PutHostCredentialsError,
+  PutHostCredentialsResponse,
   PutLinearAppData,
   PutLinearAppError,
   PutLinearAppResponse,
@@ -636,6 +644,48 @@ export const putProductSecretMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await putProductSecret({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const listHostCredentialsQueryKey = (options: Options<ListHostCredentialsData>) =>
+  createQueryKey("listHostCredentials", options);
+
+export const listHostCredentialsOptions = (options: Options<ListHostCredentialsData>) =>
+  queryOptions<
+    ListHostCredentialsResponse,
+    ListHostCredentialsError,
+    ListHostCredentialsResponse,
+    ReturnType<typeof listHostCredentialsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listHostCredentials({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listHostCredentialsQueryKey(options),
+  });
+
+export const putHostCredentialsMutation = (
+  options?: Partial<Options<PutHostCredentialsData>>,
+): UseMutationOptions<PutHostCredentialsResponse, PutHostCredentialsError, Options<PutHostCredentialsData>> => {
+  const mutationOptions: UseMutationOptions<
+    PutHostCredentialsResponse,
+    PutHostCredentialsError,
+    Options<PutHostCredentialsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putHostCredentials({
         ...options,
         ...fnOptions,
         throwOnError: true,

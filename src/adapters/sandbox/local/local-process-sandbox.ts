@@ -1,3 +1,4 @@
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { chmod, cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
@@ -148,6 +149,7 @@ export class LocalProcessSandbox implements Sandbox {
     supportsExposedServices: false,
     supportsCustomImage: false,
     supportsDocker: false,
+    bindsCredentials: false,
   };
 
   private readonly live = new Set<string>();
@@ -173,6 +175,12 @@ export class LocalProcessSandbox implements Sandbox {
   }
 
   applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
+    // docs/specs/host-credentials.md. This provider cannot add a header outside the guest.
+    if ((policy.credentials ?? []).length > 0) {
+      throw new RunConfigurationError(
+        `The sandbox provider ${this.name} cannot bind host credentials. Run the product on Kiln or E2B, or remove its host credentials.`,
+      );
+    }
     // This adapter records nothing. `SandboxManager` never lets an agent run here in production.
     // The reason is that `capabilities.enforcesNetworkPolicy` is false.
     void policy;

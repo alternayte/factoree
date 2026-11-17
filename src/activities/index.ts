@@ -1,3 +1,5 @@
+import type { HostCredentialAccess } from "~/domain/products/host-credentials.js";
+import type { CredentialBindingStore } from "~/domain/runs/credential-egress.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { RunSlots } from "~/domain/runs/run-slots.js";
@@ -68,6 +70,13 @@ import {
 } from "./skill-registry.activities.js";
 
 export interface ActivityDependencies {
+  /** docs/specs/host-credentials.md. The host credentials of each product. Absent means none. */
+  hostCredentials?: {
+    access: (tenantId: string, productId: string, checkoutRepositories: readonly string[]) => Promise<HostCredentialAccess>;
+    hosts: (tenantId: string, productId: string) => Promise<string[]>;
+    key: (tenantId: string, productId: string) => Promise<string[]>;
+    bindings: CredentialBindingStore;
+  };
   runs: RunRepository;
   /** docs/specs/release-0-1-0.md, DI-15.13. The maxConcurrentRuns slots of each Product. */
   runSlots: RunSlots;
@@ -408,6 +417,9 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
     logger: dependencies.logger,
     appChangeIssues: dependencies.appChangeIssues,
+    hostCredentials: dependencies.hostCredentials?.access,
+    credentialBindings: dependencies.hostCredentials?.bindings,
+    credentialHosts: dependencies.hostCredentials?.hosts,
   }),
   ...createAppChangeActivities({
     setups: dependencies.setups ?? NO_SETUP_STORE,
@@ -438,6 +450,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     repositoryBaseUrl: dependencies.repositoryBaseUrl,
     logger: dependencies.logger,
     setupMarks: dependencies.setupMarks,
+    credentialKey: dependencies.hostCredentials?.key,
   }),
 });
 

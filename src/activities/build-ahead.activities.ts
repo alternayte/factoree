@@ -36,6 +36,8 @@ export interface BuildAheadActivityDependencies {
   logger: Logger;
   /** docs/specs/repository-setup-and-services.md. A failed build-ahead marks the repository for setup. */
   setupMarks?: RepositorySetupMarks | undefined;
+  /** docs/specs/host-credentials.md. The credential part of the bootstrap key of a product. */
+  credentialKey?: ((tenantId: string, productId: string) => Promise<string[]>) | undefined;
 }
 
 export const createBuildAheadActivities = (dependencies: BuildAheadActivityDependencies) => ({
@@ -65,7 +67,8 @@ export const createBuildAheadActivities = (dependencies: BuildAheadActivityDepen
       repository.defaultBranch,
       repository.githubInstallationId,
     );
-    const bootstrapKey = bootstrapKeyOfConfig(file, defaults, files);
+    const credentials = (await dependencies.credentialKey?.(request.tenantId, repository.productId)) ?? [];
+    const bootstrapKey = bootstrapKeyOfConfig(file, defaults, files, credentials);
 
     // docs/specs/sandbox-provider-spillover.md. A warm snapshot on every enabled provider the product
     // allows, so a spillover run starts warm. A worker with one bare sandbox builds on it alone.
