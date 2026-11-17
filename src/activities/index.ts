@@ -65,6 +65,7 @@ import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { createPullRequestActivities } from "./pull-request.activities.js";
 import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
+import type { AutoMergePort } from "~/domain/pull-requests/auto-merge.js";
 import type { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import {
   createSkillRegistryActivities,
@@ -181,6 +182,8 @@ export interface ActivityDependencies {
    */
   publishedPullRequests?: PullRequestStore | undefined;
   pullRequestClose?: Pick<PullRequestCloseHandler, "closeOfRecord"> | undefined;
+  /** docs/specs/pr-review-merge-and-deploy.md. The GitHub calls of the L4 merge. A worker without them turns on no auto-merge. */
+  autoMerge?: AutoMergePort | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -214,6 +217,22 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   findByCommit: () => Promise.reject(new Error("this worker holds no pull request store")),
   recordEvent: () => Promise.reject(new Error("this worker holds no pull request store")),
   markClosed: () => Promise.reject(new Error("this worker holds no pull request store")),
+  steeringFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
+  setAutoMerge: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listAutoMergeUnavailable: () => Promise.reject(new Error("this worker holds no pull request store")),
+};
+
+const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
+
+/** A worker built without the auto-merge port refuses the L4 merge, and the PR workflow logs it. */
+const NO_AUTO_MERGE: AutoMergePort = {
+  pullRequest: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  gate: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  reviewerVerdict: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  reviews: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  enable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  disable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+  merge: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
 };
 
 /** A worker built without the file reader refuses a setup, and runs every other activity. */
@@ -478,6 +497,9 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
       closeOfRecord: () => Promise.reject(new Error("this worker holds no pull request close handler")),
     },
     logger: dependencies.logger,
+    autoMerge: dependencies.autoMerge ?? NO_AUTO_MERGE,
+    products: dependencies.products,
+    agentSession: dependencies.agentSession,
   }),
 });
 

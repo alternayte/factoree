@@ -53,6 +53,7 @@ import { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.js";
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
+import { GitHubAutoMerge } from "~/adapters/github/github-auto-merge.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
@@ -524,6 +525,8 @@ const worker = await Worker.create({
     issueStatus: issueStatusFor,
     publishedPullRequests: new PrismaPullRequestStore(prisma),
     pullRequestClose,
+    // docs/specs/pr-review-merge-and-deploy.md. The L4 merge mints a token per call for one repository.
+    autoMerge: new GitHubAutoMerge({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),

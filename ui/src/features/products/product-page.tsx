@@ -5,6 +5,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import {
+  getProductAutoMergeAttentionOptions,
   getProductGitHubAccessOptions,
   getProductOptions,
   getProductQueryKey,
@@ -211,6 +212,7 @@ function ProductEditor({
         <ActivateProduct product={product} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
       ) : null}
       <GitHubAccessNotice productId={product.id} linearWorkspaceId={linearWorkspaceId} />
+      <AutoMergeNotice productId={product.id} linearWorkspaceId={linearWorkspaceId} />
       {/* docs/specs/run-visibility.md. On a desktop the sections sit in two columns. */}
       <form
         id="product-form"
@@ -701,6 +703,33 @@ function GitHubAccessNotice({ productId, linearWorkspaceId }: { productId: strin
                 . Until then, Factoree does not see the reviews, checks and statuses of its pull requests.
               </p>
             ) : null}
+          </li>
+        ))}
+      </ul>
+    </Alert>
+  );
+}
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D5. An L4 pull request stays open as at L3 when its
+ * repository does not allow auto-merge or its base branch has no rule. The notice names the setting.
+ */
+function AutoMergeNotice({ productId, linearWorkspaceId }: { productId: string; linearWorkspaceId: string }) {
+  const attention = useQuery(getProductAutoMergeAttentionOptions({ path: { id: productId }, query: { linearWorkspaceId } }));
+  const pullRequests = attention.data?.pullRequests ?? [];
+  if (pullRequests.length === 0) return null;
+  return (
+    <Alert tone="warning" title="Needs your attention: L4 pull requests without auto-merge" className="mb-4">
+      <ul className="flex flex-col gap-2">
+        {pullRequests.map((pullRequest) => (
+          <li key={pullRequest.url}>
+            <p>
+              <a className="font-mono underline" href={pullRequest.url} target="_blank" rel="noreferrer">
+                {pullRequest.repositoryFullName}#{pullRequest.number}
+              </a>{" "}
+              stays open as at L3.
+            </p>
+            <p>{pullRequest.reason}</p>
           </li>
         ))}
       </ul>

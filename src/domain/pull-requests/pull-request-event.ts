@@ -12,6 +12,7 @@ export type PullRequestEvent =
   | PullRequestReopenedEvent
   | PullRequestSynchronizedEvent
   | PullRequestEditedEvent
+  | PullRequestAutoMergeDisabledEvent
   | PullRequestReviewEvent
   | PullRequestCheckRunEvent
   | PullRequestCommitStatusEvent
@@ -56,6 +57,17 @@ export interface PullRequestEditedEvent {
   baseChanged: boolean;
   mergeable: boolean | null;
   mergeableState: string | null;
+}
+
+/**
+ * `pull_request` with the action `auto_merge_disabled`. A human, GitHub or Factoree turned off
+ * auto-merge. The head is the head at that moment (DI-21.105).
+ */
+export interface PullRequestAutoMergeDisabledEvent {
+  kind: "auto_merge_disabled";
+  deliveryId: string;
+  headSha: string;
+  senderLogin: string | null;
 }
 
 /** `pull_request_review`. The state is GitHub's lowercase review state. */
@@ -119,6 +131,7 @@ export const eventHeadSha = (event: PullRequestEvent): string | null => {
     case "reopened":
     case "synchronized":
     case "edited":
+    case "auto_merge_disabled":
     case "check_run":
       return event.headSha;
     case "review":

@@ -34,9 +34,19 @@ describe("PrismaPullRequestStore", () => {
         headBranch: "factoree/run-1",
         headSha: "head-1",
         baseBranch: "main",
+        autonomyLevel: "L4",
       };
       const recorded = await store.recordPublished(publication);
-      expect(recorded).toMatchObject({ state: "open", contractRevision: 1, reviewerFollowUps: 0, autoMerge: "off", originRunId: runId });
+      expect(recorded).toMatchObject({
+        state: "open",
+        contractRevision: 1,
+        reviewerFollowUps: 0,
+        autoMerge: "off",
+        originRunId: runId,
+        verifiedHeadSha: "head-1",
+        autonomyLevel: "L4",
+        autoMergeGateBase: null,
+      });
       expect(recorded.workflowId).toBe(`pr:${tenantId}:Acme/API#12`);
       // DI-9.8. A second publication of the same pull request keeps the record and its origin run.
       expect((await store.recordPublished(publication)).id).toBe(recorded.id);
@@ -51,6 +61,15 @@ describe("PrismaPullRequestStore", () => {
 
       expect((await store.findByNumber(tenantId, "acme/api", 12))?.id).toBe(recorded.id);
       expect((await store.findByCommit(tenantId, "acme/api", "head-2")).map((entry) => entry.id)).toEqual([recorded.id]);
+
+      // DI-21.104, DI-21.106. The L4 gate state answers the record before the write, and the product
+      // page lists only the open pull requests of that product whose gate failed.
+      expect(await store.steeringFacts(tenantId, recorded.id)).toMatchObject({ productId, githubInstallationId: "42" });
+      const before = await store.setAutoMerge(tenantId, recorded.id, { state: "unavailable", reason: "no rule", gateBase: "main" });
+      expect(before.autoMerge).toBe("off");
+      expect((await store.listAutoMergeUnavailable(tenantId, productId)).map((entry) => [entry.id, entry.autoMergeGateBase])).toEqual([
+        [recorded.id, "main"],
+      ]);
 
       const closed = await store.markClosed(tenantId, recorded.id, { merged: true, mergeCommitSha: "merge-1", closedAt: new Date() });
       expect(closed.state).toBe("merged");

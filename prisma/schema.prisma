@@ -1052,9 +1052,17 @@ model PullRequest {
   // The contract revision of the head commit. It starts at 1 and each PR follow-up run adds one.
   // ValidationContract.version is the schema version, not this counter.
   contractRevision  Int        @default(1) @map("contract_revision")
-  // off, enabled or unavailable. Factoree turns on GitHub auto-merge only at L4.
+  // off, enabled, unavailable or stopped. Factoree turns on GitHub auto-merge only at L4. enabled
+  // means Factoree turned it on. stopped means a human turned off what Factoree turned on (DI-21.105).
   autoMerge         String     @default("off") @map("auto_merge")
   autoMergeReason   String?    @map("auto_merge_reason")
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.104. The head commit whose every Factoree check
+  // passed: the commit a publication pushed. Only this head can auto-merge.
+  verifiedHeadSha   String?    @map("verified_head_sha")
+  // The autonomy level of the run that published the verified head. Null on a row from before it.
+  autonomyLevel     String?    @map("autonomy_level")
+  // DI-21.106. The base branch whose L4 gate Factoree read. Null until it reads one.
+  autoMergeGateBase String?    @map("auto_merge_gate_base")
   workflowId        String     @map("workflow_id")
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")

@@ -648,7 +648,7 @@ export type CreateSetupProductData = {
     linearTeamKey: string;
     slug: string;
     name: string;
-    defaultAutonomy: "L0" | "L1" | "L2" | "L3";
+    defaultAutonomy: "L0" | "L1" | "L2" | "L3" | "L4";
     runner?: "opencode" | "claude";
     model: string | null;
     modelKeyName?: string;
@@ -1174,9 +1174,9 @@ export type UpdateProductData = {
       url: string;
       set: string | null;
     } | null;
-    defaultAutonomy?: "L0" | "L1" | "L2" | "L3";
+    defaultAutonomy?: "L0" | "L1" | "L2" | "L3" | "L4";
     riskCaps?: {
-      [key: string]: "L0" | "L1" | "L2" | "L3";
+      [key: string]: "L0" | "L1" | "L2" | "L3" | "L4";
     };
     allowedDomains?: Array<string>;
     defaultRunner?: "opencode" | "claude";
@@ -1320,7 +1320,7 @@ export type UpdateProductResponse = UpdateProductResponses[keyof UpdateProductRe
 
 export type ActivateProductData = {
   body: {
-    defaultAutonomy: "L0" | "L1" | "L2" | "L3";
+    defaultAutonomy: "L0" | "L1" | "L2" | "L3" | "L4";
   };
   path: {
     id: string;
@@ -1476,6 +1476,53 @@ export type GetProductGitHubAccessResponses = {
 };
 
 export type GetProductGitHubAccessResponse = GetProductGitHubAccessResponses[keyof GetProductGitHubAccessResponses];
+
+export type GetProductAutoMergeAttentionData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/auto-merge-attention";
+};
+
+export type GetProductAutoMergeAttentionErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetProductAutoMergeAttentionError =
+  GetProductAutoMergeAttentionErrors[keyof GetProductAutoMergeAttentionErrors];
+
+export type GetProductAutoMergeAttentionResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    pullRequests: Array<{
+      repositoryFullName: string;
+      number: number;
+      url: string;
+      baseBranch: string;
+      reason: string;
+    }>;
+  };
+};
+
+export type GetProductAutoMergeAttentionResponse =
+  GetProductAutoMergeAttentionResponses[keyof GetProductAutoMergeAttentionResponses];
 
 export type ListProductSecretsData = {
   body?: never;

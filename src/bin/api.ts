@@ -223,8 +223,9 @@ const pullRequestClose = new PullRequestCloseHandler({
 });
 
 // docs/specs/pr-review-merge-and-deploy.md. Each event of a recorded pull request goes to its PR workflow.
+const pullRequestRecords = new PrismaPullRequestStore(prisma);
 const pullRequestEvents = new PullRequestEventRouter({
-  pullRequests: new PrismaPullRequestStore(prisma),
+  pullRequests: pullRequestRecords,
   signal: createPullRequestEventSender(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
   logger,
 });
@@ -264,6 +265,7 @@ const app = buildServer({
   recordPullRequestPreview,
   pullRequestClosed: (input) => pullRequestClose.handle(input),
   pullRequestEvents,
+  pullRequestRecords,
   readGitHubAccess: async (installationId) => readGitHubAppInstallation({ credentials: await readAppCredentials(), installationId }),
   setup: {
     github: {

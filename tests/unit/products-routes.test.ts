@@ -432,7 +432,8 @@ describe("Products administration API", () => {
     expect(products.policyChanges.map((change) => change.field)).toEqual(["defaultAutonomy", "riskCaps"]);
   });
 
-  it("refuses L4 with 422 and changes nothing, because Version 1 never merges", async () => {
+  // docs/specs/pr-review-merge-and-deploy.md. L4 is a level an operator sets, and a cap may name it.
+  it("accepts L4 as the default and as a risk cap", async () => {
     const { app, products } = build({});
     const created = await app.inject({
       method: "POST",
@@ -440,17 +441,16 @@ describe("Products administration API", () => {
       payload: { linearWorkspaceId: "ws-1", slug: "merge", name: "Merge", linearTeamKey: "MRG" },
     });
     const product = created.json<{ id: string }>();
-    const before = products.rows.get(product.id)?.defaultAutonomy;
 
-    const refused = await app.inject({
+    const accepted = await app.inject({
       method: "PUT",
       url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`,
-      payload: { defaultAutonomy: "L4" },
+      payload: { defaultAutonomy: "L4", riskCaps: { payments: "L2", docs: "L4" } },
     });
 
-    expect(refused.statusCode).toBe(422);
-    expect(products.policyChanges).toEqual([]);
-    expect(products.rows.get(product.id)?.defaultAutonomy).toBe(before);
+    expect(accepted.statusCode).toBe(200);
+    expect(products.rows.get(product.id)?.defaultAutonomy).toBe("L4");
+    expect(products.rows.get(product.id)?.riskCaps).toEqual({ payments: "L2", docs: "L4" });
   });
 
   // docs/specs/pr-review-merge-and-deploy.md, DI-21.102. Only the product names the PR reviewer.

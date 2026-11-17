@@ -3,7 +3,9 @@ import type { FactoreePrismaClient } from "./client.js";
 import { eventHeadSha, pullRequestWorkflowId, type PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type {
   AutoMergeState,
+  AutoMergeUpdate,
   PublishedPullRequest,
+  PullRequestSteeringFacts,
   PullRequestStore,
   RecordPublishedPullRequestInput,
 } from "~/domain/pull-requests/pull-request-store.js";
@@ -15,7 +17,8 @@ type Row = Prisma.PullRequestGetPayload<{ include: typeof include }>;
 
 const stateOf = (value: string): PullRequestState => (value === "merged" || value === "closed" ? value : "open");
 
-const autoMergeOf = (value: string): AutoMergeState => (value === "enabled" || value === "unavailable" ? value : "off");
+const autoMergeOf = (value: string): AutoMergeState =>
+  value === "enabled" || value === "unavailable" || value === "stopped" ? value : "off";
 
 const toRecord = (row: Row): PublishedPullRequest => ({
   id: row.id,
@@ -34,6 +37,9 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   contractRevision: row.contractRevision,
   autoMerge: autoMergeOf(row.autoMerge),
   autoMergeReason: row.autoMergeReason,
+  verifiedHeadSha: row.verifiedHeadSha,
+  autonomyLevel: row.autonomyLevel,
+  autoMergeGateBase: row.autoMergeGateBase,
   workflowId: row.workflowId,
 });
 
@@ -74,10 +80,13 @@ export class PrismaPullRequestStore implements PullRequestStore {
         headSha: input.headSha,
         baseBranch: input.baseBranch,
         originRunId: input.runId,
+        verifiedHeadSha: input.headSha,
+        autonomyLevel: input.autonomyLevel,
         workflowId: pullRequestWorkflowId(input.tenantId, repository.fullName, input.number),
       },
-      // DI-9.8. The pull request existed. The origin run and the workflow id stay.
-      update: { headSha: input.headSha, url: input.url },
+      // DI-9.8. The pull request existed. The origin run and the workflow id stay. The pushed head
+      // is verified, so it and the level of its run replace the old ones (DI-21.104).
+      update: { headSha: input.headSha, url: input.url, verifiedHeadSha: input.headSha, autonomyLevel: input.autonomyLevel },
       include,
     });
     return toRecord(row);
@@ -152,5 +161,47 @@ export class PrismaPullRequestStore implements PullRequestStore {
     if (updated.count === 0) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}" closed`);
     const row = await this.prisma.pullRequest.findFirstOrThrow({ where: { id: pullRequestId, tenantId }, include });
     return toRecord(row);
+  }
+
+  async steeringFacts(tenantId: string, pullRequestId: string): Promise<PullRequestSteeringFacts> {
+    const row = await this.prisma.pullRequest.findFirst({
+      where: { id: pullRequestId, tenantId },
+      select: {
+        repository: { select: { productId: true, githubInstallationId: true } },
+        originRun: { select: { linearAgentSessionId: true } },
+      },
+    });
+    if (row === null) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+    return {
+      productId: row.repository.productId,
+      githubInstallationId: row.repository.githubInstallationId,
+      linearAgentSessionId: row.originRun.linearAgentSessionId,
+    };
+  }
+
+  async setAutoMerge(tenantId: string, pullRequestId: string, update: AutoMergeUpdate): Promise<PublishedPullRequest> {
+    return this.prisma.$transaction(async (tx) => {
+      const before = await tx.pullRequest.findFirst({ where: { id: pullRequestId, tenantId }, include });
+      if (before === null) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+      await tx.pullRequest.update({
+        where: { id: pullRequestId },
+        data: {
+          autoMerge: update.state,
+          autoMergeReason: update.reason,
+          ...(update.gateBase === undefined ? {} : { autoMergeGateBase: update.gateBase }),
+        },
+      });
+      return toRecord(before);
+    });
+  }
+
+  async listAutoMergeUnavailable(tenantId: string, productId: string): Promise<PublishedPullRequest[]> {
+    const rows = await this.prisma.pullRequest.findMany({
+      where: { tenantId, state: "open", autoMerge: "unavailable", repository: { productId } },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include,
+    });
+    return rows.map(toRecord);
   }
 }

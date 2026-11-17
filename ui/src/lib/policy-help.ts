@@ -6,7 +6,7 @@ import type { AutonomyLevel } from "@/lib/workspace";
  * The text follows ASD-STE100: one statement per sentence, active voice, present tense.
  */
 
-export type HelpLevel = AutonomyLevel | "L4";
+export type HelpLevel = AutonomyLevel;
 
 export type LevelHelp = {
   level: HelpLevel;
@@ -47,16 +47,17 @@ export const AUTONOMY_HELP: readonly LevelHelp[] = [
   },
   {
     level: "L4",
-    name: "Merge",
-    summary: "Reserved. Factoree never merges.",
-    detail: "The SDD reserves this level. Version 1 never merges, so you cannot select it.",
+    name: "Auto-merge",
+    summary: "Runs every check. Turns on GitHub auto-merge.",
+    detail:
+      "Factoree opens a ready pull request as at L3. It turns on GitHub auto-merge when its checks, the PR reviewer and every review pass on the head. The repository rules decide the merge. The repository must allow auto-merge, and the base branch must have a rule. Otherwise the pull request stays open as at L3.",
   },
 ];
 
 export const AUTONOMY_NOTES: readonly string[] = [
-  "Each level stops earlier on the L3 path. A lower level is always the safer level.",
+  "Each level stops earlier on the L4 path. A lower level is always the safer level.",
   "A pending product runs at L0.",
-  "A human always merges.",
+  "Up to L3, a human merges. At L4, the repository rules decide the merge. A human turns off auto-merge to stop it.",
 ];
 
 export function levelHelp(level: HelpLevel): LevelHelp {

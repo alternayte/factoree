@@ -42,6 +42,7 @@ describe("pullRequestWorkflow", () => {
     const taskQueue = `pr-${randomUUID()}`;
     const taken: string[] = [];
     const closes: { merged: boolean; mergeCommitSha: string | null }[] = [];
+    const steers: string[] = [];
     let state: PullRequestState = "open";
     let headSha = "head-1";
     const worker = await Worker.create({
@@ -59,6 +60,10 @@ describe("pullRequestWorkflow", () => {
           closes.push(input);
           state = input.merged ? "merged" : "closed";
           return state;
+        },
+        steerAutoMerge: async (input: { trigger: string }) => {
+          steers.push(input.trigger);
+          return { state: "off" };
         },
       },
     });
@@ -86,6 +91,8 @@ describe("pullRequestWorkflow", () => {
     expect(result).toBe("merged");
     expect(taken).toEqual(["github:review-1", "github:sync-1", "github:close-1"]);
     expect(closes).toEqual([{ merged: true, mergeCommitSha: "merge-1" }]);
+    // DI-21.104. The L4 merge steers at the start and after each event but the close.
+    expect(steers).toEqual(["start", "event", "new_head"]);
   });
 
   it("takes a redelivered close once", async () => {
@@ -106,6 +113,7 @@ describe("pullRequestWorkflow", () => {
           closes += 1;
           return "closed";
         },
+        steerAutoMerge: async () => ({ state: "off" }),
       },
     });
     // The record already holds the close, so the workflow skips the copy and waits.

@@ -278,6 +278,14 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
           mergeable: pullRequest.mergeable ?? null,
           mergeableState: pullRequest.mergeable_state ?? null,
         };
+      } else if (action === "auto_merge_disabled") {
+        // DI-21.105. A human who turns off the auto-merge Factoree turned on stops the L4 merge.
+        routedEvent = {
+          kind: "auto_merge_disabled",
+          deliveryId: deliveryIdOr(`${key}:auto_merge_disabled:${pullRequest.head.sha}`),
+          headSha: pullRequest.head.sha,
+          senderLogin: parsed.data.sender?.login ?? null,
+        };
       }
       if (routedEvent === null) return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
       const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);

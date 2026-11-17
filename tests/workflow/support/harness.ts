@@ -553,6 +553,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         workflowId: `pr:${recordInput.tenantId}:${recordInput.repositoryId}#${String(recordInput.number)}:${recordInput.runId}`,
       };
     },
+    // DI-21.104. The PR workflow steers auto-merge at its start. No GitHub answers here.
+    steerAutoMerge: async () => ({ state: "off" }),
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
     readWorkItemContent: async () => ({
       comments: null,

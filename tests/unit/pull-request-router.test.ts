@@ -30,6 +30,9 @@ const pullRequest = (overrides: Partial<PublishedPullRequest> = {}): PublishedPu
   contractRevision: 1,
   autoMerge: "off",
   autoMergeReason: null,
+  verifiedHeadSha: "head-1",
+  autonomyLevel: "L3",
+  autoMergeGateBase: null,
   workflowId: "pr:tenant-1:acme/api#12",
   ...overrides,
 });

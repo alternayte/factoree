@@ -2750,9 +2750,10 @@ export async function agentRunWorkflow(
       // clause stops the Run before a pull request exists, not after.
       // docs/specs/autonomy-levels.md and check-isolation.md. L2 opens a draft. So does a patch
       // that changes a file that defines a check, and a run with an unstable assertion
-      // (docs/specs/run-recovery.md).
+      // (docs/specs/run-recovery.md). docs/specs/pr-review-merge-and-deploy.md: L4 publishes a
+      // ready pull request as L3 does, and its PR workflow turns on auto-merge.
       const publishDraft =
-        refined.autonomyLevel !== "L3" ||
+        (refined.autonomyLevel !== "L3" && refined.autonomyLevel !== "L4") ||
         (checkSandbox?.checkDefiningFiles.length ?? 0) > 0 ||
         publishedValidationUnstableOnly;
       const unmetBeforePublication = prePublicationFailures({
@@ -2933,6 +2934,8 @@ export async function agentRunWorkflow(
           headBranch: publication.branch,
           headSha: publication.commitSha,
           baseBranch: publishInput.baseBranch,
+          // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run.
+          autonomyLevel: refined.autonomyLevel,
         };
         await notify(async () => {
           const recorded = await activities.recordPullRequest(recordInput);

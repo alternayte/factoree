@@ -484,6 +484,13 @@ describe("GitHub webhook route", () => {
     expect(routed.map((entry) => entry.event.kind)).toEqual(["synchronized"]);
   });
 
+  // DI-21.105. A human who turns off auto-merge stops the L4 merge, so the event reaches the PR workflow.
+  it("routes an auto-merge that was turned off", async () => {
+    const { app, routed } = build({});
+    expect((await app.inject(pullRequest("auto_merge_disabled", 12, false))).json()).toEqual({ status: "handled" });
+    expect(routed.map((entry) => entry.event.kind)).toEqual(["auto_merge_disabled"]);
+  });
+
   it("routes a human request-changes review with the reviewer facts", async () => {
     const { app, routed } = build({});
     const response = await app.inject({

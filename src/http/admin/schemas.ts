@@ -12,7 +12,9 @@ import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
  * requests, and `schemaOf` turns each one into the JSON Schema of the OpenAPI document.
  */
 
-const autonomyLevel = z.enum(["L0", "L1", "L2", "L3"]);
+// docs/specs/pr-review-merge-and-deploy.md. L4 turns on GitHub auto-merge. Risk caps and the
+// factoree:l0 to factoree:l2 labels still lower it.
+const autonomyLevel = z.enum(["L0", "L1", "L2", "L3", "L4"]);
 
 export const effortSchema = z.object({
   implementer: z.string().nullable(),
@@ -155,6 +157,23 @@ export const githubAccessSchema = z.object({
       missingEvents: z.array(z.string()),
       /** Set when Factoree could not read the installation. */
       error: z.string().nullable(),
+    }),
+  ),
+});
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D5. The open L4 pull requests of a product that stay
+ * open as at L3, each with the settings its repository misses.
+ */
+export const autoMergeAttentionSchema = z.object({
+  pullRequests: z.array(
+    z.object({
+      repositoryFullName: z.string(),
+      number: z.number(),
+      url: z.string(),
+      baseBranch: z.string(),
+      /** One sentence for each missing setting. */
+      reason: z.string(),
     }),
   ),
 });

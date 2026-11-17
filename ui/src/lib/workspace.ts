@@ -5,7 +5,7 @@ export function pickWorkspace(memberships: Membership[], linearWorkspaceId: stri
   return memberships.find((m) => m.linearWorkspaceId === linearWorkspaceId) ?? memberships[0];
 }
 
-export const AUTONOMY_LEVELS = ["L0", "L1", "L2", "L3"] as const;
+export const AUTONOMY_LEVELS = ["L0", "L1", "L2", "L3", "L4"] as const;
 export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
 
 export const EFFORT_ROLES = ["implementer", "refiner", "validator", "reviewer", "setup"] as const;

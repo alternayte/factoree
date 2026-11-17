@@ -105,6 +105,8 @@ export interface ServerDependencies {
   pullRequestEvents?: GitHubWebhookDependencies["pullRequestEvents"];
   /** docs/specs/pr-review-merge-and-deploy.md. Reads what one GitHub App installation granted. */
   readGitHubAccess?: ProductRouteDependencies["readGitHubAccess"];
+  /** docs/specs/pr-review-merge-and-deploy.md, D5. The L4 pull requests whose gate failed. */
+  pullRequestRecords?: ProductRouteDependencies["pullRequests"];
   /** The GitHub and Linear calls of setup. */
   setup: Pick<SetupRouteDependencies, "github" | "linear">;
   /** The built UI. Absent, or a directory without index.html, serves no UI. */
@@ -203,6 +205,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         ...(dependencies.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: dependencies.checkSkillRegistry }),
         ...(dependencies.modelCatalog === undefined ? {} : { modelCatalog: dependencies.modelCatalog }),
         ...(dependencies.readGitHubAccess === undefined ? {} : { readGitHubAccess: dependencies.readGitHubAccess }),
+        ...(dependencies.pullRequestRecords === undefined ? {} : { pullRequests: dependencies.pullRequestRecords }),
         sandboxProviders,
       });
       // docs/specs/host-credentials.md.

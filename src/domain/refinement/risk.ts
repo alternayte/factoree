@@ -38,8 +38,11 @@ const LOWERING_LABELS: Readonly<Record<string, AutonomyLevel>> = {
   "factoree:l2": "L2",
 };
 
-/** Version 1 never merges, so L3 is the highest level a Run can reach. SDD section 27. */
-const HIGHEST = "L3";
+/**
+ * docs/specs/pr-review-merge-and-deploy.md amends SDD section 27: L4 turns on GitHub auto-merge, so
+ * it is the highest level a Run can reach.
+ */
+const HIGHEST = "L4";
 
 export interface AutonomyInput {
   /** The Product default level. A pending Product is L0. */
@@ -59,7 +62,7 @@ export interface AutonomyDecision {
 
 /**
  * docs/specs/autonomy-levels.md. The level of one Run. Every rule can only lower the level, so
- * the result is never above the Product default and never above L3.
+ * the result is never above the Product default and never above L4.
  */
 export const decideAutonomy = (input: AutonomyInput): AutonomyDecision => {
   const reasons: string[] = [];

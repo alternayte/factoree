@@ -55,8 +55,11 @@ describe("decideAutonomy", () => {
     expect(level("L0", ["payments"])).toBe("L0");
   });
 
-  it("caps L4 to L3, because Version 1 must not merge automatically", () => {
-    expect(level("L4", [])).toBe("L3");
+  // docs/specs/pr-review-merge-and-deploy.md. L4 holds, and a default high-risk label still lowers it to L2.
+  it("keeps L4, and lowers it by a risk cap or a lowering label", () => {
+    expect(level("L4", [])).toBe("L4");
+    expect(level("L4", ["payments"])).toBe("L2");
+    expect(level("L4", ["factoree:l2"])).toBe("L2");
   });
 
   it("falls back to L2 for an unknown level", () => {

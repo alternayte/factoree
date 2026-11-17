@@ -1,5 +1,16 @@
-import { condition, continueAsNew, defineQuery, defineSignal, log, proxyActivities, setHandler, workflowInfo } from "@temporalio/workflow";
+import {
+  condition,
+  continueAsNew,
+  defineQuery,
+  defineSignal,
+  isCancellation,
+  log,
+  proxyActivities,
+  setHandler,
+  workflowInfo,
+} from "@temporalio/workflow";
 import type { Activities } from "~/activities/index.js";
+import type { AutoMergeTrigger } from "~/activities/pull-request.activities.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 
@@ -34,6 +45,30 @@ const activities = proxyActivities<Activities>({
   retry: { maximumAttempts: 10, initialInterval: "2 seconds", backoffCoefficient: 2, maximumInterval: "5 minutes" },
 });
 
+/** Each GitHub read of the L4 merge goes again on a fault. A refusal is an answer, not a fault. */
+const autoMergeActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "5 minutes",
+  retry: { maximumAttempts: 5, initialInterval: "5 seconds", backoffCoefficient: 2, maximumInterval: "2 minutes" },
+});
+
+/**
+ * DI-21.104. The trigger of the L4 merge for one taken event. A close ends the workflow, and a deploy
+ * changes no merge condition, so neither steers.
+ */
+const autoMergeTriggerOf = (event: PullRequestEvent): AutoMergeTrigger | null => {
+  switch (event.kind) {
+    case "closed":
+    case "deployment_status":
+      return null;
+    case "synchronized":
+      return "new_head";
+    case "auto_merge_disabled":
+      return "auto_merge_disabled";
+    default:
+      return "event";
+  }
+};
+
 /**
  * docs/specs/pr-review-merge-and-deploy.md, DI-21.101. One workflow per published pull request, keyed
  * `pr:<tenant>:<repository>#<number>`. The run that published the pull request ends READY_FOR_HUMAN and
@@ -44,6 +79,9 @@ const activities = proxyActivities<Activities>({
  * origin run and ends the workflow. The other kinds change only the record: the head commit on a
  * synchronize, the base branch on an edit. The L4 merge, the PR follow-up runs, the bring-current
  * update and the deploy report each add their handling of their event kinds to this loop.
+ *
+ * The L4 merge (DI-21.104) steers GitHub auto-merge once at the start and after each other event. A
+ * steer that fails after its retries costs only that steer: the next event steers again.
  */
 export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Promise<PullRequestState> => {
   const queue: PullRequestEvent[] = [...(input.pending ?? [])];
@@ -53,6 +91,17 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     view.pending = queue.length;
   });
   setHandler(pullRequestStateQuery, () => view);
+
+  const steer = async (trigger: AutoMergeTrigger, eventHeadSha: string | null) => {
+    try {
+      await autoMergeActivities.steerAutoMerge({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, trigger, eventHeadSha });
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      log.warn("the auto-merge steer failed", { trigger, error: String(error) });
+    }
+  };
+  // A continue-as-new carries its events. Only a new workflow steers at its start.
+  if (input.pending === undefined) await steer("start", null);
 
   for (;;) {
     await condition(() => queue.length > 0);
@@ -78,6 +127,9 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
       }
       view.pending = 0;
       return view.state;
+    } else {
+      const trigger = autoMergeTriggerOf(event);
+      if (trigger !== null) await steer(trigger, event.kind === "auto_merge_disabled" ? event.headSha : null);
     }
     // A pull request with many check runs takes many events. The history starts again before it
     // grows too large, and the events not yet taken move to the new run.

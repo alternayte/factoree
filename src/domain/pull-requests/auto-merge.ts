@@ -1,0 +1,200 @@
+import type { PrReviewer } from "~/domain/products/product-registry.js";
+import type { AutoMergeState } from "./pull-request-store.js";
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. The L4 merge: Factoree turns on GitHub auto-merge when
+ * every condition of the spec holds for the head, and the repository ruleset decides the merge.
+ * This module holds the decisions. `AutoMergePort` is the GitHub boundary.
+ */
+
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/** The merge settings of one repository. Null means GitHub did not answer the setting. */
+export interface RepositoryMergeSettings {
+  allowAutoMerge: boolean | null;
+  allowSquash: boolean;
+  allowMergeCommit: boolean;
+  allowRebase: boolean;
+}
+
+/** What the L4 gate reads when the pull request opens (D5). */
+export interface AutoMergeGate {
+  settings: RepositoryMergeSettings;
+  /**
+   * The merge requirements of the base branch: the type of each active ruleset rule that gates a
+   * merge, and `branch_protection` for a classic protection rule.
+   */
+  baseRequirements: string[];
+}
+
+/** The pull request as GitHub answers it now. */
+export interface PullRequestOnGitHub {
+  nodeId: string;
+  headSha: string;
+  open: boolean;
+  draft: boolean;
+  /** GitHub's mergeable state, such as clean, blocked, behind or unknown. */
+  mergeableState: string | null;
+  /** True while auto-merge is on, whoever turned it on. */
+  autoMergeEnabled: boolean;
+  baseBranch: string;
+}
+
+/** One pull request review, as GitHub lists it, oldest first. */
+export interface ReviewOnGitHub {
+  reviewerLogin: string;
+  /** GitHub's upper-case review state: APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED or PENDING. */
+  state: string;
+}
+
+/** The PR reviewer verdict on one commit. absent: the app reported no check and no status there. */
+export type ReviewerVerdict = "passed" | "failed" | "pending" | "absent";
+
+/** The outcome of an auto-merge request. clean: GitHub can merge now, so it refuses auto-merge. */
+export type EnableAutoMergeOutcome = { kind: "enabled" } | { kind: "clean" } | { kind: "refused"; message: string };
+
+export type MergeOutcome = { kind: "merged" } | { kind: "refused"; message: string };
+
+/**
+ * The GitHub calls of the L4 merge. Every call mints its own installation token for the one
+ * repository, on the control plane only.
+ */
+export interface AutoMergePort {
+  pullRequest(slug: string, number: number, installationId: string): Promise<PullRequestOnGitHub>;
+  gate(slug: string, baseBranch: string, installationId: string): Promise<AutoMergeGate>;
+  reviewerVerdict(slug: string, sha: string, reviewer: PrReviewer, installationId: string): Promise<ReviewerVerdict>;
+  reviews(slug: string, number: number, installationId: string): Promise<ReviewOnGitHub[]>;
+  enable(slug: string, pullRequest: PullRequestOnGitHub, method: MergeMethod, installationId: string): Promise<EnableAutoMergeOutcome>;
+  disable(slug: string, pullRequest: PullRequestOnGitHub, installationId: string): Promise<void>;
+  /** Merges the pull request only while its head is `sha`. */
+  merge(slug: string, number: number, sha: string, method: MergeMethod, installationId: string): Promise<MergeOutcome>;
+}
+
+/**
+ * DI-21.106. The ruleset rule types that hold a merge back until something passes or a human acts.
+ * A rule such as `deletion` or `non_fast_forward` gates no merge, so it does not count.
+ */
+export const MERGE_GATING_RULES: readonly string[] = [
+  "pull_request",
+  "required_status_checks",
+  "required_deployments",
+  "required_signatures",
+  "code_scanning",
+  "workflows",
+  "merge_queue",
+];
+
+/** A classic branch protection rule on the base branch. */
+export const BRANCH_PROTECTION = "branch_protection";
+
+/**
+ * Squash when the repository allows it. Otherwise the first method that the repository settings
+ * list: merge commit, then rebase. Null when the repository allows none.
+ */
+export const mergeMethodOf = (settings: RepositoryMergeSettings): MergeMethod | null => {
+  if (settings.allowSquash) return "squash";
+  if (settings.allowMergeCommit) return "merge";
+  if (settings.allowRebase) return "rebase";
+  return null;
+};
+
+/**
+ * D5. Each setting the L4 gate misses, as one sentence that names it. An empty list means that L4
+ * takes effect on this pull request.
+ */
+export const gateGaps = (gate: AutoMergeGate, repositoryFullName: string, baseBranch: string): string[] => {
+  const gaps: string[] = [];
+  if (gate.settings.allowAutoMerge === null) {
+    gaps.push(`Factoree could not read the "Allow auto-merge" setting of ${repositoryFullName}.`);
+  } else if (!gate.settings.allowAutoMerge) {
+    gaps.push(`${repositoryFullName} does not allow auto-merge. Turn on "Allow auto-merge" in the repository settings.`);
+  }
+  if (mergeMethodOf(gate.settings) === null) {
+    gaps.push(`${repositoryFullName} allows no merge method. Allow squash merging in the repository settings.`);
+  }
+  if (gate.baseRequirements.length === 0) {
+    gaps.push(
+      `The base branch ${baseBranch} has no rule that gates a merge. Add a ruleset or a branch protection rule ` +
+        "that requires a review or a status check.",
+    );
+  }
+  return gaps;
+};
+
+/**
+ * The logins whose newest review requests changes. A COMMENTED or PENDING review changes no
+ * verdict. An APPROVED or DISMISSED review replaces the earlier verdict of the same reviewer.
+ */
+export const openChangeRequests = (reviews: readonly ReviewOnGitHub[]): string[] => {
+  const verdicts = new Map<string, string>();
+  for (const review of reviews) {
+    const state = review.state.toUpperCase();
+    if (state === "APPROVED" || state === "CHANGES_REQUESTED" || state === "DISMISSED") verdicts.set(review.reviewerLogin, state);
+  }
+  return [...verdicts].filter(([, state]) => state === "CHANGES_REQUESTED").map(([login]) => login).sort();
+};
+
+export interface AutoMergeConditionInput {
+  /** The level of the run that published the verified head. */
+  level: string | null;
+  verifiedHeadSha: string | null;
+  pullRequest: PullRequestOnGitHub;
+  reviewer: PrReviewer | null;
+  /** Null when the product names no PR reviewer. */
+  reviewerVerdict: ReviewerVerdict | null;
+  changeRequests: readonly string[];
+}
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. Each auto-merge condition that does not hold for the
+ * current head, as one sentence. An empty list means every condition holds.
+ */
+export const unmetConditions = (input: AutoMergeConditionInput): string[] => {
+  const unmet: string[] = [];
+  if (input.level !== "L4") unmet.push(`The run of this head ran at ${input.level ?? "an unknown level"}, not L4.`);
+  if (!input.pullRequest.open) unmet.push("The pull request is not open.");
+  if (input.pullRequest.draft) unmet.push("The pull request is a draft.");
+  if (input.verifiedHeadSha === null || input.pullRequest.headSha !== input.verifiedHeadSha) {
+    unmet.push(`Factoree did not verify the head commit ${input.pullRequest.headSha.slice(0, 12)}.`);
+  }
+  if (input.reviewer !== null && input.reviewerVerdict !== "passed") {
+    const verdict = input.reviewerVerdict === null || input.reviewerVerdict === "absent" ? "has not reported" : input.reviewerVerdict === "failed" ? "failed" : "is pending";
+    unmet.push(`The PR reviewer check "${input.reviewer.checkName}" ${verdict} on the head commit.`);
+  }
+  if (input.changeRequests.length > 0) {
+    unmet.push(`A "request changes" review is open from ${input.changeRequests.join(", ")}.`);
+  }
+  return unmet;
+};
+
+/** GitHub can merge a pull request in these states at once, so it refuses to turn on auto-merge. */
+const MERGEABLE_NOW = new Set(["clean", "unstable", "has_hooks"]);
+
+export type AutoMergeAction =
+  | { kind: "enable" }
+  | { kind: "merge" }
+  | { kind: "disable"; reason: string }
+  | { kind: "none"; reason: string | null };
+
+/**
+ * DI-21.105. What Factoree does with auto-merge now. Factoree turns off only an auto-merge that it
+ * turned on, and it never turns auto-merge on again after a human turned it off. A pull request that
+ * GitHub can merge at once merges, pinned to the head, because GitHub refuses auto-merge on it.
+ */
+export const decideAutoMerge = (input: {
+  state: AutoMergeState;
+  unmet: readonly string[];
+  pullRequest: PullRequestOnGitHub;
+}): AutoMergeAction => {
+  if (input.unmet.length > 0) {
+    const reason = input.unmet.join(" ");
+    if (input.state === "enabled" && input.pullRequest.autoMergeEnabled) return { kind: "disable", reason };
+    return { kind: "none", reason };
+  }
+  if (input.state === "stopped") return { kind: "none", reason: "A human turned off auto-merge on this pull request." };
+  if (input.state === "unavailable") return { kind: "none", reason: null };
+  // On already: Factoree turned it on, or a human did, and every condition holds.
+  if (input.pullRequest.autoMergeEnabled) return { kind: "none", reason: null };
+  if (input.pullRequest.mergeableState !== null && MERGEABLE_NOW.has(input.pullRequest.mergeableState)) return { kind: "merge" };
+  return { kind: "enable" };
+};

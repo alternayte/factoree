@@ -25,7 +25,9 @@ import type { ModelCatalogService } from "~/domain/products/model-catalog-servic
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 import type { GitHubAppInstallation } from "~/adapters/github/app-manifest.js";
 import { missingGitHubAccess } from "~/adapters/github/app-manifest.js";
+import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import {
+  autoMergeAttentionSchema,
   autonomyLevel,
   githubAccessSchema,
   productSchema,
@@ -54,8 +56,8 @@ const createSchema = z
   })
   .strict();
 
-// docs/specs/autonomy-levels.md. SDD section 27 reserves L4, and Version 1 never merges, so no
-// operator can set it. `autonomyLevel` in ./schemas.ts holds L0 to L3.
+// docs/specs/pr-review-merge-and-deploy.md amends docs/specs/autonomy-levels.md: an operator can set
+// L4. `autonomyLevel` in ./schemas.ts holds L0 to L4.
 
 const updateSchema = z
   .object({
@@ -141,6 +143,8 @@ export interface ProductRouteDependencies {
    * it belongs to another App. Absent in a server that reads no installation.
    */
   readGitHubAccess?: (installationId: string) => Promise<GitHubAppInstallation | null>;
+  /** docs/specs/pr-review-merge-and-deploy.md, D5. The L4 pull requests whose gate failed. */
+  pullRequests?: Pick<PullRequestStore, "listAutoMergeUnavailable">;
 }
 
 export const registerProductRoutes = (app: FastifyInstance, dependencies: ProductRouteDependencies): void => {
@@ -558,6 +562,40 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
         }),
       );
       return { installations };
+    },
+  );
+
+  // docs/specs/pr-review-merge-and-deploy.md, D5. An L4 pull request whose repository misses a
+  // setting stays open as at L3, and the product page names the setting.
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id/auto-merge-attention",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "getProductAutoMergeAttention",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        response: { 200: schemaOf(autoMergeAttentionSchema), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const parsed = tenantQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+      const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      const pullRequests = (await dependencies.pullRequests?.listAutoMergeUnavailable(tenant.id, product.id)) ?? [];
+      return {
+        pullRequests: pullRequests.map((pullRequest) => ({
+          repositoryFullName: pullRequest.repositoryFullName,
+          number: pullRequest.number,
+          url: pullRequest.url,
+          baseBranch: pullRequest.baseBranch,
+          reason: pullRequest.autoMergeReason ?? "",
+        })),
+      };
     },
   );
 

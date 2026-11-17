@@ -132,6 +132,10 @@ describe("AT-33 tenant isolation", () => {
         // docs/specs/kiln-sandbox-provider.md. A warm snapshot holds one tenant's checkout.
         "WarmSnapshot",
         "host_credential",
+        // docs/specs/pr-review-merge-and-deploy.md, DI-21.99, DI-21.100. One row per published pull
+        // request and per event its PR workflow took, of one tenant.
+        "pull_request",
+        "pull_request_event",
       ].sort(),
     );
   });

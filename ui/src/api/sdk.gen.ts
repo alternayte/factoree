@@ -52,6 +52,9 @@ import type {
   GetModelCatalogData,
   GetModelCatalogErrors,
   GetModelCatalogResponses,
+  GetProductAutoMergeAttentionData,
+  GetProductAutoMergeAttentionErrors,
+  GetProductAutoMergeAttentionResponses,
   GetProductData,
   GetProductErrors,
   GetProductGitHubAccessData,
@@ -517,6 +520,30 @@ export const getProductGitHubAccess = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/products/{id}/github-access",
+    ...options,
+  });
+
+export const getProductAutoMergeAttention = <ThrowOnError extends boolean = false>(
+  options: Options<GetProductAutoMergeAttentionData, ThrowOnError>,
+): RequestResult<GetProductAutoMergeAttentionResponses, GetProductAutoMergeAttentionErrors, ThrowOnError> =>
+  (options.client ?? client).get<
+    GetProductAutoMergeAttentionResponses,
+    GetProductAutoMergeAttentionErrors,
+    ThrowOnError
+  >({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/auto-merge-attention",
     ...options,
   });
 
