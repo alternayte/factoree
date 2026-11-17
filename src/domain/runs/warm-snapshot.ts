@@ -38,6 +38,11 @@ export interface BootstrapInputs {
   docker?: boolean;
   /** docs/specs/repository-setup-and-services.md. The key files, by path and blob SHA. */
   files?: readonly RepositoryFileEntry[];
+  /**
+   * docs/specs/host-credentials.md. Each host credential of the product: its host, its redirect
+   * hosts and, for `github`, its repositories. A secret or a token rotation is not part of it.
+   */
+  credentials?: readonly string[];
 }
 
 /** The config file itself. Its fields that change a snapshot are already in the key. */
@@ -80,6 +85,7 @@ export const bootstrapKeyOf = (inputs: BootstrapInputs): string => {
         ...(services === null ? {} : { services }),
         ...(inputs.docker === true && services === null ? { docker: true } : {}),
         ...(files.length === 0 ? {} : { files: files.map((file) => [file.path, file.sha]) }),
+        ...((inputs.credentials ?? []).length === 0 ? {} : { credentials: [...(inputs.credentials ?? [])].sort() }),
       }),
     )
     .digest("hex");

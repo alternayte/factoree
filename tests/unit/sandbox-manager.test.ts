@@ -210,7 +210,7 @@ describe("SandboxManager.prepare", () => {
       supportsCheckpoints: true,
       supportsExposedServices: false,
       supportsCustomImage: false,
-      supportsDocker: false,
+      supportsDocker: false, bindsCredentials: true,
     });
     const manager = new SandboxManager({ sandbox });
     await expect(manager.prepare(input)).rejects.toThrow(NetworkPolicyNotEnforcedError);
@@ -222,7 +222,7 @@ describe("SandboxManager.prepare", () => {
       supportsCheckpoints: true,
       supportsExposedServices: false,
       supportsCustomImage: false,
-      supportsDocker: false,
+      supportsDocker: false, bindsCredentials: true,
     });
     const manager = new SandboxManager({ sandbox, allowUnenforcedNetwork: true });
     await expect(manager.prepare(input)).resolves.toBeDefined();
@@ -234,7 +234,7 @@ describe("SandboxManager.prepare", () => {
       supportsCheckpoints: false,
       supportsExposedServices: false,
       supportsCustomImage: false,
-      supportsDocker: false,
+      supportsDocker: false, bindsCredentials: true,
     });
     const manager = new SandboxManager({ sandbox });
     const prepared = await manager.prepare(input);

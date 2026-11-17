@@ -45,6 +45,7 @@ export const bootstrapKeyOfConfig = (
   file: RepositoryConfigFile,
   defaults: ProjectDefaults,
   files: readonly RepositoryFileEntry[] | null,
+  credentials: readonly string[] = [],
 ): string | null => {
   if (files === null) return null;
   const { runtime } = toProjectRuntimeConfig(parseFactoreeConfig(file.content), defaults);
@@ -55,6 +56,7 @@ export const bootstrapKeyOfConfig = (
     services: runtime.services ?? null,
     docker: runtime.docker === true,
     files: selectKeyFiles(files, keyFilePatternsOf(runtime)),
+    credentials,
   });
 };
 
@@ -72,6 +74,8 @@ export interface BuildAheadTriggerDependencies {
   readConfig: (fullName: string, ref: string, githubInstallationId: string) => Promise<RepositoryConfigFile | null>;
   listFiles: (fullName: string, ref: string, githubInstallationId: string) => Promise<RepositoryFileEntry[] | null>;
   repositoryBaseUrl: () => Promise<string>;
+  /** docs/specs/host-credentials.md. The credential part of the bootstrap key of a product. */
+  credentialKey?: (tenantId: string, productId: string) => Promise<string[]>;
   logger: Logger;
 }
 
@@ -96,7 +100,8 @@ export class BuildAheadTrigger {
       const file = await this.dependencies.readConfig(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
       if (file === null) return;
       const files = await this.dependencies.listFiles(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
-      const key = bootstrapKeyOfConfig(file, projectDefaultsOf(product), files);
+      const credentials = (await this.dependencies.credentialKey?.(tenantId, product.id)) ?? [];
+      const key = bootstrapKeyOfConfig(file, projectDefaultsOf(product), files, credentials);
       const url = buildRepositoryUrl(await this.dependencies.repositoryBaseUrl(), repository.fullName);
       const stored = await this.dependencies.snapshotKeys(tenantId, url);
       // An unknown key cannot match, so a truncated tree requests a build. The build compares the
@@ -113,7 +118,10 @@ export class BuildAheadTrigger {
     });
   }
 
-  /** The Product allow list changed, and it is part of the bootstrap key of each repository. */
+  /**
+   * The Product allow list or its host credentials changed. Both are part of the bootstrap key of
+   * each repository (docs/specs/host-credentials.md).
+   */
   async afterAllowListChange(tenantId: string, productId: string): Promise<void> {
     await this.guarded("allow_list", async () => {
       const repositories = await this.dependencies.repositories.listByProduct(productId);

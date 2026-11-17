@@ -24,6 +24,11 @@ export interface SetupReport {
   observedHosts: string[];
   /** The hosts outside the allow list that the setup sandbox tried, when the provider records egress. */
   deniedHosts: string[];
+  /**
+   * docs/specs/host-credentials.md. The credential hosts and redirect hosts the setup sandbox
+   * reached. Absent in a report written before host credentials existed.
+   */
+  credentialHosts?: string[];
   /** False when the provider records no egress (E2B), so both host lists are empty. */
   egressRecorded: boolean;
   /** The fakes the proposal adds, by compose service and API. */
@@ -145,6 +150,9 @@ export const renderSetupReport = (report: SetupReport): string => {
     lines.push(
       report.observedHosts.length === 0 ? "The bootstrap reached no host." : `The bootstrap reached: ${report.observedHosts.map((host) => `\`${host}\``).join(", ")}.`,
     );
+    if ((report.credentialHosts ?? []).length > 0) {
+      lines.push("", `The host credentials reached: ${(report.credentialHosts ?? []).map((host) => `\`${host}\``).join(", ")}.`);
+    }
     if (report.deniedHosts.length > 0) {
       lines.push(
         "",

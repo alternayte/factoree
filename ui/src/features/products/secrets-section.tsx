@@ -54,6 +54,8 @@ export function SecretsSection({
   }, [keyRequest, canEdit]);
   const [deleting, setDeleting] = useState<Secret | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: listProductSecretsQueryKey(options) });
+  // docs/specs/host-credentials.md. A host credential secret belongs to the Host credentials section.
+  const shown = secrets.data?.filter((secret) => secret.kind !== "host_credential");
 
   const remove = useMutation({
     mutationFn: async (name: string) =>
@@ -94,10 +96,10 @@ export function SecretsSection({
       {secrets.isPending ? <SkeletonRows label="Loading the secrets" /> : null}
       <ErrorAlert error={secrets.error} title="The secrets did not load" />
       <ErrorAlert error={remove.error} />
-      {secrets.data?.length === 0 ? <Empty>No secrets.</Empty> : null}
-      {secrets.data && secrets.data.length > 0 ? (
+      {shown?.length === 0 ? <Empty>No secrets.</Empty> : null}
+      {shown && shown.length > 0 ? (
         <ul className="stagger -my-2 divide-y divide-hairline">
-          {secrets.data.map((secret) => (
+          {shown.map((secret) => (
             <li key={secret.name} className="flex flex-wrap items-center gap-2 py-2.5">
               <span className="t-value min-w-0 flex-1 break-all text-ink">{secret.name}</span>
               <Badge>{kindLabel(secret.kind)}</Badge>

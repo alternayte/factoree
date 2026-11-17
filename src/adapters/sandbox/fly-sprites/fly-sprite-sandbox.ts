@@ -1,3 +1,4 @@
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type {
@@ -101,6 +102,7 @@ export class FlySpriteSandbox implements Sandbox {
     supportsExposedServices: true,
     supportsCustomImage: false,
     supportsDocker: false,
+    bindsCredentials: false,
   };
 
   private readonly workspacePath: string;
@@ -165,6 +167,12 @@ export class FlySpriteSandbox implements Sandbox {
    * host and beats a timeout here that names nothing.
    */
   async applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
+    // docs/specs/host-credentials.md. This provider cannot add a header outside the guest.
+    if ((policy.credentials ?? []).length > 0) {
+      throw new RunConfigurationError(
+        `The sandbox provider ${this.name} cannot bind host credentials. Run the product on Kiln or E2B, or remove its host credentials.`,
+      );
+    }
     await this.options.gateway.sprite(ref.id).updateNetworkPolicy(toSpritesNetworkPolicy(policy));
 
     // A wildcard entry names no host to resolve, so it cannot be confirmed this way.

@@ -36,6 +36,7 @@ const capabilities = (supportsDocker: boolean): SandboxCapabilities => ({
   supportsExposedServices: true,
   supportsCustomImage: true,
   supportsDocker,
+  bindsCredentials: true,
 });
 
 const request = (overrides: Partial<ProviderSelectionRequest> = {}): ProviderSelectionRequest => ({

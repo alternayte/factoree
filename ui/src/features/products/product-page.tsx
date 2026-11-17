@@ -35,6 +35,7 @@ import { ContextSourcesSection } from "./context-sources-section";
 import { ModelWarning, RecentSessionsSection } from "./model-defaults";
 import { bodyOf, formOf, LIMITS, type Product, type ProductForm } from "./product-form";
 import { SecretsSection, type KeyRequest } from "./secrets-section";
+import { HostCredentialsSection } from "./host-credentials-section";
 import { AgentsSection } from "./model-picker";
 
 /** docs/specs/skill-registry.md. The Product secret that holds the registry service key. */
@@ -442,7 +443,10 @@ function ProductEditor({
           />
           <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
         </div>
-        <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+        <div className="flex min-w-0 flex-col gap-4">
+          <HostCredentialsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+          <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+        </div>
       </div>
 
       <Section title="Details" className="mt-4">

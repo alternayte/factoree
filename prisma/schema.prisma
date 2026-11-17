@@ -538,6 +538,14 @@ model SandboxLease {
   // Set when a delete at the provider failed. The sandbox still lives, so the lease stays, and the
   // reaper deletes it again on each pass until the provider confirms it.
   destroyFailedAt DateTime? @map("destroy_failed_at")
+  // docs/specs/host-credentials.md. Set while the sandbox holds a `github` binding, whose token
+  // expires after 1 hour. The worker binds a new token on each such sandbox, with the egress list
+  // it applied last, because an E2B update replaces the whole network configuration.
+  bindingTenantId  String?  @map("binding_tenant_id")
+  bindingProductId String?  @map("binding_product_id")
+  bindingHosts     String[] @default([]) @map("binding_hosts")
+  bindingRepositories String[] @default([]) @map("binding_repositories")
+  bindingBoundAt   DateTime? @map("binding_bound_at")
 
   @@unique([adapter, sandboxId])
   @@index([adapter, createdAt])
@@ -656,6 +664,7 @@ model Product {
   setups         RepositorySetup[]
   appChangeIssueRows SetupAppChangeIssue[]
   secrets        ProductSecret[]
+  hostCredentials HostCredential[]
   contextSources ContextSourceConfiguration[]
   runs           Run[]
   policyChanges  ProductPolicyChange[]
@@ -694,6 +703,36 @@ model Repository {
 
   @@unique([tenantId, fullName])
   @@index([productId])
+}
+
+// docs/specs/host-credentials.md. One host credential of a product. The secret of a `registry` or
+// `header` credential is a product secret of kind `host_credential`, named by `secretName`. A
+// `github` credential holds no secret: Factoree mints a read-only installation token.
+model HostCredential {
+  id                   String   @id @default(uuid())
+  tenantId             String   @map("tenant_id")
+  productId            String   @map("product_id")
+  product              Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position             Int
+  // registry, header or github.
+  kind                 String
+  host                 String
+  username             String?
+  headerName           String?  @map("header_name")
+  pathPrefix           String?  @map("path_prefix")
+  // The token service of a `registry` host, from the WWW-Authenticate header of GET /v2/.
+  realmHost            String?  @map("realm_host")
+  realmPath            String?  @map("realm_path")
+  redirectHosts        String[] @default([]) @map("redirect_hosts")
+  // `owner/name` repositories that a `github` token reads, beside the product repositories.
+  repositories         String[] @default([])
+  githubInstallationId String?  @map("github_installation_id")
+  secretName           String?  @map("secret_name")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@unique([productId, host])
+  @@index([tenantId])
+  @@map("host_credential")
 }
 
 model ProductSecret {

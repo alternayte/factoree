@@ -1,3 +1,5 @@
+import { credentialKeyOf } from "~/domain/products/host-credentials.js";
+import { PrismaHostCredentialStore } from "~/persistence/prisma/host-credential.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
 import { PrismaRunStopLog } from "~/persistence/prisma/run-stop.prisma.js";
 import { PrismaRunDraftStore } from "~/persistence/prisma/run-draft.prisma.js";
@@ -158,6 +160,8 @@ const buildAhead = new BuildAheadTrigger({
   readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
   listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
   repositoryBaseUrl: githubBaseUrl(settings),
+  // docs/specs/host-credentials.md. The credential hosts are part of the bootstrap key.
+  credentialKey: async (tenantId, productId) => credentialKeyOf(await new PrismaHostCredentialStore(prisma).list(tenantId, productId)),
   logger,
 });
 

@@ -20,8 +20,12 @@ export interface E2BGateway {
   createSandbox(request: E2BSandboxRequest): Promise<string>;
   /** Connects to a sandbox, resumes it when it is paused, and extends its timeout. */
   keepAlive(sandboxId: string, timeoutMs: number): Promise<void>;
-  /** Replaces the egress rules. An empty list denies all egress. */
-  setEgress(sandboxId: string, allowedDomains: string[]): Promise<void>;
+  /**
+   * Replaces the egress rules. An empty list denies all egress. docs/specs/host-credentials.md:
+   * `headers` holds the headers to add per host. E2B clears every field an update leaves out, so
+   * each call sends the whole set.
+   */
+  setEgress(sandboxId: string, allowedDomains: string[], headers?: Record<string, Record<string, string>>): Promise<void>;
   run(sandboxId: string, command: string, options: E2BRunOptions): Promise<E2BRunResult>;
   /** Starts a command and returns as soon as it runs. The command outlives this client. */
   start(sandboxId: string, command: string, options: Omit<E2BRunOptions, "timeoutMs">): Promise<void>;
@@ -151,12 +155,15 @@ export const createE2BGateway = (connection: E2BConnection): E2BGateway => {
       });
     },
 
-    async setEgress(sandboxId, allowedDomains) {
-      await (await sandbox(sandboxId)).updateNetwork(
-        allowedDomains.length === 0
-          ? { denyOut: [ALL_TRAFFIC] }
-          : { denyOut: [ALL_TRAFFIC], allowOut: allowedDomains },
+    async setEgress(sandboxId, allowedDomains, headers) {
+      const rules = Object.fromEntries(
+        Object.entries(headers ?? {}).map(([host, set]) => [host, [{ transform: { headers: set } }]]),
       );
+      await (await sandbox(sandboxId)).updateNetwork({
+        denyOut: [ALL_TRAFFIC],
+        ...(allowedDomains.length === 0 ? {} : { allowOut: allowedDomains }),
+        ...(Object.keys(rules).length === 0 ? {} : { rules }),
+      });
     },
 
     async run(sandboxId, command, options) {

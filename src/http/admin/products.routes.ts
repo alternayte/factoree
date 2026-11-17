@@ -11,6 +11,7 @@ import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { assertSecretKindAndMark, PROJECT_SECRET_KINDS, ProjectSecretKindError } from "~/domain/products/secret-store.js";
+import { HOST_CREDENTIAL_SECRET_KIND, HOST_CREDENTIAL_SECRET_PREFIX } from "~/domain/products/host-credentials.js";
 import { assertRunnerCredential, RunnerCredentialError } from "~/domain/products/runner-credentials.js";
 import {
   SKILL_REGISTRY_KEY_SECRET,
@@ -540,6 +541,11 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!product) return reply.code(404).send({ error: "product not found" });
     // A credential must fail here, where an operator reads the message, rather than in the
     // middle of a Run. Both rules come from specification section 30.
+    // docs/specs/host-credentials.md. A host credential secret belongs to its credential, which
+    // the host credentials route writes with its checks.
+    if (body.data.kind === HOST_CREDENTIAL_SECRET_KIND || request.params.name.startsWith(HOST_CREDENTIAL_SECRET_PREFIX)) {
+      return reply.code(400).send({ error: "Add a host credential in the Host credentials section of the product page." });
+    }
     try {
       assertSecretKindAndMark(body.data.kind, body.data.injectIntoImplementer);
       // docs/specs/skill-registry.md. The registry key stays on the worker. A mark or the runner
@@ -575,7 +581,7 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
         security: SESSION_SECURITY,
         params: secretParams,
         querystring: workspaceQuery,
-        response: { 204: { type: "null" }, 404: errorSchema },
+        response: { 204: { type: "null" }, 400: errorSchema, 404: errorSchema },
       },
     },
     async (request, reply) => {
@@ -583,6 +589,10 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
       const tenant = await resolveTenant(query.data.linearWorkspaceId);
       if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      // docs/specs/host-credentials.md. Removing the credential removes its secret.
+      if (request.params.name.startsWith(HOST_CREDENTIAL_SECRET_PREFIX)) {
+        return reply.code(400).send({ error: "Remove the host credential in the Host credentials section of the product page." });
+      }
       const removed = await dependencies.secrets.remove(tenant.id, request.params.id, request.params.name);
       if (!removed) return reply.code(404).send({ error: "secret not found" });
       return reply.code(204).send();

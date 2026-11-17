@@ -1,5 +1,5 @@
 import { createPrivateKey, createSign } from "node:crypto";
-import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
+import type { GitHubTokenOptions, GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
 
 /** Refresh under this margin. A long operation must not race the expiry boundary. */
 const REFRESH_MARGIN_MS = 300_000;
@@ -93,17 +93,19 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
     githubInstallationId: string,
     scope?: GitHubTokenScope,
     repositories?: readonly string[],
+    options?: GitHubTokenOptions,
   ): Promise<string> {
     const now = this.options.now?.() ?? Date.now();
     const names = repositoryNames(repositories);
     const key = cacheKey(githubInstallationId, scope, names);
+    const margin = Math.max(REFRESH_MARGIN_MS, options?.minRemainingMs ?? 0);
     const cached = this.cache.get(key);
-    if (cached !== undefined && cached.expiresAtMs - now > REFRESH_MARGIN_MS) return cached.token;
+    if (cached !== undefined && cached.expiresAtMs - now > margin) return cached.token;
 
     const existing = this.inflight.get(key);
     if (existing !== undefined) {
       const minted = await existing;
-      return minted.token;
+      if (minted.expiresAtMs - now > margin) return minted.token;
     }
 
     const mintPromise = this.mint(githubInstallationId, now, scope, names).finally(() => {

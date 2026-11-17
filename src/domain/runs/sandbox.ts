@@ -77,9 +77,32 @@ export interface ServiceRef {
   url: string;
 }
 
+/**
+ * docs/specs/host-credentials.md. One header that the sandbox provider adds, outside the guest, to
+ * each request from the sandbox to `host` whose method and path match. The value never enters the
+ * guest. A request that does not match leaves with no key.
+ */
+export interface CredentialBinding {
+  /** A name for the egress record, never the value. */
+  name: string;
+  /** One exact host name. */
+  host: string;
+  header: string;
+  value: string;
+  /** A path prefix. Absent means every path. */
+  path?: string;
+  /** The methods that carry the key. Kiln narrows by them, and E2B cannot. */
+  methods: Array<"GET" | "HEAD" | "POST">;
+}
+
 /** SDD section 29. The sandbox egress allow list. An empty list denies all egress. */
 export interface NetworkPolicy {
   allowedDomains: string[];
+  /**
+   * docs/specs/host-credentials.md. The bindings of the product's host credentials. Each host
+   * must also be in `allowedDomains`. Absent or empty means the sandbox holds no binding.
+   */
+  credentials?: CredentialBinding[];
 }
 
 export interface SandboxCapabilities {
@@ -105,6 +128,11 @@ export interface SandboxCapabilities {
    * process, or a sandbox without the image, has it false.
    */
   supportsDocker: boolean;
+  /**
+   * docs/specs/host-credentials.md. True when the provider adds a credential to a request outside
+   * the guest. A product with host credentials fails at preparation on a provider without it.
+   */
+  bindsCredentials: boolean;
 }
 
 /**
@@ -290,5 +318,8 @@ export const normalizeNetworkPolicy = (policy: NetworkPolicy): NetworkPolicy => 
     }
     domains.add(domain);
   }
-  return { allowedDomains: [...domains].sort() };
+  return {
+    allowedDomains: [...domains].sort(),
+    ...(policy.credentials === undefined || policy.credentials.length === 0 ? {} : { credentials: policy.credentials }),
+  };
 };

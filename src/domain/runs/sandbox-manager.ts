@@ -30,6 +30,15 @@ import { bootstrapAllowListOf } from "./project-runtime-config.js";
 import { ensureDocker, listRepositoryFiles, seedServices, startServices } from "./services.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
+import { credentialKeyOf, NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
+import {
+  applyEgress,
+  assertBindable,
+  githubRepositoriesOf,
+  probeCredentialHosts,
+  type CredentialBindingStore,
+  type CredentialEgress,
+} from "./credential-egress.js";
 
 export interface PrepareSandboxInput {
   runId: string;
@@ -176,6 +185,13 @@ export interface SandboxManagerOptions {
    * existing `new SandboxManager({ sandbox })` call still compiles.
    */
   logger?: Logger;
+  /**
+   * docs/specs/host-credentials.md. The host credentials of a product, with their bindings. It runs
+   * in the activity, so no value crosses a Temporal boundary. Absent means no product has any.
+   */
+  hostCredentials?: (tenantId: string, productId: string, checkoutRepositories: readonly string[]) => Promise<HostCredentialAccess>;
+  /** docs/specs/host-credentials.md. Where a sandbox with a `github` binding is recorded for its refresh. */
+  credentialBindings?: CredentialBindingStore;
 }
 
 /**
@@ -230,6 +246,17 @@ const checkoutHosts = (specs: RepositorySpec[]): string[] => {
  */
 export class SandboxManager {
   constructor(private readonly options: SandboxManagerOptions) {}
+
+  /** docs/specs/host-credentials.md. A missing stored secret is a fault the operator repairs. */
+  private async credentialAccessOf(input: PrepareSandboxInput, checkoutRepositories: readonly string[]): Promise<HostCredentialAccess> {
+    if (this.options.hostCredentials === undefined) return NO_HOST_CREDENTIALS;
+    try {
+      return await this.options.hostCredentials(input.tenantId, input.productId, checkoutRepositories);
+    } catch (error) {
+      if (error instanceof RunConfigurationError) throw error;
+      throw new RunConfigurationError(`The product's host credentials cannot be bound: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   /** docs/specs/sandbox-provider-spillover.md. The sandbox of one provider, or the default one. */
   private async sandboxOf(provider: string | undefined): Promise<Sandbox> {
@@ -346,6 +373,22 @@ export class SandboxManager {
     onSaved?: (snapshot: { snapshotId: string; bootstrapKey: string }) => void,
   ): Promise<PreparedSandbox | null> {
     const sandbox = await this.sandboxOf(input.provider);
+    // docs/specs/host-credentials.md. The credentials are read before the create, so a provider
+    // that cannot bind them fails the preparation before it costs a sandbox.
+    const checkoutRepositories = githubRepositoriesOf([
+      input.primary.url,
+      ...input.references.map((reference) => reference.url),
+      ...(input.organizationSkills === undefined ? [] : [input.organizationSkills.url]),
+    ]);
+    const access = await this.credentialAccessOf(input, checkoutRepositories);
+    assertBindable(sandbox, access);
+    const egress: CredentialEgress = {
+      tenantId: input.tenantId,
+      productId: input.productId,
+      access,
+      store: this.options.credentialBindings,
+      repositories: checkoutRepositories,
+    };
     const createInput = {
       runId: input.runId,
       tenantId: input.tenantId,
@@ -390,7 +433,7 @@ export class SandboxManager {
 
       // Policy one. Only the repository hosts. The file that names the real allow list does not
       // exist yet, so nothing wider may be permitted here.
-      await sandbox.applyNetworkPolicy(ref, { allowedDomains: repositoryHosts });
+      await applyEgress(sandbox, ref, repositoryHosts, egress);
 
       // The workspace directory must exist before the first checkout. The caller creates it here,
       // because one adapter cannot reliably create the directory at sandbox creation time.
@@ -404,6 +447,8 @@ export class SandboxManager {
             withoutUrlCredentials(mkdir.stderr.trim()),
         );
       }
+
+      await probeCredentialHosts(sandbox, ref, access);
 
       const primary =
         warm === null
@@ -432,6 +477,7 @@ export class SandboxManager {
         services: runtime.services ?? null,
         docker: runtime.docker === true,
         files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, primary.path), keyFilePatternsOf(runtime)),
+        credentials: credentialKeyOf(access.credentials),
       });
       if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
         this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
@@ -454,11 +500,12 @@ export class SandboxManager {
 
       // Policy two. The configured allow list joined with the repository hosts, so the reference
       // checkouts and the bootstrap command both work.
-      await sandbox.applyNetworkPolicy(ref, {
-        allowedDomains: [
-          ...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime), ...(browserTools ? BROWSER_TOOL_HOSTS : [])]),
-        ].sort(),
-      });
+      await applyEgress(
+        sandbox,
+        ref,
+        [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime), ...(browserTools ? BROWSER_TOOL_HOSTS : [])])],
+        egress,
+      );
       const install = browserTools
         ? await sandbox.startProcess(ref, { file: "sh", args: ["-c", BROWSER_TOOLS_INSTALL_SCRIPT], cwd: "/" })
         : null;
@@ -540,8 +587,9 @@ export class SandboxManager {
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.
       // SDD section 29.
-      const allowedHosts = [...new Set([...runtime.allowedDomains, ...(input.agentHosts ?? [])])].sort();
-      await sandbox.applyNetworkPolicy(ref, { allowedDomains: allowedHosts });
+      // docs/specs/host-credentials.md. The credential hosts stay reachable, so the implementer can
+      // add a private dependency, and the prompt states them as allowed.
+      const allowedHosts = await applyEgress(sandbox, ref, [...new Set([...runtime.allowedDomains, ...(input.agentHosts ?? [])])], egress);
 
       // SDD section 16. Discovery runs on the checkouts, in precedence order. A repository skill
       // always precedes an organization skill of the same name. Discovery needs no egress, so it

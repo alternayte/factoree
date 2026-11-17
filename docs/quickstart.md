@@ -324,6 +324,41 @@ gets no key and no route to Skael. The Run records the set, the resolution id
 and each skill version. Skael receives the skills each session loaded, the Run
 outcome, and the one skill proposal the implementer may write.
 
+### 6.2 Host credentials
+
+`docs/specs/host-credentials.md` defines them. A Product holds at most 8, in
+the Host credentials section of its page. The sandbox provider adds each one
+to matching requests outside the sandbox, in every phase, so no agent, script
+or file in the sandbox holds it. Only Kiln and E2B can do this. A Product with
+host credentials fails at preparation on Fly Sprites and on the local adapter.
+
+GitHub Packages accepts only a personal access token (classic), not a GitHub
+App token. Create one with `read:packages` on a bot account that can read the
+packages. On an organisation with SAML single sign-on, authorise the token for
+the organisation. Use a read-only token: Kiln sends a credential on GET and
+HEAD only, but E2B cannot narrow by method.
+
+| Host | Kind | Secret | Redirect host |
+| --- | --- | --- | --- |
+| `npm.pkg.github.com` | Header `Authorization`, no path | `Bearer <PAT>` | `pkg-npm.githubusercontent.com` |
+| `nuget.pkg.github.com` | Header `Authorization`, path `/<org>/` | `Basic <base64 of user:PAT>` | `github-registry-files.githubusercontent.com` |
+| `maven.pkg.github.com` | Header `Authorization` | `Basic <base64 of user:PAT>` | `github-registry-files.githubusercontent.com` |
+| `rubygems.pkg.github.com` | Header `Authorization` | `Basic <base64 of user:PAT>` | none known |
+| `ghcr.io` | Registry login | user and PAT | `pkg-containers.githubusercontent.com` |
+
+Factoree sends a header secret as entered, with no prefix added. It checks a
+registry login on save and refuses one that the registry does not accept. A
+redirect host gets no credential.
+
+A repository names the source in its `nuget.config` or `.npmrc` and holds no
+credential entry. An unset `${NODE_AUTH_TOKEN}` or `%NUGET_AUTH_TOKEN%` stays
+as literal text, the client sends it, and the bound header replaces it.
+
+For private git dependencies, such as Go modules or `git+https` npm packages,
+add GitHub git access and list the `owner/name` repositories. Factoree mints a
+read-only GitHub App token for them and the Product's own repositories, binds
+it on `github.com`, and binds a new one every 10 minutes while a run lives.
+
 ## 7. Register the context sources
 
 `tests/live/scenario.ts` refuses to start unless the Product carries one

@@ -27,6 +27,14 @@ export type GitHubTokenScope = Partial<Record<GitHubPermissionName, GitHubPermis
  * a mint per installation AND per scope, never per installation alone. A cached write token
  * answered to a read request would carry write access into a place ruling 2 forbids it.
  */
+/**
+ * docs/specs/host-credentials.md. `minRemainingMs` asks for a token that lives at least this long,
+ * because a sandbox binding keeps it until the next rebind. A cached token with less left is minted again.
+ */
+export interface GitHubTokenOptions {
+  minRemainingMs?: number;
+}
+
 export interface GitHubTokenProvider {
   /**
    * `repositories` names the `owner/repo` repositories the token may reach. An absent list
@@ -36,5 +44,6 @@ export interface GitHubTokenProvider {
     githubInstallationId: string,
     scope?: GitHubTokenScope,
     repositories?: readonly string[],
+    options?: GitHubTokenOptions,
   ): Promise<string>;
 }

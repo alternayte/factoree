@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PROJECT_SECRET_KINDS } from "~/domain/products/secret-store.js";
 import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
 import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
@@ -73,7 +74,7 @@ export const productSchema = z.object({
 export const secretDescriptorSchema = z.object({
   name: z.string(),
   injectIntoImplementer: z.boolean(),
-  kind: z.enum(["test", "runner_credential", "repository_read", "publish"]),
+  kind: z.enum(PROJECT_SECRET_KINDS),
 });
 
 export const workspaceQuerySchema = z.object({ linearWorkspaceId: z.string().min(1) });
