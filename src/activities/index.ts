@@ -242,6 +242,7 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   listMergedForDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
   listDeploys: () => Promise.reject(new Error("this worker holds no pull request store")),
   recordDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
+  setDeployIssueMove: () => Promise.reject(new Error("this worker holds no pull request store")),
   openDeployFailure: () => Promise.reject(new Error("this worker holds no pull request store")),
   markDeployFollowedUp: () => Promise.reject(new Error("this worker holds no pull request store")),
 };

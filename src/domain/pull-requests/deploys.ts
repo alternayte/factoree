@@ -63,6 +63,11 @@ export interface PullRequestDeployRecord {
   environmentUrl: string | null;
   resolvedAt: Date | null;
   followUpWorkflowId: string | null;
+  /** DI-21.126. The webhook delivery that recorded the row, or null for a row from before the column. */
+  deliveryId: string | null;
+  /** DI-21.126. The issue move of a failed deploy, or null before Factoree decided it. */
+  issueMove: DeployIssueMoveState | null;
+  issueStateName: string | null;
   createdAt: Date;
 }
 
@@ -77,6 +82,8 @@ export interface RecordDeployInput {
   previousSha: string | null;
   logUrl: string | null;
   environmentUrl: string | null;
+  /** DI-21.126. The webhook delivery of the deployment status. */
+  deliveryId: string;
 }
 
 /** DI-21.122. A success counts once per environment, and a failure once per deployment. */
@@ -102,13 +109,21 @@ export const deployRange = (failure: { previousSha: string | null; sha: string }
     ? `up to \`${failure.sha.slice(0, 12)}\` (Factoree found no earlier successful deploy of this environment)`
     : `\`${failure.previousSha.slice(0, 12)}..${failure.sha.slice(0, 12)}\``;
 
-/** The spec: a successful deploy posts the environment and the commit in Linear. */
-export const deploySuccessNotice = (input: { environment: string; sha: string; pullRequestUrl: string; environmentUrl: string | null }): string =>
-  `The change of ${input.pullRequestUrl} is deployed to \`${input.environment}\` at commit \`${input.sha.slice(0, 12)}\`.` +
-  (input.environmentUrl !== null && /^https:\/\//.test(input.environmentUrl) ? ` ${input.environmentUrl}` : "");
+/**
+ * The spec and DI-21.126: a successful deploy posts one line in Linear with the environment and the
+ * commit. The proof pack document holds the rest.
+ */
+export const deploySuccessNotice = (input: { environment: string; sha: string }): string =>
+  `Deployed to \`${input.environment}\` at commit \`${input.sha.slice(0, 12)}\`. The proof pack is updated.`;
 
 /** What the move of the issue did after a failed deploy, for the notice. */
 export type FailedDeployIssueMove = "moved" | "human_moved" | "not_moved";
+
+/**
+ * DI-21.126. The stored issue move of a failed deploy. `moving` is written before the Linear call,
+ * so a retry knows that the issue may have moved already.
+ */
+export type DeployIssueMoveState = FailedDeployIssueMove | "moving";
 
 /**
  * The spec: a failed deploy posts the environment, the commit range and the job log link. Rollback

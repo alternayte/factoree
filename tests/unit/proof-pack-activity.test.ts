@@ -594,7 +594,7 @@ describe("publishProofPack, needs your eye (docs/specs/by-eye-criteria-and-selec
 
 /** docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. */
 describe("amendProofPack", () => {
-  it("renders the whole proof pack again with the deploys and the comments after publication", async () => {
+  it("stores the whole proof pack again with the deploys and the comments after publication, and posts nothing (DI-21.126)", async () => {
     const stored: { document: Record<string, unknown> | null; input: Record<string, unknown> | null; sha256: string | null } = {
       document: null,
       input: null,
@@ -621,28 +621,26 @@ describe("amendProofPack", () => {
       tenantId: "t1",
       productId: "p1",
       runId: "run-1",
-      sessionId: "session-1",
       afterPublication: { amendedFor: "a comment arrived.", comments: ["dana: Looks fine."] },
     });
     await activities.amendProofPack({
       tenantId: "t1",
       productId: "p1",
       runId: "run-1",
-      sessionId: "session-1",
       afterPublication: {
         amendedFor: "the change is deployed to production.",
         deploys: [{ environment: "production", state: "success", sha: "d".repeat(40), previousSha: null, logUrl: null, environmentUrl: null, resolved: false }],
       },
     });
-    expect(posted).toHaveLength(3);
-    const amended = posted[2] ?? "";
-    expect(amended).toContain("_Amended: the change is deployed to production._");
-    expect(amended).toContain("### After publication");
-    expect(amended).toContain("`production`: deployed at commit `dddddddddddd`.");
-    // A field the second amendment leaves out keeps what the first one set.
-    expect(amended).toContain("- dana: Looks fine.");
-    // The rest of the proof pack is the one posted at publication.
-    expect(amended).toContain("### Checks");
+    expect(posted).toHaveLength(1);
+    expect(stored.document).toMatchObject({
+      afterPublication: {
+        amendedFor: "the change is deployed to production.",
+        deploys: [expect.objectContaining({ environment: "production", sha: "d".repeat(40) })],
+      },
+    });
+    // The stored input renders the whole proof pack again, with what the first amendment set.
+    expect(stored.input).toMatchObject({ afterPublication: { comments: ["dana: Looks fine."] } });
     expect(stored.sha256).not.toBe(first);
     expect(stored.document).toMatchObject({ afterPublication: { comments: ["dana: Looks fine."] } });
   });

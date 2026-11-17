@@ -89,8 +89,17 @@ export class PullRequestCloseHandler {
    * change of the origin run, so its issue moves back from completed to the state the run moved it
    * from, as a close without a merge moves it (DI-21.51). It moves only while the issue is in the
    * completed state Factoree set.
+   *
+   * DI-21.126. `beforeMove` runs just before the Linear move, and the caller stores there that a move
+   * started. A retry after it passes `moveStarted`, and an issue in the state the run moved it from
+   * then counts as moved, so the retry answers what the first attempt did.
    */
-  async afterFailedDeploy(input: { tenantId: string; originRunId: string }): Promise<{ move: FailedDeployIssueMove; stateName: string | null }> {
+  async afterFailedDeploy(input: {
+    tenantId: string;
+    originRunId: string;
+    moveStarted: boolean;
+    beforeMove: () => Promise<void>;
+  }): Promise<{ move: FailedDeployIssueMove; stateName: string | null }> {
     const run = await this.dependencies.runs.findById(input.tenantId, input.originRunId);
     if (run === null || run.linearIssueId === null || run.issueStateSetId === null || run.issueStateFromId === null) {
       return { move: "not_moved", stateName: null };
@@ -98,9 +107,16 @@ export class PullRequestCloseHandler {
     const port = await this.dependencies.issues(input.tenantId);
     const snapshot = await port.read(run.linearIssueId);
     if (snapshot === null) return { move: "not_moved", stateName: null };
+    if (input.moveStarted && snapshot.state.id === run.issueStateFromId) {
+      if (run.issueStateSetId !== run.issueStateFromId) {
+        await this.dependencies.runs.setIssueState(input.tenantId, run.id, { fromId: run.issueStateFromId, setId: run.issueStateFromId });
+      }
+      return { move: "moved", stateName: snapshot.state.name };
+    }
     if (snapshot.state.id !== run.issueStateSetId) return { move: "human_moved", stateName: snapshot.state.name };
     // Only an issue Factoree completed moves back. An issue the merge did not complete stays.
     if (snapshot.state.type !== "completed") return { move: "not_moved", stateName: snapshot.state.name };
+    await input.beforeMove();
     const move = await moveIfStill(port, run.linearIssueId, run.issueStateSetId, { stateId: run.issueStateFromId });
     if (move.kind === "moved") {
       await this.dependencies.runs.setIssueState(input.tenantId, run.id, { fromId: run.issueStateFromId, setId: move.to.id });

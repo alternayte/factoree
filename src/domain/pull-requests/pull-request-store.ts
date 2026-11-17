@@ -1,6 +1,6 @@
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 import type { PullRequestEvent } from "./pull-request-event.js";
-import type { OpenDeployFailure, PullRequestDeployRecord, RecordDeployInput } from "./deploys.js";
+import type { DeployIssueMoveState, OpenDeployFailure, PullRequestDeployRecord, RecordDeployInput } from "./deploys.js";
 
 /**
  * off until Factoree turns on GitHub auto-merge, and unavailable when the L4 gate of the repository
@@ -150,6 +150,8 @@ export interface PullRequestStore {
    * of its environment on the pull request. False when the key was recorded already.
    */
   recordDeploy(input: RecordDeployInput): Promise<boolean>;
+  /** DI-21.126. Writes the issue move of a recorded failed deploy. */
+  setDeployIssueMove(tenantId: string, deployId: string, move: DeployIssueMoveState, stateName: string | null): Promise<void>;
   /** DI-21.124. The newest open failed deploy of a pull request whose origin run has this agent session. */
   openDeployFailure(tenantId: string, agentSessionId: string): Promise<OpenDeployFailure | null>;
   /** DI-21.124. Marks a failed deploy as followed up. False when a reply followed it up already. */

@@ -11,7 +11,7 @@ import type {
   RecordPublishedPullRequestInput,
 } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
-import { deployKeyOf, type OpenDeployFailure, type PullRequestDeployRecord, type RecordDeployInput } from "~/domain/pull-requests/deploys.js";
+import { deployKeyOf, type DeployIssueMoveState, type OpenDeployFailure, type PullRequestDeployRecord, type RecordDeployInput } from "~/domain/pull-requests/deploys.js";
 
 const include = { repository: { select: { fullName: true } } } as const;
 
@@ -83,8 +83,14 @@ const toDeploy = (row: DeployRow): PullRequestDeployRecord => ({
   environmentUrl: row.environmentUrl,
   resolvedAt: row.resolvedAt,
   followUpWorkflowId: row.followUpWorkflowId,
+  deliveryId: row.deliveryId,
+  issueMove: isDeployIssueMove(row.issueMove) ? row.issueMove : null,
+  issueStateName: row.issueStateName,
   createdAt: row.createdAt,
 });
+
+const DEPLOY_ISSUE_MOVES: readonly string[] = ["moving", "moved", "human_moved", "not_moved"] satisfies DeployIssueMoveState[];
+const isDeployIssueMove = (value: string | null): value is DeployIssueMoveState => value !== null && DEPLOY_ISSUE_MOVES.includes(value);
 
 export class PrismaPullRequestStore implements PullRequestStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -352,6 +358,7 @@ export class PrismaPullRequestStore implements PullRequestStore {
             previousSha: input.previousSha,
             logUrl: input.logUrl,
             environmentUrl: input.environmentUrl,
+            deliveryId: input.deliveryId,
           },
         ],
         skipDuplicates: true,
@@ -365,6 +372,11 @@ export class PrismaPullRequestStore implements PullRequestStore {
       }
       return true;
     });
+  }
+
+  async setDeployIssueMove(tenantId: string, deployId: string, move: DeployIssueMoveState, stateName: string | null): Promise<void> {
+    const updated = await this.prisma.pullRequestDeploy.updateMany({ where: { id: deployId, tenantId }, data: { issueMove: move, issueStateName: stateName } });
+    if (updated.count === 0) throw new Error(`no deploy "${deployId}" of tenant "${tenantId}" took the issue move`);
   }
 
   async openDeployFailure(tenantId: string, agentSessionId: string): Promise<OpenDeployFailure | null> {

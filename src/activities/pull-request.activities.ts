@@ -47,9 +47,11 @@ import {
 } from "~/domain/pull-requests/auto-merge.js";
 import {
   deployFailureNotice,
+  deployKeyOf,
   deployResultOf,
   deploySuccessNotice,
   type DeployPort,
+  type FailedDeployIssueMove,
   type PullRequestDeployRecord,
 } from "~/domain/pull-requests/deploys.js";
 import type { ProofPackDeploy } from "~/domain/evidence/proof-pack.js";
@@ -252,8 +254,9 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
    * deployed commit is in the history of the base branch and holds the merge commit. A success counts
    * once per environment. A failure counts when the merge commit is in its commit range: after the
    * previous successful deploy of the environment, up to the failed commit. A failure moves the issue
-   * back from completed. The answer carries the Linear notice and the proof pack amendment, which the
-   * PR workflow posts. Factoree never deploys, approves or dispatches a deploy, and reverts nothing.
+   * back from completed. The answer carries the one Linear notice and the proof pack amendment, which
+   * the PR workflow applies. Factoree never deploys, approves or dispatches a deploy, and reverts
+   * nothing. DI-21.126: a retry of the same delivery answers the same outcome and notice.
    */
   async takeDeployment(input: { tenantId: string; pullRequestId: string; event: PullRequestEvent }): Promise<TakeDeploymentOutput> {
     const event = input.event;
@@ -266,59 +269,83 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     const mergeCommitSha = record.mergeCommitSha;
     const label = `${record.repositoryFullName}#${String(record.number)}`;
     const log = { pull_request: label, step: "deploy", environment: event.environment, deployment_id: event.deploymentId, state: result };
+    const key = deployKeyOf({ state: result, environment: event.environment, deploymentId: String(event.deploymentId) });
+    const deliveryId = event.deliveryId;
     const deploys = await store.listDeploys(input.tenantId, record.id);
-    if (deploys.some((deploy) => deploy.environment === event.environment && deploy.state === "success")) {
-      return { kind: "none", reason: "the environment holds the change already" };
-    }
-    if (result === "failure" && deploys.some((deploy) => deploy.state === "failure" && deploy.deploymentId === String(event.deploymentId))) {
-      return { kind: "none", reason: "the failed deployment is recorded already" };
+    let row = deploys.find((deploy) => deployKeyOf(deploy) === key) ?? null;
+    // DI-21.126. A retry of the delivery that recorded the row takes it again, so it answers the same
+    // notice. Another delivery of the same key takes nothing.
+    if (row !== null && row.deliveryId !== deliveryId) {
+      return { kind: "none", reason: result === "success" ? "the environment holds the change already" : "the failed deployment is recorded already" };
     }
     const origin = await store.originFacts(input.tenantId, record.id);
-    const slug = record.repositoryFullName;
-    const installationId = origin.githubInstallationId;
-    const port = dependencies.deploys;
-    // DI-21.120. Only a commit of the base branch is a deploy. A deployment of a pull request head
-    // is a preview, and so is any other branch.
-    if (!(await port.contains(slug, event.sha, record.baseBranch, installationId))) {
-      dependencies.logger.info("the deployed commit is not in the base branch, so it is no deploy of the run", log);
-      return { kind: "none", reason: "the deployed commit is not in the base branch" };
+    if (row === null) {
+      if (deploys.some((deploy) => deploy.environment === event.environment && deploy.state === "success")) {
+        return { kind: "none", reason: "the environment holds the change already" };
+      }
+      const slug = record.repositoryFullName;
+      const installationId = origin.githubInstallationId;
+      const port = dependencies.deploys;
+      // DI-21.120. Only a commit of the base branch is a deploy. A deployment of a pull request head
+      // is a preview, and so is any other branch.
+      if (!(await port.contains(slug, event.sha, record.baseBranch, installationId))) {
+        dependencies.logger.info("the deployed commit is not in the base branch, so it is no deploy of the run", log);
+        return { kind: "none", reason: "the deployed commit is not in the base branch" };
+      }
+      if (!(await port.contains(slug, mergeCommitSha, event.sha, installationId))) {
+        return { kind: "none", reason: "the deployed commit does not hold the merge commit" };
+      }
+      let previousSha: string | null = null;
+      if (result === "failure") {
+        previousSha = await port.previousSuccess(slug, event.environment, event.deploymentId, installationId);
+        // The previous successful deploy held the change already, so the failure is not in its range.
+        if (previousSha !== null && (await port.contains(slug, mergeCommitSha, previousSha, installationId))) {
+          return { kind: "none", reason: "an earlier successful deploy holds the change" };
+        }
+      }
+      const isNew = await store.recordDeploy({
+        tenantId: input.tenantId,
+        pullRequestId: record.id,
+        runId: record.verifiedRunId ?? record.originRunId,
+        environment: event.environment,
+        state: result,
+        deploymentId: String(event.deploymentId),
+        sha: event.sha,
+        previousSha,
+        logUrl: event.logUrl,
+        environmentUrl: event.environmentUrl,
+        deliveryId,
+      });
+      if (!isNew) return { kind: "none", reason: "the deploy is recorded already" };
+      row = (await store.listDeploys(input.tenantId, record.id)).find((deploy) => deployKeyOf(deploy) === key) ?? null;
+      if (row === null) throw new Error(`the deploy ${key} of ${label} is not readable after its record`);
     }
-    if (!(await port.contains(slug, mergeCommitSha, event.sha, installationId))) {
-      return { kind: "none", reason: "the deployed commit does not hold the merge commit" };
-    }
-    let previousSha: string | null = null;
-    if (result === "failure") {
-      previousSha = await port.previousSuccess(slug, event.environment, event.deploymentId, installationId);
-      // The previous successful deploy held the change already, so the failure is not in its range.
-      if (previousSha !== null && (await port.contains(slug, mergeCommitSha, previousSha, installationId))) {
-        return { kind: "none", reason: "an earlier successful deploy holds the change" };
+    const deploy = row;
+    // DI-21.126. The issue move is stored on the row before the notice, and a retry reads it. A
+    // `moving` row tells the move that a first attempt may have moved the issue already.
+    let issue: { move: FailedDeployIssueMove; stateName: string | null } | null = null;
+    if (deploy.state === "failure") {
+      if (deploy.issueMove !== null && deploy.issueMove !== "moving") {
+        issue = { move: deploy.issueMove, stateName: deploy.issueStateName };
+      } else {
+        issue = await dependencies.close.afterFailedDeploy({
+          tenantId: input.tenantId,
+          originRunId: record.originRunId,
+          moveStarted: deploy.issueMove === "moving",
+          beforeMove: () => store.setDeployIssueMove(input.tenantId, deploy.id, "moving", null),
+        });
+        await store.setDeployIssueMove(input.tenantId, deploy.id, issue.move, issue.stateName);
       }
     }
-    // The issue moves before the record, so a retry after a failed write still finds it moved.
-    const issue = result === "failure" ? await dependencies.close.afterFailedDeploy({ tenantId: input.tenantId, originRunId: record.originRunId }) : null;
-    const runId = record.verifiedRunId ?? record.originRunId;
-    const isNew = await store.recordDeploy({
-      tenantId: input.tenantId,
-      pullRequestId: record.id,
-      runId,
-      environment: event.environment,
-      state: result,
-      deploymentId: String(event.deploymentId),
-      sha: event.sha,
-      previousSha,
-      logUrl: event.logUrl,
-      environmentUrl: event.environmentUrl,
-    });
-    if (!isNew) return { kind: "none", reason: "the deploy is recorded already" };
     dependencies.logger.info("deploy recorded", { ...log, issue_move: issue?.move ?? "none" });
     const notice =
-      result === "success"
-        ? deploySuccessNotice({ environment: event.environment, sha: event.sha, pullRequestUrl: record.url, environmentUrl: event.environmentUrl })
+      deploy.state === "success"
+        ? deploySuccessNotice({ environment: deploy.environment, sha: deploy.sha })
         : deployFailureNotice({
-            environment: event.environment,
-            sha: event.sha,
-            previousSha,
-            logUrl: event.logUrl,
+            environment: deploy.environment,
+            sha: deploy.sha,
+            previousSha: deploy.previousSha,
+            logUrl: deploy.logUrl,
             pullRequestUrl: record.url,
             issueMove: issue?.move ?? "not_moved",
             issueStateName: issue?.stateName ?? null,
@@ -330,13 +357,12 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       amend: {
         tenantId: input.tenantId,
         productId: origin.productId,
-        runId,
-        sessionId: origin.linearAgentSessionId,
+        runId: deploy.runId,
         afterPublication: {
           amendedFor:
-            result === "success"
-              ? `the change is deployed to ${event.environment} at commit ${event.sha.slice(0, 12)}.`
-              : `the deploy to ${event.environment} failed at commit ${event.sha.slice(0, 12)}.`,
+            deploy.state === "success"
+              ? `the change is deployed to ${deploy.environment} at commit ${deploy.sha.slice(0, 12)}.`
+              : `the deploy to ${deploy.environment} failed at commit ${deploy.sha.slice(0, 12)}.`,
           deploys: proofPackDeploys(await store.listDeploys(input.tenantId, record.id)),
         },
       },
@@ -358,7 +384,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     const product = await dependencies.products.findById(input.tenantId, origin.productId);
     const reviewer = product?.prReviewer ?? null;
     const bot = reviewer === null ? null : `${reviewer.appSlug}[bot]`;
-    const base = { tenantId: input.tenantId, productId: origin.productId, runId: record.verifiedRunId ?? record.originRunId, sessionId: origin.linearAgentSessionId };
+    const base = { tenantId: input.tenantId, productId: origin.productId, runId: record.verifiedRunId ?? record.originRunId };
     if (event.kind === "review") {
       if (event.action !== "submitted" || event.state !== "commented") return { amend: null };
       // The PR reviewer's own reviews are findings of a failed check, or suggestions of a passed one.

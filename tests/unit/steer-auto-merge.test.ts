@@ -74,6 +74,7 @@ const build = (
     listMergedForDeploy: reject,
     listDeploys: reject,
     recordDeploy: reject,
+    setDeployIssueMove: reject,
     openDeployFailure: reject,
     markDeployFollowedUp: reject,
     find: () => Promise.resolve({ ...record }),

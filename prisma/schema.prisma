@@ -1139,6 +1139,13 @@ model PullRequestDeploy {
   resolvedAt         DateTime?   @map("resolved_at")
   // The workflow id of the follow-up run a Linear reply started for a failure (DI-21.124).
   followUpWorkflowId String?     @map("follow_up_workflow_id")
+  // The webhook delivery that recorded the row. A retry of the same delivery takes the row again
+  // with the same notice, and another delivery of the same key takes nothing (DI-21.126).
+  deliveryId         String?     @map("delivery_id")
+  // The issue move of a failed deploy: moving before the Linear call, then moved, human_moved or
+  // not_moved, with the state name the notice names (DI-21.126).
+  issueMove          String?     @map("issue_move")
+  issueStateName     String?     @map("issue_state_name")
   createdAt          DateTime    @default(now()) @map("created_at")
 
   @@unique([pullRequestId, key])

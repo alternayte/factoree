@@ -668,7 +668,8 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
    * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. Amends the proof pack of a run after
    * publication: a deploy result, a plain comment or the PR reviewer suggestions on a passed check.
    * The amendment renders the whole proof pack again from its stored input with the "After
-   * publication" section, stores the new document and hash, and posts it in the agent session. A
+   * publication" section and stores the new document and hash. DI-21.126: it posts nothing in the
+   * agent session. The caller posts at most one short line, and the run page shows the proof pack. A
    * proof pack from before the stored input gets the section alone, and its document takes it. A
    * field the caller leaves out keeps its stored value.
    */
@@ -724,7 +725,6 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         document: JSON.parse(documentText) as Record<string, unknown>,
       });
     }
-    await dependencies.agentSession.respond(input.sessionId, body);
     dependencies.logger.info("proof pack amended", { tenant_id: input.tenantId, run_id: input.runId, step: "proof_pack_amend" });
     return { amended: true };
   },
@@ -735,6 +735,5 @@ export interface AmendProofPackActivityInput {
   tenantId: string;
   productId: string;
   runId: string;
-  sessionId: string;
   afterPublication: { amendedFor: string } & Partial<Omit<ProofPackAfterPublication, "amendedFor">>;
 }

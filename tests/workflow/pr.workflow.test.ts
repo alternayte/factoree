@@ -133,7 +133,7 @@ describe("pullRequestWorkflow", () => {
             kind: "recorded",
             notice: "deployed",
             sessionId: "session-1",
-            amend: { tenantId: "tenant-1", productId: "product-1", runId: "run-1", sessionId: "session-1", afterPublication: { amendedFor: "deploy" } },
+            amend: { tenantId: "tenant-1", productId: "product-1", runId: "run-1", afterPublication: { amendedFor: "deploy" } },
           };
         },
         amendProofPack: async () => {
