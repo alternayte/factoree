@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-17
+
+### Added
+
+- A PR workflow per published pull request takes its review, check, status, conflict, merge and deploy events after the run ends READY_FOR_HUMAN (`docs/specs/pr-review-merge-and-deploy.md`, GitHub PR 57).
+- L4 autonomy. Factoree turns on GitHub auto-merge when its checks, the PR reviewer check and every review pass on the verified head, and the repository rules decide the merge. L4 acts only on a repository that allows auto-merge and whose base branch has a rule; otherwise the pull request stays as at L3 and the product page names the missing setting.
+- A PR reviewer per product: the GitHub App slug and the check name. A failed check starts finding triage in a fresh reviewer session, which keeps only findings with a defect, a rule and evidence and answers each dropped finding on the PR. A kept finding, or a human "request changes" review, starts a PR follow-up run that pushes one new verified commit to the same branch. At most 3 reviewer follow-ups per pull request.
+- Bring current: on a conflict, or before an L4 merge when the base branch must be up to date, Factoree merges the base into the branch, checks it with the frozen contract and the stored validation plan, and pushes the merge commit only after the checks pass.
+- Deploy reports: a deployment of a base-branch commit that holds the merge commit posts the environment and the commit in Linear and amends the proof pack. A failed deploy moves the issue back from completed and posts the commit range and the job log; a reply starts a follow-up run.
+- The product page names each GitHub App permission or event that the installation has not accepted.
+
+### Changed
+
+- The GitHub App manifest adds Checks read, Commit statuses read and the `pull_request_review`, `check_run` and `status` events. An existing install adds them in the App settings and accepts them on the installation.
+
 ## [0.11.0] - 2026-11-17
 
 ### Added
