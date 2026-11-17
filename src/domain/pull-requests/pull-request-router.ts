@@ -1,6 +1,7 @@
 import type { Logger } from "~/telemetry/logger.js";
 import type { PullRequestEvent } from "./pull-request-event.js";
 import type { PublishedPullRequest, PullRequestStore } from "./pull-request-store.js";
+import { DEPLOY_WINDOW_MS, deployResultOf } from "./deploys.js";
 
 /** One event for the PR workflow of one pull request. */
 export interface PullRequestSignal {
@@ -11,10 +12,11 @@ export interface PullRequestSignal {
 }
 
 export interface PullRequestEventRouterDependencies {
-  pullRequests: Pick<PullRequestStore, "findByNumber" | "findByCommit" | "recordEvent" | "listOpenByBase">;
+  pullRequests: Pick<PullRequestStore, "findByNumber" | "findByCommit" | "recordEvent" | "listOpenByBase" | "listMergedForDeploy">;
   /** Signal-with-start: it reaches the PR workflow that runs, or starts it. */
   signal: (input: PullRequestSignal) => Promise<void>;
   logger: Logger;
+  now?: () => Date;
 }
 
 /** routed: the PR workflow took it. recorded: the pull request ended, so only the record took it. */
@@ -60,8 +62,50 @@ export class PullRequestEventRouter {
     return pullRequests.length === 0 ? "unmatched" : "routed";
   }
 
+  /**
+   * Slice 5, DI-21.120, DI-21.121. A `deployment_status` names the deployed commit. The pull requests
+   * whose head or merge commit it is take it as `byCommit` routes it: a deployment of a head stays
+   * the preview link. A deploy result (success, failure or error) also reaches every pull request of
+   * the repository that merged inside the deploy window and holds no successful deploy of that
+   * environment yet. Its PR workflow reads from GitHub whether the deployed commit holds the merge
+   * commit, so the route makes no GitHub call.
+   */
+  async byDeployment(tenantId: string, repositoryFullName: string, event: Extract<PullRequestEvent, { kind: "deployment_status" }>): Promise<PullRequestRouteOutcome> {
+    const direct = await this.dependencies.pullRequests.findByCommit(tenantId, repositoryFullName, event.sha);
+    let outcome: PullRequestRouteOutcome = "unmatched";
+    const reached = new Set<string>();
+    for (const pullRequest of direct) {
+      reached.add(pullRequest.id);
+      const delivered = await this.deliver(pullRequest, event);
+      if (delivered === "routed" || outcome === "unmatched") outcome = delivered;
+    }
+    if (deployResultOf(event.state) === null) return outcome;
+    const since = new Date(this.now().getTime() - DEPLOY_WINDOW_MS);
+    const merged = await this.dependencies.pullRequests.listMergedForDeploy(tenantId, repositoryFullName, event.environment, since);
+    for (const pullRequest of merged) {
+      if (reached.has(pullRequest.id)) continue;
+      const delivered = await this.deliver(pullRequest, event);
+      if (delivered === "routed" || outcome === "unmatched") outcome = delivered;
+    }
+    return outcome;
+  }
+
+  private now(): Date {
+    return this.dependencies.now === undefined ? new Date() : this.dependencies.now();
+  }
+
+  /** DI-21.121. The PR workflow of a merged pull request takes deploys until the window ends. */
+  private takesDeploy(pullRequest: PublishedPullRequest, event: PullRequestEvent): boolean {
+    return (
+      event.kind === "deployment_status" &&
+      pullRequest.state === "merged" &&
+      pullRequest.closedAt !== null &&
+      pullRequest.closedAt.getTime() + DEPLOY_WINDOW_MS > this.now().getTime()
+    );
+  }
+
   private async deliver(pullRequest: PublishedPullRequest, event: PullRequestEvent): Promise<PullRequestRouteOutcome> {
-    if (pullRequest.state === "open" || event.kind === "reopened") {
+    if (pullRequest.state === "open" || event.kind === "reopened" || this.takesDeploy(pullRequest, event)) {
       await this.dependencies.signal({
         workflowId: pullRequest.workflowId,
         tenantId: pullRequest.tenantId,

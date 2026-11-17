@@ -26,6 +26,7 @@ const pullRequest = (overrides: Partial<PublishedPullRequest> = {}): PublishedPu
   originRunId: "run-1",
   state: "open",
   mergeCommitSha: null,
+  closedAt: null,
   reviewerFollowUps: 0,
   contractRevision: 1,
   autoMerge: "off",
@@ -52,6 +53,8 @@ const statusEvent: PullRequestEvent = {
   senderLogin: null,
 };
 
+const NOW = new Date("2026-11-20T12:00:00Z");
+
 const build = (records: PublishedPullRequest[]) => {
   const signals: PullRequestSignal[] = [];
   const recorded: { pullRequestId: string; event: PullRequestEvent }[] = [];
@@ -62,6 +65,8 @@ const build = (records: PublishedPullRequest[]) => {
         Promise.resolve(records.filter((record) => record.headSha === sha || record.mergeCommitSha === sha)),
       listOpenByBase: (_tenantId, _repository, baseBranch) =>
         Promise.resolve(records.filter((record) => record.state === "open" && record.baseBranch === baseBranch)),
+      listMergedForDeploy: (_tenantId, _repository, _environment, since) =>
+        Promise.resolve(records.filter((record) => record.state === "merged" && record.closedAt !== null && record.closedAt >= since)),
       recordEvent: (_tenantId, pullRequestId, event) => {
         recorded.push({ pullRequestId, event });
         return Promise.resolve({ isNew: true, pullRequest: records.find((record) => record.id === pullRequestId) as PublishedPullRequest });
@@ -72,6 +77,7 @@ const build = (records: PublishedPullRequest[]) => {
       return Promise.resolve();
     },
     logger,
+    now: () => NOW,
   });
   return { router, signals, recorded };
 };
@@ -100,6 +106,31 @@ describe("PullRequestEventRouter (docs/specs/pr-review-merge-and-deploy.md, DI-2
     expect(await router.byCommit("tenant-1", "acme/api", "merge-sha", deploy)).toBe("recorded");
     expect(signals).toEqual([]);
     expect(recorded).toEqual([{ pullRequestId: "pr-1", event: deploy }]);
+  });
+
+  // Slice 5, DI-21.121. A deploy result of a later base commit reaches each pull request merged in
+  // the window, and its PR workflow reads whether the commit holds the merge commit.
+  it("routes a deploy result to each pull request merged inside the deploy window", async () => {
+    const recent = pullRequest({ id: "pr-2", number: 13, state: "merged", mergeCommitSha: "merge-2", closedAt: new Date("2026-11-19T12:00:00Z"), workflowId: "pr:tenant-1:acme/api#13" });
+    const old = pullRequest({ id: "pr-3", number: 14, state: "merged", mergeCommitSha: "merge-3", closedAt: new Date("2026-10-01T12:00:00Z"), workflowId: "pr:tenant-1:acme/api#14" });
+    const { router, signals, recorded } = build([pullRequest(), recent, old]);
+    const deploy = {
+      kind: "deployment_status" as const,
+      deliveryId: "github:d-5",
+      deploymentId: 9,
+      environment: "production",
+      state: "failure",
+      sha: "base-later",
+      ref: "main",
+      environmentUrl: null,
+      logUrl: "https://ci.example/9",
+    };
+    expect(await router.byDeployment("tenant-1", "acme/api", deploy)).toBe("routed");
+    expect(signals.map((signal) => signal.pullRequestId)).toEqual(["pr-2"]);
+    expect(recorded).toEqual([]);
+    // A status that is no result yet reaches only the head or the merge commit it names.
+    expect(await router.byDeployment("tenant-1", "acme/api", { ...deploy, deliveryId: "github:d-6", state: "in_progress" })).toBe("unmatched");
+    expect(signals).toHaveLength(1);
   });
 
   it("starts the PR workflow again on a reopen of a closed pull request", async () => {

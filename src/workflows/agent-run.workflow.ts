@@ -87,6 +87,7 @@ import {
 } from "../domain/pull-requests/pr-follow-up.js";
 import type { TriageActivityOutput } from "~/activities/review.activities.js";
 import type { BringCurrentInput, BringCurrentOutcome } from "../domain/pull-requests/bring-current.js";
+import { deployFailureFindingLines } from "../domain/pull-requests/deploys.js";
 // The workflow bundler resolves a relative path only. The module imports nothing.
 import {
   describeAgentRole,
@@ -185,6 +186,21 @@ export interface AgentRunWorkflowInput {
    * merges its base into. Absent for every other run.
    */
   bringCurrent?: BringCurrentInput;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.124. The failed deploy of a follow-up run
+   * that a Linear reply after the failure started. The first implementer attempt takes it as a
+   * finding. Absent for every other run.
+   */
+  deployFailure?: DeployFailureInput;
+}
+
+/** DI-21.124. The failed deploy a follow-up run starts from. */
+export interface DeployFailureInput {
+  environment: string;
+  sha: string;
+  previousSha: string | null;
+  logUrl: string | null;
+  pullRequestUrl: string;
 }
 
 export interface AgentRunWorkflowResult {
@@ -708,6 +724,8 @@ export async function agentRunWorkflow(
   // The findings the first implementer attempt repairs: the PR reviewer findings the triage kept.
   // Slice 4. A base update names the conflict or the failed check at once.
   let initialRepairFindings: string[] = prFollowUp?.baseUpdate === undefined ? [] : baseUpdateFindingLines(prFollowUp.baseUpdate);
+  // Slice 5, DI-21.124. A reply after a failed deploy hands the failure to the first attempt.
+  if (input.deployFailure !== undefined) initialRepairFindings = [...initialRepairFindings, ...deployFailureFindingLines(input.deployFailure)];
   // docs/specs/pr-review-merge-and-deploy.md, slice 4. The pull request a bring-current run updates.
   const bringCurrent = input.bringCurrent ?? null;
   let triagedFindings: TriagedFinding[] = [];

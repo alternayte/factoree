@@ -248,6 +248,35 @@ export interface ProofPackInput {
    * comments on the pull request that started nothing.
    */
   pullRequestFollowUp?: ProofPackPullRequestFollowUp;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. What happened on the pull request
+   * after the proof pack was first posted. An amendment renders the whole proof pack again with it.
+   */
+  afterPublication?: ProofPackAfterPublication;
+}
+
+/** DI-21.122. One deploy result of the merged change, as the repository CI reported it. */
+export interface ProofPackDeploy {
+  environment: string;
+  state: "success" | "failure";
+  sha: string;
+  /** The commit of the previous successful deploy of a failed environment, or null. */
+  previousSha: string | null;
+  logUrl: string | null;
+  environmentUrl: string | null;
+  /** True when a later success of the environment resolved the failure. */
+  resolved: boolean;
+}
+
+/** DI-21.123. The facts an amendment adds after publication. */
+export interface ProofPackAfterPublication {
+  /** One sentence: why Factoree posted the proof pack again. */
+  amendedFor: string;
+  /** The plain comments on the pull request that started nothing, newest last. */
+  comments: string[];
+  /** The PR reviewer's comments on a head whose check passed. They started nothing. */
+  suggestions: string[];
+  deploys: ProofPackDeploy[];
 }
 
 export interface ProofPackPullRequestFollowUp {
@@ -298,6 +327,8 @@ export interface ProofPackDocument {
   status: "READY_FOR_HUMAN" | "DRAFT_PUBLISHED";
   /** docs/specs/pr-review-merge-and-deploy.md. The PR follow-up run, or null for any other run. */
   pullRequestFollowUp: ProofPackPullRequestFollowUp | null;
+  /** DI-21.123. The comments, suggestions and deploys after publication, or null before any amendment. */
+  afterPublication: ProofPackAfterPublication | null;
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
   changeDescription: string;
@@ -421,6 +452,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   runId: input.runId,
   status: input.draft === undefined ? "READY_FOR_HUMAN" : "DRAFT_PUBLISHED",
   pullRequestFollowUp: input.pullRequestFollowUp ?? null,
+  afterPublication: input.afterPublication ?? null,
   workItem: input.workItem,
   pullRequestUrl: input.pullRequestUrl,
   changeDescription: input.changeDescription,
@@ -600,9 +632,42 @@ const followUpLines = (input: ProofPackInput): string[] => {
         `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`,
     ...followUp.kept.map((kept) => `- ${line(kept.evidence)}: ${line(kept.defect)} Rule: ${line(kept.rule)}.`),
     "",
-    ...(followUp.plainComments.length === 0
+    // DI-21.123. An amendment lists the comments of the whole pull request below, so they stand once.
+    ...(followUp.plainComments.length === 0 || input.afterPublication !== undefined
       ? []
       : ["**Comments that started nothing:**", ...followUp.plainComments.map((comment) => `- ${line(comment)}`), ""]),
+  ];
+};
+
+/** DI-21.122. One deploy result, as a human reads it. */
+export const deployLine = (deploy: ProofPackDeploy): string => {
+  if (deploy.state === "success") {
+    return `- \`${line(deploy.environment)}\`: deployed at commit \`${deploy.sha.slice(0, 12)}\`.` + (openable(deploy.environmentUrl) ? ` ${deploy.environmentUrl}` : "");
+  }
+  const range = deploy.previousSha === null ? `up to \`${deploy.sha.slice(0, 12)}\`` : `\`${deploy.previousSha.slice(0, 12)}..${deploy.sha.slice(0, 12)}\``;
+  return (
+    `- \`${line(deploy.environment)}\`: the deploy of the commit range ${range} failed` +
+    (openable(deploy.logUrl) ? `. Job log: ${deploy.logUrl}` : "") +
+    (deploy.resolved ? ". A later deploy of this environment succeeded." : ".")
+  );
+};
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The section an amendment adds: the deploys of
+ * the merged change, the comments that started nothing and the PR reviewer suggestions on a passed
+ * check.
+ */
+export const afterPublicationLines = (after: ProofPackAfterPublication | undefined): string[] => {
+  if (after === undefined) return [];
+  return [
+    "### After publication",
+    "",
+    ...(after.deploys.length === 0 ? [] : ["**Deploys:**", ...after.deploys.map(deployLine), ""]),
+    ...(after.comments.length === 0 ? [] : ["**Comments that started nothing:**", ...after.comments.map((comment) => `- ${line(comment)}`), ""]),
+    ...(after.suggestions.length === 0
+      ? []
+      : ["**PR reviewer suggestions on a passed check, which started nothing:**", ...after.suggestions.map((suggestion) => `- ${line(suggestion)}`), ""]),
+    ...(after.deploys.length + after.comments.length + after.suggestions.length === 0 ? ["Nothing yet.", ""] : []),
   ];
 };
 
@@ -623,6 +688,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
   return [
     "## Factoree delivery",
     "",
+    ...(input.afterPublication === undefined ? [] : [`_Amended: ${line(input.afterPublication.amendedFor)}_`, ""]),
     `${input.draft === undefined ? "**Ready for human review.**" : `**Draft pull request. ${DRAFT_NOT_PROVEN}**`} ${line(input.workItem.title)}${
       input.workItem.url === null ? "" : ` (${input.workItem.url})`
     }`,
@@ -635,6 +701,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     "**Preview:** the pull request preview link appears in this session's links when CI publishes it.",
     "",
     ...followUpLines(input),
+    ...afterPublicationLines(input.afterPublication),
     "### Needs your attention",
     "",
     ...(attention.length === 0 ? ["Nothing."] : attention.map((item) => `- ${line(item)}`)),

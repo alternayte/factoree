@@ -61,7 +61,7 @@ export interface GitHubWebhookDependencies {
    * docs/specs/pr-review-merge-and-deploy.md. Routes each event of a recorded pull request to its PR
    * workflow. A close of a pull request with no record takes `pullRequestClosed`.
    */
-  pullRequestEvents?: Pick<PullRequestEventRouter, "byNumber" | "byCommit" | "byBase">;
+  pullRequestEvents?: Pick<PullRequestEventRouter, "byNumber" | "byCommit" | "byBase" | "byDeployment">;
 }
 
 /** The reply of a routed event. */
@@ -226,10 +226,11 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
       if (tenantId === null) return reply.code(200).send({ status: "handled" });
       const { deployment, deployment_status: deploymentStatus, repository } = parsed.data;
       // docs/specs/pr-review-merge-and-deploy.md. Every state reaches the pull request whose head or
-      // merge commit was deployed.
+      // merge commit was deployed. Slice 5 (DI-21.121): a deploy result also reaches each pull
+      // request merged inside the deploy window, whose PR workflow decides if it holds the change.
       let routed: PullRequestRouteOutcome = "unmatched";
       if (dependencies.pullRequestEvents !== undefined) {
-        routed = await dependencies.pullRequestEvents.byCommit(tenantId, repository.full_name, deployment.sha, {
+        routed = await dependencies.pullRequestEvents.byDeployment(tenantId, repository.full_name, {
           kind: "deployment_status",
           deliveryId: deliveryIdOr(`deployment_status:${repository.full_name}:${String(deployment.id)}:${deploymentStatus.state}`),
           deploymentId: deployment.id,

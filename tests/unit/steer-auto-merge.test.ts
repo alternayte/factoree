@@ -24,6 +24,7 @@ const build = (
     originRunId: "run-1",
     state: "open",
     mergeCommitSha: null,
+    closedAt: null,
     reviewerFollowUps: 0,
     contractRevision: 1,
     autoMerge: options.autoMerge ?? "off",
@@ -70,6 +71,11 @@ const build = (
     markBringCurrentTried: reject,
     listOpenByBase: reject,
     listEvents: reject,
+    listMergedForDeploy: reject,
+    listDeploys: reject,
+    recordDeploy: reject,
+    openDeployFailure: reject,
+    markDeployFollowedUp: reject,
     find: () => Promise.resolve({ ...record }),
     steeringFacts: () => Promise.resolve({ productId: "product-1", githubInstallationId: "42", linearAgentSessionId: "session-1" }),
     setAutoMerge: (_tenantId: string, _id: string, update: AutoMergeUpdate) => {
@@ -110,9 +116,10 @@ const build = (
   };
   const activities = createPullRequestActivities({
     pullRequests: store,
-    close: { closeOfRecord: reject },
+    close: { closeOfRecord: reject, afterFailedDeploy: reject },
     logger: createLogger({ level: "error", redactor: new Redactor() }),
     autoMerge: port,
+    deploys: { contains: reject, previousSuccess: reject },
     products: { findById: () => Promise.resolve({ prReviewer: { appSlug: "review-bot", checkName: "Code review" } } as ProductRecord) },
     agentSession: {
       respond: (_sessionId: string, body: string) => {

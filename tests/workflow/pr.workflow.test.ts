@@ -67,6 +67,8 @@ describe("pullRequestWorkflow", () => {
         },
         // A COMMENTED review starts no PR follow-up run.
         planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
+        // DI-21.123. The comment lists itself in the proof pack only when the planner says so.
+        planProofPackAmendment: async () => ({ amend: null }),
         // Slice 4. The new head does not conflict with its base.
         readPullRequestMergeability: async () => ({ mergeability: "clean" }),
       },
@@ -92,11 +94,84 @@ describe("pullRequestWorkflow", () => {
       return handle.result();
     });
 
+    // DI-21.121. The workflow stays open for the deploy window after the merge, and the time-skipping
+    // test environment skips that window while the test waits for the result.
     expect(result).toBe("merged");
     expect(taken).toEqual(["github:review-1", "github:sync-1", "github:close-1"]);
     expect(closes).toEqual([expect.objectContaining({ merged: true, mergeCommitSha: "merge-1" })]);
     // DI-21.104. The L4 merge steers at the start and after each event but the close.
     expect(steers).toEqual(["start", "event", "new_head"]);
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.121. A merged pull request keeps its
+  // workflow open for the deploys of the merge commit.
+  it("takes a deploy after the merge, amends the proof pack and posts the notice last", async () => {
+    const taskQueue = `pr-${randomUUID()}`;
+    const taken: string[] = [];
+    const calls: string[] = [];
+    let state: PullRequestState = "open";
+    const worker = await Worker.create({
+      connection: environment.nativeConnection,
+      taskQueue,
+      workflowsPath: new URL("../../src/workflows/pr.workflow.ts", import.meta.url).pathname,
+      activities: {
+        takePullRequestEvent: async (input: { event: PullRequestEvent }) => {
+          const isNew = !taken.includes(input.event.deliveryId);
+          if (isNew) taken.push(input.event.deliveryId);
+          return { isNew, state, headSha: "head-2", mergedAt: state === "merged" ? new Date().toISOString() : null };
+        },
+        closePullRequestOfRecord: async () => {
+          state = "merged";
+          return state;
+        },
+        steerAutoMerge: async () => ({ state: "off" }),
+        planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
+        readPullRequestMergeability: async () => ({ mergeability: "clean" }),
+        takeDeployment: async () => {
+          calls.push("take");
+          return {
+            kind: "recorded",
+            notice: "deployed",
+            sessionId: "session-1",
+            amend: { tenantId: "tenant-1", productId: "product-1", runId: "run-1", sessionId: "session-1", afterPublication: { amendedFor: "deploy" } },
+          };
+        },
+        amendProofPack: async () => {
+          calls.push("amend");
+          return { amended: true };
+        },
+        postPullRequestNotice: async (input: { body: string }) => {
+          calls.push(`notice ${input.body}`);
+        },
+      },
+    });
+    const deployed: PullRequestEvent = {
+      kind: "deployment_status",
+      deliveryId: "github:deploy-1",
+      deploymentId: 7,
+      environment: "production",
+      state: "success",
+      sha: "main-later",
+      ref: "main",
+      environmentUrl: null,
+      logUrl: null,
+    };
+    await worker.runUntil(async () => {
+      const handle = await environment.client.workflow.signalWithStart(pullRequestWorkflow, {
+        taskQueue,
+        workflowId: `pr:tenant-1:acme/api#${randomUUID()}`,
+        args: [{ tenantId: "tenant-1", pullRequestId: "pr-4" }],
+        signal: pullRequestEventSignal,
+        signalArgs: [{ ...merge, deliveryId: "github:close-4" }],
+      });
+      await waitFor(async () => (await handle.query(pullRequestStateQuery)).state === "merged", "the merge");
+      await handle.signal(pullRequestEventSignal, deployed);
+      await waitFor(() => calls.length === 3, "the deploy");
+      expect((await handle.describe()).status.name).toBe("RUNNING");
+      // The workflow stays open for the deploy window, so the test ends it.
+      await handle.terminate("test done");
+    });
+    expect(calls).toEqual(["take", "amend", "notice deployed"]);
   });
 
   it("takes a redelivered close once", async () => {

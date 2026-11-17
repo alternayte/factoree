@@ -51,6 +51,7 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   proofPackDocument: (row.proofPackDocument as Record<string, unknown> | null) ?? null,
+  proofPackInput: (row.proofPackInput as Record<string, unknown> | null) ?? null,
   decisions: (row.decisions as unknown as FactoreeDecision[] | null) ?? [],
   repairCount: row.repairCount,
   createdAt: row.createdAt,
@@ -278,7 +279,7 @@ export class PrismaRunRepository implements RunRepository {
   async setProofPack(
     tenantId: string,
     runId: string,
-    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown> },
+    proofPack: { sha256: string; postedAt: Date; document: Record<string, unknown>; input?: Record<string, unknown> },
   ): Promise<void> {
     // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
     const updated = await this.prisma.run.updateMany({
@@ -287,6 +288,7 @@ export class PrismaRunRepository implements RunRepository {
         proofPackSha256: proofPack.sha256,
         proofPackPostedAt: proofPack.postedAt,
         proofPackDocument: proofPack.document as Prisma.InputJsonObject,
+        ...(proofPack.input === undefined ? {} : { proofPackInput: proofPack.input as Prisma.InputJsonObject }),
       },
     });
     // SDD section 68 reads this value to decide whether the Run can complete. A silent success

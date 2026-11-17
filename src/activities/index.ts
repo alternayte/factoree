@@ -64,6 +64,7 @@ import type { RunDraftStore } from "~/domain/runs/run-draft.js";
 import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { createPullRequestActivities } from "./pull-request.activities.js";
+import type { DeployPort } from "~/domain/pull-requests/deploys.js";
 import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestReviewPort } from "~/domain/pull-requests/pr-follow-up.js";
 import type { AutoMergePort } from "~/domain/pull-requests/auto-merge.js";
@@ -184,7 +185,7 @@ export interface ActivityDependencies {
    * PR workflow.
    */
   publishedPullRequests?: PullRequestStore | undefined;
-  pullRequestClose?: Pick<PullRequestCloseHandler, "closeOfRecord"> | undefined;
+  pullRequestClose?: Pick<PullRequestCloseHandler, "closeOfRecord" | "afterFailedDeploy"> | undefined;
   /** docs/specs/pr-review-merge-and-deploy.md. The GitHub calls of the L4 merge. A worker without them turns on no auto-merge. */
   autoMerge?: AutoMergePort | undefined;
   /**
@@ -192,6 +193,8 @@ export interface ActivityDependencies {
    * follow-up runs. A worker without them starts no PR follow-up run.
    */
   pullRequestReviews?: PullRequestReviewPort | undefined;
+  /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The deploy reads. A worker without them reports no deploy. */
+  deploys?: DeployPort | undefined;
   /** The product page of the Factoree UI, which a missing-host post names. */
   productPageUrl?: ((productId: string) => string) | undefined;
 }
@@ -236,6 +239,11 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   markBringCurrentTried: () => Promise.reject(new Error("this worker holds no pull request store")),
   listOpenByBase: () => Promise.reject(new Error("this worker holds no pull request store")),
   listEvents: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listMergedForDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listDeploys: () => Promise.reject(new Error("this worker holds no pull request store")),
+  recordDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
+  openDeployFailure: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markDeployFollowedUp: () => Promise.reject(new Error("this worker holds no pull request store")),
 };
 
 const NO_REVIEWS_REASON = "this worker holds no GitHub review port";
@@ -261,6 +269,14 @@ const NO_AUTO_MERGE: AutoMergePort = {
   disable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   behindBy: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   merge: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
+};
+
+const NO_DEPLOYS_REASON = "this worker holds no GitHub deployment port";
+
+/** A worker built without the deployment port reports no deploy, and the PR workflow logs it. */
+const NO_DEPLOYS: DeployPort = {
+  contains: () => Promise.reject(new Error(NO_DEPLOYS_REASON)),
+  previousSuccess: () => Promise.reject(new Error(NO_DEPLOYS_REASON)),
 };
 
 /** A worker built without the file reader refuses a setup, and runs every other activity. */
@@ -524,6 +540,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     pullRequests: dependencies.publishedPullRequests ?? NO_PULL_REQUEST_STORE,
     close: dependencies.pullRequestClose ?? {
       closeOfRecord: () => Promise.reject(new Error("this worker holds no pull request close handler")),
+      afterFailedDeploy: () => Promise.reject(new Error("this worker holds no pull request close handler")),
     },
     logger: dependencies.logger,
     autoMerge: dependencies.autoMerge ?? NO_AUTO_MERGE,
@@ -534,6 +551,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     workItems: dependencies.workItems,
     repositoryBaseUrl: dependencies.repositoryBaseUrl,
     productPageUrl: dependencies.productPageUrl,
+    deploys: dependencies.deploys ?? NO_DEPLOYS,
   }),
 });
 

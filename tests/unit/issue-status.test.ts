@@ -106,6 +106,7 @@ describe("the pull_request closed event (DI-21.51)", () => {
           return Promise.resolve(run === null ? null : { runId: "run-1", linearIssueId: "issue-1", linearAgentSessionId: "session-1", ...run });
         },
         setIssueState: (_tenantId, _runId, record) => Promise.resolve(void recorded.push(record)),
+        findById: () => Promise.resolve(null),
       },
       issues: () => Promise.resolve(port),
       respond: (_tenantId, _sessionId, body) => Promise.resolve(void lines.push(body)),

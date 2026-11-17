@@ -12,7 +12,9 @@ export type GitHubPermissionName =
   // and the repository settings of the L4 gate.
   | "checks"
   | "statuses"
-  | "metadata";
+  | "metadata"
+  // Slice 5, DI-21.122. The deploy report reads the deployments of an environment.
+  | "deployments";
 
 /** The access level of one permission. GitHub also defines `admin`; Factoree asks for neither. */
 export type GitHubPermissionLevel = "read" | "write";

@@ -150,6 +150,14 @@ export interface TrustedCheckoutInput {
    */
   mergeParentSha?: string;
   /**
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.125. With `parentSha`: mints the credential of
+   * the push from the files the new commit changes against the pull request head, the remote branch
+   * head the push moves. The base side of a merge can change a GitHub Actions workflow that the
+   * verified patch does not name, and GitHub refuses that push without the Workflows permission.
+   * Absent, the push uses `token`.
+   */
+  pushToken?: (pushedFiles: string[]) => Promise<string>;
+  /**
    * Called when the temporary directory removal fails. The failure must never replace the
    * original error, so this callback is the only way to observe it. It is optional, so every
    * existing caller stays unchanged.
@@ -385,9 +393,16 @@ const commitOnPullRequestBranch = async (
   ).trim();
   if (!SHA.test(commitSha)) throw new TrustedCheckoutError("the trusted commit produced no commit SHA", { deterministic: true });
   const baseMove = await measureBaseMove(git, checkout, input.baseSha, input.baseBranch, commitSha);
+  // DI-21.125. The files the push changes on the branch decide the scope of its credential.
+  let pushEnv = remoteEnv;
+  if (input.pushToken !== undefined) {
+    const pushed = await git(checkout, ["diff", "--name-only", "--no-renames", input.parentSha, treeSha]);
+    const pushedFiles = pushed.split("\n").map((line) => line.trim()).filter((line) => line !== "").sort();
+    pushEnv = credentialEnvironment(input.cloneUrl, await input.pushToken(pushedFiles));
+  }
   // No force: a branch head other than the parent refuses the push. A retry pushes the identical
   // commit, which the branch already holds, and git reports it up to date.
-  await git(checkout, ["push", "origin", `${commitSha}:refs/heads/${input.branch}`], remoteEnv);
+  await git(checkout, ["push", "origin", `${commitSha}:refs/heads/${input.branch}`], pushEnv);
   return { commitSha, publishedPatchSha256: facts.publishedPatchSha256, treeSha, branch: input.branch, gitVersion: facts.gitVersion, baseMove };
 };
 

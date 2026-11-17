@@ -11,6 +11,7 @@ import type {
   RecordPublishedPullRequestInput,
 } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
+import { deployKeyOf, type OpenDeployFailure, type PullRequestDeployRecord, type RecordDeployInput } from "~/domain/pull-requests/deploys.js";
 
 const include = { repository: { select: { fullName: true } } } as const;
 
@@ -34,6 +35,7 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   originRunId: row.originRunId,
   state: stateOf(row.state),
   mergeCommitSha: row.mergeCommitSha,
+  closedAt: row.closedAt,
   reviewerFollowUps: row.reviewerFollowUps,
   contractRevision: row.contractRevision,
   autoMerge: autoMergeOf(row.autoMerge),
@@ -65,6 +67,24 @@ const factsOf = (event: PullRequestEvent): Prisma.PullRequestUpdateManyMutationI
       return null;
   }
 };
+
+type DeployRow = Prisma.PullRequestDeployGetPayload<object>;
+
+const toDeploy = (row: DeployRow): PullRequestDeployRecord => ({
+  id: row.id,
+  pullRequestId: row.pullRequestId,
+  runId: row.runId,
+  environment: row.environment,
+  state: row.state === "success" ? "success" : "failure",
+  deploymentId: row.deploymentId,
+  sha: row.sha,
+  previousSha: row.previousSha,
+  logUrl: row.logUrl,
+  environmentUrl: row.environmentUrl,
+  resolvedAt: row.resolvedAt,
+  followUpWorkflowId: row.followUpWorkflowId,
+  createdAt: row.createdAt,
+});
 
 export class PrismaPullRequestStore implements PullRequestStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -291,5 +311,92 @@ export class PrismaPullRequestStore implements PullRequestStore {
       select: { payload: true },
     });
     return rows.map((row) => row.payload as unknown as PullRequestEvent);
+  }
+
+  async listMergedForDeploy(tenantId: string, repositoryFullName: string, environment: string, since: Date): Promise<PublishedPullRequest[]> {
+    const rows = await this.prisma.pullRequest.findMany({
+      where: {
+        tenantId,
+        state: "merged",
+        closedAt: { gte: since },
+        repository: { fullName: { equals: repositoryFullName, mode: "insensitive" } },
+        deploys: { none: { key: deployKeyOf({ state: "success", environment, deploymentId: "" }) } },
+      },
+      orderBy: { closedAt: "asc" },
+      take: 200,
+      include,
+    });
+    return rows.map(toRecord);
+  }
+
+  async listDeploys(tenantId: string, pullRequestId: string): Promise<PullRequestDeployRecord[]> {
+    const rows = await this.prisma.pullRequestDeploy.findMany({ where: { tenantId, pullRequestId }, orderBy: { createdAt: "asc" }, take: 200 });
+    return rows.map(toDeploy);
+  }
+
+  async recordDeploy(input: RecordDeployInput): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const owner = await tx.pullRequest.findFirst({ where: { id: input.pullRequestId, tenantId: input.tenantId }, select: { id: true } });
+      if (owner === null) throw new Error(`no pull request "${input.pullRequestId}" of tenant "${input.tenantId}" took the deploy`);
+      const inserted = await tx.pullRequestDeploy.createMany({
+        data: [
+          {
+            tenantId: input.tenantId,
+            pullRequestId: input.pullRequestId,
+            runId: input.runId,
+            key: deployKeyOf(input),
+            environment: input.environment,
+            state: input.state,
+            deploymentId: input.deploymentId,
+            sha: input.sha,
+            previousSha: input.previousSha,
+            logUrl: input.logUrl,
+            environmentUrl: input.environmentUrl,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 0) return false;
+      if (input.state === "success") {
+        await tx.pullRequestDeploy.updateMany({
+          where: { tenantId: input.tenantId, pullRequestId: input.pullRequestId, environment: input.environment, state: "failure", resolvedAt: null },
+          data: { resolvedAt: new Date() },
+        });
+      }
+      return true;
+    });
+  }
+
+  async openDeployFailure(tenantId: string, agentSessionId: string): Promise<OpenDeployFailure | null> {
+    const row = await this.prisma.pullRequestDeploy.findFirst({
+      where: {
+        tenantId,
+        state: "failure",
+        resolvedAt: null,
+        followUpWorkflowId: null,
+        pullRequest: { originRun: { linearAgentSessionId: agentSessionId } },
+      },
+      orderBy: { createdAt: "desc" },
+      include: { pullRequest: { select: { url: true, mergeCommitSha: true } } },
+    });
+    if (row === null) return null;
+    return {
+      id: row.id,
+      runId: row.runId,
+      environment: row.environment,
+      sha: row.sha,
+      previousSha: row.previousSha,
+      logUrl: row.logUrl,
+      pullRequestUrl: row.pullRequest.url,
+      mergeCommitSha: row.pullRequest.mergeCommitSha,
+    };
+  }
+
+  async markDeployFollowedUp(tenantId: string, deployId: string, workflowId: string): Promise<boolean> {
+    const updated = await this.prisma.pullRequestDeploy.updateMany({
+      where: { id: deployId, tenantId, followUpWorkflowId: null },
+      data: { followUpWorkflowId: workflowId },
+    });
+    return updated.count > 0;
   }
 }

@@ -131,6 +131,8 @@ const delegation = new DelegationService({
   // docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run.
   drafts: new PrismaRunDraftStore(prisma),
   blockerWait,
+  // docs/specs/pr-review-merge-and-deploy.md, slice 5. A reply after a failed deploy starts a follow-up run.
+  deployFailures: new PrismaPullRequestStore(prisma),
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`

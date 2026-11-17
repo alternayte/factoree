@@ -339,6 +339,11 @@ export interface PublishDraftActivityOutput {
 const captureForPublication = async (
   dependencies: PublishingActivityDependencies,
   input: Omit<PublishActivityInput, "draft" | "workItemTitle" | "workItemUrl" | "verificationSummary" | "repairCount" | "baseBranch">,
+  /**
+   * DI-21.125. `clone` mints a token that only reads, for a publication whose push mints its own
+   * credential from the files it changes on the branch.
+   */
+  tokenUse: "push" | "clone" = "push",
 ): Promise<{ token: string; plainUrl: string; patch: VerifiedPatch }> => {
   // Step 1. SDD section 60. Every Project secret reaches the redactor first.
   await registerProjectSecrets(
@@ -358,7 +363,10 @@ const captureForPublication = async (
   // publish pushes one branch. It opens one pull request. The token carries exactly those
   // two permissions, plus `workflows` only for a patch that changes a workflow (DI-21.33).
   // Step 6 proves later that the captured patch changes exactly the reviewed files.
-  const token = await mintPublishToken(dependencies, input, input.reviewedChangedFiles);
+  const token =
+    tokenUse === "clone"
+      ? await dependencies.tokens.tokenForInstallation(input.githubInstallationId, { contents: "read" }, [input.repositorySlug])
+      : await mintPublishToken(dependencies, input, input.reviewedChangedFiles);
 
   // Step 3. The credential reaches the redactor at once, so no later message can echo it.
   dependencies.redactor.addSecret(token);
@@ -578,7 +586,9 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
     const startedAt = new Date(started);
     const labels = { tenant_id: input.tenantId, product_id: input.productId };
     try {
-      const { token, plainUrl, patch } = await captureForPublication(dependencies, input);
+      // DI-21.125. The clone only reads. The push mints its credential from the files it changes on the
+      // branch, which for a merge holds the base side too.
+      const { token, plainUrl, patch } = await captureForPublication(dependencies, input, "clone");
       const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle });
       const commitMessage = [
         `${title} (contract revision ${String(input.contractRevision)})`,
@@ -606,6 +616,11 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         authorEmail: author.email,
         parentSha: input.parentSha,
         ...(input.mergeParentSha === undefined ? {} : { mergeParentSha: input.mergeParentSha }),
+        pushToken: async (pushedFiles: string[]) => {
+          const pushToken = await mintPublishToken(dependencies, input, pushedFiles);
+          dependencies.redactor.addSecret(pushToken);
+          return pushToken;
+        },
         onCleanupFailure: (error: unknown) => {
           dependencies.logger.error("the trusted checkout directory was not removed", {
             tenant_id: input.tenantId,

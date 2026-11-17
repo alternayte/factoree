@@ -1,4 +1,5 @@
 import type { RunDetail } from "./run-view.js";
+import { deployRange, type OpenDeployFailure } from "~/domain/pull-requests/deploys.js";
 
 /**
  * docs/specs/run-recovery.md. A failed run tells the human what blocked it, from recorded facts,
@@ -157,9 +158,15 @@ export const renderFollowUpDescription = (input: {
   failedRunId: string;
   run: Pick<RunDetail, "assertions" | "findings">;
   previousPatch: string | null;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.124. The failed deploy of the merged change of the
+   * run. The run passed its checks, so the deploy failure is what blocked it.
+   */
+  deployFailure?: Pick<OpenDeployFailure, "environment" | "sha" | "previousSha" | "logUrl" | "pullRequestUrl">;
 }): string => {
   const frozen = [...new Map(input.run.assertions.map((assertion) => [assertion.key, assertion])).values()];
   const patch = input.previousPatch;
+  const deploy = input.deployFailure;
   return [
     input.description,
     "",
@@ -169,7 +176,16 @@ export const renderFollowUpDescription = (input: {
     "",
     input.reply.trim(),
     "",
-    `## The failed run this follows up (${input.failedRunId})`,
+    ...(deploy === undefined
+      ? []
+      : [
+          "## The failed deploy",
+          "",
+          `The change of ${deploy.pullRequestUrl} merged, and the deploy to ${deploy.environment} failed on the commit range ${deployRange(deploy)}. ` +
+            `Job log: ${deploy.logUrl ?? "none"}. The base branch holds the merged change, so this run starts from the base with it.`,
+          "",
+        ]),
+    `## The ${deploy === undefined ? "failed run" : "run whose deploy failed"} this follows up (${input.failedRunId})`,
     "",
     "The criteria it froze:",
     ...(frozen.length === 0 ? ["- none recorded"] : frozen.map((assertion) => `- ${assertion.key}: ${oneLine(assertion.statement, 200)}`)),

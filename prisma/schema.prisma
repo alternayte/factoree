@@ -130,6 +130,9 @@ model Run {
   proofPackPostedAt        DateTime?
   // docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document an agent reads.
   proofPackDocument        Json?
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input of the last proof pack,
+  // so an amendment after publication renders the whole proof pack again.
+  proofPackInput           Json?     @map("proof_pack_input")
   // docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking.
   decisions                Json      @default("[]")
   repairCount              Int       @default(0)
@@ -1082,10 +1085,12 @@ model PullRequest {
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
   events            PullRequestEvent[]
+  deploys           PullRequestDeploy[]
 
   @@unique([tenantId, repositoryId, number])
   @@index([tenantId, headSha])
   @@index([originRunId])
+  @@index([tenantId, state, closedAt])
   @@map("pull_request")
 }
 
@@ -1106,4 +1111,37 @@ model PullRequestEvent {
   @@unique([pullRequestId, deliveryId])
   @@index([tenantId])
   @@map("pull_request_event")
+}
+
+// docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.122. One deploy result of a merged pull
+// request: the first success per environment, and each failed deployment whose commit range holds
+// the merge commit. The run is the run of the verified head at the merge, whose proof pack the
+// deploy amends.
+model PullRequestDeploy {
+  id                 String      @id @default(uuid())
+  tenantId           String      @map("tenant_id")
+  pullRequestId      String      @map("pull_request_id")
+  pullRequest        PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  runId              String      @map("run_id")
+  // success:<environment> or failure:<deployment id>, so a success counts once per environment
+  // and a failure once per deployment.
+  key                String
+  environment        String
+  // success or failure.
+  state              String
+  deploymentId       String      @map("deployment_id")
+  sha                String
+  // The commit of the previous successful deploy of the environment, the start of the failed range.
+  previousSha        String?     @map("previous_sha")
+  logUrl             String?     @map("log_url")
+  environmentUrl     String?     @map("environment_url")
+  // A later success of the same environment resolves a failure.
+  resolvedAt         DateTime?   @map("resolved_at")
+  // The workflow id of the follow-up run a Linear reply started for a failure (DI-21.124).
+  followUpWorkflowId String?     @map("follow_up_workflow_id")
+  createdAt          DateTime    @default(now()) @map("created_at")
+
+  @@unique([pullRequestId, key])
+  @@index([tenantId, state])
+  @@map("pull_request_deploy")
 }

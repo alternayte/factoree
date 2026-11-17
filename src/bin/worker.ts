@@ -54,6 +54,7 @@ import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.j
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
 import { GitHubAutoMerge } from "~/adapters/github/github-auto-merge.js";
+import { GitHubDeployments } from "~/adapters/github/github-deployments.js";
 import { GitHubPullRequestReviews } from "~/adapters/github/github-pull-request-reviews.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
@@ -531,6 +532,8 @@ const worker = await Worker.create({
     autoMerge: new GitHubAutoMerge({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     // docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR follow-up runs.
     pullRequestReviews: new GitHubPullRequestReviews({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+    // Slice 5. The deploy report reads compares and deployments, and writes nothing on GitHub.
+    deploys: new GitHubDeployments({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
     validationContracts,
     // docs/specs/pr-review-merge-and-deploy.md, D1. The same store holds the passing plans.

@@ -3,6 +3,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import { eventHeadSha, type PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import {
   droppedFindingReply,
+  findingPlace,
   MAX_FINDINGS,
   MAX_PLAIN_COMMENTS,
   MAX_REVIEWER_FOLLOW_UPS,
@@ -44,10 +45,19 @@ import {
   type BringCurrentReason,
   type Mergeability,
 } from "~/domain/pull-requests/auto-merge.js";
+import {
+  deployFailureNotice,
+  deployResultOf,
+  deploySuccessNotice,
+  type DeployPort,
+  type PullRequestDeployRecord,
+} from "~/domain/pull-requests/deploys.js";
+import type { ProofPackDeploy } from "~/domain/evidence/proof-pack.js";
+import type { AmendProofPackActivityInput } from "./evidence.activities.js";
 
 export interface PullRequestActivityDependencies {
   pullRequests: PullRequestStore;
-  close: Pick<PullRequestCloseHandler, "closeOfRecord">;
+  close: Pick<PullRequestCloseHandler, "closeOfRecord" | "afterFailedDeploy">;
   logger: Logger;
   /** docs/specs/pr-review-merge-and-deploy.md. The GitHub calls of the L4 merge. */
   autoMerge: AutoMergePort;
@@ -60,7 +70,29 @@ export interface PullRequestActivityDependencies {
   /** The GitHub web URL from the install settings. */
   repositoryBaseUrl: () => Promise<string>;
   productPageUrl?: ((productId: string) => string) | undefined;
+  /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The GitHub reads of the deploy report. */
+  deploys: DeployPort;
 }
+
+/**
+ * Slice 5, DI-21.122. What one deployment status did for a merged pull request: nothing, or a
+ * recorded deploy result with the notice for Linear and the amendment of the proof pack.
+ */
+export type TakeDeploymentOutput =
+  | { kind: "none"; reason: string }
+  | { kind: "recorded"; notice: string; sessionId: string; amend: AmendProofPackActivityInput };
+
+/** DI-21.122. The deploys of a pull request, as the proof pack lists them. */
+const proofPackDeploys = (deploys: readonly PullRequestDeployRecord[]): ProofPackDeploy[] =>
+  deploys.map((deploy) => ({
+    environment: deploy.environment,
+    state: deploy.state,
+    sha: deploy.sha,
+    previousSha: deploy.previousSha,
+    logUrl: deploy.logUrl,
+    environmentUrl: deploy.environmentUrl,
+    resolved: deploy.resolvedAt !== null,
+  }));
 
 /** What one event of the PR workflow asks for: nothing, or one PR follow-up run. */
 export type PullRequestFollowUpPlan =
@@ -76,11 +108,12 @@ const oneLine = (text: string, limit: number): string => {
  * The plain comments of a pull request that started nothing: each COMMENTED review, newest last.
  * The PR reviewer's own reviews on the head it fails are its findings, not plain comments.
  */
-const plainCommentLines = (events: readonly PullRequestEvent[], exclude: { login: string; sha: string } | null): string[] => {
+const plainCommentLines = (events: readonly PullRequestEvent[], exclude: { login: string; sha: string | null } | null): string[] => {
   const reviews = new Map<number, string>();
   for (const event of events) {
     if (event.kind !== "review" || event.state !== "commented" || event.action === "dismissed") continue;
-    if (exclude !== null && event.reviewerLogin.toLowerCase() === exclude.login && event.commitSha === exclude.sha) continue;
+    // A null SHA excludes every review of that login: the PR reviewer's comments are findings or suggestions.
+    if (exclude !== null && event.reviewerLogin.toLowerCase() === exclude.login && (exclude.sha === null || event.commitSha === exclude.sha)) continue;
     const at = event.commitSha === null ? "" : ` on ${event.commitSha.slice(0, 12)}`;
     const body = event.body === null || event.body.trim() === "" ? "left review comments on the changed lines." : oneLine(event.body, 300);
     reviews.set(event.reviewId, `${event.reviewerLogin}${at}: ${body}`);
@@ -114,6 +147,8 @@ export interface TakePullRequestEventOutput {
   isNew: boolean;
   state: PullRequestState;
   headSha: string;
+  /** Slice 5, DI-21.121. The time of the merge, as an ISO string, or null when the pull request did not merge. */
+  mergedAt?: string | null;
 }
 
 /**
@@ -203,7 +238,156 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       new: isNew,
       step: "pull_request_event",
     });
-    return { isNew, state: pullRequest.state, headSha: pullRequest.headSha };
+    return {
+      isNew,
+      state: pullRequest.state,
+      headSha: pullRequest.headSha,
+      mergedAt: pullRequest.state === "merged" && pullRequest.closedAt !== null ? pullRequest.closedAt.toISOString() : null,
+    };
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.120 to DI-21.122. Takes one deployment
+   * status of a merged pull request. A deploy result counts as a deploy of the run only when the
+   * deployed commit is in the history of the base branch and holds the merge commit. A success counts
+   * once per environment. A failure counts when the merge commit is in its commit range: after the
+   * previous successful deploy of the environment, up to the failed commit. A failure moves the issue
+   * back from completed. The answer carries the Linear notice and the proof pack amendment, which the
+   * PR workflow posts. Factoree never deploys, approves or dispatches a deploy, and reverts nothing.
+   */
+  async takeDeployment(input: { tenantId: string; pullRequestId: string; event: PullRequestEvent }): Promise<TakeDeploymentOutput> {
+    const event = input.event;
+    if (event.kind !== "deployment_status") return { kind: "none", reason: "no deployment status" };
+    const result = deployResultOf(event.state);
+    if (result === null) return { kind: "none", reason: `the deployment is ${event.state}` };
+    const store = dependencies.pullRequests;
+    const record = await store.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "merged" || record.mergeCommitSha === null) return { kind: "none", reason: "the pull request did not merge" };
+    const mergeCommitSha = record.mergeCommitSha;
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    const log = { pull_request: label, step: "deploy", environment: event.environment, deployment_id: event.deploymentId, state: result };
+    const deploys = await store.listDeploys(input.tenantId, record.id);
+    if (deploys.some((deploy) => deploy.environment === event.environment && deploy.state === "success")) {
+      return { kind: "none", reason: "the environment holds the change already" };
+    }
+    if (result === "failure" && deploys.some((deploy) => deploy.state === "failure" && deploy.deploymentId === String(event.deploymentId))) {
+      return { kind: "none", reason: "the failed deployment is recorded already" };
+    }
+    const origin = await store.originFacts(input.tenantId, record.id);
+    const slug = record.repositoryFullName;
+    const installationId = origin.githubInstallationId;
+    const port = dependencies.deploys;
+    // DI-21.120. Only a commit of the base branch is a deploy. A deployment of a pull request head
+    // is a preview, and so is any other branch.
+    if (!(await port.contains(slug, event.sha, record.baseBranch, installationId))) {
+      dependencies.logger.info("the deployed commit is not in the base branch, so it is no deploy of the run", log);
+      return { kind: "none", reason: "the deployed commit is not in the base branch" };
+    }
+    if (!(await port.contains(slug, mergeCommitSha, event.sha, installationId))) {
+      return { kind: "none", reason: "the deployed commit does not hold the merge commit" };
+    }
+    let previousSha: string | null = null;
+    if (result === "failure") {
+      previousSha = await port.previousSuccess(slug, event.environment, event.deploymentId, installationId);
+      // The previous successful deploy held the change already, so the failure is not in its range.
+      if (previousSha !== null && (await port.contains(slug, mergeCommitSha, previousSha, installationId))) {
+        return { kind: "none", reason: "an earlier successful deploy holds the change" };
+      }
+    }
+    // The issue moves before the record, so a retry after a failed write still finds it moved.
+    const issue = result === "failure" ? await dependencies.close.afterFailedDeploy({ tenantId: input.tenantId, originRunId: record.originRunId }) : null;
+    const runId = record.verifiedRunId ?? record.originRunId;
+    const isNew = await store.recordDeploy({
+      tenantId: input.tenantId,
+      pullRequestId: record.id,
+      runId,
+      environment: event.environment,
+      state: result,
+      deploymentId: String(event.deploymentId),
+      sha: event.sha,
+      previousSha,
+      logUrl: event.logUrl,
+      environmentUrl: event.environmentUrl,
+    });
+    if (!isNew) return { kind: "none", reason: "the deploy is recorded already" };
+    dependencies.logger.info("deploy recorded", { ...log, issue_move: issue?.move ?? "none" });
+    const notice =
+      result === "success"
+        ? deploySuccessNotice({ environment: event.environment, sha: event.sha, pullRequestUrl: record.url, environmentUrl: event.environmentUrl })
+        : deployFailureNotice({
+            environment: event.environment,
+            sha: event.sha,
+            previousSha,
+            logUrl: event.logUrl,
+            pullRequestUrl: record.url,
+            issueMove: issue?.move ?? "not_moved",
+            issueStateName: issue?.stateName ?? null,
+          });
+    return {
+      kind: "recorded",
+      notice,
+      sessionId: origin.linearAgentSessionId,
+      amend: {
+        tenantId: input.tenantId,
+        productId: origin.productId,
+        runId,
+        sessionId: origin.linearAgentSessionId,
+        afterPublication: {
+          amendedFor:
+            result === "success"
+              ? `the change is deployed to ${event.environment} at commit ${event.sha.slice(0, 12)}.`
+              : `the deploy to ${event.environment} failed at commit ${event.sha.slice(0, 12)}.`,
+          deploys: proofPackDeploys(await store.listDeploys(input.tenantId, record.id)),
+        },
+      },
+    };
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. A plain comment, or a passed PR reviewer
+   * check with review comments on the verified head, starts nothing. The proof pack of the run of the
+   * verified head lists it: the answer is the amendment, or null.
+   */
+  async planProofPackAmendment(input: { tenantId: string; pullRequestId: string; event: PullRequestEvent }): Promise<{ amend: AmendProofPackActivityInput | null }> {
+    const event = input.event;
+    if (event.kind !== "review" && event.kind !== "check_run" && event.kind !== "commit_status") return { amend: null };
+    const store = dependencies.pullRequests;
+    const record = await store.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { amend: null };
+    const origin = await store.originFacts(input.tenantId, record.id);
+    const product = await dependencies.products.findById(input.tenantId, origin.productId);
+    const reviewer = product?.prReviewer ?? null;
+    const bot = reviewer === null ? null : `${reviewer.appSlug}[bot]`;
+    const base = { tenantId: input.tenantId, productId: origin.productId, runId: record.verifiedRunId ?? record.originRunId, sessionId: origin.linearAgentSessionId };
+    if (event.kind === "review") {
+      if (event.action !== "submitted" || event.state !== "commented") return { amend: null };
+      // The PR reviewer's own reviews are findings of a failed check, or suggestions of a passed one.
+      if (bot !== null && event.reviewerLogin.toLowerCase() === bot) return { amend: null };
+      const comments = plainCommentLines(await store.listEvents(input.tenantId, record.id, "review"), bot === null ? null : { login: bot, sha: null });
+      return { amend: { ...base, afterPublication: { amendedFor: `${event.reviewerLogin} commented on ${record.url}, which started nothing.`, comments } } };
+    }
+    if (reviewer === null || reviewerVerdictOfEvent(event, reviewer) !== "passed") return { amend: null };
+    const sha = eventHeadSha(event);
+    // Only the verified head has a proof pack that describes it.
+    if (sha === null || sha !== record.verifiedHeadSha) return { amend: null };
+    const findings = await dependencies.reviews.reviewerFindings(record.repositoryFullName, record.number, sha, reviewer.appSlug, origin.githubInstallationId);
+    if (findings.length === 0) return { amend: null };
+    const suggestions = findings.slice(0, MAX_FINDINGS).map((finding) => `${findingPlace(finding)}: ${oneLine(finding.body, 300)}`);
+    if (findings.length > MAX_FINDINGS) suggestions.push(`${String(findings.length - MAX_FINDINGS)} more on the pull request.`);
+    return {
+      amend: {
+        ...base,
+        afterPublication: {
+          amendedFor: `the PR reviewer check "${reviewer.checkName}" passed on ${sha.slice(0, 12)} with ${String(findings.length)} ${findings.length === 1 ? "comment" : "comments"}, which started nothing.`,
+          suggestions,
+        },
+      },
+    };
+  },
+
+  /** Slice 5. One notice in the agent session of the origin run. */
+  async postPullRequestNotice(input: { sessionId: string; body: string }): Promise<void> {
+    await dependencies.agentSession.respond(input.sessionId, input.body);
   },
 
   /**

@@ -128,6 +128,12 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
         routed.push({ by: "commit", tenantId, repositoryFullName, key: sha, event });
         return Promise.resolve("routed");
       },
+      // Slice 5. A deployment routes by its commit, as a check run does.
+      byDeployment: (tenantId, repositoryFullName, event) => {
+        if (event.sha !== "pr-head-sha") return Promise.resolve("unmatched");
+        routed.push({ by: "deployment", tenantId, repositoryFullName, key: event.sha, event });
+        return Promise.resolve("routed");
+      },
       // Slice 4. Only the branch release is the base of a recorded pull request.
       byBase: (tenantId, repositoryFullName, baseBranch, event) => {
         if (baseBranch !== "release") return Promise.resolve("unmatched");

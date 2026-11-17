@@ -1,5 +1,6 @@
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 import type { PullRequestEvent } from "./pull-request-event.js";
+import type { OpenDeployFailure, PullRequestDeployRecord, RecordDeployInput } from "./deploys.js";
 
 /**
  * off until Factoree turns on GitHub auto-merge, and unavailable when the L4 gate of the repository
@@ -26,6 +27,8 @@ export interface PublishedPullRequest {
   originRunId: string;
   state: PullRequestState;
   mergeCommitSha: string | null;
+  /** The time of the merge or the close, or null while open. */
+  closedAt: Date | null;
   reviewerFollowUps: number;
   /** The contract revision of the head commit. It starts at 1. */
   contractRevision: number;
@@ -135,4 +138,20 @@ export interface PullRequestStore {
   listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]>;
   /** The recorded events of one kind, oldest first. */
   listEvents(tenantId: string, pullRequestId: string, kind: PullRequestEvent["kind"]): Promise<PullRequestEvent[]>;
+  /**
+   * Slice 5, DI-21.121. The pull requests of a repository that merged at or after `since` and hold
+   * no successful deploy of the environment yet, oldest first.
+   */
+  listMergedForDeploy(tenantId: string, repositoryFullName: string, environment: string, since: Date): Promise<PublishedPullRequest[]>;
+  /** DI-21.122. The deploy results of one pull request, oldest first. */
+  listDeploys(tenantId: string, pullRequestId: string): Promise<PullRequestDeployRecord[]>;
+  /**
+   * DI-21.122. Records one deploy result once by its key. A success also resolves every open failure
+   * of its environment on the pull request. False when the key was recorded already.
+   */
+  recordDeploy(input: RecordDeployInput): Promise<boolean>;
+  /** DI-21.124. The newest open failed deploy of a pull request whose origin run has this agent session. */
+  openDeployFailure(tenantId: string, agentSessionId: string): Promise<OpenDeployFailure | null>;
+  /** DI-21.124. Marks a failed deploy as followed up. False when a reply followed it up already. */
+  markDeployFollowedUp(tenantId: string, deployId: string, workflowId: string): Promise<boolean>;
 }

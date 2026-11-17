@@ -136,6 +136,8 @@ describe("AT-33 tenant isolation", () => {
         // request and per event its PR workflow took, of one tenant.
         "pull_request",
         "pull_request_event",
+        // Slice 5, DI-21.122. One row per deploy result of a merged pull request of one tenant.
+        "pull_request_deploy",
       ].sort(),
     );
   });
