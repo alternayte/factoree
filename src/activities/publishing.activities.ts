@@ -445,7 +445,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         // an authenticated URL there exposes the credential to any local process. SDD
         // section 30 forbids that.
         const commitSha = existing.headSha;
-        await dependencies.runs.setPublication(input.tenantId, input.runId, {
+        await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
           patchSha256: patch.patchSha256,
           commitSha,
           pullRequestUrl: existing.url,
@@ -535,7 +535,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       );
 
       // Step 11. The publication facts of the Run.
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: patch.patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: created.url,
@@ -631,7 +631,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           });
         },
       });
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: patch.patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: input.pullRequestUrl,
@@ -705,7 +705,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           if (result.changedFiles.length === 0) {
             throw new EmptyPatchError();
           }
-          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, result.patchBase64, 1);
+          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, input.repositorySlug, result.patchBase64, 1);
           return {
             kind: "merged",
             baseSha: result.baseSha,
@@ -757,7 +757,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       if (result.kind !== "merged" || !result.pushed) {
         throw new PatchError(`the merge of the verified base ${input.baseSha.slice(0, 12)} is no longer clean, so Factoree pushed nothing.`);
       }
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: result.patchSha256,
         commitSha: result.commitSha,
         pullRequestUrl: input.pullRequestUrl,
@@ -792,7 +792,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       );
       assertInstallation(input.githubInstallationId);
 
-      const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId);
+      const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId, input.repositorySlug);
       if (patchBase64 === null) throw new PatchError("the run holds no patch, so Factoree published nothing.");
       const patchSha256 = sha256OfBase64(patchBase64);
       const patchBytes = Buffer.from(patchBase64, "base64");
@@ -811,7 +811,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // AT-35. A second request, or a retry, finds the pull request of this branch.
       const existing = await port.findByHead(input.repositorySlug, branch, input.githubInstallationId);
       if (existing !== null) {
-        await dependencies.runs.setPublication(input.tenantId, input.runId, {
+        await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
           patchSha256,
           commitSha: existing.headSha,
           pullRequestUrl: existing.url,
@@ -888,7 +888,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         },
         input.githubInstallationId,
       );
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: created.url,

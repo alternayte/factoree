@@ -25,3 +25,13 @@ export const buildRepositoryUrl = (baseUrl: string, slug: string): string => {
   const trimmed = slug.replace(/\.git$/, "");
   return `${baseUrl.replace(/\/+$/, "")}/${trimmed}.git`;
 };
+
+/**
+ * docs/specs/change-sets.md. The `owner/repo` name of a clone URL that `buildRepositoryUrl` built,
+ * so an activity that holds only the URL can name the run target it serves.
+ */
+export const repositorySlugOfUrl = (url: string): string => {
+  const slug = url.replace(/\/+$/, "").replace(/\.git$/, "").split("/").slice(-2).join("/");
+  assertRepositorySlug(slug);
+  return slug;
+};

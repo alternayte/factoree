@@ -853,7 +853,7 @@ export async function agentRunWorkflow(
       await activities.completeRun({ ...args, waitedMs });
       // DI-21.50. A run that ends with no pull request moves its issue back, while the issue is
       // still in the state the run set. The start already took the patch, so no new marker lands here.
-      if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrl === null) {
+      if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrls.length === 0) {
         await notify(() => activities.restoreIssueStatus({ tenantId: input.tenantId, runId: id }));
       }
       if (sources !== null && patched(SKILL_REGISTRY_PATCH)) {
@@ -1063,12 +1063,13 @@ export async function agentRunWorkflow(
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
 
   /**
-   * The pull request URL of a successful publication, or null while nothing is published. A stop
-   * message and a timeout message must not claim that nothing was published once it exists. The
+   * docs/specs/change-sets.md. The pull request URL of each published target, empty while nothing
+   * is published. A stop message and a timeout message must not claim that nothing was published
+   * once it exists. The
    * Run status does not change, because SDD section 68 forbids a success terminal state before
    * Phase 10 builds the Proof Pack.
    */
-  let publishedPullRequestUrl: string | null = null;
+  const publishedPullRequestUrls: string[] = [];
 
   /**
    * SDD section 23 requires one focused question. The workflow asks that question. It waits for
@@ -1384,7 +1385,7 @@ export async function agentRunWorkflow(
     await notify(() =>
       activities.postFinalResponse({
         sessionId: input.agentSessionId,
-        body: stopResponse(stopRequest, publishedPullRequestUrl),
+        body: stopResponse(stopRequest, publishedPullRequestUrls),
       }),
     );
     return { runId: id, status };
@@ -1721,7 +1722,7 @@ export async function agentRunWorkflow(
           { kind: "moved" },
         );
       }
-      publishedPullRequestUrl = update.url;
+      publishedPullRequestUrls.push(update.url);
       await activities.recordRunTargetFacts({
         tenantId: input.tenantId,
         runId: id,
@@ -3486,7 +3487,7 @@ export async function agentRunWorkflow(
 
       // The publication succeeded. A later stop message and a later timeout message read this
       // value, so neither one claims that Factoree published nothing.
-      publishedPullRequestUrl = publication.pullRequestUrl;
+      publishedPullRequestUrls.push(publication.pullRequestUrl);
 
       // DI-21.52. The issue shows its pull request as an attachment, and the session as a link.
       // A PR follow-up run shares the agent session of the run that linked the pull request.
@@ -3657,8 +3658,14 @@ export async function agentRunWorkflow(
         blockingFindingCount: publishedBlockingCount,
         repairCount,
         repairLimit: maxRepairs,
-        patchSha256: publication.patchSha256,
-        pullRequestUrl: publication.pullRequestUrl,
+        // docs/specs/change-sets.md. One verified patch and one pull request per target of the run.
+        targets: [
+          {
+            repositoryFullName: primaryRepositorySlug,
+            patchSha256: publication.patchSha256,
+            pullRequestUrl: publication.pullRequestUrl,
+          },
+        ],
         proofPackSha256: proofPack.sha256,
       });
 

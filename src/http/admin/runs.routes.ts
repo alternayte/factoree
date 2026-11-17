@@ -34,7 +34,21 @@ export const runListItemSchema = z.object({
   failureMessage: z.string().nullable(),
   workItemTitle: z.string().nullable(),
   workItemUrl: z.string().nullable(),
-  pullRequestUrl: z.string().nullable(),
+  /**
+   * docs/specs/change-sets.md. Each repository the run changes, with its base, its pull request and
+   * the state of that pull request: open, merged or closed, or null before it exists.
+   */
+  targets: z.array(
+    z.object({
+      repositoryFullName: z.string(),
+      baseSha: z.string().nullable(),
+      patchSha256: z.string().nullable(),
+      commitSha: z.string().nullable(),
+      pullRequestUrl: z.string().nullable(),
+      pullRequestState: z.string().nullable(),
+      mergeOrder: z.number().nullable(),
+    }),
+  ),
   repairCount: z.number(),
   repairLimit: z.number().nullable(),
   costUsd: z.number().nullable(),
@@ -46,7 +60,7 @@ export const runListItemSchema = z.object({
   sandboxProvider: z.string().nullable(),
   /**
    * docs/specs/blocked-by-wait.md. Each blocker as the last read saw it, with its Linear state type
-   * and the pull request of its newest Factoree run. Null when the run never waited.
+   * and the pull requests of its newest Factoree run. Null when the run never waited.
    */
   blockers: z
     .array(
@@ -54,7 +68,7 @@ export const runListItemSchema = z.object({
         identifier: z.string(),
         url: z.string().nullable(),
         state: z.string(),
-        pullRequestUrl: z.string().nullable(),
+        pullRequestUrls: z.array(z.string()),
       }),
     )
     .nullable(),
@@ -82,9 +96,6 @@ export const runDetailSchema = runListItemSchema.extend({
   sandboxRetentionHours: z.number(),
   autonomyLevel: z.string(),
   followUpOfRunId: z.string().nullable(),
-  baseSha: z.string().nullable(),
-  commitSha: z.string().nullable(),
-  patchSha256: z.string().nullable(),
   skillRegistrySet: z.string().nullable(),
   skillResolutionId: z.string().nullable(),
   proofPackPostedAt: z.string().nullable(),

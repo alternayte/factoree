@@ -109,8 +109,7 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
   blockingFindingCount: 0,
   repairCount: 1,
   repairLimit: 2,
-  patchSha256: "4".repeat(64),
-  pullRequestUrl: "https://github.com/acme/fixture/pull/1",
+  targets: [{ repositoryFullName: "acme/fixture", patchSha256: "4".repeat(64), pullRequestUrl: "https://github.com/acme/fixture/pull/1" }],
   proofPackSha256: "9".repeat(64),
   ...overrides,
 });

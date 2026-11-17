@@ -95,7 +95,7 @@ const stubRuns = (): RunRepository & { publications: PublicationRow[] } => {
   const publications: PublicationRow[] = [];
   return {
     publications,
-    setPublication(_tenantId: string, _runId: string, publication: PublicationRow): Promise<void> {
+    setPublication(_tenantId: string, _runId: string, _repositorySlug: string, publication: PublicationRow): Promise<void> {
       publications.push(publication);
       return Promise.resolve();
     },

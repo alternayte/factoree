@@ -9,7 +9,16 @@ import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import { pickWorkspace } from "@/lib/workspace";
 import { WorkspacePicker } from "@/features/products/workspace-picker";
-import { formatCost, formatDuration, isOpenBlocker, issueIdentifier, STATUS_FILTERS, statusTone } from "./run-format";
+import {
+  formatCost,
+  formatDuration,
+  isOpenBlocker,
+  issueIdentifier,
+  pullRequestLabel,
+  pullRequestTone,
+  STATUS_FILTERS,
+  statusTone,
+} from "./run-format";
 
 export type RunsSearch = { ws?: string; product?: string; status?: string };
 
@@ -124,7 +133,7 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                   Repairs
                 </th>
                 <th scope="col">Started</th>
-                <th scope="col">Pull request</th>
+                <th scope="col">Targets</th>
               </tr>
             </thead>
             <tbody className="stagger">
@@ -173,12 +182,32 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                   </td>
                   <td className="whitespace-nowrap text-mute">{formatDate(run.createdAt)}</td>
                   <td>
-                    {run.pullRequestUrl ? (
-                      <a className="link" href={run.pullRequestUrl} target="_blank" rel="noreferrer">
-                        #{run.pullRequestUrl.split("/").at(-1)}
-                      </a>
-                    ) : (
+                    {/* docs/specs/change-sets.md. Each target with its base, its pull request and its status. */}
+                    {run.targets.length === 0 ? (
                       <span className="text-mute">—</span>
+                    ) : (
+                      <ul className="space-y-1">
+                        {run.targets.map((target) => (
+                          <li key={target.repositoryFullName} className="whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              {target.pullRequestUrl ? (
+                                <a className="link" href={target.pullRequestUrl} target="_blank" rel="noreferrer">
+                                  {pullRequestLabel(target.pullRequestUrl)}
+                                </a>
+                              ) : (
+                                <span className="text-mute">—</span>
+                              )}
+                              {target.pullRequestState ? (
+                                <Badge tone={pullRequestTone(target.pullRequestState)}>{target.pullRequestState}</Badge>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 font-mono text-xs text-mute">
+                              {target.repositoryFullName}
+                              {target.baseSha ? ` @ ${target.baseSha.slice(0, 12)}` : ""}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </td>
                 </tr>

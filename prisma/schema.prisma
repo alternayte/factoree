@@ -84,12 +84,6 @@ model Run {
   // docs/specs/run-recovery.md. A follow-up run shares the agent session of the run it follows.
   linearAgentSessionId     String
   followUpOfRunId          String?   @map("follow_up_of_run_id")
-  // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured, so a
-  // follow-up run can read what the failed run tried.
-  lastPatchBase64          String?   @map("last_patch_base64")
-  // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
-  // patch, so a draft names the review of that same patch. Null on a run from before it.
-  lastPatchAttempt         Int?      @map("last_patch_attempt")
   temporalWorkflowId       String    @unique
   status                   String
   failureReason            String?
@@ -109,7 +103,6 @@ model Run {
   // docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to. It stays
   // after the reaper clears spriteAdapter, so the run page and the proof pack can name it.
   sandboxProviderId        String?   @map("sandbox_provider_id")
-  baseSha                  String?
   organizationSkillsSha    String?
   // docs/specs/skill-registry.md. The registry set the run used, null for every released skill,
   // and the resolution id that pins each version. Both stay null without a registry.
@@ -118,12 +111,6 @@ model Run {
   // docs/specs/external-context-delivery.md. One entry per context file of the work sprite: ref,
   // path, SHA-256, verified and the skip reason. It holds no content (SDD section 55).
   deliveredContext         Json?     @map("delivered_context")
-  // Specification section 8. The SHA-256 of .factoree/config.yaml, read from the target
-  // repository at the Run's base commit. Null until context resolution pins that commit.
-  configSha                 String?
-  patchSha256              String?
-  commitSha                String?
-  pullRequestUrl           String?
   contextContractVersion   String?
   validationContractVersion String?
   proofPackSha256          String?
@@ -177,6 +164,7 @@ model Run {
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
   targets                  RunTarget[]
+  targetEdges              RunTargetEdge[]
   originOfPullRequests     PullRequest[]
 
   @@index([tenantId])
@@ -783,13 +771,48 @@ model RunTarget {
   // merged or closed from the GitHub pull_request event.
   pullRequestNumber Int?     @map("pull_request_number")
   pullRequestState  String?  @map("pull_request_state")
+  // docs/specs/change-sets.md, DI-21.127. The SHA-256 of .factoree/config.yaml of this target at its
+  // base commit. Null until context resolution pins that commit, or when the target holds no file.
+  configSha         String?  @map("config_sha")
+  // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured of this target,
+  // so a follow-up run can read what the failed run tried.
+  lastPatchBase64   String?  @map("last_patch_base64")
+  // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
+  // patch, so a draft names the review of that same patch.
+  lastPatchAttempt  Int?     @map("last_patch_attempt")
+  // docs/specs/change-sets.md. The place of this target in the merge order, from 1, or null when
+  // no edge orders it.
+  mergeOrder        Int?     @map("merge_order")
   createdAt       DateTime   @default(now())
+  providerOf      RunTargetEdge[] @relation("provider")
+  consumerOf      RunTargetEdge[] @relation("consumer")
 
   @@unique([runId, repositoryId])
   @@index([runId])
   @@index([tenantId])
   @@index([tenantId, commitSha])
   @@index([tenantId, pullRequestNumber])
+}
+
+// docs/specs/change-sets.md. One provider-to-consumer edge of a change set, with the file and line
+// the refiner cited for it. The edges decide the merge order of the targets.
+model RunTargetEdge {
+  id               String    @id @default(uuid())
+  tenantId         String    @map("tenant_id")
+  runId            String    @map("run_id")
+  run              Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  providerTargetId String    @map("provider_target_id")
+  provider         RunTarget @relation("provider", fields: [providerTargetId], references: [id], onDelete: Cascade)
+  consumerTargetId String    @map("consumer_target_id")
+  consumer         RunTarget @relation("consumer", fields: [consumerTargetId], references: [id], onDelete: Cascade)
+  citationFile     String    @map("citation_file")
+  citationLine     Int       @map("citation_line")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@unique([providerTargetId, consumerTargetId])
+  @@index([runId])
+  @@index([tenantId])
+  @@map("run_target_edge")
 }
 
 // docs/specs/autonomy-levels.md. One row for each change of a Product policy field, so raising

@@ -15,22 +15,24 @@ export const FOLLOW_UP_STATUSES = ["FAILED", "FAILED_REVIEW", "STALE_BASE", "FAI
 
 export const takesFollowUp = (status: string): boolean => (FOLLOW_UP_STATUSES as readonly string[]).includes(status);
 
-/** The one line Factoree answers a reply with when the run takes no follow-up. */
-export const noFollowUpLine = (status: string, pullRequestUrl: string | null): string => {
+/** docs/specs/change-sets.md. Where a human comments: every pull request of the run. */
+const commentLine = (pullRequestUrls: readonly string[]): string =>
+  pullRequestUrls.length === 0
+    ? "Put a further change in a new issue."
+    : pullRequestUrls.length === 1
+      ? `Comment on the pull request (${pullRequestUrls.join("")}) or put a further change in a new issue.`
+      : `Comment on one of the pull requests (${pullRequestUrls.join(", ")}) or put a further change in a new issue.`;
+
+/**
+ * The one line Factoree answers a reply with when the run takes no follow-up. It names every pull
+ * request of the run (docs/specs/change-sets.md).
+ */
+export const noFollowUpLine = (status: string, pullRequestUrls: readonly string[]): string => {
   if (status === "READY_FOR_HUMAN" || status === "REPORTED") {
-    return (
-      "This run is complete, so Factoree starts no new run here. " +
-      (pullRequestUrl === null
-        ? "Put a further change in a new issue."
-        : `Comment on the pull request (${pullRequestUrl}) or put a further change in a new issue.`)
-    );
+    return `This run is complete, so Factoree starts no new run here. ${commentLine(pullRequestUrls)}`;
   }
   // docs/specs/draft-of-failed-run.md. The draft pull request has its own review loop.
-  if (status === "DRAFT_PUBLISHED") {
-    return pullRequestUrl === null
-      ? "Put a further change in a new issue."
-      : `Comment on the pull request (${pullRequestUrl}) or put a further change in a new issue.`;
-  }
+  if (status === "DRAFT_PUBLISHED") return commentLine(pullRequestUrls);
   if (status === "CANCELLED") return "This run was stopped, so Factoree starts no new run here. Delegate the issue again to start one.";
   if (status.startsWith("BLOCKED")) {
     return "This run failed on its configuration, so a new run would fail the same way. Repair the configuration, then delegate the issue again.";
@@ -157,7 +159,11 @@ export const renderFollowUpDescription = (input: {
   reply: string;
   failedRunId: string;
   run: Pick<RunDetail, "assertions" | "findings">;
-  previousPatch: string | null;
+  /**
+   * docs/specs/change-sets.md. The last patch of each target of the failed run that holds one, in
+   * target order. A follow-up run reads each target's last patch.
+   */
+  previousPatches: Array<{ repositoryFullName: string; patch: string }>;
   /**
    * docs/specs/pr-review-merge-and-deploy.md, DI-21.124. The failed deploy of the merged change of the
    * run. The run passed its checks, so the deploy failure is what blocked it.
@@ -165,7 +171,6 @@ export const renderFollowUpDescription = (input: {
   deployFailure?: Pick<OpenDeployFailure, "environment" | "sha" | "previousSha" | "logUrl" | "pullRequestUrl">;
 }): string => {
   const frozen = [...new Map(input.run.assertions.map((assertion) => [assertion.key, assertion])).values()];
-  const patch = input.previousPatch;
   const deploy = input.deployFailure;
   return [
     input.description,
@@ -193,10 +198,29 @@ export const renderFollowUpDescription = (input: {
     "What blocked it:",
     ...(failureFacts(input.run).length === 0 ? ["- nothing recorded"] : failureFacts(input.run).slice(0, MAX_FAILURE_FACTS).map((fact) => `- ${fact}`)),
     "",
-    ...(patch === null
-      ? []
-      : patch.length <= MAX_REFERENCE_PATCH_BYTES
-        ? ["Its last patch, for reference only. Start from the base, not from this patch:", "", "```diff", patch.trimEnd(), "```"]
-        : ["Its last patch was too large to repeat here. Start from the base."]),
+    ...previousPatchLines(input.previousPatches),
   ].join("\n");
+};
+
+const diffBlock = (patch: string): string[] =>
+  patch.length <= MAX_REFERENCE_PATCH_BYTES ? ["```diff", patch.trimEnd(), "```"] : ["The patch was too large to repeat here."];
+
+/** The last patch of one target as before, or a block per repository for a change set. */
+const previousPatchLines = (patches: ReadonlyArray<{ repositoryFullName: string; patch: string }>): string[] => {
+  const [only] = patches;
+  if (only === undefined) return [];
+  if (patches.length === 1) {
+    return only.patch.length <= MAX_REFERENCE_PATCH_BYTES
+      ? ["Its last patch, for reference only. Start from the base, not from this patch:", "", "```diff", only.patch.trimEnd(), "```"]
+      : ["Its last patch was too large to repeat here. Start from the base."];
+  }
+  return [
+    "Its last patch of each repository, for reference only. Start from the base, not from these patches:",
+    ...patches.flatMap((entry) => [
+      "",
+      `${entry.repositoryFullName}:`,
+      "",
+      ...diffBlock(entry.patch),
+    ]),
+  ];
 };

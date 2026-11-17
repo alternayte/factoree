@@ -6,18 +6,19 @@ import { stopResponse, type StopRequest } from "./run-stop.js";
 /**
  * docs/specs/blocked-by-wait.md. One blocker of a work item, as the run row stores it in
  * `blockers`. `state` is the Linear state type: triage, backlog, unstarted, started, completed or
- * canceled. `pullRequestUrl` is the pull request of the newest Factoree run of the blocker issue.
+ * canceled. `pullRequestUrls` are the pull requests of the newest Factoree run of the blocker issue
+ * that opened any, one per run target (docs/specs/change-sets.md).
  */
 export interface Blocker {
   issueId: string;
   identifier: string;
   url: string | null;
   state: string;
-  pullRequestUrl: string | null;
+  pullRequestUrls: string[];
 }
 
 /** A blocker as Linear returns it, before Factoree adds its own pull request. */
-export type ReadBlocker = Omit<Blocker, "pullRequestUrl">;
+export type ReadBlocker = Omit<Blocker, "pullRequestUrls">;
 
 /** One `inverseRelations` node of the work item, as Linear returns it. */
 export interface InverseRelationNode {
@@ -64,7 +65,7 @@ const sorted = (blockers: readonly Blocker[]): Blocker[] =>
       identifier: blocker.identifier,
       url: blocker.url,
       state: blocker.state,
-      pullRequestUrl: blocker.pullRequestUrl,
+      pullRequestUrls: blocker.pullRequestUrls,
     }))
     .sort((left, right) => (left.issueId < right.issueId ? -1 : left.issueId > right.issueId ? 1 : 0));
 
@@ -85,7 +86,7 @@ export const openSetChanged = (before: readonly Blocker[] | null, after: readonl
   openSetKey(before) !== openSetKey(after);
 
 const named = (blocker: Blocker): string =>
-  blocker.pullRequestUrl === null ? blocker.identifier : `${blocker.identifier} (${blocker.pullRequestUrl})`;
+  blocker.pullRequestUrls.length === 0 ? blocker.identifier : `${blocker.identifier} (${blocker.pullRequestUrls.join(", ")})`;
 
 const list = (names: string[]): string =>
   names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
@@ -169,7 +170,7 @@ export interface WaitingRunStore {
    */
   cancel(tenantId: string, runId: string, request: StopRequest, at: Date): Promise<WaitingRun | null>;
   /** The pull request URL of the newest Factoree run of each issue that has one. */
-  pullRequestsOf(tenantId: string, issueIds: readonly string[]): Promise<Map<string, string>>;
+  pullRequestsOf(tenantId: string, issueIds: readonly string[]): Promise<Map<string, string[]>>;
 }
 
 /** Reads the blockers of several work items of one workspace in one batched query. */
@@ -202,8 +203,8 @@ export class BlockerWait {
   constructor(private readonly dependencies: BlockerWaitDependencies) {}
 
   private async withPullRequests(tenantId: string, read: readonly ReadBlocker[]): Promise<Blocker[]> {
-    const pullRequests = read.length === 0 ? new Map<string, string>() : await this.dependencies.store.pullRequestsOf(tenantId, read.map((blocker) => blocker.issueId));
-    return read.map((blocker) => ({ ...blocker, pullRequestUrl: pullRequests.get(blocker.issueId) ?? null }));
+    const pullRequests = read.length === 0 ? new Map<string, string[]>() : await this.dependencies.store.pullRequestsOf(tenantId, read.map((blocker) => blocker.issueId));
+    return read.map((blocker) => ({ ...blocker, pullRequestUrls: pullRequests.get(blocker.issueId) ?? [] }));
   }
 
   /**
@@ -290,7 +291,7 @@ export class BlockerWait {
       }
       const next: Blocker[] = (run.linearIssueId === null ? [] : (read.get(run.linearIssueId) ?? [])).map((blocker) => ({
         ...blocker,
-        pullRequestUrl: pullRequests.get(blocker.issueId) ?? null,
+        pullRequestUrls: pullRequests.get(blocker.issueId) ?? [],
       }));
       const open = openBlockers(next);
       try {
@@ -321,7 +322,7 @@ export class BlockerWait {
     if (run === null) return false;
     metrics.runsCancelled.inc({ tenant_id: tenantId, product_id: run.productId });
     this.dependencies.logger.info("waiting run stopped", { tenant_id: tenantId, run_id: runId, step: "blockers", source: request.source });
-    await this.post(tenantId, run.linearAgentSessionId, "response", stopResponse(request, null));
+    await this.post(tenantId, run.linearAgentSessionId, "response", stopResponse(request, []));
     return true;
   }
 

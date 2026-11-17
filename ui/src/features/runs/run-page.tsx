@@ -29,6 +29,8 @@ import {
   issueIdentifier,
   statusTone,
   isOpenBlocker,
+  pullRequestLabel,
+  pullRequestTone,
   temporalWorkflowUrl,
 } from "./run-format";
 
@@ -208,11 +210,11 @@ function RunDetail({
                       <span className="font-mono">{blocker.identifier}</span>
                     )}
                     <Badge tone={isOpenBlocker(blocker) ? "accent" : "success"}>{blocker.state}</Badge>
-                    {blocker.pullRequestUrl ? (
-                      <a className="link" href={blocker.pullRequestUrl} target="_blank" rel="noreferrer">
-                        Pull request #{blocker.pullRequestUrl.split("/").at(-1)}
+                    {blocker.pullRequestUrls.map((url) => (
+                      <a key={url} className="link" href={url} target="_blank" rel="noreferrer">
+                        Pull request {pullRequestLabel(url)}
                       </a>
-                    ) : null}
+                    ))}
                   </li>
                 ))}
               </ul>
@@ -261,7 +263,6 @@ function RunDetail({
                     },
                   ]
                 : []),
-              { label: "Base", value: run.baseSha ? <code>{run.baseSha.slice(0, 12)}</code> : "—" },
               ...(run.skillResolutionId
                 ? [
                     {
@@ -272,15 +273,11 @@ function RunDetail({
                 : []),
             ]}
           />
+          <Targets run={run} />
           <div className="mt-4 flex flex-wrap gap-3 text-sm">
             {run.workItemUrl ? (
               <a className="link" href={run.workItemUrl} target="_blank" rel="noreferrer">
                 Linear issue
-              </a>
-            ) : null}
-            {run.pullRequestUrl ? (
-              <a className="link" href={run.pullRequestUrl} target="_blank" rel="noreferrer">
-                {run.status === "DRAFT_PUBLISHED" ? "Draft pull request" : "Pull request"}
               </a>
             ) : null}
             {/* docs/specs/blocked-by-wait.md. A waiting run has no workflow yet, so the link would find nothing. */}
@@ -360,6 +357,37 @@ function RunDetail({
         <ErrorAlert error={draft.error} className="mt-3" />
       </Confirm>
     </>
+  );
+}
+
+/** docs/specs/change-sets.md. Each repository of the run with its base, its pull request and its status. */
+function Targets({ run }: { run: Run }) {
+  if (run.targets.length === 0) return null;
+  const pullRequestName = run.status === "DRAFT_PUBLISHED" ? "Draft pull request" : "Pull request";
+  return (
+    <ul className="mt-4 flex flex-col gap-3 text-sm">
+      {run.targets.map((target) => (
+        <li key={target.repositoryFullName}>
+          <div className="font-mono text-xs">{target.repositoryFullName}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="text-mute">
+              Base {target.baseSha ? <code>{target.baseSha.slice(0, 12)}</code> : "—"}
+            </span>
+            {target.pullRequestUrl ? (
+              <a className="link" href={target.pullRequestUrl} target="_blank" rel="noreferrer">
+                {pullRequestName} {pullRequestLabel(target.pullRequestUrl)}
+              </a>
+            ) : (
+              <span className="text-mute">No pull request</span>
+            )}
+            {target.pullRequestState ? (
+              <Badge tone={pullRequestTone(target.pullRequestState)}>{target.pullRequestState}</Badge>
+            ) : null}
+            {target.mergeOrder !== null ? <span className="text-mute">merge {target.mergeOrder}</span> : null}
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

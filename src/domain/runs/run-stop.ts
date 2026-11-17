@@ -33,16 +33,18 @@ export const readStopRequest = (value: unknown): StopRequest | null => {
  * from before issue #45. A Factoree UI stop names the source and the admin, because the human in
  * Linear did not press Stop.
  */
-export const stopResponse = (request: StopRequest | null, pullRequestUrl: string | null): string => {
+export const stopResponse = (request: StopRequest | null, pullRequestUrls: readonly string[]): string => {
   const opening =
     request?.source === "factoree_ui"
       ? `Stopped from the Factoree UI${request.by ? ` by ${request.by}` : ""}.`
       : request?.source === "pull_request"
         ? "The pull request merged or closed, so Factoree stopped this PR follow-up run."
         : "Factoree stopped this Run at your request.";
-  return pullRequestUrl === null
+  // docs/specs/change-sets.md. The message names every pull request of the run.
+  return pullRequestUrls.length === 0
     ? `${opening} No change was published.`
-    : `${opening} The verified change is already published and waits for a human. Pull request: ${pullRequestUrl}.`;
+    : `${opening} The verified change is already published and waits for a human. ` +
+        `${pullRequestUrls.length === 1 ? "Pull request" : "Pull requests"}: ${pullRequestUrls.join(", ")}.`;
 };
 
 /** Records who stopped a Run and from where. The first stop of a Run wins. */

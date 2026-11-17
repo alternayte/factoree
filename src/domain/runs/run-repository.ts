@@ -23,10 +23,6 @@ export interface RunRecord {
   /** docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to. */
   sandboxProviderId: string | null;
   spriteRetainUntil: Date | null;
-  baseSha: string | null;
-  patchSha256: string | null;
-  commitSha: string | null;
-  pullRequestUrl: string | null;
   contextContractVersion: string | null;
   validationContractVersion: string | null;
   /**
@@ -34,8 +30,6 @@ export interface RunRecord {
    * Project configures no organization skills repository, or the Run recorded no sandbox yet.
    */
   organizationSkillsSha: string | null;
-  /** Specification section 8. The SHA-256 of the identity file at the Run's base commit. */
-  configSha: string | null;
   /** SDD section 47. The SHA-256 of the Proof Pack this Run posted, or null while none exists. */
   proofPackSha256: string | null;
   proofPackPostedAt: Date | null;
@@ -105,7 +99,6 @@ export interface RunSandboxPatch {
   spriteId: string;
   adapter: string;
   retainUntil: Date;
-  baseSha: string;
   implementerRunner: string;
   /**
    * SDD section 55. The commit the organization skills checkout resolved to. Absent when the
@@ -152,6 +145,32 @@ export interface RunTargetRecord {
   pullRequestUrl: string | null;
   /** docs/specs/proof-pack-and-visual-evidence.md. The pull request preview, or null. */
   previewUrl: string | null;
+  /** docs/specs/change-sets.md. The `owner/repo` name of the target repository. */
+  repositoryFullName: string;
+  /** DI-21.51. Open, merged or closed, or null before the pull request exists. */
+  pullRequestState: PullRequestState | null;
+  /** docs/specs/change-sets.md. The SHA-256 of `.factoree/config.yaml` at the base, or null. */
+  configSha: string | null;
+  /** docs/specs/change-sets.md. The place in the merge order, from 1, or null when no edge orders it. */
+  mergeOrder: number | null;
+}
+
+/**
+ * docs/specs/change-sets.md, docs/specs/run-recovery.md. The last patch a check sprite captured of
+ * one target, and the attempt it served (docs/specs/draft-of-failed-run.md, DI-21.76).
+ */
+export interface TargetPatch {
+  repositoryFullName: string;
+  patchBase64: string;
+  /** Null on a patch recorded before the attempt column. */
+  attempt: number | null;
+}
+
+/** SDD section 44 and section 46. The immutable publication facts of one run target. */
+export interface TargetPublication {
+  patchSha256: string;
+  commitSha: string;
+  pullRequestUrl: string;
 }
 
 /** The Run a pull request preview belongs to. The session receives the preview link. */
@@ -186,12 +205,21 @@ export interface RunRepository {
   /** The newest run of the agent session. A follow-up run is newer than the run it follows. */
   findByAgentSession(tenantId: string, agentSessionId: string): Promise<RunRecord | null>;
   /**
-   * docs/specs/run-recovery.md. Records the last patch a check sprite captured, and the attempt it
-   * served (docs/specs/draft-of-failed-run.md, DI-21.76).
+   * docs/specs/run-recovery.md, docs/specs/change-sets.md. Records the last patch a check sprite
+   * captured of the run target of `repositoryFullName`, and the attempt it served
+   * (docs/specs/draft-of-failed-run.md, DI-21.76).
    */
-  recordLastPatch(tenantId: string, runId: string, patchBase64: string, attempt: number): Promise<void>;
-  /** docs/specs/run-recovery.md. The last patch a check sprite captured, or null. */
-  lastPatch(tenantId: string, runId: string): Promise<string | null>;
+  recordLastPatch(
+    tenantId: string,
+    runId: string,
+    repositoryFullName: string,
+    patchBase64: string,
+    attempt: number,
+  ): Promise<void>;
+  /** docs/specs/run-recovery.md. The last patch of the run target of `repositoryFullName`, or null. */
+  lastPatch(tenantId: string, runId: string, repositoryFullName: string): Promise<string | null>;
+  /** docs/specs/change-sets.md. The last patch of each run target that holds one, in target order. */
+  lastPatches(tenantId: string, runId: string): Promise<TargetPatch[]>;
   updateStatus(id: string, status: RunStatus, patch?: RunStatusPatch): Promise<RunRecord>;
   /**
    * Records the sandbox of the Run and the moment its retention window ends. It reports the
@@ -222,13 +250,15 @@ export interface RunRepository {
    */
   setValidationContractVersion(tenantId: string, runId: string, version: string): Promise<void>;
   /**
-   * SDD section 44 and section 46. Records the immutable publication facts of one Run. The method
-   * throws when it reaches no Run of that tenant, because a silent success hides a caller defect.
+   * SDD section 44 and section 46, docs/specs/change-sets.md. Records the immutable publication facts
+   * of the run target of `repositoryFullName`. The method throws when it reaches no run target of
+   * that tenant, because a silent success hides a caller defect.
    */
   setPublication(
     tenantId: string,
     runId: string,
-    publication: { patchSha256: string; commitSha: string; pullRequestUrl: string },
+    repositoryFullName: string,
+    publication: TargetPublication,
   ): Promise<void>;
   /**
    * SDD section 47 and section 68. Records the Proof Pack of one Run. The method throws when it
@@ -265,8 +295,8 @@ export interface RunRepository {
   /** Runs whose sandbox retention window has passed and whose sandbox still exists. */
   listExpiredSandboxes(now: Date, limit: number): Promise<ExpiredSandboxRun[]>;
   /**
-   * Specification section 10. Records the repository target of the Run. A Version 1 Run has one
-   * target, so it writes one row. Change Sets are Version 2.
+   * Specification section 10, docs/specs/change-sets.md. Records one repository target of the Run.
+   * A retry of the same target writes nothing new.
    */
   createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }>;
   /**
@@ -280,14 +310,15 @@ export interface RunRepository {
     repositoryId: string,
     patch: RunTargetPatch,
   ): Promise<void>;
-  /** Specification section 18. The `RunTarget` rows of one Run, in merge order. */
+  /** Specification section 18. The `RunTarget` rows of one Run, in the order they were selected. */
   listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]>;
   /**
-   * Specification section 8. Records the SHA-256 of `.factoree/config.yaml` as read at the
-   * Run's base commit. The method throws when it reaches no Run of that tenant, because a
-   * silent success hides a caller defect.
+   * Specification section 8, docs/specs/change-sets.md. Records the SHA-256 of
+   * `.factoree/config.yaml` as read at the base commit of the run target of `repositoryFullName`.
+   * The method throws when it reaches no run target of that tenant, because a silent success hides
+   * a caller defect.
    */
-  setConfigSha(tenantId: string, runId: string, sha: string): Promise<void>;
+  setConfigSha(tenantId: string, runId: string, repositoryFullName: string, sha: string): Promise<void>;
   /**
    * F6. The count of Runs a Product owns, so an operator's DELETE /admin/products/:id can
    * refuse to destroy the Run history and the Proof Pack evidence a cascade would otherwise

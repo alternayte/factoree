@@ -25,6 +25,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { repositorySlugOfUrl } from "~/domain/products/repository-url.js";
 import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 
 export interface ResolveContextActivityInput {
@@ -312,7 +313,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     }
 
     const configSha = createHash("sha256").update(text, "utf8").digest("hex");
-    await dependencies.runs.setConfigSha(input.tenantId, input.runId, configSha);
+    await dependencies.runs.setConfigSha(input.tenantId, input.runId, repositorySlugOfUrl(input.repositoryUrl), configSha);
 
     let declaredProduct: string | null;
     try {

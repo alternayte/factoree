@@ -31,7 +31,7 @@ const read = (issueId: string, identifier: string, state: string): ReadBlocker =
 /** An in-memory store with the same conditional writes as the Prisma store. */
 const memoryStore = () => {
   const runs = new Map<string, WaitingRun & { status: string; stop?: StopRequest }>();
-  const pullRequests = new Map<string, string>();
+  const pullRequests = new Map<string, string[]>();
   /** When set, the next list answers this snapshot, as a sweep that read before another wrote. */
   const snapshot: { runs: WaitingRun[] | null } = { runs: null };
   const store: WaitingRunStore = {
@@ -177,13 +177,13 @@ describe("the hold at delegation", () => {
   it("holds a work item with an open blocker and names its Factoree pull request", async () => {
     const harness = build();
     harness.linear.set("issue-2", [read("issue-1", "FAC-1", "started"), read("issue-9", "FAC-9", "completed")]);
-    harness.pullRequests.set("issue-1", "https://github.com/org/repo/pull/2");
+    harness.pullRequests.set("issue-1", ["https://github.com/org/repo/pull/2"]);
     expect(await harness.hold()).toBe(true);
     const run = [...harness.runs.values()][0];
     expect(run?.status).toBe("WAITING_FOR_BLOCKERS");
-    expect(run?.blockers?.map((blocker) => [blocker.identifier, blocker.state, blocker.pullRequestUrl])).toEqual([
-      ["FAC-1", "started", "https://github.com/org/repo/pull/2"],
-      ["FAC-9", "completed", null],
+    expect(run?.blockers?.map((blocker) => [blocker.identifier, blocker.state, blocker.pullRequestUrls])).toEqual([
+      ["FAC-1", "started", ["https://github.com/org/repo/pull/2"]],
+      ["FAC-9", "completed", []],
     ]);
     expect(harness.posts).toEqual([
       {
@@ -299,7 +299,7 @@ describe("the sweep", () => {
     if (run === undefined) throw new Error("no run");
     // This sweep read the row before another sweep wrote FAC-5 to it.
     harness.snapshot.runs = [structuredClone(run)];
-    const written: Blocker[] = [{ ...read("issue-5", "FAC-5", "started"), pullRequestUrl: null }];
+    const written: Blocker[] = [{ ...read("issue-5", "FAC-5", "started"), pullRequestUrls: [] }];
     run.blockers = written;
     harness.linear.set("issue-2", [read("issue-5", "FAC-5", "started")]);
     harness.posts.length = 0;

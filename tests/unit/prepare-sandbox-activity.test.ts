@@ -117,6 +117,7 @@ const build = (
     countByProduct: vi.fn().mockResolvedValue(0),
     recordLastPatch: vi.fn().mockResolvedValue(undefined),
     lastPatch: vi.fn().mockResolvedValue(null),
+    lastPatches: vi.fn().mockResolvedValue([]),
     setDeliveredContext: vi.fn().mockResolvedValue(undefined),
     setIssueState: vi.fn().mockResolvedValue(undefined),
     closePullRequest: vi.fn().mockResolvedValue(null),

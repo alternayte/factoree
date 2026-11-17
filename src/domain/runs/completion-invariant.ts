@@ -32,14 +32,21 @@ export interface PrePublicationInput {
   repairLimit: number;
 }
 
-export interface CompletionInvariantInput extends PrePublicationInput {
+/** docs/specs/change-sets.md. The publication facts of one target of the run. */
+export interface PublishedTarget {
+  repositoryFullName: string;
   /**
    * SDD section 44 and section 46. The publication reproduced this hash inside the trusted
    * checkout before it created a branch, so one recorded value proves both sides of the clause
    * "verified patch hash == published patch hash".
    */
-  patchSha256: string;
+  patchSha256: string | null;
   pullRequestUrl: string | null;
+}
+
+export interface CompletionInvariantInput extends PrePublicationInput {
+  /** docs/specs/change-sets.md. Every target of the run. Each one needs its own pull request. */
+  targets: PublishedTarget[];
   proofPackSha256: string | null;
 }
 
@@ -76,9 +83,16 @@ export const prePublicationFailures = (input: PrePublicationInput): string[] => 
 
 export const completionInvariantFailures = (input: CompletionInvariantInput): string[] => {
   const failures = prePublicationFailures(input);
-  if (!SHA256.test(input.patchSha256)) failures.push("No verified patch hash exists.");
-  if (input.pullRequestUrl === null || input.pullRequestUrl.trim() === "") {
-    failures.push("No pull request exists.");
+  if (input.targets.length === 0) failures.push("No run target exists.");
+  // A single target keeps the sentences of a run before change sets.
+  const of = (target: PublishedTarget): string => (input.targets.length === 1 ? "" : ` for ${target.repositoryFullName}`);
+  for (const target of input.targets) {
+    if (target.patchSha256 === null || !SHA256.test(target.patchSha256)) {
+      failures.push(`No verified patch hash exists${of(target)}.`);
+    }
+    if (target.pullRequestUrl === null || target.pullRequestUrl.trim() === "") {
+      failures.push(`No pull request exists${of(target)}.`);
+    }
   }
   if (input.proofPackSha256 === null || !SHA256.test(input.proofPackSha256)) {
     failures.push("No Proof Pack exists.");

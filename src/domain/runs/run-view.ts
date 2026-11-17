@@ -13,7 +13,8 @@ export interface RunListItem {
   failureMessage: string | null;
   workItemTitle: string | null;
   workItemUrl: string | null;
-  pullRequestUrl: string | null;
+  /** docs/specs/change-sets.md. Each repository the run changes, in the order it was selected. */
+  targets: RunTargetView[];
   repairCount: number;
   /** The repair limit the run had. Only a run that posted a proof pack records it. */
   repairLimit: number | null;
@@ -40,13 +41,26 @@ export interface RunListItem {
   blockers: RunBlockerView[] | null;
 }
 
+/** docs/specs/change-sets.md. One run target with its base, its pull request and its status. */
+export interface RunTargetView {
+  repositoryFullName: string;
+  baseSha: string | null;
+  patchSha256: string | null;
+  commitSha: string | null;
+  pullRequestUrl: string | null;
+  /** Open, merged or closed, or null before the pull request exists. */
+  pullRequestState: string | null;
+  /** The place in the merge order, from 1, or null when no edge orders the target. */
+  mergeOrder: number | null;
+}
+
 export interface RunBlockerView {
   identifier: string;
   url: string | null;
   /** The Linear state type of the blocker issue. */
   state: string;
-  /** The pull request of the newest Factoree run of the blocker issue, or null. */
-  pullRequestUrl: string | null;
+  /** The pull requests of the newest Factoree run of the blocker issue that opened any. */
+  pullRequestUrls: string[];
 }
 
 export interface RunStageView {
@@ -137,9 +151,6 @@ export interface RunDetail extends RunListItem {
   autonomyLevel: string;
   /** docs/specs/run-recovery.md. The failed run this run follows up, or null. */
   followUpOfRunId: string | null;
-  baseSha: string | null;
-  commitSha: string | null;
-  patchSha256: string | null;
   skillRegistrySet: string | null;
   skillResolutionId: string | null;
   proofPackPostedAt: Date | null;

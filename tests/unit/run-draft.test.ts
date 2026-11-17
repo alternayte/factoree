@@ -7,7 +7,7 @@ const failed: DraftFacts = {
   status: "FAILED",
   failureReason: "VALIDATION_FAILED",
   failureMessage: "VAL-UI-001 failed and the repair budget is spent.",
-  pullRequestUrl: null,
+  pullRequestUrls: [],
   hasPatch: true,
   patchAttempt: 3,
   targetCount: 1,
@@ -40,7 +40,7 @@ describe("the draft decision", () => {
   });
 
   it("answers a run that already published its draft with its pull request", () => {
-    expect(decideDraft({ ...failed, status: "DRAFT_PUBLISHED", pullRequestUrl: "https://github.com/a/b/pull/4" })).toEqual({
+    expect(decideDraft({ ...failed, status: "DRAFT_PUBLISHED", pullRequestUrls: ["https://github.com/a/b/pull/4"] })).toEqual({
       kind: "published",
       pullRequestUrl: "https://github.com/a/b/pull/4",
     });
@@ -56,7 +56,7 @@ describe("the draft decision", () => {
     expect(refusal({ ...failed, hasPatch: false, patchAttempt: null })).toContain("has no patch");
     expect(refusal({ ...failed, targetCount: 2 })).toContain("no draft of a change set");
     expect(refusal({ ...failed, failureReason: "PATCH_HASH_MISMATCH" })).toContain("did not reproduce its verified hash");
-    expect(refusal({ ...failed, pullRequestUrl: "https://github.com/a/b/pull/2" })).toContain("already opened a pull request");
+    expect(refusal({ ...failed, pullRequestUrls: ["https://github.com/a/b/pull/2"] })).toContain("already opened a pull request");
   });
 
   it("refuses a patch whose review found a blocker, and takes one with a lesser finding", () => {

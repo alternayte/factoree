@@ -14,6 +14,8 @@ import type {
   RunRecord,
   RunRepository,
   RunStatusPatch,
+  TargetPatch,
+  TargetPublication,
 } from "~/domain/runs/run-repository.js";
 import { TERMINAL_RUN_STATUSES, type RunFailureReason, type RunStatus } from "~/domain/runs/run-status.js";
 import type { RunFailureCategory } from "~/domain/runs/failure-category.js";
@@ -40,14 +42,9 @@ const toRecord = (row: NonNullable<RunRow>): RunRecord => ({
   spriteAdapter: row.spriteAdapter,
   sandboxProviderId: row.sandboxProviderId,
   spriteRetainUntil: row.spriteRetainUntil,
-  baseSha: row.baseSha,
-  patchSha256: row.patchSha256,
-  commitSha: row.commitSha,
-  pullRequestUrl: row.pullRequestUrl,
   contextContractVersion: row.contextContractVersion,
   validationContractVersion: row.validationContractVersion,
   organizationSkillsSha: row.organizationSkillsSha ?? null,
-  configSha: row.configSha ?? null,
   proofPackSha256: row.proofPackSha256,
   proofPackPostedAt: row.proofPackPostedAt,
   proofPackDocument: (row.proofPackDocument as Record<string, unknown> | null) ?? null,
@@ -120,16 +117,53 @@ export class PrismaRunRepository implements RunRepository {
     return row ? toRecord(row) : null;
   }
 
-  async recordLastPatch(tenantId: string, runId: string, patchBase64: string, attempt: number): Promise<void> {
-    await this.prisma.run.updateMany({
-      where: { tenantId, id: runId },
-      data: { lastPatchBase64: patchBase64, lastPatchAttempt: attempt },
-    });
+  /**
+   * docs/specs/change-sets.md. The run target of one repository. GitHub names a repository with its
+   * own case, so the match ignores case. The tenant filter is part of the query (SDD section 52).
+   */
+  private targetWhere(tenantId: string, runId: string, repositoryFullName: string) {
+    return {
+      tenantId,
+      runId,
+      repository: { fullName: { equals: repositoryFullName, mode: "insensitive" as const } },
+    };
   }
 
-  async lastPatch(tenantId: string, runId: string): Promise<string | null> {
-    const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId }, select: { lastPatchBase64: true } });
+  async recordLastPatch(
+    tenantId: string,
+    runId: string,
+    repositoryFullName: string,
+    patchBase64: string,
+    attempt: number,
+  ): Promise<void> {
+    const updated = await this.prisma.runTarget.updateMany({
+      where: this.targetWhere(tenantId, runId, repositoryFullName),
+      data: { lastPatchBase64: patchBase64, lastPatchAttempt: attempt },
+    });
+    if (updated.count === 0) {
+      throw new Error(`no RunTarget of run "${runId}" and repository "${repositoryFullName}" received the last patch`);
+    }
+  }
+
+  async lastPatch(tenantId: string, runId: string, repositoryFullName: string): Promise<string | null> {
+    const row = await this.prisma.runTarget.findFirst({
+      where: this.targetWhere(tenantId, runId, repositoryFullName),
+      select: { lastPatchBase64: true },
+    });
     return row?.lastPatchBase64 ?? null;
+  }
+
+  async lastPatches(tenantId: string, runId: string): Promise<TargetPatch[]> {
+    const rows = await this.prisma.runTarget.findMany({
+      where: { tenantId, runId, lastPatchBase64: { not: null } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { lastPatchBase64: true, lastPatchAttempt: true, repository: { select: { fullName: true } } },
+    });
+    return rows.flatMap((row) =>
+      row.lastPatchBase64 === null
+        ? []
+        : [{ repositoryFullName: row.repository.fullName, patchBase64: row.lastPatchBase64, attempt: row.lastPatchAttempt }],
+    );
   }
 
   async updateStatus(id: string, status: RunStatus, patch: RunStatusPatch = {}): Promise<RunRecord> {
@@ -184,7 +218,6 @@ export class PrismaRunRepository implements RunRepository {
           spriteId: sandbox.spriteId,
           spriteAdapter: sandbox.adapter,
           spriteRetainUntil: sandbox.retainUntil,
-          baseSha: sandbox.baseSha,
           implementerRunner: sandbox.implementerRunner,
           ...(sandbox.organizationSkillsSha === undefined
             ? {}
@@ -257,22 +290,28 @@ export class PrismaRunRepository implements RunRepository {
   async setPublication(
     tenantId: string,
     runId: string,
-    publication: { patchSha256: string; commitSha: string; pullRequestUrl: string },
+    repositoryFullName: string,
+    publication: TargetPublication,
   ): Promise<void> {
-    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
-    const updated = await this.prisma.run.updateMany({
-      where: { id: runId, tenantId },
+    // DI-21.51. The pull request number matches the pull_request event, and a published pull
+    // request is open, as `updateRunTarget` records it.
+    const updated = await this.prisma.runTarget.updateMany({
+      where: this.targetWhere(tenantId, runId, repositoryFullName),
       data: {
         patchSha256: publication.patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: publication.pullRequestUrl,
+        pullRequestNumber: pullRequestNumberOf(publication.pullRequestUrl),
+        pullRequestState: "open",
       },
     });
     // A write that reaches no row must not report success. These values name the exact
-    // publication facts of the Run. A wrong Run or a wrong tenant is a caller defect. A silent
-    // success makes a Run that holds publication facts report that it holds none.
+    // publication facts of the target. A wrong Run, repository or tenant is a caller defect. A
+    // silent success makes a target that holds publication facts report that it holds none.
     if (updated.count === 0) {
-      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the publication facts`);
+      throw new Error(
+        `no RunTarget of run "${runId}" and repository "${repositoryFullName}" of tenant "${tenantId}" received the publication facts`,
+      );
     }
   }
 
@@ -313,15 +352,27 @@ export class PrismaRunRepository implements RunRepository {
   }
 
   async createRunTarget(input: CreateRunTargetInput): Promise<{ id: string }> {
-    const row = await this.prisma.runTarget.create({
-      data: {
-        tenantId: input.tenantId,
-        runId: input.runId,
-        repositoryId: input.repositoryId,
-        selectionReason: input.selectionReason,
-      },
-    });
-    return { id: row.id };
+    try {
+      const row = await this.prisma.runTarget.create({
+        data: {
+          tenantId: input.tenantId,
+          runId: input.runId,
+          repositoryId: input.repositoryId,
+          selectionReason: input.selectionReason,
+        },
+      });
+      return { id: row.id };
+    } catch (error) {
+      // An activity retry after a lost reply finds the row its first attempt wrote.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const existing = await this.prisma.runTarget.findFirst({
+          where: { tenantId: input.tenantId, runId: input.runId, repositoryId: input.repositoryId },
+          select: { id: true },
+        });
+        if (existing !== null) return existing;
+      }
+      throw error;
+    }
   }
 
   async updateRunTarget(
@@ -352,7 +403,8 @@ export class PrismaRunRepository implements RunRepository {
   async listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]> {
     const rows = await this.prisma.runTarget.findMany({
       where: { runId, tenantId },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      include: { repository: { select: { fullName: true } } },
     });
     return rows.map((row) => ({
       id: row.id,
@@ -365,6 +417,10 @@ export class PrismaRunRepository implements RunRepository {
       commitSha: row.commitSha,
       pullRequestUrl: row.pullRequestUrl,
       previewUrl: row.previewUrl,
+      repositoryFullName: row.repository.fullName,
+      pullRequestState: row.pullRequestState === null ? null : pullRequestStateOf(row.pullRequestState),
+      configSha: row.configSha,
+      mergeOrder: row.mergeOrder,
     }));
   }
 
@@ -404,16 +460,17 @@ export class PrismaRunRepository implements RunRepository {
     };
   }
 
-  async setConfigSha(tenantId: string, runId: string, sha: string): Promise<void> {
-    // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
-    const updated = await this.prisma.run.updateMany({
-      where: { id: runId, tenantId },
+  async setConfigSha(tenantId: string, runId: string, repositoryFullName: string, sha: string): Promise<void> {
+    const updated = await this.prisma.runTarget.updateMany({
+      where: this.targetWhere(tenantId, runId, repositoryFullName),
       data: { configSha: sha },
     });
     // A write that reaches no row must not report success. This value names the exact identity
-    // file the Run checked. A wrong Run or a wrong tenant is a caller defect.
+    // file the target checked. A wrong Run, repository or tenant is a caller defect.
     if (updated.count === 0) {
-      throw new Error(`no Run "${runId}" of tenant "${tenantId}" received the config SHA`);
+      throw new Error(
+        `no RunTarget of run "${runId}" and repository "${repositoryFullName}" of tenant "${tenantId}" received the config SHA`,
+      );
     }
   }
 

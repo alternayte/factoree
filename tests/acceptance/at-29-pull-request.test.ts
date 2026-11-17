@@ -63,7 +63,7 @@ const memoryRuns = (): RunRepository & { publications: PublicationRow[] } => {
   const publications: PublicationRow[] = [];
   return {
     publications,
-    setPublication: (_tenantId: string, _runId: string, row: PublicationRow): Promise<void> => {
+    setPublication: (_tenantId: string, _runId: string, _repositorySlug: string, row: PublicationRow): Promise<void> => {
       publications.push(row);
       return Promise.resolve();
     },

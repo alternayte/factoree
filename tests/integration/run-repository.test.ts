@@ -36,6 +36,15 @@ afterAll(async () => {
   await stop();
 });
 
+/** docs/specs/change-sets.md. A repository of the product and the run target of `runId` there. */
+const seedTarget = async (tenantId: string, productId: string, runId: string, fullName: string) => {
+  const repository = await prisma.repository.create({
+    data: { tenantId, productId, fullName, configSha: "c", githubInstallationId: "42" },
+  });
+  await prisma.runTarget.create({ data: { tenantId, runId, repositoryId: repository.id, selectionReason: "named" } });
+  return repository;
+};
+
 const input = (sessionId: string) => ({
   tenantId: tenantA,
   productId: productA,
@@ -106,14 +115,12 @@ describe("PrismaRunRepository", () => {
       spriteId: "sprite-5",
       adapter: "fake",
       retainUntil,
-      baseSha: "b".repeat(40),
       implementerRunner: "opencode",
     });
 
     const stored = await repository.findById(tenantA, created.run.id);
     expect(stored?.spriteId).toBe("sprite-5");
     expect(stored?.spriteAdapter).toBe("fake");
-    expect(stored?.baseSha).toBe("b".repeat(40));
     expect(stored?.implementerRunner).toBe("opencode");
 
     const expired = await repository.listExpiredSandboxes(new Date(), 10);
@@ -131,14 +138,13 @@ describe("PrismaRunRepository", () => {
     expect(await repository.listExpiredSandboxes(new Date(), 10)).toHaveLength(0);
   });
 
-  it("stores the organization skills SHA beside the base SHA (SDD section 55)", async () => {
+  it("stores the organization skills SHA of the sandbox (SDD section 55)", async () => {
     const repository = new PrismaRunRepository(prisma);
     const created = await repository.createIfAbsent(input("session-organization-skills-sha"));
     await repository.setSandbox(tenantA, created.run.id, {
       spriteId: "sprite-organization-skills",
       adapter: "fake",
       retainUntil: new Date(),
-      baseSha: "d".repeat(40),
       implementerRunner: "opencode",
       organizationSkillsSha: "e".repeat(40),
     });
@@ -253,25 +259,30 @@ describe("PrismaRunRepository.setValidationContractVersion", () => {
 });
 
 describe("PrismaRunRepository.setPublication", () => {
-  it("writes the publication facts to the Run", async () => {
+  // docs/specs/change-sets.md. The facts land on the target of the repository, and on no other.
+  it("writes the publication facts to the run target of the repository", async () => {
     const runs = new PrismaRunRepository(prisma);
-    const { tenantId, runId } = await seedTenantProjectAndRun(prisma);
-    await runs.setPublication(tenantId, runId, {
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+    await seedTarget(tenantId, productId, runId, "Acme/Demo");
+    await seedTarget(tenantId, productId, runId, "acme/api");
+    await runs.setPublication(tenantId, runId, "acme/demo", {
       patchSha256: "c".repeat(64),
       commitSha: "d".repeat(40),
       pullRequestUrl: "https://github.com/acme/demo/pull/1",
     });
-    const reloaded = await runs.findById(tenantId, runId);
-    expect(reloaded?.patchSha256).toBe("c".repeat(64));
-    expect(reloaded?.commitSha).toBe("d".repeat(40));
-    expect(reloaded?.pullRequestUrl).toBe("https://github.com/acme/demo/pull/1");
+    const targets = await runs.listRunTargets(tenantId, runId);
+    expect(targets.map((target) => [target.repositoryFullName, target.patchSha256, target.commitSha, target.pullRequestUrl, target.pullRequestState])).toEqual([
+      ["Acme/Demo", "c".repeat(64), "d".repeat(40), "https://github.com/acme/demo/pull/1", "open"],
+      ["acme/api", null, null, null, null],
+    ]);
   });
 
-  it("throws when it reaches no Run of that tenant, because a silent success hides a caller defect", async () => {
+  it("throws when it reaches no run target of that tenant, because a silent success hides a caller defect", async () => {
     const runs = new PrismaRunRepository(prisma);
-    const { runId } = await seedTenantProjectAndRun(prisma);
+    const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+    await seedTarget(tenantId, productId, runId, "acme/demo");
     await expect(
-      runs.setPublication("other-tenant", runId, {
+      runs.setPublication("other-tenant", runId, "acme/demo", {
         patchSha256: "e".repeat(64),
         commitSha: "f".repeat(40),
         pullRequestUrl: "https://github.com/acme/demo/pull/2",
@@ -345,9 +356,13 @@ describe("PrismaRunDraftStore", () => {
     const repository = new PrismaRunRepository(prisma);
     const drafts = new PrismaRunDraftStore(prisma);
     const { run } = await repository.createIfAbsent(input("session-draft"));
+    await seedTarget(tenantA, productA, run.id, "acme/draft");
     await repository.updateStatus(run.id, "FAILED", { failureReason: "VALIDATION_FAILED", failureMessage: "AC-1 failed." });
     await prisma.reviewFinding.create({ data: finding(run.id, 1) });
-    await repository.recordLastPatch(tenantA, run.id, Buffer.from("diff --git a/x b/x\n").toString("base64"), 2);
+    await repository.recordLastPatch(tenantA, run.id, "acme/draft", Buffer.from("diff --git a/x b/x\n").toString("base64"), 2);
+    expect(await repository.lastPatches(tenantA, run.id)).toEqual([
+      { repositoryFullName: "acme/draft", patchBase64: Buffer.from("diff --git a/x b/x\n").toString("base64"), attempt: 2 },
+    ]);
 
     const facts = await drafts.facts(tenantA, run.id);
     expect(facts).toMatchObject({ status: "FAILED", hasPatch: true, patchAttempt: 2, findings: [], reviewed: false });
@@ -370,7 +385,7 @@ describe("PrismaWaitingRunStore", () => {
     identifier,
     url: null,
     state,
-    pullRequestUrl: null,
+    pullRequestUrls: [],
   });
   const waitingInput = (sessionId: string, blockers: Blocker[] | null) => ({
     ...input(sessionId),
@@ -441,7 +456,7 @@ describe("PrismaWaitingRunStore", () => {
     // A second sweep that read before the first one wrote loses.
     expect(await store.replaceBlockers(runId, null, [blocker("FAC-3", "started")])).toBe(false);
     // jsonb equality ignores the key order of the stored objects.
-    const reordered = read.map((entry) => ({ state: entry.state, pullRequestUrl: null, url: null, identifier: entry.identifier, issueId: entry.issueId }));
+    const reordered = read.map((entry) => ({ state: entry.state, pullRequestUrls: [], url: null, identifier: entry.identifier, issueId: entry.issueId }));
     expect(await store.replaceBlockers(runId, reordered, [])).toBe(true);
     expect((await store.findWaiting(tenantA, runId))?.blockers).toEqual([]);
     // DI-21.85. An issue Linear stops returning sets the row back to unread, once.
@@ -450,14 +465,21 @@ describe("PrismaWaitingRunStore", () => {
     expect((await store.findWaiting(tenantA, runId))?.blockers).toBeNull();
   });
 
-  it("names the pull request of the newest Factoree run of a blocker issue", async () => {
+  it("names the pull requests of the newest Factoree run of a blocker issue", async () => {
     const repository = new PrismaRunRepository(prisma);
     const store = new PrismaWaitingRunStore(prisma);
     const older = await repository.createIfAbsent({ ...input("session-blocker-old"), linearIssueId: "issue-blocker" });
-    await prisma.run.update({ where: { id: older.run.id }, data: { pullRequestUrl: "https://github.com/o/r/pull/1", createdAt: new Date("2026-01-01") } });
+    await prisma.run.update({ where: { id: older.run.id }, data: { createdAt: new Date("2026-01-01") } });
+    await seedTarget(tenantA, productA, older.run.id, "o/old");
+    await repository.setPublication(tenantA, older.run.id, "o/old", { patchSha256: "a".repeat(64), commitSha: "b".repeat(40), pullRequestUrl: "https://github.com/o/old/pull/1" });
     const newer = await repository.createIfAbsent({ ...input("session-blocker-new"), linearIssueId: "issue-blocker" });
-    await prisma.run.update({ where: { id: newer.run.id }, data: { pullRequestUrl: "https://github.com/o/r/pull/2" } });
-    expect(await store.pullRequestsOf(tenantA, ["issue-blocker", "issue-none"])).toEqual(new Map([["issue-blocker", "https://github.com/o/r/pull/2"]]));
+    for (const name of ["o/api", "o/web"]) {
+      await seedTarget(tenantA, productA, newer.run.id, name);
+      await repository.setPublication(tenantA, newer.run.id, name, { patchSha256: "a".repeat(64), commitSha: "b".repeat(40), pullRequestUrl: `https://github.com/${name}/pull/2` });
+    }
+    expect(await store.pullRequestsOf(tenantA, ["issue-blocker", "issue-none"])).toEqual(
+      new Map([["issue-blocker", ["https://github.com/o/api/pull/2", "https://github.com/o/web/pull/2"]]]),
+    );
     expect(await store.pullRequestsOf(tenantB, ["issue-blocker"])).toEqual(new Map());
   });
 });

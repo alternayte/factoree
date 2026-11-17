@@ -70,7 +70,8 @@ export const createDraftActivities = (dependencies: DraftActivityDependencies) =
     if (decision.kind === "refused") return { kind: "refused", sessionId, reason: decision.reason };
     if (decision.kind === "published") return { kind: "published", sessionId, pullRequestUrl: decision.pullRequestUrl };
     const subject = await dependencies.drafts.subject(input.tenantId, input.runId);
-    if (subject?.target == null || run.baseSha === null || facts.patchAttempt === null) {
+    const baseSha = subject?.target?.baseSha ?? null;
+    if (subject?.target == null || baseSha === null || facts.patchAttempt === null) {
       return {
         kind: "refused",
         sessionId,
@@ -87,7 +88,7 @@ export const createDraftActivities = (dependencies: DraftActivityDependencies) =
       repositorySlug: subject.target.fullName,
       repositoryBaseUrl: await dependencies.repositoryBaseUrl(),
       baseBranch: subject.target.defaultBranch,
-      baseSha: run.baseSha,
+      baseSha,
       githubInstallationId: subject.target.githubInstallationId,
       workItemTitle: subject.workItemTitle,
       workItemUrl: subject.workItemUrl,

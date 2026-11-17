@@ -39,8 +39,11 @@ export interface SessionRuns {
   findByAgentSession(
     tenantId: string,
     agentSessionId: string,
-  ): Promise<{ id: string; status: RunStatus; temporalWorkflowId: string; pullRequestUrl: string | null } | null>;
-  lastPatch(tenantId: string, runId: string): Promise<string | null>;
+  ): Promise<{ id: string; status: RunStatus; temporalWorkflowId: string } | null>;
+  /** docs/specs/change-sets.md. The targets of a run, whose pull requests a reply is pointed to. */
+  listRunTargets(tenantId: string, runId: string): Promise<Array<{ pullRequestUrl: string | null }>>;
+  /** docs/specs/change-sets.md. The last patch of each target of a run. */
+  lastPatches(tenantId: string, runId: string): Promise<Array<{ repositoryFullName: string; patchBase64: string }>>;
 }
 import type { AgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
 import { classifyAgentSessionEvent } from "~/adapters/linear/webhook-schemas.js";
@@ -253,7 +256,12 @@ export class DelegationService {
           await this.dependencies.refusalNotifier.postResponse(
             event.organizationId,
             event.agentSession.id,
-            noFollowUpLine(latest.status, latest.pullRequestUrl),
+            noFollowUpLine(
+              latest.status,
+              ((await this.dependencies.sessionRuns?.listRunTargets(tenantId, latest.id)) ?? []).flatMap((target) =>
+                target.pullRequestUrl === null ? [] : [target.pullRequestUrl],
+              ),
+            ),
           );
           return { kind: "follow_up_refused", status: latest.status };
         }
@@ -486,13 +494,16 @@ export class DelegationService {
   ): Promise<string> {
     const detail = (await this.dependencies.runViews?.detail(tenantId, failedRunId)) ?? null;
     // DI-21.124. The patch of a run whose deploy failed is merged into the base already.
-    const patch = deploy === undefined ? ((await this.dependencies.sessionRuns?.lastPatch(tenantId, failedRunId)) ?? null) : null;
+    const patches = deploy === undefined ? ((await this.dependencies.sessionRuns?.lastPatches(tenantId, failedRunId)) ?? []) : [];
     return renderFollowUpDescription({
       description,
       reply,
       failedRunId,
       run: { assertions: detail?.assertions ?? [], findings: detail?.findings ?? [] },
-      previousPatch: patch === null ? null : Buffer.from(patch, "base64").toString("utf8"),
+      previousPatches: patches.map((entry) => ({
+        repositoryFullName: entry.repositoryFullName,
+        patch: Buffer.from(entry.patchBase64, "base64").toString("utf8"),
+      })),
       ...(deploy === undefined ? {} : { deployFailure: deploy }),
     });
   }

@@ -17,6 +17,7 @@ import type {
   VerificationCommand,
 } from "~/domain/runs/project-runtime-config.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
+import { repositorySlugOfUrl } from "~/domain/products/repository-url.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import { loadRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
@@ -625,7 +626,6 @@ const prepare = async (
       spriteId: prepared.ref.id,
       adapter: prepared.ref.adapter,
       retainUntil,
-      baseSha: prepared.checkout.primary.baseSha,
       implementerRunner: prepared.runtime.implementerRunner,
       ...(prepared.organizationSkillsSha === undefined
         ? {}
@@ -764,7 +764,7 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
           });
           // docs/specs/run-recovery.md. A follow-up run reads what this run last tried. A failed
           // write costs the follow-up its reference and nothing else.
-          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, captured.patchBase64, input.attempt).catch((error: unknown) => {
+          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, repositorySlugOfUrl(input.primary.url), captured.patchBase64, input.attempt).catch((error: unknown) => {
             dependencies.logger.warn("the last patch of the run was not recorded", { run_id: input.runId, error: String(error) });
           });
           // docs/specs/run-speed.md. The reviewer's check sprite must hold the patch the first
@@ -913,7 +913,7 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
         dependencies.logger,
         { tenantId: input.tenantId, runId: input.runId, stage: "prepare_check_sprite", attempt: 1, sandboxId: null },
         async () => {
-          const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId);
+          const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId, repositorySlugOfUrl(input.primary.url));
           if (patchBase64 === null) throw new PatchError("the run holds no patch of the merge of the base, so Factoree checks nothing.");
           let applied: VerifiedPatch | null = null;
           const checkInput: PrepareSandboxActivityInput = { ...input };

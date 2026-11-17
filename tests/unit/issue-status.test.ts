@@ -57,7 +57,7 @@ describe("the issue status of a run (DI-21.49, DI-21.50)", () => {
   });
 
   it("moves back only the statuses that end with no pull request", () => {
-    for (const status of ["FAILED", "FAILED_REVIEW", "FAILED_CONFIGURATION", "STALE_BASE", "CANCELLED", "REPORTED", "BLOCKED_ROUTING", "BLOCKED_STALE_SET"]) {
+    for (const status of ["FAILED", "FAILED_REVIEW", "FAILED_CONFIGURATION", "STALE_BASE", "CANCELLED", "REPORTED", "BLOCKED_ROUTING"]) {
       expect(endsWithoutPullRequest(status)).toBe(true);
     }
     expect(endsWithoutPullRequest("READY_FOR_HUMAN")).toBe(false);

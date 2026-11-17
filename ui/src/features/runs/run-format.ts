@@ -70,3 +70,15 @@ export function isOpenBlocker(blocker: { state: string }): boolean {
 export function temporalWorkflowUrl(namespace: string, workflowId: string): string {
   return `/temporal/namespaces/${encodeURIComponent(namespace)}/workflows/${encodeURIComponent(workflowId)}`;
 }
+
+/** docs/specs/change-sets.md. The number of a pull request, such as #24, from its URL. */
+export function pullRequestLabel(url: string): string {
+  return `#${url.split("/").at(-1) ?? ""}`;
+}
+
+/** The badge tone of a pull request state: merged, closed, or still open. */
+export function pullRequestTone(state: string): StatusTone {
+  if (state === "merged") return "success";
+  if (state === "closed") return "neutral";
+  return "accent";
+}

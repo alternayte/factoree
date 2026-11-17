@@ -27,12 +27,16 @@ describe("run recovery (docs/specs/run-recovery.md)", () => {
   it("takes a follow-up only after FAILED, FAILED_REVIEW, STALE_BASE or FAILED_CONFIGURATION (DI-21.32)", () => {
     expect(["FAILED", "FAILED_REVIEW", "STALE_BASE", "FAILED_CONFIGURATION"].every(takesFollowUp)).toBe(true);
     expect(["READY_FOR_HUMAN", "CANCELLED", "BLOCKED_ROUTING"].some(takesFollowUp)).toBe(false);
-    expect(noFollowUpLine("READY_FOR_HUMAN", "https://github.com/acme/shop/pull/7")).toContain("pull/7");
+    expect(noFollowUpLine("READY_FOR_HUMAN", ["https://github.com/acme/shop/pull/7"])).toContain("pull/7");
+    // docs/specs/change-sets.md. The line names every pull request of a change set.
+    expect(noFollowUpLine("READY_FOR_HUMAN", ["https://github.com/acme/api/pull/3", "https://github.com/acme/shop/pull/7"])).toContain(
+      "(https://github.com/acme/api/pull/3, https://github.com/acme/shop/pull/7)",
+    );
   });
 
   it("answers a reply after DRAFT_PUBLISHED with the pull request, and starts nothing (draft-of-failed-run.md)", () => {
     expect(takesFollowUp("DRAFT_PUBLISHED")).toBe(false);
-    expect(noFollowUpLine("DRAFT_PUBLISHED", "https://github.com/acme/shop/pull/9")).toBe(
+    expect(noFollowUpLine("DRAFT_PUBLISHED", ["https://github.com/acme/shop/pull/9"])).toBe(
       "Comment on the pull request (https://github.com/acme/shop/pull/9) or put a further change in a new issue.",
     );
   });
@@ -72,7 +76,7 @@ describe("run recovery (docs/specs/run-recovery.md)", () => {
       reply: "Drop VAL-UI-001 and check the text in the source instead.",
       failedRunId: "run-73",
       run: fac73,
-      previousPatch: "diff --git a/pages/configs/index.tsx b/pages/configs/index.tsx\n",
+      previousPatches: [{ repositoryFullName: "acme/shop", patch: "diff --git a/pages/configs/index.tsx b/pages/configs/index.tsx\n" }],
     });
     expect(text.indexOf("Change Loading...")).toBeLessThan(text.indexOf("Drop VAL-UI-001 and check"));
     expect(text).toContain("outranks every other sentence");
