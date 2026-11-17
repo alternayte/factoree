@@ -21,6 +21,26 @@ export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
     return rows.map((row) => row.template);
   }
 
+  /**
+   * docs/specs/change-sets.md, DI-21.137. Every set snapshot of the install, with its tenant, its
+   * repository URLs and its key, once per set: the build-ahead of a set keeps every provider current.
+   */
+  async listSets(): Promise<Array<{ tenantId: string; repositoryUrls: string[]; bootstrapKeys: string[] }>> {
+    const rows = await this.prisma.warmSnapshot.findMany({
+      where: { NOT: { repositoryUrls: { isEmpty: true } } },
+      select: { tenantId: true, repositoryUrl: true, repositoryUrls: true, bootstrapKey: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const sets = new Map<string, { tenantId: string; repositoryUrls: string[]; bootstrapKeys: string[] }>();
+    for (const row of rows) {
+      const key = `${row.tenantId} ${row.repositoryUrl}`;
+      const set = sets.get(key) ?? { tenantId: row.tenantId, repositoryUrls: row.repositoryUrls, bootstrapKeys: [] };
+      if (!set.bootstrapKeys.includes(row.bootstrapKey)) set.bootstrapKeys.push(row.bootstrapKey);
+      sets.set(key, set);
+    }
+    return [...sets.values()];
+  }
+
   async save(snapshot: WarmSnapshot): Promise<WarmSnapshot | null> {
     const key = { tenantId: snapshot.tenantId, adapter: snapshot.adapter, repositoryUrl: snapshot.repositoryUrl };
     const fields = {
@@ -28,6 +48,7 @@ export class PrismaWarmSnapshotStore implements WarmSnapshotStore {
       bootstrapKey: snapshot.bootstrapKey,
       warmCommandExitCode: snapshot.warmCommandExitCode,
       snapshotId: snapshot.snapshotId,
+      repositoryUrls: snapshot.repositoryUrls ?? [],
     };
     return this.prisma.$transaction(async (tx) => {
       const previous = await tx.warmSnapshot.findUnique({ where: { tenantId_adapter_repositoryUrl: key } });
@@ -83,6 +104,7 @@ const toSnapshot = (row: {
   bootstrapKey: string;
   warmCommandExitCode: number | null;
   snapshotId: string;
+  repositoryUrls: string[];
 }): WarmSnapshot => ({
   tenantId: row.tenantId,
   adapter: row.adapter,
@@ -91,4 +113,5 @@ const toSnapshot = (row: {
   bootstrapKey: row.bootstrapKey,
   warmCommandExitCode: row.warmCommandExitCode,
   snapshotId: row.snapshotId,
+  ...(row.repositoryUrls.length === 0 ? {} : { repositoryUrls: row.repositoryUrls }),
 });

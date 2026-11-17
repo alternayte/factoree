@@ -175,13 +175,45 @@ export const checkoutTarget = async (
  * snapshot to the ref of this Run. `git clean` keeps ignored files, so the dependencies the
  * bootstrap installed stay, and the bootstrap that follows only updates them.
  */
-export const refreshPrimary = async (
+export const refreshPrimary = (
   sandbox: Sandbox,
   ref: SandboxRef,
   spec: RepositorySpec,
   credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> => refreshCheckout(sandbox, ref, spec, `${ref.workspacePath}/primary`, credential);
+
+/**
+ * docs/specs/change-sets.md, DI-21.136. Moves one target checkout of a sandbox restored from a set
+ * snapshot to the ref of this Run, as `refreshPrimary` does for the primary checkout.
+ */
+export const refreshTarget = (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec & { repository: string },
+  credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> =>
+  refreshCheckout(sandbox, ref, spec, targetPathOf(ref.workspacePath, spec.repository), credential);
+
+/**
+ * docs/specs/change-sets.md, DI-21.136. Moves the primary checkout of a snapshot of one repository
+ * to the target folder of that repository, so a change set starts its first target from it.
+ */
+export const movePrimaryToTarget = async (sandbox: Sandbox, ref: SandboxRef, repository: string): Promise<string> => {
+  const path = targetPathOf(ref.workspacePath, repository);
+  await run(sandbox, ref, {
+    file: "sh",
+    args: ["-c", 'mkdir -p -- "$(dirname -- "$1")" && mv -- "$0" "$1"', `${ref.workspacePath}/primary`, path],
+  });
+  return path;
+};
+
+const refreshCheckout = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec,
+  path: string,
+  credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository> => {
-  const path = `${ref.workspacePath}/primary`;
   const credentialEnv = credentialEnvironment(spec.url, credential);
   await run(sandbox, ref, {
     file: "git",

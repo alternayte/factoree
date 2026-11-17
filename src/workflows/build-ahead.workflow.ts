@@ -18,9 +18,9 @@ const activities = proxyActivities<Activities>({
 });
 
 /**
- * docs/specs/run-speed.md. One workflow per repository, keyed by `buildAheadWorkflowId`. A request
- * during a build queues one more build, not one per request, because every build reads the head
- * of the default branch and makes the same snapshot.
+ * docs/specs/run-speed.md. One workflow per repository, or per set (docs/specs/change-sets.md),
+ * keyed by `buildAheadWorkflowId`. A request during a build queues one more build, not one per
+ * request, because every build reads the head of the default branch and makes the same snapshot.
  */
 export const buildAheadWorkflow = async (request: BuildAheadRequest): Promise<void> => {
   let pending = true;

@@ -80,7 +80,7 @@ import { PrismaValidationContractStore } from "~/persistence/prisma/validation-c
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { createBuildAheadRequester, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
-import { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
+import { BuildAheadTrigger, setBuildAheadRequest } from "~/domain/runs/build-ahead.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
@@ -193,6 +193,9 @@ const sandboxManager = new SandboxManager({
   installBrowserTools: (sandboxName) =>
     (sandbox.providerSettings().find((provider) => provider.id === sandboxName)?.type ?? sandboxName) === "fly-sprites",
   ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
+  // docs/specs/change-sets.md, DI-21.136. A change set with no set snapshot asks for its build-ahead.
+  // The client exists before the first run prepares a sandbox.
+  requestSetBuildAhead: (request) => createBuildAheadRequester(blockerClient, env.FACTOREE_TEMPORAL_TASK_QUEUE)(setBuildAheadRequest(request)),
 });
 
 // docs/specs/claude-code-runner.md. The Product of the Run holds the runner, the model and the
@@ -674,6 +677,7 @@ try {
       products,
       repositories,
       snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
+      setSnapshots: () => warmSnapshots.listSets(),
       readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
       listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
       repositoryBaseUrl: githubBaseUrl(settings),

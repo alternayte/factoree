@@ -4,7 +4,7 @@ import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
-import type { RepositoryFileEntry } from "~/domain/runs/warm-snapshot.js";
+import { setBootstrapKeyOf, type RepositoryFileEntry } from "~/domain/runs/warm-snapshot.js";
 
 const CONFIG = (bootstrap: string, verify: string): string =>
   `version: 1\nidentity:\n  product: shop\n  linear:\n    teamKey: SHP\nbootstrap:\n  command: ${bootstrap}\n` +
@@ -104,5 +104,57 @@ describe("BuildAheadTrigger (docs/specs/run-speed.md)", () => {
   it("never fails the request that caused it", async () => {
     const { trigger } = triggerFor("version: [", CONFIG("go mod download", "go test ./..."));
     await expect(trigger.afterPush("tenant-1", "acme/shop")).resolves.toBeUndefined();
+  });
+});
+
+describe("BuildAheadTrigger, a set snapshot (docs/specs/change-sets.md, DI-21.137)", () => {
+  const web: RepositoryRecord = { ...repository, id: "repository-2", fullName: "acme/web" };
+  const SHOP = "https://github.com/acme/shop.git";
+  const WEB = "https://github.com/acme/web.git";
+
+  const setTriggerFor = (config: string, storedConfig: string) => {
+    const requests: BuildAheadRequest[] = [];
+    const key = bootstrapKeyOfConfig({ content: storedConfig, sha: "old" }, projectDefaultsOf(product), [])!;
+    const stored = setBootstrapKeyOf([
+      { repositoryUrl: SHOP, bootstrapKey: key },
+      { repositoryUrl: WEB, bootstrapKey: key },
+    ]);
+    const trigger = new BuildAheadTrigger({
+      request: (request) => {
+        requests.push(request);
+        return Promise.resolve();
+      },
+      products: { findById: () => Promise.resolve(product) },
+      repositories: {
+        listByProduct: () => Promise.resolve([repository, web]),
+        findByFullName: (_tenantId, fullName) => Promise.resolve(fullName === "acme/web" ? web : repository),
+        listPresent: () => Promise.resolve([repository, web]),
+      },
+      snapshotKeys: () => Promise.resolve([bootstrapKeyOfConfig({ content: config, sha: "new" }, projectDefaultsOf(product), [])!]),
+      setSnapshots: () => Promise.resolve([{ tenantId: "tenant-1", repositoryUrls: [SHOP, WEB], bootstrapKeys: [stored] }]),
+      readConfig: () => Promise.resolve({ content: config, sha: "new" }),
+      listFiles: () => Promise.resolve([]),
+      repositoryBaseUrl: () => Promise.resolve("https://github.com"),
+      logger: createLogger({ level: "error", redactor: new Redactor(), sink: () => undefined }),
+    });
+    return { trigger, requests };
+  };
+
+  it("builds the set again only when a push changes the key of the set", async () => {
+    const same = setTriggerFor(CONFIG("go mod download", "go test ./..."), CONFIG("go mod download", "go vet ./..."));
+    await same.trigger.afterPush("tenant-1", "acme/web");
+    expect(same.requests).toEqual([]);
+
+    const changed = setTriggerFor(CONFIG("go mod download && go build ./...", "go test ./..."), CONFIG("go mod download", "go test ./..."));
+    await changed.trigger.afterPush("tenant-1", "acme/web");
+    expect(changed.requests).toEqual([
+      { tenantId: "tenant-1", productId: "product-1", repositoryFullName: "acme/shop", repositoryFullNames: ["acme/shop", "acme/web"] },
+    ]);
+  });
+
+  it("builds every stored set when the template changes", async () => {
+    const { trigger, requests } = setTriggerFor(CONFIG("go mod download", "go test ./..."), CONFIG("go mod download", "go test ./..."));
+    await trigger.afterTemplateChange();
+    expect(requests.filter((request) => request.repositoryFullNames !== undefined)).toHaveLength(1);
   });
 });

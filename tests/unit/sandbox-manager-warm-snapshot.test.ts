@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
 import type { SandboxCreateInput, SandboxRef, WarmSnapshots } from "~/domain/runs/sandbox.js";
-import { bootstrapKeyOf, type RetiredWarmSnapshot, type WarmSnapshot, type WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
+import {
+  bootstrapKeyOf,
+  setBootstrapKeyOf,
+  snapshotSubjectOf,
+  type RetiredWarmSnapshot,
+  type WarmSnapshot,
+  type WarmSnapshotStore,
+} from "~/domain/runs/warm-snapshot.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"a".repeat(64)}`;
@@ -321,5 +328,96 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
       const sandbox = new WarmFakeSandbox(SERVICES_YAML, false);
       await expect(new SandboxManager({ sandbox }).prepare(input)).rejects.toThrow(/sandbox provider "fake" runs no Docker/);
     });
+  });
+});
+
+describe("SandboxManager set snapshots (docs/specs/change-sets.md, DI-21.135, DI-21.136)", () => {
+  const API = "https://github.com/acme/api.git";
+  const WEB = "https://github.com/acme/web.git";
+  const setInput = {
+    ...input,
+    primary: { url: API, ref: HEAD },
+    targets: [
+      { repository: "acme/api", url: API, ref: HEAD },
+      { repository: "acme/web", url: WEB, ref: HEAD },
+    ],
+  };
+  const SET_KEY = setBootstrapKeyOf([
+    { repositoryUrl: API, bootstrapKey: KEY },
+    { repositoryUrl: WEB, bootstrapKey: KEY },
+  ]);
+
+  it("keeps the subject and the key of one repository", () => {
+    expect(snapshotSubjectOf([API])).toBe(API);
+    expect(setBootstrapKeyOf([{ repositoryUrl: API, bootstrapKey: KEY }])).toBe(KEY);
+    expect(snapshotSubjectOf([WEB, API])).toBe(`${API} ${WEB}`);
+  });
+
+  it("builds one row for the set, and a run of the set restores every target from it", async () => {
+    const store = new MemoryWarmSnapshotStore();
+    const builder = new WarmFakeSandbox();
+    const outcome = await new SandboxManager({ sandbox: builder, warmSnapshots: store }).buildAhead({ ...setInput, runId: "build-ahead:set" });
+
+    expect(outcome).toEqual({ kind: "built", snapshotId: "snap-1", bootstrapKey: SET_KEY });
+    expect([...store.rows.values()]).toEqual([
+      expect.objectContaining({ repositoryUrl: `${API} ${WEB}`, repositoryUrls: [API, WEB], bootstrapKey: SET_KEY, snapshotId: "snap-1" }),
+    ]);
+
+    const requests: string[][] = [];
+    const run = new WarmFakeSandbox();
+    const prepared = await new SandboxManager({
+      sandbox: run,
+      warmSnapshots: store,
+      requestSetBuildAhead: (request) => {
+        requests.push(request.repositoryFullNames);
+        return Promise.resolve();
+      },
+    }).prepare(setInput);
+
+    expect(run.restored).toEqual(["snap-1"]);
+    expect(prepared.targets.map((target) => target.checkout.path)).toEqual(["/workspace/targets/acme/api", "/workspace/targets/acme/web"]);
+    const git = gitLines(run);
+    expect(git.some((line) => line.startsWith("clone"))).toBe(false);
+    expect(git).toContain(`-C /workspace/targets/acme/web fetch --no-tags origin ${HEAD}`);
+    expect(requests).toEqual([]);
+    expect(run.calls).not.toContain("snapshot");
+  });
+
+  it("restores the first target from its own snapshot, clones the others cold, and asks for the set build-ahead", async () => {
+    const store = new MemoryWarmSnapshotStore();
+    await store.save({ ...stored(KEY), repositoryUrl: API });
+    const requests: string[][] = [];
+    const sandbox = new WarmFakeSandbox();
+    const prepared = await new SandboxManager({
+      sandbox,
+      warmSnapshots: store,
+      requestSetBuildAhead: (request) => {
+        requests.push(request.repositoryFullNames);
+        return Promise.resolve();
+      },
+    }).prepare(setInput);
+
+    expect(requests).toEqual([["acme/api", "acme/web"]]);
+    expect(sandbox.restored).toEqual(["snap-old"]);
+    const move = sandbox.commands.find((command) => command.file === "sh" && command.args[1]?.includes("mv --"));
+    expect(move?.args.slice(2)).toEqual(["/workspace/primary", "/workspace/targets/acme/api"]);
+    const git = gitLines(sandbox);
+    expect(git).toContain(`-C /workspace/targets/acme/api fetch --no-tags origin ${HEAD}`);
+    expect(git.filter((line) => line.startsWith("clone"))).toEqual([`clone --no-hardlinks ${WEB} /workspace/targets/acme/web`]);
+    expect(prepared.targets.map((target) => target.checkout.path)).toEqual(["/workspace/targets/acme/api", "/workspace/targets/acme/web"]);
+    // A run never saves a set snapshot, so it never waits for one.
+    expect(sandbox.calls).not.toContain("snapshot");
+    expect([...store.rows.keys()]).toEqual([`tenant-1|fake|${API}`]);
+  });
+
+  it("starts the set cold when the first target's snapshot holds another bootstrap key", async () => {
+    const store = new MemoryWarmSnapshotStore();
+    await store.save({ ...stored("2222222222222222222222222222222222222222"), repositoryUrl: API });
+    const sandbox = new WarmFakeSandbox();
+    const prepared = await new SandboxManager({ sandbox, warmSnapshots: store }).prepare(setInput);
+
+    expect(sandbox.destroyed).toEqual(["warm-run-1"]);
+    expect(prepared.ref.id).not.toBe("warm-run-1");
+    expect(gitLines(sandbox).filter((line) => line.startsWith("clone"))).toHaveLength(2);
   });
 });

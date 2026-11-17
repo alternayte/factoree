@@ -162,6 +162,8 @@ const buildAhead = new BuildAheadTrigger({
   products,
   repositories,
   snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
+  // docs/specs/change-sets.md, DI-21.137. A stored set snapshot is kept current.
+  setSnapshots: () => warmSnapshots.listSets(),
   readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
   listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
   repositoryBaseUrl: githubBaseUrl(settings),

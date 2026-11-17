@@ -481,14 +481,19 @@ model ProcessedWebhook {
   @@index([tenantId])
 }
 
-/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, sandbox provider and repository.
+/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, sandbox provider and repository,
+/// or per tenant, sandbox provider and set (docs/specs/change-sets.md).
 /// docs/specs/sandbox-provider-spillover.md. `adapter` holds the sandbox provider id.
 model WarmSnapshot {
   id            String   @id @default(uuid())
   tenantId      String
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   adapter       String
+  // docs/specs/change-sets.md, DI-21.135. The repository URL, or the subject of a set snapshot: its
+  // sorted repository URLs joined by a space.
   repositoryUrl String
+  // DI-21.135. The sorted repository URLs of a set snapshot. Empty for a snapshot of one repository.
+  repositoryUrls String[] @default([]) @map("repository_urls")
   // docs/specs/kiln-sandbox-size.md. The Kiln template: the image digest and the size.
   template      String
   // docs/specs/run-speed.md. The SHA-256 of the bootstrap command, the warm command and the

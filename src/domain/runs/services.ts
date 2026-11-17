@@ -149,6 +149,23 @@ export const startServices = async (
   }
 };
 
+/**
+ * docs/specs/change-sets.md, DI-21.136. Stops the compose stack of a checkout and drops its
+ * containers and volumes. The images stay, so a stack that starts again pulls nothing.
+ */
+export const stopServices = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  primaryPath: string,
+  services: ServicesConfig,
+): Promise<void> => {
+  const args = [...(await composeArguments(sandbox, ref, primaryPath, services)), "down", "--volumes", "--remove-orphans"];
+  const result = await sandbox.exec(ref, { file: "docker", args, cwd: primaryPath, timeoutMs: 600_000 });
+  if (result.exitCode !== 0) {
+    throw new Error(`the compose stack did not stop, exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
+  }
+};
+
 /** Runs the seed command once, after the bootstrap, so the stack holds the data the app needs. */
 export const seedServices = async (
   sandbox: Sandbox,

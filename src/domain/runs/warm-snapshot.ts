@@ -11,7 +11,16 @@ export interface WarmSnapshot {
   tenantId: string;
   /** The adapter that holds the snapshot. A snapshot id means nothing to another adapter. */
   adapter: string;
+  /**
+   * The repository URL of a one-repository snapshot. docs/specs/change-sets.md, DI-21.135: the
+   * subject of a set snapshot, `snapshotSubjectOf` its repository URLs.
+   */
   repositoryUrl: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.135. The sorted repository URLs a set snapshot holds. Absent
+   * for a snapshot of one repository.
+   */
+  repositoryUrls?: string[];
   /** docs/specs/kiln-sandbox-size.md. The template the snapshot holds: the image digest and the size. */
   template: string;
   /** docs/specs/run-speed.md. The bootstrap key of the configuration the snapshot ran. */
@@ -92,6 +101,31 @@ export const bootstrapKeyOf = (inputs: BootstrapInputs): string => {
 };
 
 /**
+ * docs/specs/change-sets.md, DI-21.135. The subject of a warm snapshot: the repository URL of one
+ * repository, or the sorted URLs of a set joined by a space. A URL holds no space, and the subject
+ * of one repository is its URL, so every snapshot of one repository keeps its row.
+ */
+export const snapshotSubjectOf = (repositoryUrls: readonly string[]): string => [...new Set(repositoryUrls)].sort().join(" ");
+
+/** One repository of a set and the bootstrap key of its configuration. */
+export interface SetMemberKey {
+  repositoryUrl: string;
+  bootstrapKey: string;
+}
+
+/**
+ * docs/specs/change-sets.md, DI-21.135. The key of a set snapshot: the SHA-256 of the sorted list
+ * of repository and bootstrap key, one line each. The key of one repository is its bootstrap key,
+ * so a snapshot of one repository keeps its key.
+ */
+export const setBootstrapKeyOf = (members: readonly SetMemberKey[]): string => {
+  const only = members.length === 1 ? members[0] : undefined;
+  if (only !== undefined) return only.bootstrapKey;
+  const lines = members.map((member) => `${member.repositoryUrl} ${member.bootstrapKey}`).sort();
+  return createHash("sha256").update(`${lines.join("\n")}\n`).digest("hex");
+};
+
+/**
  * A snapshot that no row names any more and that the provider still holds: one that a new
  * snapshot replaced, or one that did not restore. The reaper removes it.
  */
@@ -102,7 +136,7 @@ export interface RetiredWarmSnapshot {
   snapshotId: string;
 }
 
-/** One warm snapshot per tenant, adapter and repository. A new one replaces the old one. */
+/** One warm snapshot per tenant, adapter and subject: a repository or a set. A new one replaces the old one. */
 export interface WarmSnapshotStore {
   find(key: { tenantId: string; adapter: string; repositoryUrl: string }): Promise<WarmSnapshot | null>;
   /** Stores the snapshot, and returns the snapshot it replaced, so the caller can remove it. */
