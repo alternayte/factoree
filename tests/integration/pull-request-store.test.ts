@@ -35,6 +35,7 @@ describe("PrismaPullRequestStore", () => {
         headSha: "head-1",
         baseBranch: "main",
         autonomyLevel: "L4",
+        baseSha: "base-1",
       };
       const recorded = await store.recordPublished(publication);
       expect(recorded).toMatchObject({
@@ -46,6 +47,8 @@ describe("PrismaPullRequestStore", () => {
         verifiedHeadSha: "head-1",
         autonomyLevel: "L4",
         autoMergeGateBase: null,
+        verifiedBaseSha: "base-1",
+        verifiedRunId: runId,
       });
       expect(recorded.workflowId).toBe(`pr:${tenantId}:Acme/API#12`);
       // DI-9.8. A second publication of the same pull request keeps the record and its origin run.

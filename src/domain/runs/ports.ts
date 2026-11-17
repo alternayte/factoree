@@ -31,4 +31,11 @@ export interface WorkItemPort {
 export interface WorkItemFacts {
   labels: string[];
   project: string | null;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. The text of the issue now, which a PR follow-up run
+   * refines again. Absent from an adapter that does not read it.
+   */
+  title?: string;
+  description?: string;
+  url?: string | null;
 }

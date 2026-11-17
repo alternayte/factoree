@@ -31,6 +31,7 @@ import {
   type ProofPackCheck,
   type ProofPackEvidenceRef,
   type ProofPackForYourEye,
+  type ProofPackPullRequestFollowUp,
   type ProofPackRouting,
 } from "~/domain/evidence/proof-pack.js";
 
@@ -288,6 +289,8 @@ export interface PublishProofPackActivityInput {
    * proven.
    */
   draft?: { attempt: number; reviewed: boolean };
+  /** docs/specs/pr-review-merge-and-deploy.md. Present for a PR follow-up run. */
+  pullRequestFollowUp?: ProofPackPullRequestFollowUp;
 }
 
 export interface PublishProofPackActivityOutput {
@@ -608,6 +611,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         reason: proposal.reason,
       })),
       ...(draft === undefined ? {} : { draft: { reviewed: draft.reviewed } }),
+      ...(input.pullRequestFollowUp === undefined ? {} : { pullRequestFollowUp: input.pullRequestFollowUp }),
     };
 
     // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.

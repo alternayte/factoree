@@ -134,6 +134,12 @@ export interface PrepareSandboxActivityInput {
   workItemComments?: string | null;
   /** The followed links of the work item, which the work sprite delivery reads again. */
   workItemLinks?: WorkItemLink[];
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D2. The pull request head of a PR follow-up run. Only
+   * its work sprite takes it: the diff from the base to this head lands in the worktree. Absent for
+   * every other run.
+   */
+  pullRequestHead?: string;
 }
 
 export interface PrepareSandboxActivityOutput {
@@ -246,6 +252,11 @@ const build = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
   beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
+  /**
+   * A work sprite hosts the refiner and the implementer, and a check sprite the validator and the
+   * reviewer. Absent, a sandbox with a patch hook is a check sprite.
+   */
+  kind: "work" | "check" = beforeBootstrap === undefined ? "work" : "check",
 ): Promise<PreparedSandbox> => {
   // SDD section 30. A model provider credential of the coding agent reaches the sandbox from the
   // Project secret store, never from a workflow argument, so no Temporal history holds its value.
@@ -274,7 +285,7 @@ const build = async (
         `Add ${CLAUDE_CREDENTIAL_NAMES.join(" or ")} as a runner credential on the product page.`,
     );
   }
-  const sandboxRoles: (keyof RunRunners)[] = beforeBootstrap === undefined ? ["refiner", "implementer"] : ["validator", "reviewer"];
+  const sandboxRoles: (keyof RunRunners)[] = kind === "work" ? ["refiner", "implementer"] : ["validator", "reviewer"];
   const claudeHost = claudeApiHostOf(runnerEnvironment);
   const agentHosts = sandboxRoles.some((role) => runners[role] === "claude") && claudeHost !== null ? [claudeHost] : [];
 
@@ -313,7 +324,7 @@ const build = async (
   // the sandbox exists. Only the work sprite gets the skills, because only the implementer reads
   // them. A fault that repeats on a retry is a configuration fault.
   let registrySkills: SkillResolution | null = null;
-  if (beforeBootstrap === undefined) {
+  if (kind === "work") {
     try {
       const registry = await registryOf(
         { secrets: dependencies.secrets, redactor: dependencies.redactor, logger: dependencies.logger, registries: dependencies.registries },
@@ -360,7 +371,8 @@ const build = async (
     ...(registrySkills === null ? {} : { registrySkills }),
     // A check sprite applies a patch before its bootstrap. Only the work sprite hosts an agent
     // that checks its own work in a browser.
-    browserTools: beforeBootstrap === undefined,
+    browserTools: kind === "work",
+    ...(input.pullRequestHead === undefined ? {} : { pullRequestHead: input.pullRequestHead }),
     },
     beforeBootstrap,
   );
@@ -774,7 +786,10 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
           }
 
           let applied: VerifiedPatch | null = null;
-          const prepared = await build(dependencies, input, async (ref, primaryPath) => {
+          // D2. A check sprite takes the captured patch, which already holds the pull request change.
+          const checkInput: PrepareSandboxActivityInput = { ...input };
+          delete checkInput.pullRequestHead;
+          const prepared = await build(dependencies, checkInput, async (ref, primaryPath) => {
             await applyPatch(patchDependencies, {
               ref,
               primaryPath,
@@ -824,6 +839,44 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
             changedFiles: captured.changedFiles,
             checkDefiningFiles: checkDefiningFilesOf(captured.changedFiles),
           };
+        },
+        (output) => output.spriteId,
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        error.message = dependencies.redactor.redactText(error.message);
+        if (error.stack !== undefined) error.stack = dependencies.redactor.redactText(error.stack);
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. The check sprite of a pull request head where the
+   * triage session reads the PR reviewer's findings: the verified base with the diff to the head
+   * applied, the configuration from the base, and the bootstrap. No agent touched it. The run
+   * deletes it with `releaseCheckSandbox` after the triage.
+   */
+  async prepareTriageSandbox(input: PrepareSandboxActivityInput & { pullRequestHead: string }): Promise<PrepareSandboxActivityOutput> {
+    await registerProjectSecrets(dependencies.redactor, dependencies.secrets, input.tenantId, input.productId, dependencies.logger);
+    try {
+      return await timeStage(
+        dependencies.stages,
+        dependencies.logger,
+        { tenantId: input.tenantId, runId: input.runId, stage: "prepare_check_sprite", attempt: 0, sandboxId: null },
+        async () => {
+          const prepared = await build(dependencies, input, undefined, "check");
+          metrics.sandboxesCreated.inc({ tenant_id: input.tenantId, product_id: input.productId, adapter: prepared.ref.adapter });
+          dependencies.logger.info("triage sandbox prepared", {
+            tenant_id: input.tenantId,
+            product_id: input.productId,
+            run_id: input.runId,
+            sprite_id: prepared.ref.id,
+            base_sha: prepared.checkout.primary.baseSha,
+            pull_request_head: input.pullRequestHead,
+            step: "prepare_check",
+          });
+          return toOutput(prepared);
         },
         (output) => output.spriteId,
       );

@@ -2,6 +2,7 @@ import type { CheckoutResult, RepositorySpec } from "./checkout.js";
 import {
   checkoutOrganizationSkills,
   checkoutPrimary,
+  overlayPullRequestHead,
   checkoutReferences,
   refreshPrimary,
   removeReferences,
@@ -82,6 +83,13 @@ export interface PrepareSandboxInput {
    * pinned to, or the one a build-ahead builds for. Absent means the default provider.
    */
   provider?: string;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D2. The pull request head of a PR follow-up run. The
+   * work sprite and the triage sprite apply the diff from the base to this head after the
+   * configuration read, so the configuration and the checks come from the base. Absent for every
+   * other sandbox.
+   */
+  pullRequestHead?: string;
 }
 
 /** docs/specs/run-speed.md. What one build-ahead did. */
@@ -488,6 +496,9 @@ export class SandboxManager {
         return null;
       }
 
+      if (input.pullRequestHead !== undefined) {
+        await overlayPullRequestHead(sandbox, ref, primary, input.pullRequestHead, input.repositoryCredential);
+      }
       if (beforeBootstrap !== undefined) await beforeBootstrap(ref, primary.path);
 
       // docs/specs/proof-pack-and-visual-evidence.md. A work sprite with a preview gets the browser

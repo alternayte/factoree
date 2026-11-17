@@ -461,6 +461,19 @@ describe("the delegation service and the organization skills repository", () => 
       expect(postedResponses).toEqual([expect.stringContaining("pull/24")]);
     });
 
+    // docs/specs/pr-review-merge-and-deploy.md, DI-21.111. A failed PR follow-up run follows an open
+    // pull request. A follow-up of the issue, or a draft, would open a second one.
+    it("answers a reply after a failed PR follow-up run with one line, and starts nothing", async () => {
+      const { service, starter, postedResponses } = build({
+        latest: { id: "run-75", status: "FAILED", temporalWorkflowId: "linear:workspace-123:session-1:pr-follow-up:abc", pullRequestUrl: null },
+      });
+      for (const body of ["Try again.", "publish as draft"]) {
+        expect(await service.handleAgentSessionEvent(reply(body), `delivery-${body}`)).toEqual({ kind: "follow_up_refused", status: "FAILED" });
+      }
+      expect(starter.start).not.toHaveBeenCalled();
+      expect(postedResponses).toEqual([expect.stringContaining("Request changes on the pull request"), expect.stringContaining("Request changes")]);
+    });
+
     // docs/specs/draft-of-failed-run.md. The typed reply and the chosen option take one matcher.
     it("publishes a failed run as a draft for the reply `publish as draft`, and starts no follow-up run", async () => {
       const { service, starter, postedResponses, draftRequests } = build({

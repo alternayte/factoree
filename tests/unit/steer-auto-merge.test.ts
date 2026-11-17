@@ -29,6 +29,9 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
     verifiedHeadSha: "head-1",
     autonomyLevel: "L4",
     autoMergeGateBase: null,
+    verifiedBaseSha: "base-1",
+    verifiedRunId: "run-1",
+    reviewerHandledKey: null,
     workflowId: "pr:tenant-1:acme/api#12",
   };
   const github: PullRequestOnGitHub = {
@@ -50,6 +53,10 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
     recordEvent: reject,
     markClosed: reject,
     listAutoMergeUnavailable: reject,
+    originFacts: reject,
+    markReviewerHandled: reject,
+    countReviewerFollowUp: reject,
+    listEvents: reject,
     find: () => Promise.resolve({ ...record }),
     steeringFacts: () => Promise.resolve({ productId: "product-1", githubInstallationId: "42", linearAgentSessionId: "session-1" }),
     setAutoMerge: (_tenantId: string, _id: string, update: AutoMergeUpdate) => {
@@ -98,6 +105,10 @@ const build = (options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGi
         return Promise.resolve();
       },
     },
+    reviews: { reviewerFindings: reject, review: reject, canWrite: reject, reply: reject, comment: reject },
+    repositories: { listByProduct: reject },
+    workItems: { facts: reject },
+    repositoryBaseUrl: () => Promise.resolve("https://github.com"),
   });
   const steer = (trigger: "start" | "new_head" | "auto_merge_disabled" | "event", eventHeadSha: string | null = null) =>
     activities.steerAutoMerge({ tenantId: "tenant-1", pullRequestId: "pr-1", trigger, eventHeadSha });

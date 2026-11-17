@@ -1,5 +1,5 @@
 import { metrics } from "~/telemetry/metrics.js";
-import { buildDraftWorkflowId, buildFollowUpWorkflowId, buildWorkflowId } from "~/temporal/workflow-id.js";
+import { buildDraftWorkflowId, buildFollowUpWorkflowId, buildWorkflowId, isPrFollowUpWorkflowId } from "~/temporal/workflow-id.js";
 import { isTerminalRunStatus, type RunStatus } from "~/domain/runs/run-status.js";
 import { noFollowUpLine, renderFollowUpDescription, takesFollowUp } from "~/domain/runs/run-recovery.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
@@ -49,7 +49,7 @@ import type {
 } from "~/workflows/agent-run.workflow.js";
 import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
-import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
+import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
 import { ignoresImages } from "~/domain/products/model-vision.js";
 
 export interface WorkflowStarter {
@@ -76,6 +76,11 @@ export type DelegationOutcome =
   | { kind: "ignored"; reason: string }
   | { kind: "unconfigured"; reason: string }
   | { kind: "blocked_routing"; reason: string };
+
+/** The answer to a Linear reply after a failed PR follow-up run. */
+export const PR_FOLLOW_UP_REPLY_LINE =
+  "This run followed up its pull request, so a reply here starts no new run. Request changes on the pull request, " +
+  "or run the PR reviewer check again, to start another PR follow-up run.";
 
 /** docs/specs/draft-of-failed-run.md. The answer to one draft request. */
 export type DraftOutcome =
@@ -208,6 +213,13 @@ export class DelegationService {
         metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
         return signalled ? { kind: "prompt_forwarded", workflowId: target } : { kind: "not_running", workflowId: target };
       }
+      // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run follows an open pull request,
+      // and a review there starts the next one. A follow-up run of the issue would open a second pull
+      // request for the same work item, and so would a draft of its patch.
+      if (isPrFollowUpWorkflowId(latest.temporalWorkflowId) && (takesFollowUp(latest.status) || isDraftCommand(command.body))) {
+        await this.dependencies.refusalNotifier.postResponse(event.organizationId, event.agentSession.id, PR_FOLLOW_UP_REPLY_LINE);
+        return { kind: "follow_up_refused", status: latest.status };
+      }
       // docs/specs/draft-of-failed-run.md. The command is the whole reply, so a real follow-up
       // reply never matches. The chosen option of the elicitation arrives as the same prompt.
       if (isDraftCommand(command.body)) {
@@ -286,32 +298,13 @@ export class DelegationService {
     // docs/specs/autonomy-levels.md. A pending Product can investigate and report, nothing
     // more, whatever level its row holds.
     const defaultAutonomy = product.status === "pending" ? "L0" : product.defaultAutonomy;
-    const workflowProduct: AgentRunProductInput = {
-      productId: product.id,
-      productSlug: product.slug,
+    const workflowProduct: AgentRunProductInput = agentRunProductInput({
+      product,
       defaultAutonomy,
-      riskCaps: product.riskCaps,
-      allowedDomains: product.allowedDomains,
-      repositories: repositories.map((repository) => ({
-        id: repository.id,
-        fullName: repository.fullName,
-        defaultBranch: repository.defaultBranch,
-        absentSince: repository.absentSince === null ? null : repository.absentSince.toISOString(),
-        githubInstallationId: repository.githubInstallationId,
-        linearProjects: repository.linearProjects,
-      })),
+      repositories,
       repositoryBaseUrl: await this.dependencies.repositoryBaseUrl(),
-      stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,
-      // docs/specs/release-0-1-0.md. Retention is a Product setting.
-      spriteRetentionHours: product.sandboxRetentionHours,
-      organizationSkillsRepository: product.organizationSkillsRepository,
-      // docs/specs/skill-registry.md. The key stays in the secret store. Only the settings travel.
-      skillRegistry: product.skillRegistry,
-      // Issue #39, DI-21.66. The criteria cap of the refiner proposal is a Product setting.
-      refinerCriteriaLimit: product.refinerCriteriaLimit,
-      // docs/specs/egress-honesty-and-issue-status.md. A missing-host post names the product page.
-      ...(this.dependencies.productPageUrl === undefined ? {} : { productPageUrl: this.dependencies.productPageUrl(product.id) }),
-    };
+      productPageUrl: this.dependencies.productPageUrl === undefined ? null : this.dependencies.productPageUrl(product.id),
+    });
 
     // An unusable slug must stop the Run here, and not inside the workflow, where the operator
     // sees only a failed Run. The workflow builds the real clone URL later.

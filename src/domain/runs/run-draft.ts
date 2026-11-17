@@ -55,6 +55,8 @@ export interface DraftFacts {
   failureReason: string | null;
   failureMessage: string | null;
   pullRequestUrl: string | null;
+  /** docs/specs/pr-review-merge-and-deploy.md. True for a PR follow-up run, whose pull request is open already. */
+  pullRequestFollowUp?: boolean;
   hasPatch: boolean;
   /** DI-21.76. The attempt whose check sprite received the last patch, or null with no patch. */
   patchAttempt: number | null;
@@ -95,6 +97,12 @@ export const decideDraft = (facts: DraftFacts): DraftDecision => {
     return {
       kind: "refused",
       reason: `This run is ${facts.status}, so Factoree publishes no draft of it. A draft is for a failed run.`,
+    };
+  }
+  if (facts.pullRequestFollowUp === true) {
+    return {
+      kind: "refused",
+      reason: "This run followed up an open pull request, so Factoree publishes no draft of it. A review on that pull request starts the next run.",
     };
   }
   // DI-21.78. A run that failed after it opened a pull request already has one.

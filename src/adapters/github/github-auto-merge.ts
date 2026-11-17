@@ -1,4 +1,5 @@
-import { resolveGitHubApiBaseUrl, type GitHubApiBaseUrl } from "./api-base-url.js";
+import type { GitHubApiBaseUrl } from "./api-base-url.js";
+import { GitHubRest } from "./github-rest.js";
 import { GitHubApiError } from "./github-pull-requests.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
@@ -15,9 +16,6 @@ import {
   type ReviewerVerdict,
   type ReviewOnGitHub,
 } from "~/domain/pull-requests/auto-merge.js";
-
-/** One GitHub call must not hang the PR workflow. */
-const GITHUB_API_TIMEOUT_MS = 30_000;
 
 /** The reads of the L4 merge. D5: the gate reads with Metadata read, the verdicts with Checks and Commit statuses read. */
 const READ_SCOPE: GitHubTokenScope = { metadata: "read", contents: "read", pull_requests: "read", checks: "read", statuses: "read" };
@@ -58,10 +56,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
  * only. Every call mints a token for the one repository, with the narrowest scope of that call.
  */
 export class GitHubAutoMerge implements AutoMergePort {
-  private readonly fetchImpl: typeof fetch;
+  private readonly http: GitHubRest;
 
-  constructor(private readonly options: GitHubAutoMergeOptions) {
-    this.fetchImpl = options.fetch ?? fetch;
+  constructor(options: GitHubAutoMergeOptions) {
+    this.http = new GitHubRest(options);
   }
 
   async pullRequest(slug: string, number: number, installationId: string): Promise<PullRequestOnGitHub> {
@@ -225,22 +223,7 @@ export class GitHubAutoMerge implements AutoMergePort {
   }
 
   private async rest(slug: string, path: string, init: RequestInit, installationId: string, scope: GitHubTokenScope): Promise<unknown> {
-    assertRepositorySlug(slug);
-    const base = await resolveGitHubApiBaseUrl(this.options.apiBaseUrl);
-    const url = `${base}/repos/${slug}${path}`;
-    const response = await this.send(url, init, installationId, scope, slug);
-    const text = await response.text();
-    if (!response.ok) {
-      let message = "";
-      try {
-        const parsed = JSON.parse(text) as { message?: unknown };
-        message = typeof parsed.message === "string" ? parsed.message : "";
-      } catch {
-        message = "";
-      }
-      throw new GitHubApiError(`the GitHub API answered ${String(response.status)} for ${url}${message === "" ? "" : `: ${message}`}`, response.status);
-    }
-    return text === "" ? null : (JSON.parse(text) as unknown);
+    return await this.http.repository(slug, path, init, installationId, scope);
   }
 
   private async graphql(
@@ -251,8 +234,8 @@ export class GitHubAutoMerge implements AutoMergePort {
     scope: GitHubTokenScope,
   ): Promise<unknown> {
     assertRepositorySlug(slug);
-    const url = graphqlUrlOf(await resolveGitHubApiBaseUrl(this.options.apiBaseUrl));
-    const response = await this.send(url, { method: "POST", body: JSON.stringify({ query, variables }) }, installationId, scope, slug);
+    const url = graphqlUrlOf(await this.http.baseUrl());
+    const response = await this.http.send(url, { method: "POST", body: JSON.stringify({ query, variables }) }, installationId, scope, slug);
     const text = await response.text();
     if (!response.ok) throw new GitHubApiError(`the GitHub GraphQL API answered ${String(response.status)}`, response.status);
     const parsed = JSON.parse(text) as { data?: unknown; errors?: unknown };
@@ -261,27 +244,5 @@ export class GitHubAutoMerge implements AutoMergePort {
       throw new GitHubGraphqlError(messages.join("; "));
     }
     return parsed.data ?? null;
-  }
-
-  private async send(url: string, init: RequestInit, installationId: string, scope: GitHubTokenScope, slug: string): Promise<Response> {
-    const token = await this.options.tokens.tokenForInstallation(installationId, scope, [slug]);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GITHUB_API_TIMEOUT_MS);
-    timer.unref();
-    try {
-      return await this.fetchImpl(url, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          accept: "application/vnd.github+json",
-          "content-type": "application/json",
-          "x-github-api-version": "2022-11-28",
-          "user-agent": "factoree",
-          authorization: `Bearer ${token}`,
-        },
-      });
-    } finally {
-      clearTimeout(timer);
-    }
   }
 }

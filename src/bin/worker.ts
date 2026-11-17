@@ -54,6 +54,7 @@ import { createLinearAgentClient } from "~/adapters/linear/linear-agent-client.j
 import { GitRepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { GitHubPullRequests } from "~/adapters/github/github-pull-requests.js";
 import { GitHubAutoMerge } from "~/adapters/github/github-auto-merge.js";
+import { GitHubPullRequestReviews } from "~/adapters/github/github-pull-request-reviews.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { ContextResolver } from "~/domain/context/context-resolver.js";
@@ -527,6 +528,9 @@ const worker = await Worker.create({
     pullRequestClose,
     // docs/specs/pr-review-merge-and-deploy.md. The L4 merge mints a token per call for one repository.
     autoMerge: new GitHubAutoMerge({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+    // docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR follow-up runs.
+    pullRequestReviews: new GitHubPullRequestReviews({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+    productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),

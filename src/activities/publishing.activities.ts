@@ -11,6 +11,7 @@ import {
   EmptyPatchError,
   PatchError,
   sha256OfBase64,
+  type VerifiedPatch,
 } from "~/domain/publishing/patch.js";
 import {
   buildPullRequestBody,
@@ -230,6 +231,28 @@ const assertInstallation = (githubInstallationId: string): void => {
   }
 };
 
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D2. The publication of a PR follow-up run: the verified
+ * patch, still a diff from the verified base, as one new commit on the branch of the pull request.
+ */
+export interface PublishFollowUpActivityInput extends Omit<PublishActivityInput, "draft"> {
+  /** The head branch of the pull request. */
+  branch: string;
+  /** The head the run read. The new commit's parent. */
+  parentSha: string;
+  pullRequestUrl: string;
+  pullRequestNumber: number;
+  /** The contract revision of the new head. The commit message names it. */
+  contractRevision: number;
+}
+
+export interface PublishFollowUpActivityOutput {
+  patchSha256: string;
+  commitSha: string;
+  patchByteLength: number;
+  baseMove: BaseMove | null;
+}
+
 /** docs/specs/draft-of-failed-run.md. The input of the draft publication of one failed run. */
 export interface PublishDraftActivityInput {
   runId: string;
@@ -259,6 +282,85 @@ export interface PublishDraftActivityOutput {
   changedFiles: string[];
 }
 
+/**
+ * SDD section 46 steps 1 to 7. Mints the write credential, captures the patch from the check sprite
+ * itself, and proves that it is the reviewed and verified patch, before any network write. `publish`
+ * and `publishFollowUp` share it.
+ */
+const captureForPublication = async (
+  dependencies: PublishingActivityDependencies,
+  input: Omit<PublishActivityInput, "draft" | "workItemTitle" | "workItemUrl" | "verificationSummary" | "repairCount" | "baseBranch">,
+): Promise<{ token: string; plainUrl: string; patch: VerifiedPatch }> => {
+  // Step 1. SDD section 60. Every Project secret reaches the redactor first.
+  await registerProjectSecrets(
+    dependencies.redactor,
+    dependencies.secrets,
+    input.tenantId,
+    input.productId,
+    dependencies.logger,
+  );
+
+  // Step 2. The GitHub write credential. An empty installation id names no installation to
+  // mint against, and a mint request against an empty id would reach GitHub as a malformed
+  // URL rather than a clear refusal, so this activity refuses it here instead.
+  assertInstallation(input.githubInstallationId);
+
+  // Ruling 2 requires the token to carry a scope no wider than this publish needs. This
+  // publish pushes one branch. It opens one pull request. The token carries exactly those
+  // two permissions, plus `workflows` only for a patch that changes a workflow (DI-21.33).
+  // Step 6 proves later that the captured patch changes exactly the reviewed files.
+  const token = await mintPublishToken(dependencies, input, input.reviewedChangedFiles);
+
+  // Step 3. The credential reaches the redactor at once, so no later message can echo it.
+  dependencies.redactor.addSecret(token);
+
+  // Step 4. The plain URL goes to git and into every message. The credential travels apart
+  // from it, so no process argument list ever holds it.
+  const plainUrl = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
+  assertHttpsRepositoryUrl(plainUrl);
+
+  const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+
+  // Step 5. This activity captures the patch itself. It never trusts an earlier capture. A
+  // Temporal retry therefore recaptures and rehashes, which keeps the activity
+  // self-contained.
+  const patch = await captureVerifiedPatch(
+    { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
+    { ref, primaryPath: input.primaryPath, baseSha: input.baseSha },
+  );
+
+  // Step 6. DI-9.2. This check runs before any network call, so a mismatch
+  // costs no remote work.
+  assertSameChangedFiles(input.reviewedChangedFiles, patch.changedFiles);
+
+  // Step 6b. The file names alone prove too little. A background process of the Implementer
+  // can rewrite the body of a file the review already saw. The tree object is the identity
+  // of the content. An empty reviewed tree means the review produced no fingerprint, so it
+  // is a mismatch too. This check fails closed.
+  if (patch.treeSha !== input.reviewedWorktreeSha) {
+    throw new PatchError(
+      "the primary worktree changed after the independent review examined it. Reviewed " +
+        `tree: ${input.reviewedWorktreeSha || "none"}. Captured tree: ${patch.treeSha}. ` +
+        "Factoree published nothing.",
+    );
+  }
+
+  // Step 7. An empty patch publishes nothing.
+  if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
+
+  // Step 7b. The bootstrap and the checks ran project code in the check sprite. The patch that
+  // leaves it must be the patch that entered it, before that code ran.
+  if (patch.patchSha256 !== input.verifiedPatchSha256) {
+    throw new PatchHashMismatchError(
+      input.verifiedPatchSha256,
+      patch.patchSha256,
+      patch.gitVersion,
+      patch.gitVersion,
+    );
+  }
+  return { token, plainUrl, patch };
+};
+
 /** SDD section 44, section 45, and section 46. */
 export const createPublishingActivities = (dependencies: PublishingActivityDependencies) => ({
   /**
@@ -272,73 +374,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
     const labels = { tenant_id: input.tenantId, product_id: input.productId };
 
     try {
-      // Step 1. SDD section 60. Every Project secret reaches the redactor first.
-      await registerProjectSecrets(
-        dependencies.redactor,
-        dependencies.secrets,
-        input.tenantId,
-        input.productId,
-        dependencies.logger,
-      );
-
-      // Step 2. The GitHub write credential. An empty installation id names no installation to
-      // mint against, and a mint request against an empty id would reach GitHub as a malformed
-      // URL rather than a clear refusal, so this activity refuses it here instead.
-      assertInstallation(input.githubInstallationId);
-
-      // Ruling 2 requires the token to carry a scope no wider than this publish needs. This
-      // publish pushes one branch. It opens one pull request. The token carries exactly those
-      // two permissions, plus `workflows` only for a patch that changes a workflow (DI-21.33).
-      // Step 6 proves later that the captured patch changes exactly the reviewed files.
-      const token = await mintPublishToken(dependencies, input, input.reviewedChangedFiles);
-
-      // Step 3. The credential reaches the redactor at once, so no later message can echo it.
-      dependencies.redactor.addSecret(token);
-
-      // Step 4. The plain URL goes to git and into every message. The credential travels apart
-      // from it, so no process argument list ever holds it.
-      const plainUrl = buildRepositoryUrl(input.repositoryBaseUrl, input.repositorySlug);
-      assertHttpsRepositoryUrl(plainUrl);
-
-      const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
-
-      // Step 5. This activity captures the patch itself. It never trusts an earlier capture. A
-      // Temporal retry therefore recaptures and rehashes, which keeps the activity
-      // self-contained.
-      const patch = await captureVerifiedPatch(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        { ref, primaryPath: input.primaryPath, baseSha: input.baseSha },
-      );
-
-      // Step 6. DI-9.2. This check runs before any network call, so a mismatch
-      // costs no remote work.
-      assertSameChangedFiles(input.reviewedChangedFiles, patch.changedFiles);
-
-      // Step 6b. The file names alone prove too little. A background process of the Implementer
-      // can rewrite the body of a file the review already saw. The tree object is the identity
-      // of the content. An empty reviewed tree means the review produced no fingerprint, so it
-      // is a mismatch too. This check fails closed.
-      if (patch.treeSha !== input.reviewedWorktreeSha) {
-        throw new PatchError(
-          "the primary worktree changed after the independent review examined it. Reviewed " +
-            `tree: ${input.reviewedWorktreeSha || "none"}. Captured tree: ${patch.treeSha}. ` +
-            "Factoree published nothing.",
-        );
-      }
-
-      // Step 7. An empty patch publishes nothing.
-      if (patch.changedFiles.length === 0 || patch.byteLength === 0) throw new EmptyPatchError();
-
-      // Step 7b. The bootstrap and the checks ran project code in the check sprite. The patch that
-      // leaves it must be the patch that entered it, before that code ran.
-      if (patch.patchSha256 !== input.verifiedPatchSha256) {
-        throw new PatchHashMismatchError(
-          input.verifiedPatchSha256,
-          patch.patchSha256,
-          patch.gitVersion,
-          patch.gitVersion,
-        );
-      }
+      const { token, plainUrl, patch } = await captureForPublication(dependencies, input);
 
       const branch = publishBranchName(input.runId);
       const port = dependencies.pullRequests(token);
@@ -472,6 +508,88 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
     } finally {
       metrics.publishDuration.observe(labels, (Date.now() - started) / 1000);
       // Each repair adds one attempt, so the attempt that passed is the repair count plus one.
+      await recordStage(dependencies.stages, dependencies.logger, {
+        tenantId: input.tenantId,
+        runId: input.runId,
+        stage: "publish",
+        attempt: input.repairCount + 1,
+        sandboxId: input.spriteId,
+        startedAt,
+        endedAt: new Date(),
+      });
+    }
+  },
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D2. Publishes the verified patch of a PR follow-up run
+   * as one commit on the existing pull request branch. The commit holds base plus the verified patch,
+   * its parent is the head the run read, and the push never forces. No new pull request opens.
+   */
+  async publishFollowUp(input: PublishFollowUpActivityInput): Promise<PublishFollowUpActivityOutput> {
+    const started = Date.now();
+    const startedAt = new Date(started);
+    const labels = { tenant_id: input.tenantId, product_id: input.productId };
+    try {
+      const { token, plainUrl, patch } = await captureForPublication(dependencies, input);
+      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle });
+      const commitMessage = [
+        `${title} (contract revision ${String(input.contractRevision)})`,
+        "",
+        `Run ID: ${input.runId}`,
+        `Base SHA: ${input.baseSha}`,
+        `Patch SHA-256: ${patch.patchSha256}`,
+        `Contract revision: ${String(input.contractRevision)}`,
+      ].join("\n");
+      const publish = dependencies.publishToBranch ?? publishToBranchDefault;
+      const author = await dependencies.gitAuthor();
+      const publication = await publish({
+        cloneUrl: plainUrl,
+        token,
+        baseSha: input.baseSha,
+        branch: input.branch,
+        baseBranch: input.baseBranch,
+        patchBase64: patch.patchBase64,
+        verifiedPatchSha256: patch.patchSha256,
+        verifiedGitVersion: patch.gitVersion,
+        commitMessage,
+        // AT-35. A retry builds the identical commit, so its push changes nothing.
+        commitTimestamp: PUBLICATION_COMMIT_TIMESTAMP,
+        authorName: author.name,
+        authorEmail: author.email,
+        parentSha: input.parentSha,
+        onCleanupFailure: (error: unknown) => {
+          dependencies.logger.error("the trusted checkout directory was not removed", {
+            tenant_id: input.tenantId,
+            product_id: input.productId,
+            run_id: input.runId,
+            step: "publish",
+            error: dependencies.redactor.redactText(String(error)),
+          });
+        },
+      });
+      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+        patchSha256: patch.patchSha256,
+        commitSha: publication.commitSha,
+        pullRequestUrl: input.pullRequestUrl,
+      });
+      dependencies.logger.info("the PR follow-up commit was pushed", {
+        tenant_id: input.tenantId,
+        product_id: input.productId,
+        run_id: input.runId,
+        step: "publish",
+        branch: input.branch,
+        pull_request: input.pullRequestNumber,
+        commit_sha: publication.commitSha,
+      });
+      return {
+        patchSha256: patch.patchSha256,
+        commitSha: publication.commitSha,
+        patchByteLength: patch.byteLength,
+        baseMove: publication.baseMove,
+      };
+    } catch (error) {
+      throw asNonRetryable(dependencies.redactor, error);
+    } finally {
+      metrics.publishDuration.observe(labels, (Date.now() - started) / 1000);
       await recordStage(dependencies.stages, dependencies.logger, {
         tenantId: input.tenantId,
         runId: input.runId,

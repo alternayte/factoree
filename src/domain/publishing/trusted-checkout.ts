@@ -58,6 +58,11 @@ export const isDeterministicCheckoutFailure = (text: string): boolean =>
   /unable to read tree/i.test(text) ||
   /did not match any file\(s\) known to git/i.test(text) ||
   /unknown revision or path not in the working tree/i.test(text) ||
+  // D2. A PR follow-up push that the branch refuses, because it moved since the run read it, and a
+  // parent that no branch reaches any more. Both repeat on every attempt.
+  /\[rejected\]/i.test(text) ||
+  /non-fast-forward/i.test(text) ||
+  /not a valid object name/i.test(text) ||
   /invalid credentials/i.test(text) ||
   /bad credentials/i.test(text);
 
@@ -130,6 +135,13 @@ export interface TrustedCheckoutInput {
   commitTimestamp: string;
   authorName: string;
   authorEmail: string;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D2. The head of the pull request a PR follow-up run
+   * read. The commit then takes the verified tree with this commit as its parent, and the push
+   * fast-forwards the existing branch. A push never forces, so a branch that moved since the run
+   * read it refuses the commit. Absent, the commit sits on the base SHA on a new branch.
+   */
+  parentSha?: string;
   /**
    * Called when the temporary directory removal fails. The failure must never replace the
    * original error, so this callback is the only way to observe it. It is optional, so every
@@ -257,10 +269,17 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
 
     const treeSha = (await git(checkout, ["write-tree"])).trim();
 
-    // Step 6, step 7, and step 8.
-    await git(checkout, ["checkout", "-b", input.branch]);
     const messageFile = join(directory, "commit-message.txt");
     await writeFile(messageFile, input.commitMessage, "utf8");
+    if (input.parentSha !== undefined) {
+      return await commitOnPullRequestBranch({ ...input, parentSha: input.parentSha }, git, checkout, treeSha, messageFile, remoteEnv, {
+        publishedPatchSha256,
+        gitVersion,
+      });
+    }
+
+    // Step 6, step 7, and step 8.
+    await git(checkout, ["checkout", "-b", input.branch]);
     // The author date and the committer date come from the caller. A retry of the same Run
     // therefore builds the identical commit object. The second push is then a no-op
     // fast-forward instead of a rejected non-fast-forward.
@@ -308,6 +327,58 @@ export const publishToBranch = async (input: TrustedCheckoutInput): Promise<Trus
       input.onCleanupFailure?.(cleanupError);
     }
   }
+};
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md, D2. The commit of a PR follow-up run: the verified tree
+ * of base plus patch, with the pull request head the run read as its parent. The commit holds the
+ * same tree whatever the head held, so the patch hash still describes the whole pull request from
+ * the base. The push names the branch without a force, so GitHub refuses it when the branch moved.
+ */
+const commitOnPullRequestBranch = async (
+  input: TrustedCheckoutInput & { parentSha: string },
+  git: (cwd: string, args: string[], extraEnv?: Record<string, string>) => Promise<string>,
+  checkout: string,
+  treeSha: string,
+  messageFile: string,
+  remoteEnv: Record<string, string>,
+  facts: { publishedPatchSha256: string; gitVersion: string },
+): Promise<TrustedPublication> => {
+  if (!SHA.test(input.parentSha)) {
+    throw new TrustedCheckoutError(`the pull request head is not forty hexadecimal characters: "${input.parentSha}"`, { deterministic: true });
+  }
+  // The clone holds every branch, and so the head of the pull request branch. The fetch names the
+  // branch again, so a head that moved after the clone is in the store too.
+  await git(checkout, ["fetch", "--no-tags", "origin", `+refs/heads/${input.branch}:refs/remotes/origin/${input.branch}`], remoteEnv);
+  const parentTree = (await git(checkout, ["rev-parse", `${input.parentSha}^{tree}`])).trim();
+  // The run verified the change of the pull request and added nothing to it. A commit with the
+  // tree of its parent would change nothing on the pull request.
+  if (parentTree === treeSha) {
+    throw new TrustedCheckoutError(
+      "the verified tree equals the tree of the pull request head, so this run changed nothing on the pull request. Factoree pushed nothing.",
+      { deterministic: true },
+    );
+  }
+  const commitSha = (
+    await git(
+      checkout,
+      ["commit-tree", treeSha, "-p", input.parentSha, "-F", messageFile],
+      {
+        GIT_AUTHOR_NAME: input.authorName,
+        GIT_AUTHOR_EMAIL: input.authorEmail,
+        GIT_COMMITTER_NAME: input.authorName,
+        GIT_COMMITTER_EMAIL: input.authorEmail,
+        GIT_AUTHOR_DATE: input.commitTimestamp,
+        GIT_COMMITTER_DATE: input.commitTimestamp,
+      },
+    )
+  ).trim();
+  if (!SHA.test(commitSha)) throw new TrustedCheckoutError("the trusted commit produced no commit SHA", { deterministic: true });
+  const baseMove = await measureBaseMove(git, checkout, input.baseSha, input.baseBranch, commitSha);
+  // No force: a branch head other than the parent refuses the push. A retry pushes the identical
+  // commit, which the branch already holds, and git reports it up to date.
+  await git(checkout, ["push", "origin", `${commitSha}:refs/heads/${input.branch}`], remoteEnv);
+  return { commitSha, publishedPatchSha256: facts.publishedPatchSha256, treeSha, branch: input.branch, gitVersion: facts.gitVersion, baseMove };
 };
 
 /**

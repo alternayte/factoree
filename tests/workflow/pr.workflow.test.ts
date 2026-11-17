@@ -65,6 +65,8 @@ describe("pullRequestWorkflow", () => {
           steers.push(input.trigger);
           return { state: "off" };
         },
+        // A COMMENTED review starts no PR follow-up run.
+        planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
       },
     });
 
@@ -114,6 +116,7 @@ describe("pullRequestWorkflow", () => {
           return "closed";
         },
         steerAutoMerge: async () => ({ state: "off" }),
+        planPullRequestFollowUp: async () => ({ kind: "none", reason: "no change request" }),
       },
     });
     // The record already holds the close, so the workflow skips the copy and waits.

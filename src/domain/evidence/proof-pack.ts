@@ -242,6 +242,22 @@ export interface ProofPackInput {
    * did not pass is not proven, and `reviewed` says whether a review of the patch finished.
    */
   draft?: { reviewed: boolean };
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. Present for a PR follow-up run: the contract revision of
+   * the new head commit, what started the run, the triage of the PR reviewer findings, and the plain
+   * comments on the pull request that started nothing.
+   */
+  pullRequestFollowUp?: ProofPackPullRequestFollowUp;
+}
+
+export interface ProofPackPullRequestFollowUp {
+  contractRevision: number;
+  trigger: "reviewer" | "human";
+  /** The human who requested changes, or the PR reviewer as `slug (check name)`. */
+  startedBy: string;
+  kept: Array<{ evidence: string; defect: string; rule: string }>;
+  dropped: number;
+  plainComments: string[];
 }
 
 /**
@@ -280,6 +296,8 @@ export interface ProofPackDocument {
   runId: string;
   /** docs/specs/draft-of-failed-run.md. DRAFT_PUBLISHED for the draft of a failed run. */
   status: "READY_FOR_HUMAN" | "DRAFT_PUBLISHED";
+  /** docs/specs/pr-review-merge-and-deploy.md. The PR follow-up run, or null for any other run. */
+  pullRequestFollowUp: ProofPackPullRequestFollowUp | null;
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
   changeDescription: string;
@@ -402,6 +420,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
   version: 1,
   runId: input.runId,
   status: input.draft === undefined ? "READY_FOR_HUMAN" : "DRAFT_PUBLISHED",
+  pullRequestFollowUp: input.pullRequestFollowUp ?? null,
   workItem: input.workItem,
   pullRequestUrl: input.pullRequestUrl,
   changeDescription: input.changeDescription,
@@ -561,6 +580,29 @@ export const skillLines = (input: ProofPackInput): string[] => {
   return lines;
 };
 
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. The PR follow-up section: the contract revision of the
+ * head commit, what started the run, and the comments that started nothing.
+ */
+const followUpLines = (input: ProofPackInput): string[] => {
+  const followUp = input.pullRequestFollowUp;
+  if (followUp === undefined) return [];
+  return [
+    "### PR follow-up",
+    "",
+    `The head commit \`${input.commitSha.slice(0, 7)}\` holds contract revision ${String(followUp.contractRevision)}.`,
+    followUp.trigger === "human"
+      ? `${line(followUp.startedBy)} requested changes. Factoree followed the review as a decision, with no triage.`
+      : `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree kept ${String(followUp.kept.length)} ` +
+        `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`,
+    ...followUp.kept.map((kept) => `- ${line(kept.evidence)}: ${line(kept.defect)} Rule: ${line(kept.rule)}.`),
+    "",
+    ...(followUp.plainComments.length === 0
+      ? []
+      : ["**Comments that started nothing:**", ...followUp.plainComments.map((comment) => `- ${line(comment)}`), ""]),
+  ];
+};
+
 const footer = (input: ProofPackInput, documentUrl: string | null): string =>
   [
     `Run ${input.runId}`,
@@ -589,6 +631,7 @@ export const renderProofPack = (input: ProofPackInput, documentUrl: string | nul
     ...pullRequestLines(input),
     "**Preview:** the pull request preview link appears in this session's links when CI publishes it.",
     "",
+    ...followUpLines(input),
     "### Needs your attention",
     "",
     ...(attention.length === 0 ? ["Nothing."] : attention.map((item) => `- ${line(item)}`)),

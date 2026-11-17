@@ -74,6 +74,15 @@ import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from ".
 import { describeSpentRepairBudget } from "../domain/runs/repair-budget.js";
 import { allowListCovers } from "../domain/runs/sandbox.js";
 import { endsWithoutPullRequest } from "../domain/runs/issue-status.js";
+// The workflow bundler resolves a relative path only. The module imports nothing at run time.
+import {
+  findingPlace,
+  keptFindingLines,
+  renderPrFollowUpDescription,
+  type PrFollowUpInput,
+  type TriagedFinding,
+} from "../domain/pull-requests/pr-follow-up.js";
+import type { TriageActivityOutput } from "~/activities/review.activities.js";
 // The workflow bundler resolves a relative path only. The module imports nothing.
 import {
   describeAgentRole,
@@ -162,6 +171,11 @@ export interface AgentRunWorkflowInput {
    * said "ignore the images". The run freezes that decision and skips the image check.
    */
   ignoreImages?: boolean;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 3, D2. The open pull request this PR follow-up
+   * run changes, and the review that started it. Absent for every other run.
+   */
+  prFollowUp?: PrFollowUpInput;
 }
 
 export interface AgentRunWorkflowResult {
@@ -554,6 +568,15 @@ const proofPackActivities = proxyActivities<Activities>({
   },
 });
 
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. The replies to the dropped PR reviewer findings make one
+ * GitHub call per finding, so they get more than the one minute of a single call.
+ */
+const pullRequestReplyActivities = proxyActivities<Activities>({
+  startToCloseTimeout: "10 minutes",
+  retry: { maximumAttempts: 3, initialInterval: "5 seconds", backoffCoefficient: 2 },
+});
+
 // The cancellation of a live Implementer session runs after the Run budget has ended, so it
 // needs its own short timeout.
 const cancelActivities = proxyActivities<Activities>({
@@ -650,12 +673,31 @@ export async function agentRunWorkflow(
   let questionRounds = 0;
   /** DI-21.50. True once this run moved, or tried to move, its issue to started. */
   let issueStatusTracked = false;
+  // docs/specs/pr-review-merge-and-deploy.md, slice 3. The pull request a PR follow-up run changes.
+  const prFollowUp = input.prFollowUp ?? null;
+  // The work item text the run refines. A PR follow-up run adds the review to it.
+  let workItemDescription =
+    prFollowUp !== null && prFollowUp.trigger === "human"
+      ? renderPrFollowUpDescription({ description: input.workItem.description, followUp: prFollowUp, kept: [] })
+      : input.workItem.description;
+  // The findings the first implementer attempt repairs: the PR reviewer findings the triage kept.
+  let initialRepairFindings: string[] = [];
+  let triagedFindings: TriagedFinding[] = [];
+  // DI-19.04. A human review is a decision, as a Linear reply is, so the implementer follows it.
+  if (prFollowUp !== null && prFollowUp.trigger === "human") {
+    humanInputs.push(
+      [
+        `${prFollowUp.reviewerLogin ?? "A human"} requested changes on the pull request ${prFollowUp.url}:`,
+        ...prFollowUp.findings.map((finding) => `- ${findingPlace(finding)}: ${finding.body}`),
+      ].join("\n"),
+    );
+  }
 
   // Refinement needs a repository pair before target selection runs, further below. This
   // placeholder feeds Refinement only, and the pass-through echo never reaches the sandbox. The
   // target-selection step corrects `primaryRepositorySlug` once the target is known.
   const targetRepositories = input.product.repositories;
-  let primaryRepositorySlug = targetRepositories[0]?.fullName ?? "";
+  let primaryRepositorySlug = prFollowUp?.repositoryFullName ?? targetRepositories[0]?.fullName ?? "";
   // Specification section 5. The id of the confirmed target's RunTarget row, so the later steps
   // can record its per-target facts as they become known.
   let primaryRepositoryId = targetRepositories[0]?.id ?? "";
@@ -855,14 +897,18 @@ export async function agentRunWorkflow(
     // docs/specs/run-recovery.md. A run that can take a follow-up says what blocked it and how
     // to reply. The post falls back to the message when the facts cannot be read.
     let post = message;
+    // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run takes no Linear reply and no
+    // draft: the pull request it follows is open already, and a review there starts the next one.
     const kind =
-      status === "FAILED" || status === "FAILED_REVIEW"
-        ? patched(FAILURE_POST_PATCH)
-          ? "run"
-          : null
-        : status === "FAILED_CONFIGURATION" && patched(CONFIGURATION_FAILURE_POST_PATCH)
-          ? "configuration"
-          : null;
+      prFollowUp !== null
+        ? null
+        : status === "FAILED" || status === "FAILED_REVIEW"
+          ? patched(FAILURE_POST_PATCH)
+            ? "run"
+            : null
+          : status === "FAILED_CONFIGURATION" && patched(CONFIGURATION_FAILURE_POST_PATCH)
+            ? "configuration"
+            : null;
     if (kind !== null) {
       try {
         post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message, kind });
@@ -870,8 +916,13 @@ export async function agentRunWorkflow(
         if (isCancellation(error)) throw error;
       }
     }
+    if (prFollowUp !== null) {
+      post =
+        `${message}\n\nThis PR follow-up run pushed nothing to ${prFollowUp.url}. Request changes on the pull request, ` +
+        "or run the PR reviewer check again, to start another PR follow-up run.";
+    }
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
-    if (patched(DRAFT_OFFER_PATCH)) {
+    if (prFollowUp === null && patched(DRAFT_OFFER_PATCH)) {
       await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
     }
     return { runId: id, status };
@@ -1362,7 +1413,12 @@ export async function agentRunWorkflow(
   try {
     await activities.acknowledgeSession({
       sessionId: input.agentSessionId,
-      message: "Factoree accepted the work and started a Run.",
+      message:
+        prFollowUp === null
+          ? "Factoree accepted the work and started a Run."
+          : prFollowUp.trigger === "human"
+            ? `${prFollowUp.reviewerLogin ?? "A human"} requested changes on ${prFollowUp.url}, so Factoree started a PR follow-up run.`
+            : `The PR reviewer check failed on ${prFollowUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`,
     });
 
     status = "RECEIVED";
@@ -1370,10 +1426,167 @@ export async function agentRunWorkflow(
 
     // docs/specs/egress-honesty-and-issue-status.md, DI-21.49. Started means that Factoree works on
     // the issue. A Linear fault never fails the Run.
+    // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run moves no issue: the run that opened
+    // the pull request owns its issue status, and the merge completes it through the record.
     const startedIssueId = input.workItem.issueId;
-    if (startedIssueId !== null && patched(ISSUE_STATUS_PATCH)) {
+    if (prFollowUp === null && startedIssueId !== null && patched(ISSUE_STATUS_PATCH)) {
       issueStatusTracked = true;
       await notify(() => activities.startIssueWork({ tenantId: input.tenantId, runId: id, issueId: startedIssueId }));
+    }
+
+    // docs/specs/pr-review-merge-and-deploy.md, DI-21.110. A failed PR reviewer check: a fresh reviewer
+    // session in a check sprite of the pull request head keeps only the findings with a concrete
+    // defect, a rule and evidence. Factoree replies on the pull request to each dropped finding. A
+    // triage that keeps nothing ends the run with no change, and it does not count toward the limit.
+    if (prFollowUp !== null && prFollowUp.trigger === "reviewer") {
+      if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+      const stoppedInQueue = await waitForRunSlot();
+      if (stoppedInQueue !== null) return stoppedInQueue;
+      status = "REVIEWING";
+      await activities.setRunStatus({ runId: id, status });
+      const repository = targetRepositories.find((candidate) => candidate.id === prFollowUp.repositoryId);
+      if (repository === undefined) {
+        return await failRun(
+          "TARGET_UNRESOLVED",
+          `The repository ${prFollowUp.repositoryFullName} of ${prFollowUp.url} is no longer part of this product, so Factoree cannot triage its review.`,
+        );
+      }
+      const triageInput = {
+        runId: id,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        primary: { url: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.fullName), ref: prFollowUp.baseSha },
+        references: [],
+        defaults: {
+          stagingRead: input.product.stagingRead,
+          spriteRetentionHours: input.product.spriteRetentionHours,
+          allowedDomains: input.product.allowedDomains,
+        },
+        environment: {},
+        organizationSkills: null,
+        githubInstallationId: repository.githubInstallationId,
+        skillRegistry: null,
+        pullRequestHead: prFollowUp.headSha,
+      };
+      let triageSprite: PrepareSandboxActivityOutput | null;
+      try {
+        triageSprite = await withSandboxSlot(async (budgetMs) => {
+          await buildSandboxActivities(budgetMs).selectSandboxProvider({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            repositoryUrl: triageInput.primary.url,
+          });
+          return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareTriageSandbox(triageInput);
+        });
+      } catch (error) {
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            withCause(`Factoree could not prepare the check sandbox of the pull request head of ${prFollowUp.url}.`, error),
+          );
+        }
+        if (remainingMs() > 0) throw error;
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      }
+      if (triageSprite === null) {
+        if (stopRequested) return await cancelRun();
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      }
+      const sprite = triageSprite;
+      const reviewerName = prFollowUp.reviewer === null ? "PR reviewer" : `${prFollowUp.reviewer.appSlug} (${prFollowUp.reviewer.checkName})`;
+      const triageOnce = (afterHang: boolean): Promise<TriageActivityOutput | null> =>
+        runAgentActivity(() =>
+          buildReviewActivities(remainingMs()).triagePullRequestFindings({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            runnerName: sprite.runtime.reviewerRunner,
+            spriteId: sprite.spriteId,
+            adapter: sprite.adapter,
+            workspacePath: sprite.workspacePath,
+            primaryPath: sprite.primaryPath,
+            baseSha: sprite.baseSha,
+            pullRequestUrl: prFollowUp.url,
+            reviewerName,
+            findings: prFollowUp.findings,
+            repositoryInstructions: sprite.repositoryInstructions,
+            timeoutMs: remainingMs(),
+            ...(afterHang ? { afterHang: true } : {}),
+          }),
+        );
+      let triage: TriageActivityOutput | null;
+      try {
+        triage = await triageOnce(false);
+        // docs/specs/agent-session-usage-and-hangs.md. A hung session gets one fresh session.
+        const hang = hangOf(triage);
+        if (triage !== null && hang !== null && !stopRequested && remainingMs() > 0) {
+          await reportHang("reviewer", hang, "starts one fresh session");
+          triage = await triageOnce(true);
+        }
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        if (isConfigurationFault(error)) {
+          return await failRun(
+            "CONFIGURATION_INVALID",
+            withCause("Factoree could not start the triage session. Repair the reviewer runner on the product page.", error),
+          );
+        }
+        if (remainingMs() > 0) throw error;
+        return await failRun("RUN_TIMEOUT", timeoutMessage);
+      } finally {
+        // The triage sprite serves the triage only. A failed delete is logged by the activity.
+        await CancellationScope.nonCancellable(() =>
+          notify(() =>
+            cancelActivities.releaseCheckSandbox({ runId: id, spriteId: sprite.spriteId, adapter: sprite.adapter, workspacePath: sprite.workspacePath }),
+          ),
+        );
+      }
+      if (stopRequested) return await cancelRun();
+      if (triage === null) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        return await failRun("REVIEW_UNAVAILABLE", `The triage of the PR reviewer findings on ${prFollowUp.url} did not finish.`);
+      }
+      const triageHang = hangOf(triage);
+      if (triageHang !== null) return await failHung("reviewer", triageHang);
+      if (!triage.reportUsable) {
+        return await failRun(
+          "REVIEW_UNAVAILABLE",
+          `Factoree could not triage the PR reviewer findings on ${prFollowUp.url}. ${triage.reportProblem ?? ""}`.trim(),
+        );
+      }
+      triagedFindings = triage.decisions;
+      const kept = triage.decisions.filter((decision) => decision.kept);
+      const dropped = triage.decisions.filter((decision) => !decision.kept);
+      if (dropped.length > 0) {
+        await notify(async () => {
+          await pullRequestReplyActivities.answerDroppedFindings({
+            tenantId: input.tenantId,
+            pullRequestId: prFollowUp.pullRequestId,
+            findings: prFollowUp.findings,
+            dropped,
+          });
+        });
+      }
+      const triageLine =
+        `Factoree triaged ${String(triage.decisions.length)} ${triage.decisions.length === 1 ? "finding" : "findings"} of the PR reviewer on ${prFollowUp.url}: ` +
+        `it kept ${String(kept.length)} and dropped ${String(dropped.length)}.` +
+        (dropped.length === 0 ? "" : " It replied on the pull request to each dropped finding with the reason.");
+      if (kept.length === 0) {
+        return await endReported(
+          [
+            "## Factoree triage",
+            "",
+            triageLine,
+            "",
+            "No finding names a concrete defect, a rule and evidence, so Factoree changed nothing. This triage does not count toward the limit of PR follow-up runs.",
+          ].join("\n"),
+        );
+      }
+      await notify(() => activities.postProgress({ sessionId: input.agentSessionId, message: triageLine }));
+      await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: prFollowUp.pullRequestId });
+      workItemDescription = renderPrFollowUpDescription({ description: input.workItem.description, followUp: prFollowUp, kept });
+      initialRepairFindings = keptFindingLines(kept);
     }
 
     {
@@ -1427,7 +1640,7 @@ export async function agentRunWorkflow(
             productId: input.productId,
             runId: id,
             issueId,
-            description: input.workItem.description,
+            description: workItemDescription,
             delegatedAt: input.delegatedAt ?? null,
             repositories: targetRepositories.map((repository) => ({
               fullName: repository.fullName,
@@ -1459,7 +1672,7 @@ export async function agentRunWorkflow(
         runId: id,
         tenantId: input.tenantId,
         productId: input.productId,
-        source: { ...input.workItem, labels },
+        source: { ...input.workItem, description: workItemDescription, labels },
         project: {
           primaryRepository: primaryRepositorySlug,
           referenceRepositories: referenceRepositorySlugs,
@@ -1569,10 +1782,23 @@ export async function agentRunWorkflow(
       // docs/specs/own-proposals-and-parallel-runs.md. The issue text or the Linear project decides
       // the target when exactly one repository matches. A pick among equals is a guess, so only
       // then does a human choose.
-      let targetOutcome = selectTarget(
-        presentRepositories,
-        proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
-      );
+      // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run changes the repository of its
+      // pull request, and no other.
+      const pullRequestRepository =
+        prFollowUp === null ? null : (presentRepositories.find((repository) => repository.id === prFollowUp.repositoryId) ?? null);
+      if (prFollowUp !== null && pullRequestRepository === null) {
+        return await failRun(
+          "TARGET_UNRESOLVED",
+          `The repository ${prFollowUp.repositoryFullName} of ${prFollowUp.url} is no longer part of this product, so Factoree cannot change it.`,
+        );
+      }
+      let targetOutcome: ReturnType<typeof selectTarget> =
+        pullRequestRepository !== null
+          ? { kind: "selected", repository: pullRequestRepository, reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
+          : selectTarget(
+              presentRepositories,
+              proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+            );
       while (targetOutcome.kind === "ambiguous") {
         const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
         const proceeded = await askAndWait(
@@ -1625,7 +1851,11 @@ export async function agentRunWorkflow(
             productId: input.productId,
             goal: refined.goal,
             acceptanceCriteria: refined.acceptanceCriteria,
-            primaryRepository: repositoryRef(refined.primaryRepository),
+            // D2. A PR follow-up run reads its context at the verified base of the pull request.
+            primaryRepository:
+              prFollowUp === null
+                ? repositoryRef(refined.primaryRepository)
+                : { ...repositoryRef(refined.primaryRepository), ref: prFollowUp.baseSha },
             referenceRepositories: refined.referenceRepositories.map(repositoryRef),
             workItemReferences: refined.workItemReferences,
             decisions,
@@ -1815,6 +2045,10 @@ export async function agentRunWorkflow(
             }),
       };
 
+      // D2. The work sprite of a PR follow-up run holds the full change of the pull request: the
+      // verified base, with the diff to the head the run read. A check sprite takes the captured patch.
+      const workInput = prFollowUp === null ? prepareInput : { ...prepareInput, pullRequestHead: prFollowUp.headSha };
+
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
       // retention window of SDD section 51 has passed.
       // A const holds the prepared sandbox, because narrowing of a let does not survive into a
@@ -1822,7 +2056,7 @@ export async function agentRunWorkflow(
       let preparedSandbox: PrepareSandboxActivityOutput;
       try {
         const work = await withSandboxSlot(async (budgetMs) => {
-          if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(prepareInput);
+          if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(workInput);
           // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
           // there, then prepares the work sprite on it. A provider that fails the create is marked
           // down, the run gives its slots back, and it selects again. With no provider that has
@@ -1836,7 +2070,7 @@ export async function agentRunWorkflow(
               repositoryUrl: sandbox.primary.url,
             });
             try {
-              return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(prepareInput);
+              return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(workInput);
             } catch (error) {
               if (!isSandboxProviderDown(error)) throw error;
             }
@@ -1922,8 +2156,8 @@ export async function agentRunWorkflow(
             // and the gate finds a criterion quoted from a comment.
             workItemText:
               workItemContent?.comments === null || workItemContent?.comments === undefined
-                ? `${input.workItem.title}\n\n${input.workItem.description}`
-                : `${input.workItem.title}\n\n${input.workItem.description}\n\n${workItemContent.comments}`,
+                ? `${input.workItem.title}\n\n${workItemDescription}`
+                : `${input.workItem.title}\n\n${workItemDescription}\n\n${workItemContent.comments}`,
             goal: refined.goal,
             statedCriteria: refined.acceptanceCriteria,
             contextContract: resolvedContext.document,
@@ -2078,7 +2312,9 @@ export async function agentRunWorkflow(
       // One Implementer attempt plus its verification. SDD section 42 bounds the number of
       // repairs, so the loop can never run without end.
       let attempt = FIRST_IMPLEMENTER_ATTEMPT;
-      let repairFindings: string[] = [];
+      // docs/specs/pr-review-merge-and-deploy.md. The first attempt of a PR reviewer follow-up repairs
+      // the findings the triage kept.
+      let repairFindings: string[] = initialRepairFindings;
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
       // Issue #43, DI-21.67. A spent budget names its size and where it comes from. Only the
@@ -2830,7 +3066,8 @@ export async function agentRunWorkflow(
         draft: publishDraft,
         repositorySlug: resolvedContext.primary.slug,
         repositoryBaseUrl: input.product.repositoryBaseUrl,
-        baseBranch: defaultBranchForSlug(resolvedContext.primary.slug),
+        // A PR follow-up run keeps the base branch of its pull request.
+        baseBranch: prFollowUp?.baseBranch ?? defaultBranchForSlug(resolvedContext.primary.slug),
         baseSha: preparedSandbox.baseSha,
         reviewedChangedFiles: publishedChangedFiles,
         reviewedWorktreeSha: publishedWorktreeSha,
@@ -2847,7 +3084,27 @@ export async function agentRunWorkflow(
 
       let publication: PublishActivityOutput;
       try {
-        publication = await publishingActivities.publish(publishInput);
+        if (prFollowUp === null) {
+          publication = await publishingActivities.publish(publishInput);
+        } else {
+          // D2. One new verified commit on the branch of the pull request, with the head this run read
+          // as its parent. No new pull request opens, and the push never forces.
+          const pushed = await publishingActivities.publishFollowUp({
+            ...publishInput,
+            branch: prFollowUp.headBranch,
+            parentSha: prFollowUp.headSha,
+            pullRequestUrl: prFollowUp.url,
+            pullRequestNumber: prFollowUp.number,
+            contractRevision: prFollowUp.contractRevision,
+          });
+          publication = {
+            ...pushed,
+            pullRequestUrl: prFollowUp.url,
+            pullRequestNumber: prFollowUp.number,
+            branch: prFollowUp.headBranch,
+            created: false,
+          };
+        }
       } catch (error) {
         if (isCancellation(error)) throw error;
         // SDD section 50. A human stop is never a configuration fault. It is never a publication
@@ -2884,7 +3141,11 @@ export async function agentRunWorkflow(
       await notify(() =>
         activities.postProgress({
           sessionId: input.agentSessionId,
-          message: `Factoree opened the pull request: ${publication.pullRequestUrl}.`,
+          message:
+            prFollowUp === null
+              ? `Factoree opened the pull request: ${publication.pullRequestUrl}.`
+              : `Factoree pushed the verified commit ${publication.commitSha.slice(0, 12)} to the pull request ${publication.pullRequestUrl} ` +
+                `(contract revision ${String(prFollowUp.contractRevision)}).`,
         }),
       );
 
@@ -2893,8 +3154,9 @@ export async function agentRunWorkflow(
       publishedPullRequestUrl = publication.pullRequestUrl;
 
       // DI-21.52. The issue shows its pull request as an attachment, and the session as a link.
-      let pullRequestLinked = false;
-      if (patched(PULL_REQUEST_LINK_PATCH)) {
+      // A PR follow-up run shares the agent session of the run that linked the pull request.
+      let pullRequestLinked = prFollowUp !== null;
+      if (prFollowUp === null && patched(PULL_REQUEST_LINK_PATCH)) {
         const linkedUrl = publication.pullRequestUrl;
         await notify(async () => {
           await activities.linkPullRequest({
@@ -2934,11 +3196,18 @@ export async function agentRunWorkflow(
           headBranch: publication.branch,
           headSha: publication.commitSha,
           baseBranch: publishInput.baseBranch,
-          // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run.
-          autonomyLevel: refined.autonomyLevel,
+          // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run. DI-21.112: a
+          // PR follow-up commit that a first run would publish as a draft lands on the open pull
+          // request, so its head records L2, and auto-merge stays off for it.
+          autonomyLevel: prFollowUp !== null && publishDraft ? "L2" : refined.autonomyLevel,
+          // D2. The next PR follow-up run starts from this base.
+          baseSha: publishInput.baseSha,
+          ...(prFollowUp === null ? {} : { contractRevision: prFollowUp.contractRevision }),
         };
         await notify(async () => {
           const recorded = await activities.recordPullRequest(recordInput);
+          // A PR follow-up run runs under the PR workflow of its pull request, which already runs.
+          if (prFollowUp !== null) return;
           try {
             await startChild(pullRequestWorkflow, {
               workflowId: recorded.workflowId,
@@ -2999,6 +3268,26 @@ export async function agentRunWorkflow(
           autonomyLevel: refined.autonomyLevel,
           autonomyReasons: refined.autonomyReasons,
           checkDefiningFiles: published.checkDefiningFiles,
+          // docs/specs/pr-review-merge-and-deploy.md. The proof pack names the contract revision of the head commit.
+          ...(prFollowUp === null
+            ? {}
+            : {
+                pullRequestFollowUp: {
+                  contractRevision: prFollowUp.contractRevision,
+                  trigger: prFollowUp.trigger,
+                  startedBy:
+                    prFollowUp.trigger === "human"
+                      ? (prFollowUp.reviewerLogin ?? "A human")
+                      : prFollowUp.reviewer === null
+                        ? "PR reviewer"
+                        : `${prFollowUp.reviewer.appSlug} (${prFollowUp.reviewer.checkName})`,
+                  kept: triagedFindings
+                    .filter((finding) => finding.kept)
+                    .map((finding) => ({ evidence: finding.evidence, defect: finding.defect, rule: finding.rule })),
+                  dropped: triagedFindings.filter((finding) => !finding.kept).length,
+                  plainComments: prFollowUp.plainComments,
+                },
+              }),
         });
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -3082,7 +3371,7 @@ export async function agentRunWorkflow(
           // The post falls back to the message when the facts cannot be read.
         }
         await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
-        if (patched(DRAFT_OFFER_PATCH)) {
+        if (prFollowUp === null && patched(DRAFT_OFFER_PATCH)) {
           await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
         }
       });

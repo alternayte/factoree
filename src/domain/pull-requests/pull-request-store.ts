@@ -37,7 +37,25 @@ export interface PublishedPullRequest {
   autonomyLevel: string | null;
   /** DI-21.106. The base branch whose L4 gate Factoree read, or null before the first read. */
   autoMergeGateBase: string | null;
+  /** D2. The base SHA of the verified head. A PR follow-up run starts from it. */
+  verifiedBaseSha: string | null;
+  /** The run that published the verified head. */
+  verifiedRunId: string | null;
+  /** DI-21.108. The failed PR reviewer check that last started a triage or a limit notice. */
+  reviewerHandledKey: string | null;
   workflowId: string;
+}
+
+/** What a PR follow-up run needs of the run that published the pull request. */
+export interface PullRequestOriginFacts {
+  productId: string;
+  githubInstallationId: string;
+  /** The workflow id of the origin run, which names the Linear workspace. */
+  originWorkflowId: string;
+  linearAgentSessionId: string;
+  linearIssueId: string | null;
+  workItemTitle: string | null;
+  workItemUrl: string | null;
 }
 
 /** DI-21.104. What the L4 merge reads beside the record: the product, the installation and the Linear session. */
@@ -66,6 +84,10 @@ export interface RecordPublishedPullRequestInput {
   baseBranch: string;
   /** The autonomy level of the publishing run. The head it pushed becomes the verified head. */
   autonomyLevel: string;
+  /** D2. The base SHA the publishing run verified the patch against. */
+  baseSha: string;
+  /** The contract revision of the pushed head. Absent for the run that opened the pull request. */
+  contractRevision?: number;
 }
 
 export interface PullRequestStore {
@@ -95,4 +117,11 @@ export interface PullRequestStore {
   setAutoMerge(tenantId: string, pullRequestId: string, update: AutoMergeUpdate): Promise<PublishedPullRequest>;
   /** D5. The open pull requests of a product whose L4 gate failed, newest first. */
   listAutoMergeUnavailable(tenantId: string, productId: string): Promise<PublishedPullRequest[]>;
+  originFacts(tenantId: string, pullRequestId: string): Promise<PullRequestOriginFacts>;
+  /** DI-21.108. Marks one failed PR reviewer check as handled. False when it already was. */
+  markReviewerHandled(tenantId: string, pullRequestId: string, key: string): Promise<boolean>;
+  /** Counts one PR follow-up run from the PR reviewer, and answers the new count. */
+  countReviewerFollowUp(tenantId: string, pullRequestId: string): Promise<number>;
+  /** The recorded events of one kind, oldest first. */
+  listEvents(tenantId: string, pullRequestId: string, kind: PullRequestEvent["kind"]): Promise<PullRequestEvent[]>;
 }

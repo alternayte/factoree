@@ -246,6 +246,72 @@ describe("publishToBranch", () => {
     expect(isDeterministicCheckoutFailure("error: patch failed: README.md:1")).toBe(true);
     expect(isDeterministicCheckoutFailure("fatal: unable to read tree (0000)")).toBe(true);
   });
+
+  // docs/specs/pr-review-merge-and-deploy.md, D2, DI-21.112. A PR follow-up commit takes the head it
+  // read as its parent, holds base plus the whole verified patch, and never forces the branch.
+  it("commits a PR follow-up on the head it read, and refuses a moved branch", async () => {
+    const common = {
+      cloneUrl: bare,
+      baseSha,
+      baseBranch: "main",
+      branch: "factoree/run-follow-up",
+      verifiedGitVersion: "git version 0.0.0-test",
+      commitMessage: "Factoree change\n",
+      commitTimestamp: COMMIT_TIMESTAMP,
+      authorName: "Factoree",
+      authorEmail: "factoree@example.test",
+    };
+    const opened = await publishToBranch({ ...common, patchBase64, verifiedPatchSha256: sha256OfBase64(patchBase64) });
+
+    // The follow-up patch is the whole change of the pull request from the base, plus the repair.
+    const follow = join(root, "follow-up");
+    execFileSync("git", ["clone", bare, follow]);
+    git(follow, "checkout", "--detach", baseSha);
+    writeFileSync(join(follow, "README.md"), "base\nchanged\n");
+    writeFileSync(join(follow, "new.txt"), "new file\n");
+    writeFileSync(join(follow, "repair.txt"), "repair\n");
+    git(follow, "add", "-A");
+    const followPatch = Buffer.from(
+      execFileSync("git", [...PATCH_GIT_OPTIONS, ...PATCH_DIFF_ARGS, baseSha], { cwd: follow, encoding: "buffer" }),
+    ).toString("base64");
+
+    const pushed = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: opened.commitSha,
+    });
+    expect(pushed.publishedPatchSha256).toBe(sha256OfBase64(followPatch));
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up^").trim()).toBe(opened.commitSha);
+    expect(git(bare, "diff", "--name-only", opened.commitSha, pushed.commitSha).trim()).toBe("repair.txt");
+
+    // A commit whose parent is no longer the branch head is refused, and the branch stays.
+    const refused = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: opened.commitSha,
+      commitMessage: "Another change\n",
+    })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(refused).toBeInstanceOf(TrustedCheckoutError);
+    expect((refused as TrustedCheckoutError).deterministic).toBe(true);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+
+    // A verified tree equal to the head changes nothing, so nothing is pushed.
+    const unchanged = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: pushed.commitSha,
+    })
+      .then(() => null)
+      .catch((thrown: unknown) => thrown);
+    expect(unchanged).toBeInstanceOf(TrustedCheckoutError);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+  });
 });
 
 describe("the review name query and the publication name query", () => {

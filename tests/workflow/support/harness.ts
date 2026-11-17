@@ -555,6 +555,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     },
     // DI-21.104. The PR workflow steers auto-merge at its start. No GitHub answers here.
     steerAutoMerge: async () => ({ state: "off" }),
+    // docs/specs/pr-review-merge-and-deploy.md, slice 3. No review event reaches the PR workflow here.
+    planPullRequestFollowUp: async () => ({ kind: "none", reason: "no review event" }),
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
     readWorkItemContent: async () => ({
       comments: null,

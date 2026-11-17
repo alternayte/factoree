@@ -17,6 +17,10 @@ interface LinearIssueWithLabels {
   labels(): Promise<{ nodes: LinearIssueLabel[] } | null>;
   /** The SDK resolves the project lazily. An issue in no project has none. */
   project?: PromiseLike<{ name: string } | undefined> | undefined;
+  /** docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run refines the issue text again. */
+  title?: string;
+  description?: string | null;
+  url?: string;
 }
 
 export interface LinearApi {
@@ -87,6 +91,9 @@ export class LinearAgentClient implements AgentSessionPort {
     return {
       labels: labels === null ? [] : labels.nodes.map((label) => label.name),
       project: project?.name ?? null,
+      ...(issue.title === undefined ? {} : { title: issue.title }),
+      ...(issue.description === undefined ? {} : { description: issue.description ?? "" }),
+      ...(issue.url === undefined ? {} : { url: issue.url }),
     };
   }
 }

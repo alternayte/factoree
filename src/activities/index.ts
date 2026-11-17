@@ -65,6 +65,7 @@ import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { createPullRequestActivities } from "./pull-request.activities.js";
 import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
+import type { PullRequestReviewPort } from "~/domain/pull-requests/pr-follow-up.js";
 import type { AutoMergePort } from "~/domain/pull-requests/auto-merge.js";
 import type { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import {
@@ -184,6 +185,13 @@ export interface ActivityDependencies {
   pullRequestClose?: Pick<PullRequestCloseHandler, "closeOfRecord"> | undefined;
   /** docs/specs/pr-review-merge-and-deploy.md. The GitHub calls of the L4 merge. A worker without them turns on no auto-merge. */
   autoMerge?: AutoMergePort | undefined;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR
+   * follow-up runs. A worker without them starts no PR follow-up run.
+   */
+  pullRequestReviews?: PullRequestReviewPort | undefined;
+  /** The product page of the Factoree UI, which a missing-host post names. */
+  productPageUrl?: ((productId: string) => string) | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -220,6 +228,21 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   steeringFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
   setAutoMerge: () => Promise.reject(new Error("this worker holds no pull request store")),
   listAutoMergeUnavailable: () => Promise.reject(new Error("this worker holds no pull request store")),
+  originFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markReviewerHandled: () => Promise.reject(new Error("this worker holds no pull request store")),
+  countReviewerFollowUp: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listEvents: () => Promise.reject(new Error("this worker holds no pull request store")),
+};
+
+const NO_REVIEWS_REASON = "this worker holds no GitHub review port";
+
+/** A worker built without the review port starts no PR follow-up run, and the PR workflow logs it. */
+const NO_REVIEWS: PullRequestReviewPort = {
+  reviewerFindings: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  review: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  canWrite: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  reply: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  comment: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
 };
 
 const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
@@ -500,6 +523,11 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     autoMerge: dependencies.autoMerge ?? NO_AUTO_MERGE,
     products: dependencies.products,
     agentSession: dependencies.agentSession,
+    reviews: dependencies.pullRequestReviews ?? NO_REVIEWS,
+    repositories: dependencies.repositories,
+    workItems: dependencies.workItems,
+    repositoryBaseUrl: dependencies.repositoryBaseUrl,
+    productPageUrl: dependencies.productPageUrl,
   }),
 });
 

@@ -33,6 +33,9 @@ const pullRequest = (overrides: Partial<PublishedPullRequest> = {}): PublishedPu
   verifiedHeadSha: "head-1",
   autonomyLevel: "L3",
   autoMergeGateBase: null,
+  verifiedBaseSha: "base-1",
+  verifiedRunId: "run-1",
+  reviewerHandledKey: null,
   workflowId: "pr:tenant-1:acme/api#12",
   ...overrides,
 });

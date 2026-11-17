@@ -1,5 +1,25 @@
+import { createHash } from "node:crypto";
 import type { Logger } from "~/telemetry/logger.js";
-import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
+import { eventHeadSha, type PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
+import {
+  droppedFindingReply,
+  MAX_FINDINGS,
+  MAX_PLAIN_COMMENTS,
+  MAX_REVIEWER_FOLLOW_UPS,
+  reviewerLimitNotice,
+  reviewerVerdictOfEvent,
+  type PrFollowUpInput,
+  type PrFollowUpTrigger,
+  type PrReviewFinding,
+  type PullRequestReviewPort,
+  type TriagedFinding,
+} from "~/domain/pull-requests/pr-follow-up.js";
+import type { PrReviewer } from "~/domain/products/product-registry.js";
+import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
+import type { WorkItemPort } from "~/domain/runs/ports.js";
+import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
+import { buildPrFollowUpWorkflowId, parseWorkflowId } from "~/temporal/workflow-id.js";
+import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import type { PullRequestStore, RecordPublishedPullRequestInput } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
@@ -23,7 +43,40 @@ export interface PullRequestActivityDependencies {
   autoMerge: AutoMergePort;
   products: Pick<ProductRegistry, "findById">;
   agentSession: Pick<AgentSessionPort, "respond">;
+  /** docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and the replies on GitHub. */
+  reviews: PullRequestReviewPort;
+  repositories: Pick<RepositoryRegistry, "listByProduct">;
+  workItems: WorkItemPort;
+  /** The GitHub web URL from the install settings. */
+  repositoryBaseUrl: () => Promise<string>;
+  productPageUrl?: ((productId: string) => string) | undefined;
 }
+
+/** What one event of the PR workflow asks for: nothing, or one PR follow-up run. */
+export type PullRequestFollowUpPlan =
+  | { kind: "none"; reason: string }
+  | { kind: "start"; workflowId: string; input: AgentRunWorkflowInput };
+
+const oneLine = (text: string, limit: number): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
+};
+
+/**
+ * The plain comments of a pull request that started nothing: each COMMENTED review, newest last.
+ * The PR reviewer's own reviews on the head it fails are its findings, not plain comments.
+ */
+const plainCommentLines = (events: readonly PullRequestEvent[], exclude: { login: string; sha: string } | null): string[] => {
+  const reviews = new Map<number, string>();
+  for (const event of events) {
+    if (event.kind !== "review" || event.state !== "commented" || event.action === "dismissed") continue;
+    if (exclude !== null && event.reviewerLogin.toLowerCase() === exclude.login && event.commitSha === exclude.sha) continue;
+    const at = event.commitSha === null ? "" : ` on ${event.commitSha.slice(0, 12)}`;
+    const body = event.body === null || event.body.trim() === "" ? "left review comments on the changed lines." : oneLine(event.body, 300);
+    reviews.set(event.reviewId, `${event.reviewerLogin}${at}: ${body}`);
+  }
+  return [...reviews.values()].slice(-MAX_PLAIN_COMMENTS);
+};
 
 /**
  * What made the PR workflow steer auto-merge: the start of the workflow, a new head commit, an
@@ -100,6 +153,210 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       originRunId: pullRequest.originRunId,
     });
     return pullRequest.state;
+  },
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, slice 3, DI-21.108 and DI-21.109. Decides whether one
+   * taken event starts a PR follow-up run, and builds its input. A failed PR reviewer check on the
+   * current head starts one under the limit, with that app's review comments on that head as the
+   * findings to triage. A "request changes" review from a human with write access starts one with
+   * the review as a decision. Every other event starts nothing. A retry reads GitHub again, and the
+   * check that started a triage is marked once, so a retry decides the same.
+   */
+  async planPullRequestFollowUp(input: { tenantId: string; pullRequestId: string; event: PullRequestEvent }): Promise<PullRequestFollowUpPlan> {
+    const store = dependencies.pullRequests;
+    const record = await store.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { kind: "none", reason: "the pull request is not open" };
+    const event = input.event;
+    if (event.kind !== "check_run" && event.kind !== "commit_status" && event.kind !== "review") return { kind: "none", reason: "no review event" };
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    const log = { pull_request: label, step: "pr_follow_up", event: event.kind, delivery_id: event.deliveryId };
+    const origin = await store.originFacts(input.tenantId, record.id);
+    const product = await dependencies.products.findById(input.tenantId, origin.productId);
+    if (product === null) return { kind: "none", reason: "the product is gone" };
+    const installationId = origin.githubInstallationId;
+    const slug = record.repositoryFullName;
+    const say = async (body: string) => {
+      try {
+        await dependencies.agentSession.respond(origin.linearAgentSessionId, body);
+      } catch (error) {
+        dependencies.logger.warn("the PR follow-up notice did not reach Linear", { ...log, error: String(error) });
+      }
+    };
+
+    let trigger: PrFollowUpTrigger;
+    let reviewer: PrReviewer | null = null;
+    let reviewerLogin: string | null = null;
+    let findings: PrReviewFinding[];
+    // DI-21.108. The failed check this event names. The record marks it once the plan is complete,
+    // so a retry after a fault plans again, and a second delivery of the check starts nothing.
+    let handledKey: string | null = null;
+    if (event.kind === "review") {
+      // The spec: only a "request changes" review from a human with write access is a decision. A
+      // bot's verdict reaches Factoree through its check, and a COMMENTED review starts nothing.
+      if (event.action !== "submitted" || event.state !== "changes_requested") return { kind: "none", reason: "no change request" };
+      if (event.reviewerType !== "User") return { kind: "none", reason: "the reviewer is no human" };
+      if (!(await dependencies.reviews.canWrite(slug, event.reviewerLogin, installationId))) {
+        dependencies.logger.info("a change request from a user without write access starts nothing", { ...log, reviewer: event.reviewerLogin });
+        return { kind: "none", reason: "the reviewer holds no write access" };
+      }
+      const review = await dependencies.reviews.review(slug, record.number, event.reviewId, installationId);
+      if (review.findings.length === 0) {
+        await say(`${review.reviewerLogin} requested changes on ${record.url} without a comment, so Factoree has nothing to act on and starts no run.`);
+        return { kind: "none", reason: "the review holds no text" };
+      }
+      trigger = "human";
+      reviewerLogin = review.reviewerLogin;
+      findings = review.findings;
+    } else {
+      reviewer = product.prReviewer;
+      if (reviewer === null) return { kind: "none", reason: "the product names no PR reviewer" };
+      const verdict = reviewerVerdictOfEvent(event, reviewer);
+      if (verdict === null) return { kind: "none", reason: "another check" };
+      if (verdict === "pending") {
+        dependencies.logger.info("the PR reviewer reviews the head", log);
+        return { kind: "none", reason: "the review is in progress" };
+      }
+      if (verdict !== "failed") return { kind: "none", reason: `the PR reviewer check is ${verdict}` };
+      const sha = eventHeadSha(event);
+      // An old head has a newer commit on the branch already, and the newer commit gets its own check.
+      if (sha !== record.headSha) return { kind: "none", reason: "the check names an old head" };
+      handledKey = event.kind === "check_run" ? `check_run:${String(event.checkRunId)}` : `status:${sha}:${event.context}`;
+      if (record.reviewerHandledKey === handledKey) return { kind: "none", reason: "the check already started a triage" };
+      if (record.reviewerFollowUps >= MAX_REVIEWER_FOLLOW_UPS) {
+        if (!(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) return { kind: "none", reason: "the check was handled" };
+        const notice = reviewerLimitNotice(record.url, reviewer.checkName);
+        dependencies.logger.info("the PR reviewer follow-up limit holds", log);
+        await say(notice);
+        try {
+          await dependencies.reviews.comment(slug, record.number, notice, installationId);
+        } catch (error) {
+          dependencies.logger.warn("the limit notice did not reach the pull request", { ...log, error: String(error) });
+        }
+        return { kind: "none", reason: "the PR reviewer follow-up limit holds" };
+      }
+      findings = await dependencies.reviews.reviewerFindings(slug, record.number, sha, reviewer.appSlug, installationId);
+      if (findings.length === 0) {
+        if (!(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) return { kind: "none", reason: "the check was handled" };
+        await say(
+          `The PR reviewer check "${reviewer.checkName}" failed on ${record.url} at ${sha.slice(0, 12)}, and the PR reviewer left no review comment on that head. ` +
+            "Factoree has no finding to triage, so it starts no run.",
+        );
+        return { kind: "none", reason: "the PR reviewer left no finding" };
+      }
+      trigger = "reviewer";
+    }
+
+    if (record.verifiedBaseSha === null) {
+      dependencies.logger.warn("the pull request holds no verified base, so no PR follow-up run starts", log);
+      await say(`Factoree cannot start a PR follow-up run on ${record.url}, because it holds no verified base for it.`);
+      return { kind: "none", reason: "no verified base" };
+    }
+    const { workspaceId } = parseWorkflowId(origin.originWorkflowId);
+    let title = origin.workItemTitle ?? "";
+    let description = "";
+    let url = origin.workItemUrl;
+    if (origin.linearIssueId !== null) {
+      try {
+        const facts = await dependencies.workItems.facts(origin.linearAgentSessionId, origin.linearIssueId);
+        title = facts.title ?? title;
+        description = facts.description ?? "";
+        url = facts.url ?? url;
+      } catch (error) {
+        // The issue text is context. The review is the change, so the run still starts.
+        dependencies.logger.warn("the issue text of the PR follow-up run was not read", { ...log, error: String(error) });
+      }
+    }
+    const defaultAutonomy = product.status === "pending" ? "L0" : product.defaultAutonomy;
+    const followUp: PrFollowUpInput = {
+      pullRequestId: record.id,
+      repositoryId: record.repositoryId,
+      repositoryFullName: record.repositoryFullName,
+      number: record.number,
+      url: record.url,
+      headBranch: record.headBranch,
+      headSha: record.headSha,
+      baseSha: record.verifiedBaseSha,
+      baseBranch: record.baseBranch,
+      contractRevision: record.contractRevision + 1,
+      trigger,
+      reviewer,
+      reviewerLogin,
+      findings: findings.slice(0, MAX_FINDINGS),
+      omittedFindings: Math.max(0, findings.length - MAX_FINDINGS),
+      plainComments: plainCommentLines(
+        await store.listEvents(input.tenantId, record.id, "review"),
+        reviewer === null ? null : { login: `${reviewer.appSlug}[bot]`, sha: record.headSha },
+      ),
+    };
+    if (handledKey !== null && !(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) {
+      return { kind: "none", reason: "the check already started a triage" };
+    }
+    const key = createHash("sha256").update(`${record.id}\n${event.deliveryId}`).digest("hex").slice(0, 32);
+    const workflowId = buildPrFollowUpWorkflowId(workspaceId, origin.linearAgentSessionId, key);
+    dependencies.logger.info("a PR follow-up run starts", { ...log, trigger, workflow_id: workflowId, findings: findings.length });
+    return {
+      kind: "start",
+      workflowId,
+      input: {
+        tenantId: input.tenantId,
+        workspaceId,
+        productId: product.id,
+        linearIssueId: origin.linearIssueId,
+        agentSessionId: origin.linearAgentSessionId,
+        autonomyLevel: defaultAutonomy,
+        maxRunMinutes: product.maxRunMinutes,
+        workItem: { issueId: origin.linearIssueId, title, description, url, labels: [] },
+        product: agentRunProductInput({
+          product,
+          defaultAutonomy,
+          repositories: await dependencies.repositories.listByProduct(product.id),
+          repositoryBaseUrl: await dependencies.repositoryBaseUrl(),
+          productPageUrl: dependencies.productPageUrl === undefined ? null : dependencies.productPageUrl(product.id),
+        }),
+        followUpOfRunId: record.verifiedRunId ?? record.originRunId,
+        delegatedAt: new Date().toISOString(),
+        prFollowUp: followUp,
+      },
+    };
+  },
+
+  /**
+   * The spec: Factoree replies on the pull request to each finding the triage dropped, with the
+   * reason. A reply that fails is logged, and the others still go.
+   */
+  async answerDroppedFindings(input: {
+    tenantId: string;
+    pullRequestId: string;
+    findings: PrReviewFinding[];
+    dropped: TriagedFinding[];
+  }): Promise<{ answered: number }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null) return { answered: 0 };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const byKey = new Map(input.findings.map((finding) => [finding.key, finding]));
+    let answered = 0;
+    for (const dropped of input.dropped) {
+      const finding = byKey.get(dropped.key);
+      if (finding === undefined) continue;
+      try {
+        await dependencies.reviews.reply(record.repositoryFullName, record.number, finding, droppedFindingReply(dropped), origin.githubInstallationId);
+        answered += 1;
+      } catch (error) {
+        dependencies.logger.warn("the reply to a dropped finding did not reach the pull request", {
+          pull_request: `${record.repositoryFullName}#${String(record.number)}`,
+          finding: dropped.key,
+          error: String(error),
+          step: "triage",
+        });
+      }
+    }
+    return { answered };
+  },
+
+  /** The spec: counts one PR follow-up run from the PR reviewer, once its triage kept a finding. */
+  async countReviewerFollowUp(input: { tenantId: string; pullRequestId: string }): Promise<{ count: number }> {
+    return { count: await dependencies.pullRequests.countReviewerFollowUp(input.tenantId, input.pullRequestId) };
   },
 
   /**

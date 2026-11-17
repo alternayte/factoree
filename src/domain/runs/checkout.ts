@@ -169,6 +169,50 @@ export const refreshPrimary = async (
 };
 
 /**
+ * docs/specs/pr-review-merge-and-deploy.md, D2. A PR follow-up run works on the full change of its
+ * pull request. The primary checkout stays at the verified base, which the configuration was read
+ * from, and the diff from the base to the pull request head lands in the worktree as uncommitted
+ * change. The captured patch is then the full change against the base, so every check and the
+ * reviewer see all of it. This runs in a fresh sandbox, before the bootstrap and before any agent.
+ */
+export const overlayPullRequestHead = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  primary: CheckedOutRepository,
+  headSha: string,
+  credential?: RepositoryCredential,
+): Promise<void> => {
+  if (!SHA.test(headSha)) throw new Error(`the pull request head is not forty hexadecimal characters: "${headSha}"`);
+  const credentialEnv = credentialEnvironment(primary.url, credential);
+  // GitHub serves a commit that a branch reaches by its SHA. A head that no branch reaches any more
+  // was force-pushed away, and a retry cannot bring it back.
+  await run(
+    sandbox,
+    ref,
+    {
+      file: "git",
+      args: ["-C", primary.path, "fetch", "--no-tags", "origin", headSha],
+      ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
+    },
+    true,
+  );
+  const patchPath = `${ref.workspacePath}/pull-request.diff`;
+  await run(sandbox, ref, {
+    file: "sh",
+    args: [
+      "-c",
+      'git -C "$0" -c core.quotePath=true -c diff.external= diff --binary --no-renames --no-ext-diff --no-textconv --no-color "$1" "$2" > "$3"',
+      primary.path,
+      primary.baseSha,
+      headSha,
+      patchPath,
+    ],
+  });
+  await run(sandbox, ref, { file: "git", args: ["-C", primary.path, "apply", "--binary", "--whitespace=nowarn", patchPath] }, true);
+  await run(sandbox, ref, { file: "rm", args: ["-f", patchPath] });
+};
+
+/**
  * Removes the reference checkouts a warm snapshot holds. They are read-only, so the write bit
  * comes back first. `checkoutReferences` then clones each one at the ref of this Run.
  */

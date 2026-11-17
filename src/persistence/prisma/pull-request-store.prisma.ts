@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import { eventHeadSha, pullRequestWorkflowId, type PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type {
+  PullRequestOriginFacts,
   AutoMergeState,
   AutoMergeUpdate,
   PublishedPullRequest,
@@ -40,6 +41,9 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   verifiedHeadSha: row.verifiedHeadSha,
   autonomyLevel: row.autonomyLevel,
   autoMergeGateBase: row.autoMergeGateBase,
+  verifiedBaseSha: row.verifiedBaseSha,
+  verifiedRunId: row.verifiedRunId,
+  reviewerHandledKey: row.reviewerHandledKey,
   workflowId: row.workflowId,
 });
 
@@ -82,11 +86,22 @@ export class PrismaPullRequestStore implements PullRequestStore {
         originRunId: input.runId,
         verifiedHeadSha: input.headSha,
         autonomyLevel: input.autonomyLevel,
+        verifiedBaseSha: input.baseSha,
+        verifiedRunId: input.runId,
         workflowId: pullRequestWorkflowId(input.tenantId, repository.fullName, input.number),
       },
       // DI-9.8. The pull request existed. The origin run and the workflow id stay. The pushed head
-      // is verified, so it and the level of its run replace the old ones (DI-21.104).
-      update: { headSha: input.headSha, url: input.url, verifiedHeadSha: input.headSha, autonomyLevel: input.autonomyLevel },
+      // is verified, so it, its base, its run and the level of its run replace the old ones
+      // (DI-21.104). A PR follow-up run also moves the contract revision.
+      update: {
+        headSha: input.headSha,
+        url: input.url,
+        verifiedHeadSha: input.headSha,
+        autonomyLevel: input.autonomyLevel,
+        verifiedBaseSha: input.baseSha,
+        verifiedRunId: input.runId,
+        ...(input.contractRevision === undefined ? {} : { contractRevision: input.contractRevision }),
+      },
       include,
     });
     return toRecord(row);
@@ -203,5 +218,56 @@ export class PrismaPullRequestStore implements PullRequestStore {
       include,
     });
     return rows.map(toRecord);
+  }
+
+  async originFacts(tenantId: string, pullRequestId: string): Promise<PullRequestOriginFacts> {
+    const row = await this.prisma.pullRequest.findFirst({
+      where: { id: pullRequestId, tenantId },
+      select: {
+        repository: { select: { productId: true, githubInstallationId: true } },
+        originRun: {
+          select: { temporalWorkflowId: true, linearAgentSessionId: true, linearIssueId: true, workItemTitle: true, workItemUrl: true },
+        },
+      },
+    });
+    if (row === null) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+    return {
+      productId: row.repository.productId,
+      githubInstallationId: row.repository.githubInstallationId,
+      originWorkflowId: row.originRun.temporalWorkflowId,
+      linearAgentSessionId: row.originRun.linearAgentSessionId,
+      linearIssueId: row.originRun.linearIssueId,
+      workItemTitle: row.originRun.workItemTitle,
+      workItemUrl: row.originRun.workItemUrl,
+    };
+  }
+
+  async markReviewerHandled(tenantId: string, pullRequestId: string, key: string): Promise<boolean> {
+    // One conditional write, so two deliveries of one check never both start a triage.
+    const updated = await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId, OR: [{ reviewerHandledKey: null }, { reviewerHandledKey: { not: key } }] },
+      data: { reviewerHandledKey: key },
+    });
+    return updated.count > 0;
+  }
+
+  async countReviewerFollowUp(tenantId: string, pullRequestId: string): Promise<number> {
+    const updated = await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId },
+      data: { reviewerFollowUps: { increment: 1 } },
+    });
+    if (updated.count === 0) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+    const row = await this.prisma.pullRequest.findFirstOrThrow({ where: { id: pullRequestId, tenantId }, select: { reviewerFollowUps: true } });
+    return row.reviewerFollowUps;
+  }
+
+  async listEvents(tenantId: string, pullRequestId: string, kind: PullRequestEvent["kind"]): Promise<PullRequestEvent[]> {
+    const rows = await this.prisma.pullRequestEvent.findMany({
+      where: { tenantId, pullRequestId, kind },
+      orderBy: { receivedAt: "asc" },
+      take: 500,
+      select: { payload: true },
+    });
+    return rows.map((row) => row.payload as unknown as PullRequestEvent);
   }
 }

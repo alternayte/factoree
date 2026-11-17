@@ -1063,6 +1063,12 @@ model PullRequest {
   autonomyLevel     String?    @map("autonomy_level")
   // DI-21.106. The base branch whose L4 gate Factoree read. Null until it reads one.
   autoMergeGateBase String?    @map("auto_merge_gate_base")
+  // D2. The base SHA of the verified head, and the run that published it. A PR follow-up run starts
+  // its work sprite at this base with the pull request change applied.
+  verifiedBaseSha   String?    @map("verified_base_sha")
+  verifiedRunId     String?    @map("verified_run_id")
+  // DI-21.108. The failed PR reviewer check that last started a triage or a limit notice.
+  reviewerHandledKey String?   @map("reviewer_handled_key")
   workflowId        String     @map("workflow_id")
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
