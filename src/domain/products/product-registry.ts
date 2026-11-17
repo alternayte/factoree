@@ -44,8 +44,19 @@ export interface ProductRecord {
   maxConcurrentRuns: number;
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: AppChangeIssueMode;
+  /** docs/specs/pr-review-merge-and-deploy.md. The PR reviewer, or null when the product names none. */
+  prReviewer: PrReviewer | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. An external review app: its GitHub App slug, and the name
+ * of the check run or commit status it reports on the pull request head.
+ */
+export interface PrReviewer {
+  appSlug: string;
+  checkName: string;
 }
 
 export interface ProductEffort {
@@ -74,6 +85,8 @@ export interface ProductSettingsUpdate {
   sandboxProviderIds?: string[];
   maxConcurrentRuns?: number;
   appChangeIssues?: AppChangeIssueMode;
+  /** Null clears the PR reviewer. */
+  prReviewer?: PrReviewer | null;
 }
 
 export interface CreateProductInput {

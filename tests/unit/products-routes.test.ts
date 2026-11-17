@@ -69,7 +69,7 @@ class FakeProductRegistry implements ProductRegistry {
       repairMaxAttempts: 2,
       sandboxRetentionHours: 24,
       sandboxProviderIds: [],
-      maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
+      maxConcurrentRuns: 2, appChangeIssues: "one_per_change", prReviewer: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -182,6 +182,7 @@ class FakeProductRegistry implements ProductRegistry {
       ...(settings.sandboxRetentionHours === undefined ? {} : { sandboxRetentionHours: settings.sandboxRetentionHours }),
       ...(settings.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: settings.maxConcurrentRuns }),
       ...(settings.sandboxProviderIds === undefined ? {} : { sandboxProviderIds: settings.sandboxProviderIds }),
+      ...(settings.prReviewer === undefined ? {} : { prReviewer: settings.prReviewer }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
@@ -450,6 +451,29 @@ describe("Products administration API", () => {
     expect(refused.statusCode).toBe(422);
     expect(products.policyChanges).toEqual([]);
     expect(products.rows.get(product.id)?.defaultAutonomy).toBe(before);
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, DI-21.102. Only the product names the PR reviewer.
+  it("sets and clears the PR reviewer, and refuses a slug GitHub cannot hold", async () => {
+    const { app } = build({});
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/products",
+      payload: { linearWorkspaceId: "ws-1", slug: "review", name: "Review", linearTeamKey: "REV" },
+    });
+    const product = created.json<{ id: string }>();
+    const put = (prReviewer: unknown) =>
+      app.inject({ method: "PUT", url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`, payload: { prReviewer } });
+
+    const set = await put({ appSlug: " Review-Bot ", checkName: "Code review" });
+    expect(set.statusCode).toBe(200);
+    expect(set.json<{ prReviewer: unknown }>().prReviewer).toEqual({ appSlug: "review-bot", checkName: "Code review" });
+
+    expect((await put({ appSlug: "review bot", checkName: "Code review" })).statusCode).toBe(422);
+    expect((await put({ appSlug: "review-bot", checkName: "" })).statusCode).toBe(422);
+
+    const cleared = await put(null);
+    expect(cleared.json<{ prReviewer: unknown }>().prReviewer).toBeNull();
   });
 
   // docs/specs/claude-code-runner.md. A model or an effort of one runner means nothing to the other.

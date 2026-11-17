@@ -295,12 +295,17 @@ export interface RunRepository {
   /**
    * DI-21.51. Records that the pull request `number` of `repositoryFullName` merged or closed, and
    * answers its run, or null when no run target of the tenant opened that pull request.
+   *
+   * docs/specs/pr-review-merge-and-deploy.md, D3. With `originRunId`, every run target of that pull
+   * request takes the state, and the answer is the origin run, because a later run on the same branch
+   * moved no issue.
    */
   closePullRequest(
     tenantId: string,
     repositoryFullName: string,
     number: number,
     state: "merged" | "closed",
+    originRunId?: string,
   ): Promise<ClosedPullRequestRun | null>;
 }
 

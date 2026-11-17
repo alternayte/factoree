@@ -429,22 +429,32 @@ export class PrismaRunRepository implements RunRepository {
     repositoryFullName: string,
     number: number,
     state: "merged" | "closed",
+    originRunId?: string,
   ): Promise<ClosedPullRequestRun | null> {
     // GitHub names a repository with its own case, so the match ignores case. The tenant filter is
     // part of the query, and the newest target wins when a number was reused across a rename.
-    const target = await this.prisma.runTarget.findFirst({
-      where: {
-        tenantId,
-        pullRequestNumber: number,
-        repository: { fullName: { equals: repositoryFullName, mode: "insensitive" } },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, runId: true },
-    });
-    if (target === null) return null;
-    await this.prisma.runTarget.update({ where: { id: target.id }, data: { pullRequestState: state } });
+    const where = {
+      tenantId,
+      pullRequestNumber: number,
+      repository: { fullName: { equals: repositoryFullName, mode: "insensitive" as const } },
+    };
+    let runId: string;
+    if (originRunId === undefined) {
+      const target = await this.prisma.runTarget.findFirst({
+        where,
+        orderBy: { createdAt: "desc" },
+        select: { id: true, runId: true },
+      });
+      if (target === null) return null;
+      await this.prisma.runTarget.update({ where: { id: target.id }, data: { pullRequestState: state } });
+      runId = target.runId;
+    } else {
+      // docs/specs/pr-review-merge-and-deploy.md, D3. The pull request record names the origin run.
+      await this.prisma.runTarget.updateMany({ where, data: { pullRequestState: state } });
+      runId = originRunId;
+    }
     const run = await this.prisma.run.findFirstOrThrow({
-      where: { id: target.runId, tenantId },
+      where: { id: runId, tenantId },
       select: {
         id: true,
         linearIssueId: true,

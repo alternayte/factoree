@@ -174,6 +174,7 @@ model Run {
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
   targets                  RunTarget[]
+  originOfPullRequests     PullRequest[]
 
   @@index([tenantId])
   @@index([productId, status])
@@ -658,6 +659,11 @@ model Product {
   skillRegistryKind String? @map("skill_registry_kind")
   skillRegistryUrl  String? @map("skill_registry_url")
   skillRegistrySet  String? @map("skill_registry_set")
+  // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer: the GitHub App slug and the check
+  // name of an external review app. Both null means the product names none. Only the product sets
+  // it, never .factoree/config.yaml (R-4).
+  prReviewerAppSlug   String? @map("pr_reviewer_app_slug")
+  prReviewerCheckName String? @map("pr_reviewer_check_name")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   repositories   Repository[]
@@ -700,6 +706,7 @@ model Repository {
   needsSetupReason     String?   @map("needs_setup_reason")
   needsSetupAt         DateTime? @map("needs_setup_at")
   runTargets           RunTarget[]
+  pullRequests         PullRequest[]
 
   @@unique([tenantId, fullName])
   @@index([productId])
@@ -1017,4 +1024,63 @@ model ModelCatalog {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("model_catalog")
+}
+
+// docs/specs/pr-review-merge-and-deploy.md, DI-21.99. One pull request that a run published. The PR
+// workflow keyed `pr:<tenant>:<repository>#<number>` owns it after the run ends READY_FOR_HUMAN.
+model PullRequest {
+  id                String     @id @default(uuid())
+  tenantId          String     @map("tenant_id")
+  repositoryId      String     @map("repository_id")
+  repository        Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  number            Int
+  url               String
+  headBranch        String     @map("head_branch")
+  // The newest head commit GitHub reported: the published commit, then each synchronize.
+  headSha           String     @map("head_sha")
+  baseBranch        String     @map("base_branch")
+  // The run that published the pull request. Issue completion on a merge reads its issue state,
+  // because a later run on the same branch moved no issue.
+  originRunId       String     @map("origin_run_id")
+  originRun         Run        @relation(fields: [originRunId], references: [id], onDelete: Cascade)
+  // open, merged or closed.
+  state             String     @default("open")
+  mergeCommitSha    String?    @map("merge_commit_sha")
+  closedAt          DateTime?  @map("closed_at")
+  // The PR follow-up runs that a failed PR reviewer check started. The spec caps them at 3.
+  reviewerFollowUps Int        @default(0) @map("reviewer_follow_ups")
+  // The contract revision of the head commit. It starts at 1 and each PR follow-up run adds one.
+  // ValidationContract.version is the schema version, not this counter.
+  contractRevision  Int        @default(1) @map("contract_revision")
+  // off, enabled or unavailable. Factoree turns on GitHub auto-merge only at L4.
+  autoMerge         String     @default("off") @map("auto_merge")
+  autoMergeReason   String?    @map("auto_merge_reason")
+  workflowId        String     @map("workflow_id")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+  events            PullRequestEvent[]
+
+  @@unique([tenantId, repositoryId, number])
+  @@index([tenantId, headSha])
+  @@index([originRunId])
+  @@map("pull_request")
+}
+
+// docs/specs/pr-review-merge-and-deploy.md, DI-21.100. Each GitHub event the PR workflow took for one
+// pull request, once per delivery.
+model PullRequestEvent {
+  id            String      @id @default(uuid())
+  tenantId      String      @map("tenant_id")
+  pullRequestId String      @map("pull_request_id")
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  deliveryId    String      @map("delivery_id")
+  kind          String
+  headSha       String?     @map("head_sha")
+  // The event as the PR workflow received it.
+  payload       Json
+  receivedAt    DateTime    @default(now()) @map("received_at")
+
+  @@unique([pullRequestId, deliveryId])
+  @@index([tenantId])
+  @@map("pull_request_event")
 }

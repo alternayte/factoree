@@ -101,6 +101,10 @@ export interface ServerDependencies {
   recordPullRequestPreview: GitHubWebhookDependencies["recordPullRequestPreview"];
   /** docs/specs/egress-honesty-and-issue-status.md. A pull request of a run merged or closed. */
   pullRequestClosed?: GitHubWebhookDependencies["pullRequestClosed"];
+  /** docs/specs/pr-review-merge-and-deploy.md. Routes each event of a recorded pull request to its PR workflow. */
+  pullRequestEvents?: GitHubWebhookDependencies["pullRequestEvents"];
+  /** docs/specs/pr-review-merge-and-deploy.md. Reads what one GitHub App installation granted. */
+  readGitHubAccess?: ProductRouteDependencies["readGitHubAccess"];
   /** The GitHub and Linear calls of setup. */
   setup: Pick<SetupRouteDependencies, "github" | "linear">;
   /** The built UI. Absent, or a directory without index.html, serves no UI. */
@@ -152,6 +156,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       ...(dependencies.setupAfterPush === undefined ? {} : { setupAfterPush: dependencies.setupAfterPush }),
       ...(dependencies.pullRequestClosed === undefined ? {} : { pullRequestClosed: dependencies.pullRequestClosed }),
+      ...(dependencies.pullRequestEvents === undefined ? {} : { pullRequestEvents: dependencies.pullRequestEvents }),
     });
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });
@@ -197,6 +202,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
         ...(dependencies.checkSkillRegistry === undefined ? {} : { checkSkillRegistry: dependencies.checkSkillRegistry }),
         ...(dependencies.modelCatalog === undefined ? {} : { modelCatalog: dependencies.modelCatalog }),
+        ...(dependencies.readGitHubAccess === undefined ? {} : { readGitHubAccess: dependencies.readGitHubAccess }),
         sandboxProviders,
       });
       // docs/specs/host-credentials.md.

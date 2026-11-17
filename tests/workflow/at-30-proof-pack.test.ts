@@ -15,6 +15,7 @@ const {
   verifyOutcomes,
   heldProofPacks,
   publishCalls,
+  recordPullRequestCalls,
   activityOrder,
   input,
   runWorker,
@@ -52,6 +53,22 @@ describe("AT-30 — the Proof Pack completes a successful Run", () => {
     expect(completion?.status).toBe("READY_FOR_HUMAN");
     // SDD section 48. A success carries no failure reason.
     expect(completion?.failureReason).toBeUndefined();
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md. The run ends READY_FOR_HUMAN while its PR workflow stays open.
+  it("records the pull request and leaves its PR workflow open after the run ends", async () => {
+    const runId = "run-ses-at30-pr";
+    const { result, description } = await runWorker(async () => {
+      const ended = await (await startRun("ses-at30-pr")).result();
+      const recorded = recordPullRequestCalls.find((entry) => entry.runId === runId);
+      if (recorded === undefined) throw new Error("the run recorded no pull request");
+      const workflowId = `pr:${recorded.tenantId}:${recorded.repositoryId}#${String(recorded.number)}:${runId}`;
+      return { result: ended, description: await environment.client.workflow.getHandle(workflowId).describe() };
+    });
+
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    expect(recordPullRequestCalls.filter((entry) => entry.runId === runId)).toHaveLength(1);
+    expect(description.status.name).toBe("RUNNING");
   });
 
   it("carries the by-eye criteria from the refiner to each validation pass and the Proof Pack (by-eye-criteria-and-selector-recheck.md)", async () => {

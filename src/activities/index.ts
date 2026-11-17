@@ -63,6 +63,9 @@ import { createDraftActivities } from "./draft.activities.js";
 import type { RunDraftStore } from "~/domain/runs/run-draft.js";
 import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
+import { createPullRequestActivities } from "./pull-request.activities.js";
+import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
+import type { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import {
   createSkillRegistryActivities,
   type OrganizationSkillsFactory,
@@ -171,6 +174,13 @@ export interface ActivityDependencies {
    * without it moves no issue status.
    */
   issueStatus?: ((tenantId: string) => Promise<IssueStatusPort>) | undefined;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. The published pull requests, and the close that moves
+   * the issue of the origin run. A worker without them records no pull request, so the run starts no
+   * PR workflow.
+   */
+  publishedPullRequests?: PullRequestStore | undefined;
+  pullRequestClose?: Pick<PullRequestCloseHandler, "closeOfRecord"> | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -194,6 +204,16 @@ const NO_DRAFT_STORE: RunDraftStore = {
   subject: () => Promise.resolve(null),
   recordRequest: () => Promise.reject(new Error("this worker holds no draft store")),
   markPublished: () => Promise.reject(new Error("this worker holds no draft store")),
+};
+
+/** A worker built without the pull request store records no pull request and takes no event. */
+const NO_PULL_REQUEST_STORE: PullRequestStore = {
+  recordPublished: () => Promise.reject(new Error("this worker holds no pull request store")),
+  find: () => Promise.reject(new Error("this worker holds no pull request store")),
+  findByNumber: () => Promise.reject(new Error("this worker holds no pull request store")),
+  findByCommit: () => Promise.reject(new Error("this worker holds no pull request store")),
+  recordEvent: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markClosed: () => Promise.reject(new Error("this worker holds no pull request store")),
 };
 
 /** A worker built without the file reader refuses a setup, and runs every other activity. */
@@ -451,6 +471,13 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     setupMarks: dependencies.setupMarks,
     credentialKey: dependencies.hostCredentials?.key,
+  }),
+  ...createPullRequestActivities({
+    pullRequests: dependencies.publishedPullRequests ?? NO_PULL_REQUEST_STORE,
+    close: dependencies.pullRequestClose ?? {
+      closeOfRecord: () => Promise.reject(new Error("this worker holds no pull request close handler")),
+    },
+    logger: dependencies.logger,
   }),
 });
 

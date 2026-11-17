@@ -45,7 +45,7 @@ class FakeProductRegistry implements ProductRegistry {
       repairMaxAttempts: 2,
       sandboxRetentionHours: 24,
       sandboxProviderIds: [],
-      maxConcurrentRuns: 2, appChangeIssues: "one_per_change",
+      maxConcurrentRuns: 2, appChangeIssues: "one_per_change", prReviewer: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

@@ -68,12 +68,34 @@ export class PullRequestCloseHandler {
     }
   }
 
-  private async apply(input: { tenantId: string; repositoryFullName: string; number: number; merged: boolean }): Promise<PullRequestCloseOutcome> {
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, D3. The PR workflow of a recorded pull request takes the
+   * close. Its delivery is already taken once, so no webhook marker applies, and the origin run of the
+   * record decides the issue move.
+   */
+  async closeOfRecord(input: {
+    tenantId: string;
+    repositoryFullName: string;
+    number: number;
+    merged: boolean;
+    originRunId: string;
+  }): Promise<PullRequestCloseOutcome> {
+    return this.apply(input);
+  }
+
+  private async apply(input: {
+    tenantId: string;
+    repositoryFullName: string;
+    number: number;
+    merged: boolean;
+    originRunId?: string;
+  }): Promise<PullRequestCloseOutcome> {
     const run = await this.dependencies.runs.closePullRequest(
       input.tenantId,
       input.repositoryFullName,
       input.number,
       input.merged ? "merged" : "closed",
+      ...(input.originRunId === undefined ? [] : [input.originRunId]),
     );
     if (run === null) return "unmatched";
     await this.decide(input, run);

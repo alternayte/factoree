@@ -1,5 +1,5 @@
 /**
- * Bundles `src/workflows/agent-run.workflow.ts` once and writes the result to a temporary
+ * Bundles `src/workflows/index.ts`, with `agentRunWorkflow` and the PR workflow it starts, once and writes the result to a temporary
  * file.
  *
  * `tests/workflow/support/harness.ts` builds a Temporal worker for this workflow inside
@@ -16,7 +16,9 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { bundleWorkflowCode } from "@temporalio/worker";
 
-const AGENT_RUN_WORKFLOWS_PATH = new URL("../../../src/workflows/agent-run.workflow.ts", import.meta.url).pathname;
+// docs/specs/pr-review-merge-and-deploy.md. The barrel holds the PR workflow that a published run starts
+// as its child, so the harness worker runs it too.
+const AGENT_RUN_WORKFLOWS_PATH = new URL("../../../src/workflows/index.ts", import.meta.url).pathname;
 
 /** Bundles the agent-run workflow and writes it to a temporary file. Returns the file's path. */
 export const bundleAgentRunWorkflow = async (): Promise<string> => {

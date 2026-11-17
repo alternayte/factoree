@@ -1,13 +1,18 @@
 import type { FastifyInstance } from "fastify";
 import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import {
+  checkRunEventSchema,
+  commitStatusEventSchema,
   deploymentStatusEventSchema,
   FACTOREE_CONFIG_PATH,
   installationEventSchema,
   installationRepositoriesEventSchema,
   pullRequestEventSchema,
+  pullRequestReviewEventSchema,
   pushEventSchema,
 } from "~/adapters/github/webhook-schemas.js";
+import type { PullRequestEvent, PullRequestReviewEvent } from "~/domain/pull-requests/pull-request-event.js";
+import type { PullRequestEventRouter, PullRequestRouteOutcome } from "~/domain/pull-requests/pull-request-router.js";
 import type { DiscoveryOutcome, DiscoveryService } from "~/domain/products/discovery-service.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -52,7 +57,19 @@ export interface GitHubWebhookDependencies {
     number: number;
     merged: boolean;
   }) => Promise<"handled" | "duplicate" | "unmatched">;
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md. Routes each event of a recorded pull request to its PR
+   * workflow. A close of a pull request with no record takes `pullRequestClosed`.
+   */
+  pullRequestEvents?: Pick<PullRequestEventRouter, "byNumber" | "byCommit">;
 }
+
+/** The reply of a routed event. */
+const routedReply = (outcome: PullRequestRouteOutcome) =>
+  outcome === "unmatched" ? { status: "ignored", reason: "no run published this pull request" } : { status: "handled" };
+
+const REVIEW_ACTIONS = ["submitted", "edited", "dismissed"] as const;
+const REVIEW_STATES = ["approved", "changes_requested", "commented", "dismissed"] as const;
 
 /**
  * Resolves the tenant that owns a GitHub App installation. The numeric installation id is
@@ -106,6 +123,10 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
     }
 
     const event = request.headers["x-github-event"] as string | undefined;
+    // GitHub always names the delivery. Without it, the event itself keys the marker.
+    const delivery = request.headers["x-github-delivery"];
+    const deliveryIdOr = (fallback: string): string =>
+      typeof delivery === "string" && delivery !== "" ? `github:${delivery}` : `github:${fallback}`;
 
     if (event === "installation_repositories") {
       const parsed = installationRepositoriesEventSchema.safeParse(request.body);
@@ -184,50 +205,172 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
     if (event === "deployment_status") {
       const parsed = deploymentStatusEventSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
-      const url = parsed.data.deployment_status.environment_url ?? "";
-      // Only a live preview is a link a human can open. A pending, failed or inactive status
-      // carries no URL worth showing.
-      if (parsed.data.deployment_status.state !== "success" || !/^https:\/\//.test(url)) {
-        return reply.code(200).send({ status: "ignored", reason: "no live preview" });
-      }
       const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
       if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const { deployment, deployment_status: deploymentStatus, repository } = parsed.data;
+      // docs/specs/pr-review-merge-and-deploy.md. Every state reaches the pull request whose head or
+      // merge commit was deployed.
+      let routed: PullRequestRouteOutcome = "unmatched";
+      if (dependencies.pullRequestEvents !== undefined) {
+        routed = await dependencies.pullRequestEvents.byCommit(tenantId, repository.full_name, deployment.sha, {
+          kind: "deployment_status",
+          deliveryId: deliveryIdOr(`deployment_status:${repository.full_name}:${String(deployment.id)}:${deploymentStatus.state}`),
+          deploymentId: deployment.id,
+          environment: deployment.environment,
+          state: deploymentStatus.state,
+          sha: deployment.sha,
+          ref: deployment.ref,
+          environmentUrl: deploymentStatus.environment_url ?? null,
+          logUrl: deploymentStatus.log_url ?? deploymentStatus.target_url ?? null,
+        });
+      }
+      const url = deploymentStatus.environment_url ?? "";
+      // Only a live preview is a link a human can open. A pending, failed or inactive status
+      // carries no URL worth showing.
+      if (deploymentStatus.state !== "success" || !/^https:\/\//.test(url)) {
+        return reply.code(200).send(routed === "unmatched" ? { status: "ignored", reason: "no live preview" } : { status: "handled" });
+      }
       // The deployment SHA must equal the commit a Run published. A preview of any other commit
       // shows a change Factoree did not verify.
       const linked = await dependencies.recordPullRequestPreview({
         tenantId,
-        repositoryFullName: parsed.data.repository.full_name,
-        commitSha: parsed.data.deployment.sha,
+        repositoryFullName: repository.full_name,
+        commitSha: deployment.sha,
         previewUrl: url,
       });
-      return reply.code(200).send(linked ? { status: "handled" } : { status: "ignored", reason: "no run published this commit" });
+      return reply
+        .code(200)
+        .send(linked || routed !== "unmatched" ? { status: "handled" } : { status: "ignored", reason: "no run published this commit" });
     }
 
     if (event === "pull_request") {
       const parsed = pullRequestEventSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
-      // A close without a merge makes no push, so only this event says a pull request ended.
-      if (parsed.data.action !== "closed" || dependencies.pullRequestClosed === undefined) {
-        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      const { action, number, pull_request: pullRequest, repository } = parsed.data;
+      const key = `pull_request:${repository.full_name}#${String(number)}`;
+      let routedEvent: PullRequestEvent | null = null;
+      if (action === "closed") {
+        const merged = pullRequest.merged === true;
+        routedEvent = {
+          kind: "closed",
+          deliveryId: deliveryIdOr(`${key}:${merged ? "merged" : "closed"}`),
+          merged,
+          mergeCommitSha: merged ? (pullRequest.merge_commit_sha ?? null) : null,
+          headSha: pullRequest.head.sha,
+        };
+      } else if (action === "reopened") {
+        routedEvent = { kind: "reopened", deliveryId: deliveryIdOr(`${key}:reopened:${pullRequest.head.sha}`), headSha: pullRequest.head.sha };
+      } else if (action === "synchronize") {
+        routedEvent = {
+          kind: "synchronized",
+          deliveryId: deliveryIdOr(`${key}:synchronize:${pullRequest.head.sha}`),
+          headSha: pullRequest.head.sha,
+          beforeSha: parsed.data.before ?? null,
+          senderLogin: parsed.data.sender?.login ?? null,
+        };
+      } else if (action === "edited") {
+        routedEvent = {
+          kind: "edited",
+          deliveryId: deliveryIdOr(`${key}:edited:${pullRequest.base.ref}:${pullRequest.head.sha}`),
+          headSha: pullRequest.head.sha,
+          baseBranch: pullRequest.base.ref,
+          baseChanged: parsed.data.changes?.base !== undefined,
+          mergeable: pullRequest.mergeable ?? null,
+          mergeableState: pullRequest.mergeable_state ?? null,
+        };
       }
+      if (routedEvent === null) return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
       const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
       if (tenantId === null) return reply.code(200).send({ status: "handled" });
-      const merged = parsed.data.pull_request.merged === true;
-      const delivery = request.headers["x-github-delivery"];
+      if (dependencies.pullRequestEvents !== undefined) {
+        const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, number, routedEvent);
+        if (routed !== "unmatched") return reply.code(200).send(routedReply(routed));
+      }
+      // A pull request with no record: a run published it before the PR workflow existed, or a
+      // failed-run draft. A close without a merge makes no push, so only this event says it ended.
+      if (routedEvent.kind !== "closed" || dependencies.pullRequestClosed === undefined) {
+        return reply.code(200).send({ status: "ignored", reason: "no run published this pull request" });
+      }
       const outcome = await dependencies.pullRequestClosed({
         tenantId,
-        // GitHub always names the delivery. Without it, the event itself keys the marker.
-        deliveryId:
-          typeof delivery === "string" && delivery !== ""
-            ? `github:${delivery}`
-            : `github:pull_request:${parsed.data.repository.full_name}#${String(parsed.data.number)}:${merged ? "merged" : "closed"}`,
-        repositoryFullName: parsed.data.repository.full_name,
-        number: parsed.data.number,
-        merged,
+        deliveryId: routedEvent.deliveryId,
+        repositoryFullName: repository.full_name,
+        number,
+        merged: routedEvent.merged,
       });
       return reply
         .code(200)
         .send(outcome === "unmatched" ? { status: "ignored", reason: "no run opened this pull request" } : { status: outcome });
+    }
+
+    if (event === "pull_request_review") {
+      const parsed = pullRequestReviewEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      const { action, review, pull_request: pullRequest, repository } = parsed.data;
+      const state = review.state.toLowerCase();
+      if (
+        !(REVIEW_ACTIONS as readonly string[]).includes(action) ||
+        !(REVIEW_STATES as readonly string[]).includes(state) ||
+        dependencies.pullRequestEvents === undefined
+      ) {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, pullRequest.number, {
+        kind: "review",
+        deliveryId: deliveryIdOr(`pull_request_review:${repository.full_name}#${String(pullRequest.number)}:${String(review.id)}:${action}`),
+        action: action as PullRequestReviewEvent["action"],
+        reviewId: review.id,
+        state: state as PullRequestReviewEvent["state"],
+        commitSha: review.commit_id ?? null,
+        reviewerLogin: review.user.login,
+        reviewerType: review.user.type,
+        authorAssociation: review.author_association,
+        body: review.body ?? null,
+      });
+      return reply.code(200).send(routedReply(routed));
+    }
+
+    if (event === "check_run") {
+      const parsed = checkRunEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      if (dependencies.pullRequestEvents === undefined) return reply.code(200).send({ status: "ignored", reason: "unsupported event" });
+      const { action, check_run: checkRun, repository } = parsed.data;
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const routed = await dependencies.pullRequestEvents.byCommit(tenantId, repository.full_name, checkRun.head_sha, {
+        kind: "check_run",
+        deliveryId: deliveryIdOr(`check_run:${repository.full_name}:${String(checkRun.id)}:${action}:${checkRun.status}`),
+        action,
+        checkRunId: checkRun.id,
+        name: checkRun.name,
+        appSlug: checkRun.app?.slug ?? null,
+        headSha: checkRun.head_sha,
+        status: checkRun.status,
+        conclusion: checkRun.conclusion ?? null,
+        detailsUrl: checkRun.details_url ?? null,
+      });
+      return reply.code(200).send(routedReply(routed));
+    }
+
+    if (event === "status") {
+      const parsed = commitStatusEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      if (dependencies.pullRequestEvents === undefined) return reply.code(200).send({ status: "ignored", reason: "unsupported event" });
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const { sha, state, context, repository } = parsed.data;
+      const routed = await dependencies.pullRequestEvents.byCommit(tenantId, repository.full_name, sha, {
+        kind: "commit_status",
+        deliveryId: deliveryIdOr(`status:${repository.full_name}:${sha}:${context}:${state}`),
+        sha,
+        context,
+        state,
+        targetUrl: parsed.data.target_url ?? null,
+        senderLogin: parsed.data.sender?.login ?? null,
+      });
+      return reply.code(200).send(routedReply(routed));
     }
 
     if (event === "installation") {

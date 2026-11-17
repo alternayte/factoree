@@ -1,3 +1,4 @@
+import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import { registerGitHubWebhookRoutes } from "~/http/webhooks/github.routes.js";
@@ -80,6 +81,7 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
   const previews: { tenantId: string; repositoryFullName: string; commitSha: string; previewUrl: string }[] = [];
   const pushes: { tenantId: string; repositoryFullName: string }[] = [];
   const closes: { tenantId: string; deliveryId: string; repositoryFullName: string; number: number; merged: boolean }[] = [];
+  const routed: { by: string; tenantId: string; repositoryFullName: string; key: string | number; event: PullRequestEvent }[] = [];
 
   const app: FastifyInstance = Fastify({ logger: false });
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
@@ -114,10 +116,23 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
       closes.push(input);
       return Promise.resolve(input.number === 7 ? "handled" : "unmatched");
     },
+    // docs/specs/pr-review-merge-and-deploy.md. Only pull request 12, with head commit pr-head-sha, has a record.
+    pullRequestEvents: {
+      byNumber: (tenantId, repositoryFullName, number, event) => {
+        if (number !== 12) return Promise.resolve("unmatched");
+        routed.push({ by: "number", tenantId, repositoryFullName, key: number, event });
+        return Promise.resolve("routed");
+      },
+      byCommit: (tenantId, repositoryFullName, sha, event) => {
+        if (sha !== "pr-head-sha") return Promise.resolve("unmatched");
+        routed.push({ by: "commit", tenantId, repositoryFullName, key: sha, event });
+        return Promise.resolve("routed");
+      },
+    },
     logger,
   });
 
-  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews, pushes, closes };
+  return { app, synced: discovery.synced, absent: discovery.absent, logger, discovery, started, previews, pushes, closes, routed };
 };
 
 describe("GitHub webhook route", () => {
@@ -418,7 +433,14 @@ describe("GitHub webhook route", () => {
     payload: {
       action,
       number,
-      pull_request: { number, merged, state: "closed" },
+      pull_request: {
+        number,
+        merged,
+        state: "closed",
+        merge_commit_sha: merged ? "merge-sha" : null,
+        head: { sha: "pr-head-sha", ref: "factoree/run-1" },
+        base: { ref: "main" },
+      },
       repository: { full_name: "Acme/API", default_branch: "main" },
       installation: { id: 42 },
     },
@@ -439,5 +461,108 @@ describe("GitHub webhook route", () => {
     expect((await app.inject(pullRequest("closed", 8, true))).json()).toEqual({ status: "ignored", reason: "no run opened this pull request" });
     expect((await app.inject(pullRequest("opened", 7, false))).json()).toEqual({ status: "ignored", reason: "unsupported action" });
     expect(closes.map((entry) => entry.number)).toEqual([8]);
+  });
+  it("routes a close of a recorded pull request to its PR workflow, and not to the webhook close", async () => {
+    const { app, closes, routed } = build({});
+    expect((await app.inject(pullRequest("closed", 12, true))).json()).toEqual({ status: "handled" });
+    expect(closes).toEqual([]);
+    expect(routed).toEqual([
+      {
+        by: "number",
+        tenantId: "tenant-1",
+        repositoryFullName: "Acme/API",
+        key: 12,
+        event: { kind: "closed", deliveryId: "github:delivery-1", merged: true, mergeCommitSha: "merge-sha", headSha: "pr-head-sha" },
+      },
+    ]);
+  });
+
+  it("routes a synchronize, and ignores an opened pull request", async () => {
+    const { app, routed } = build({});
+    expect((await app.inject(pullRequest("synchronize", 12, false))).json()).toEqual({ status: "handled" });
+    expect((await app.inject(pullRequest("opened", 12, false))).json()).toEqual({ status: "ignored", reason: "unsupported action" });
+    expect(routed.map((entry) => entry.event.kind)).toEqual(["synchronized"]);
+  });
+
+  it("routes a human request-changes review with the reviewer facts", async () => {
+    const { app, routed } = build({});
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "pull_request_review", "x-github-delivery": "delivery-2" },
+      payload: {
+        action: "submitted",
+        review: {
+          id: 77,
+          state: "CHANGES_REQUESTED",
+          commit_id: "pr-head-sha",
+          body: "Rename the handler.",
+          author_association: "MEMBER",
+          user: { login: "dana", type: "User" },
+        },
+        pull_request: { number: 12 },
+        repository: { full_name: "Acme/API" },
+        installation: { id: 42 },
+      },
+    });
+    expect(response.json()).toEqual({ status: "handled" });
+    expect(routed[0]?.event).toEqual({
+      kind: "review",
+      deliveryId: "github:delivery-2",
+      action: "submitted",
+      reviewId: 77,
+      state: "changes_requested",
+      commitSha: "pr-head-sha",
+      reviewerLogin: "dana",
+      reviewerType: "User",
+      authorAssociation: "MEMBER",
+      body: "Rename the handler.",
+    });
+  });
+
+  it("routes a check run and a commit status by the head commit", async () => {
+    const { app, routed } = build({});
+    const checkRun = (sha: string) =>
+      app.inject({
+        method: "POST",
+        url: "/webhooks/github",
+        headers: { "x-github-event": "check_run", "x-github-delivery": `check-${sha}` },
+        payload: {
+          action: "completed",
+          check_run: {
+            id: 5,
+            name: "Code review",
+            head_sha: sha,
+            status: "completed",
+            conclusion: "failure",
+            details_url: "https://review.example/5",
+            app: { slug: "review-bot" },
+          },
+          repository: { full_name: "Acme/API" },
+          installation: { id: 42 },
+        },
+      });
+    expect((await checkRun("pr-head-sha")).json()).toEqual({ status: "handled" });
+    expect((await checkRun("main-sha")).json()).toEqual({ status: "ignored", reason: "no run published this pull request" });
+    const status = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "status", "x-github-delivery": "status-1" },
+      payload: {
+        sha: "pr-head-sha",
+        state: "pending",
+        context: "Code review",
+        target_url: null,
+        repository: { full_name: "Acme/API" },
+        installation: { id: 42 },
+        sender: { login: "review-bot[bot]" },
+      },
+    });
+    expect(status.json()).toEqual({ status: "handled" });
+    expect(routed.map((entry) => [entry.event.kind, entry.key])).toEqual([
+      ["check_run", "pr-head-sha"],
+      ["commit_status", "pr-head-sha"],
+    ]);
+    expect(routed[0]?.event).toMatchObject({ appSlug: "review-bot", conclusion: "failure", name: "Code review" });
   });
 });

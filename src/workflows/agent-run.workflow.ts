@@ -6,13 +6,17 @@ import {
   defineSignal,
   ApplicationFailure,
   isCancellation,
+  ParentClosePolicy,
   patched,
+  startChild,
   TemporalFailure,
   proxyActivities,
   setHandler,
   sleep,
   workflowInfo,
 } from "@temporalio/workflow";
+import { WorkflowExecutionAlreadyStartedError } from "@temporalio/common";
+import { pullRequestWorkflow } from "./pr.workflow.js";
 import type { RunStatus } from "~/domain/runs/run-status.js";
 import { readStopRequest, stopResponse, type StopRequest } from "../domain/runs/run-stop.js";
 import type { Activities } from "~/activities/index.js";
@@ -241,6 +245,11 @@ const SANDBOX_PROVIDER_PATCH = "sandbox-provider-spillover";
  * last patch as a draft pull request. An older history posts no offer.
  */
 const DRAFT_OFFER_PATCH = "draft-offer";
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. Publication records the pull request and starts its PR
+ * workflow. An older history starts none, and its close takes the webhook path of DI-21.51.
+ */
+const PR_WORKFLOW_PATCH = "pr-workflow";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -2909,6 +2918,36 @@ export async function agentRunWorkflow(
         commitSha: publication.commitSha,
         pullRequestUrl: publication.pullRequestUrl,
       });
+
+      // docs/specs/pr-review-merge-and-deploy.md, D3. The pull request record names this run as its
+      // origin, and the PR workflow takes the events after the run ends. ABANDON keeps that workflow
+      // open after this run closes. A failure here costs only the PR workflow: the close then takes
+      // the webhook path of DI-21.51.
+      if (patched(PR_WORKFLOW_PATCH)) {
+        const recordInput = {
+          tenantId: input.tenantId,
+          runId: id,
+          repositoryId: primaryRepositoryId,
+          number: publication.pullRequestNumber,
+          url: publication.pullRequestUrl,
+          headBranch: publication.branch,
+          headSha: publication.commitSha,
+          baseBranch: publishInput.baseBranch,
+        };
+        await notify(async () => {
+          const recorded = await activities.recordPullRequest(recordInput);
+          try {
+            await startChild(pullRequestWorkflow, {
+              workflowId: recorded.workflowId,
+              args: [{ tenantId: input.tenantId, pullRequestId: recorded.pullRequestId }],
+              parentClosePolicy: ParentClosePolicy.ABANDON,
+            });
+          } catch (error) {
+            // A webhook event already started it with signal-with-start.
+            if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
+          }
+        });
+      }
 
       // SDD section 50. A stop that arrived during the publication ends the Run CANCELLED. The
       // pull request already exists, and the stop message names it.

@@ -3,9 +3,10 @@ import { signGitHubAppJwt, type GitHubAppCredentials } from "./app-token-provide
 /**
  * docs/specs/release-0-1-0.md. The GitHub App manifest flow of setup. The permissions and the
  * events are the ones docs/quickstart.md granted by hand before 0.1.0, plus Workflows
- * (DI-21.33) and Issues read (DI-21.41): six repository permissions and three events, with Pull
- * request (DI-21.51). GitHub delivers `installation` and `installation_repositories` to
- * every App, so the manifest does not name them.
+ * (DI-21.33), Issues read (DI-21.41) and Pull request (DI-21.51).
+ * docs/specs/pr-review-merge-and-deploy.md (D4) adds Checks read, Commit statuses read and the
+ * events pull_request_review, check_run and status. GitHub delivers `installation` and
+ * `installation_repositories` to every App, so the manifest does not name them.
  */
 export const GITHUB_APP_PERMISSIONS = {
   contents: "write",
@@ -16,11 +17,44 @@ export const GITHUB_APP_PERMISSIONS = {
   issues: "read",
   deployments: "read",
   metadata: "read",
+  // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer verdict is a check run or a commit
+  // status on the pull request head.
+  checks: "read",
+  statuses: "read",
 } as const;
 
 // docs/specs/egress-honesty-and-issue-status.md. A close without a merge makes no push, so the
 // pull_request event says when a pull request of a run merged or closed.
-export const GITHUB_APP_EVENTS = ["push", "deployment_status", "pull_request"] as const;
+// docs/specs/pr-review-merge-and-deploy.md. The PR workflow takes reviews, check runs and commit
+// statuses.
+export const GITHUB_APP_EVENTS = ["push", "deployment_status", "pull_request", "pull_request_review", "check_run", "status"] as const;
+
+/** The access GitHub ranks above each level. */
+const LEVEL_RANK: Record<string, number> = { read: 1, write: 2, admin: 3 };
+
+/** One permission the installation lacks, with the level it holds, or null for none. */
+export interface MissingGitHubPermission {
+  name: keyof typeof GITHUB_APP_PERMISSIONS;
+  required: (typeof GITHUB_APP_PERMISSIONS)[keyof typeof GITHUB_APP_PERMISSIONS];
+  granted: string | null;
+}
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. An existing installation keeps its old permissions until
+ * an owner accepts the new ones. This compares what it holds with what the manifest asks for.
+ */
+export const missingGitHubAccess = (granted: {
+  permissions: Record<string, string>;
+  events: readonly string[];
+}): { permissions: MissingGitHubPermission[]; events: string[] } => {
+  const permissions: MissingGitHubPermission[] = [];
+  for (const [name, required] of Object.entries(GITHUB_APP_PERMISSIONS) as [MissingGitHubPermission["name"], MissingGitHubPermission["required"]][]) {
+    const held = granted.permissions[name] ?? null;
+    if ((held === null ? 0 : (LEVEL_RANK[held] ?? 0)) < (LEVEL_RANK[required] ?? 0)) permissions.push({ name, required, granted: held });
+  }
+  const events = GITHUB_APP_EVENTS.filter((event) => !granted.events.includes(event));
+  return { permissions, events };
+};
 
 export interface GitHubAppManifest {
   name: string;
@@ -99,11 +133,21 @@ export const convertGitHubAppManifest = async (
   };
 };
 
+/** One installation of the App, with the permissions and the events it accepted. */
+export interface GitHubAppInstallation {
+  id: string;
+  accountLogin: string;
+  permissions: Record<string, string>;
+  events: string[];
+  /** The installation settings page, where an owner accepts new permissions. */
+  settingsUrl: string | null;
+}
+
 /** Reads one installation of the App. A 404 means the installation belongs to another App. */
 export const readGitHubAppInstallation = async (
   input: { credentials: GitHubAppCredentials; installationId: string },
   call: typeof fetch = fetch,
-): Promise<{ id: string; accountLogin: string } | null> => {
+): Promise<GitHubAppInstallation | null> => {
   const { credentials } = input;
   const response = await call(
     `${credentials.apiBaseUrl.replace(/\/+$/, "")}/app/installations/${encodeURIComponent(input.installationId)}`,
@@ -118,9 +162,27 @@ export const readGitHubAppInstallation = async (
   );
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`GitHub answered ${response.status} to the installation read`);
-  const body = (await response.json()) as { id?: unknown; account?: { login?: unknown } };
+  const body = (await response.json()) as {
+    id?: unknown;
+    account?: { login?: unknown };
+    permissions?: unknown;
+    events?: unknown;
+    html_url?: unknown;
+  };
   if (typeof body.id !== "number" || typeof body.account?.login !== "string") {
     throw new Error("GitHub returned an installation without an id or an account");
   }
-  return { id: String(body.id), accountLogin: body.account.login };
+  const permissions: Record<string, string> = {};
+  if (body.permissions !== null && typeof body.permissions === "object") {
+    for (const [name, level] of Object.entries(body.permissions as Record<string, unknown>)) {
+      if (typeof level === "string") permissions[name] = level;
+    }
+  }
+  return {
+    id: String(body.id),
+    accountLogin: body.account.login,
+    permissions,
+    events: Array.isArray(body.events) ? body.events.filter((event): event is string => typeof event === "string") : [],
+    settingsUrl: typeof body.html_url === "string" ? body.html_url : null,
+  };
 };

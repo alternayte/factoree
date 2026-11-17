@@ -28,6 +28,7 @@ import {
   getMe,
   getModelCatalog,
   getProduct,
+  getProductGitHubAccess,
   getRun,
   getSetupState,
   getSetupStatus,
@@ -113,6 +114,9 @@ import type {
   GetModelCatalogResponse,
   GetProductData,
   GetProductError,
+  GetProductGitHubAccessData,
+  GetProductGitHubAccessError,
+  GetProductGitHubAccessResponse,
   GetProductResponse,
   GetRunData,
   GetRunError,
@@ -591,6 +595,28 @@ export const activateProductMutation = (
   };
   return mutationOptions;
 };
+
+export const getProductGitHubAccessQueryKey = (options: Options<GetProductGitHubAccessData>) =>
+  createQueryKey("getProductGitHubAccess", options);
+
+export const getProductGitHubAccessOptions = (options: Options<GetProductGitHubAccessData>) =>
+  queryOptions<
+    GetProductGitHubAccessResponse,
+    GetProductGitHubAccessError,
+    GetProductGitHubAccessResponse,
+    ReturnType<typeof getProductGitHubAccessQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getProductGitHubAccess({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getProductGitHubAccessQueryKey(options),
+  });
 
 export const listProductSecretsQueryKey = (options: Options<ListProductSecretsData>) =>
   createQueryKey("listProductSecrets", options);

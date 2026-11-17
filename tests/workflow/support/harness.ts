@@ -61,6 +61,7 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 import { SandboxProviderDownError, SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { RunSlotClaim } from "~/domain/runs/run-slots.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
+import type { RecordPublishedPullRequestInput } from "~/domain/pull-requests/pull-request-store.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 
 /** One conflict the context double reports. It carries the domain, the way a real record does. */
@@ -337,6 +338,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     commitSha?: string;
     pullRequestUrl?: string;
   }> = [];
+  /** docs/specs/pr-review-merge-and-deploy.md. Every pull request publication recorded, in order. */
+  const recordPullRequestCalls: RecordPublishedPullRequestInput[] = [];
   /** Every recorded `recordDecision` call, in order. */
   const decisionCalls: Array<{ tenantId: string; runId: string; decision: FactoreeDecision }> = [];
   /** A run id in this map holds the publication open until the test resolves the promise. */
@@ -542,6 +545,14 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     startIssueWork: async () => undefined,
     restoreIssueStatus: async () => undefined,
     linkPullRequest: async () => undefined,
+    // docs/specs/pr-review-merge-and-deploy.md. The run then starts the PR workflow, which waits for events.
+    recordPullRequest: async (recordInput: RecordPublishedPullRequestInput) => {
+      recordPullRequestCalls.push(recordInput);
+      return {
+        pullRequestId: `pull-request-${recordInput.runId}`,
+        workflowId: `pr:${recordInput.tenantId}:${recordInput.repositoryId}#${String(recordInput.number)}:${recordInput.runId}`,
+      };
+    },
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
     readWorkItemContent: async () => ({
       comments: null,
@@ -1090,6 +1101,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldProofPacks,
     recordRunTargetCalls,
     recordRunTargetFactsCalls,
+    recordPullRequestCalls,
     decisionCalls,
     targetIdentityOutcomes,
     targetIdentityCalls,

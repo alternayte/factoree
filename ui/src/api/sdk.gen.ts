@@ -54,6 +54,9 @@ import type {
   GetModelCatalogResponses,
   GetProductData,
   GetProductErrors,
+  GetProductGitHubAccessData,
+  GetProductGitHubAccessErrors,
+  GetProductGitHubAccessResponses,
   GetProductResponses,
   GetRunData,
   GetRunErrors,
@@ -495,6 +498,26 @@ export const activateProduct = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+export const getProductGitHubAccess = <ThrowOnError extends boolean = false>(
+  options: Options<GetProductGitHubAccessData, ThrowOnError>,
+): RequestResult<GetProductGitHubAccessResponses, GetProductGitHubAccessErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetProductGitHubAccessResponses, GetProductGitHubAccessErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/github-access",
+    ...options,
   });
 
 export const listProductSecrets = <ThrowOnError extends boolean = false>(

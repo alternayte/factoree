@@ -83,6 +83,9 @@ import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { githubApiBaseUrl, githubAppCredentials, githubBaseUrl, linearOAuthFromSettings } from "./install-wiring.js";
 import { createBlockerWait } from "./blocker-wait-wiring.js";
+import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
+import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
+import { PrismaPullRequestStore } from "~/persistence/prisma/pull-request-store.prisma.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
@@ -443,6 +446,40 @@ const httpValidationFetch: HttpValidationFetch = async (url, init) => {
   return { status: response.status, headers, body: await response.text() };
 };
 
+// docs/specs/blocked-by-wait.md. The sweep below and the merge of a pull request both release waiting runs.
+const blockerClient = await createTemporalClient(env);
+const blockerWait = createBlockerWait({
+  prisma,
+  linearToken: (workspaceId) => linearTokens.tokenFor(workspaceId),
+  client: blockerClient,
+  taskQueue: env.FACTOREE_TEMPORAL_TASK_QUEUE,
+  logger,
+});
+
+// docs/specs/pr-review-merge-and-deploy.md, D3. The PR workflow closes a recorded pull request here,
+// with the same issue move as the webhook path of DI-21.51.
+const pullRequestClose = new PullRequestCloseHandler({
+  webhookLog: new PrismaWebhookLog(prisma),
+  runs,
+  issues: issueStatusFor,
+  respond: (_tenantId, sessionId, body) => agentSession.respond(sessionId, body),
+  logger,
+  blockers: {
+    // The activity answers at once. The sweep logs its own failure, and the next tick retries.
+    sweepSoon: (tenantId) => {
+      void blockerWait
+        .sweep(tenantId)
+        .then(({ released }) => {
+          if (released > 0) logger.info("blocked runs released after a merge", { tenant_id: tenantId, count: released, step: "blockers" });
+        })
+        .catch((error: unknown) => {
+          logger.error("the blocker sweep after a merge failed", { tenant_id: tenantId, error: String(error), step: "blockers" });
+        });
+    },
+    pullRequestClosedUnmerged: (tenantId, issueId, pullRequest) => blockerWait.pullRequestClosedUnmerged(tenantId, issueId, pullRequest),
+  },
+});
+
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.FACTOREE_TEMPORAL_NAMESPACE,
@@ -485,6 +522,8 @@ const worker = await Worker.create({
     contextConfigurations,
     vision,
     issueStatus: issueStatusFor,
+    publishedPullRequests: new PrismaPullRequestStore(prisma),
+    pullRequestClose,
     validationContracts: new PrismaValidationContractStore(prisma, logger),
     repositoryReader,
     browser: new PlaywrightBrowserDriver(),
@@ -584,14 +623,6 @@ rebindTimer.unref();
 // docs/specs/blocked-by-wait.md. The sweep reads the blockers of every waiting run every minute, with
 // one batched Linear query per tenant, and starts each run that no open blocker holds.
 const BLOCKER_SWEEP_INTERVAL_MS = 60_000;
-const blockerClient = await createTemporalClient(env);
-const blockerWait = createBlockerWait({
-  prisma,
-  linearToken: (workspaceId) => linearTokens.tokenFor(workspaceId),
-  client: blockerClient,
-  taskQueue: env.FACTOREE_TEMPORAL_TASK_QUEUE,
-  logger,
-});
 // One pass at a time, as the reaper does. A slow Linear answer must not start a second pass.
 let sweeping = false;
 const blockerTimer = setInterval(() => {

@@ -743,6 +743,10 @@ export type CreateSetupProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
     createdAt: string;
     updatedAt: string;
   };
@@ -908,6 +912,10 @@ export type ListProductsResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -1008,6 +1016,10 @@ export type CreateProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
     createdAt: string;
     updatedAt: string;
   };
@@ -1141,6 +1153,10 @@ export type GetProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
     createdAt: string;
     updatedAt: string;
   };
@@ -1193,6 +1209,10 @@ export type UpdateProductData = {
     sandboxProviderIds?: Array<string>;
     maxConcurrentRuns?: number;
     appChangeIssues?: "one_per_change" | "one_for_all";
+    prReviewer?: {
+      appSlug: string;
+      checkName: string;
+    } | null;
   };
   path: {
     id: string;
@@ -1287,6 +1307,10 @@ export type UpdateProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
     createdAt: string;
     updatedAt: string;
   };
@@ -1385,12 +1409,73 @@ export type ActivateProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
     createdAt: string;
     updatedAt: string;
   };
 };
 
 export type ActivateProductResponse = ActivateProductResponses[keyof ActivateProductResponses];
+
+export type GetProductGitHubAccessData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/github-access";
+};
+
+export type GetProductGitHubAccessErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  503: {
+    error: unknown;
+  };
+};
+
+export type GetProductGitHubAccessError = GetProductGitHubAccessErrors[keyof GetProductGitHubAccessErrors];
+
+export type GetProductGitHubAccessResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    installations: Array<{
+      installationId: string;
+      accountLogin: string | null;
+      settingsUrl: string | null;
+      repositories: Array<string>;
+      missingPermissions: Array<{
+        name: string;
+        required: string;
+        granted: string | null;
+      }>;
+      missingEvents: Array<string>;
+      error: string | null;
+    }>;
+  };
+};
+
+export type GetProductGitHubAccessResponse = GetProductGitHubAccessResponses[keyof GetProductGitHubAccessResponses];
 
 export type ListProductSecretsData = {
   body?: never;
