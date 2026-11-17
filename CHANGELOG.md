@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-17
+
 ### Added
 
 - Host credentials on the product page: a registry login, a header for a package feed, or GitHub git access to listed repositories. The sandbox provider adds each credential to matching requests outside the sandbox, in every phase, so a bootstrap restores private GitHub Packages npm, NuGet, Maven and RubyGems packages, a compose stack pulls private `ghcr.io` images, and `go mod download` fetches private modules, with no token in the sandbox (`docs/specs/host-credentials.md`, GitHub issue 51).
