@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-17
+
 ### Fixed
 
 - `mise install` of an aqua tool, such as uv, works in a setup sandbox. The ecosystem host list holds `tuf-repo-cdn.sigstore.dev`, so mise verifies the GitHub artifact attestation instead of refusing the install. It also holds `releases.astral.sh`, from which the uv installer script downloads.
