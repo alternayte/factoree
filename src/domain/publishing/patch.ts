@@ -317,3 +317,13 @@ export const assertSameChangedFiles = (reviewed: string[], published: string[]):
       `Files only in the review: ${removed.join(", ") || "none"}.`,
   );
 };
+
+/**
+ * docs/specs/change-sets.md, DI-21.133. The identity of the patches of a change set: the SHA-256 of
+ * one line `<owner/repo> <patch_sha256>` per target, in set order. Two check sprites of one attempt
+ * hold the same set when this value matches. Each target keeps its own patch hash for publication.
+ */
+export const setPatchSha256 = (targets: ReadonlyArray<{ repository: string; patchSha256: string }>): string =>
+  createHash("sha256")
+    .update(targets.map((target) => `${target.repository} ${target.patchSha256}\n`).join(""))
+    .digest("hex");

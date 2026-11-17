@@ -1,9 +1,10 @@
 import type { EgressFacts } from "~/domain/runs/egress.js";
 import { contextFilesBody, imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
+import { targetRepositoriesBody, type TargetRepositoryLine } from "./implementer.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@9";
+export const REFINER_PROMPT_VERSION = "refiner@10";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -15,6 +16,8 @@ export interface RefinerPromptFields {
   /** docs/specs/work-item-images-and-links.md. One line per image file of the work sprite. */
   imageFiles?: string[];
   primaryRepositoryPath: string;
+  /** docs/specs/change-sets.md. Every target of a change set. Absent for a run with one target. */
+  targetRepositories?: TargetRepositoryLine[];
   proposalPath: string;
   proposalSchema: string;
   /** Issue #39, DI-21.66. The most criteria the proposal may hold, a Product setting. */
@@ -53,10 +56,12 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
     section("Context Contract", fields.contextContract),
     section("Images of the Work Item", imageFilesBody(fields.imageFiles ?? [])),
     section("Context files", contextFilesBody(fields.contextFiles)),
-    section(
-      "Primary repository",
-      `The repository is at ${fields.primaryRepositoryPath}. Read it. You must not change any file in it.`,
-    ),
+    fields.targetRepositories !== undefined && fields.targetRepositories.length > 1
+      ? section("Target repositories", targetRepositoriesBody(fields.targetRepositories, "Read each one. You must not change any file in them."))
+      : section(
+          "Primary repository",
+          `The repository is at ${fields.primaryRepositoryPath}. Read it. You must not change any file in it.`,
+        ),
     section("Skills", list(fields.skills, "None.")),
     ...(fields.egress === undefined || fields.egress === null
       ? []

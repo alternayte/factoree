@@ -25,6 +25,8 @@ export interface SelectSandboxProviderInput {
   productId: string;
   /** The primary repository of the run. */
   repositoryUrl: string;
+  /** docs/specs/change-sets.md. The other targets of a change set. Absent for a run with one target. */
+  targetRepositoryUrls?: string[];
 }
 
 /**
@@ -60,6 +62,16 @@ export const needsDockerOf = async (
   }
 };
 
+const anyNeedsDocker = async (
+  dependencies: Pick<ProviderSelectionActivityDependencies, "products" | "repositories" | "discoveryClient" | "logger">,
+  input: SelectSandboxProviderInput,
+): Promise<boolean> => {
+  for (const repositoryUrl of [input.repositoryUrl, ...(input.targetRepositoryUrls ?? [])]) {
+    if (await needsDockerOf(dependencies, { tenantId: input.tenantId, productId: input.productId, repositoryUrl })) return true;
+  }
+  return false;
+};
+
 export const createProviderSelectionActivities = (dependencies: ProviderSelectionActivityDependencies) => ({
   /**
    * docs/specs/sandbox-provider-spillover.md. Pins the run to a sandbox provider and holds its slots
@@ -74,7 +86,8 @@ export const createProviderSelectionActivities = (dependencies: ProviderSelectio
       tenantId: input.tenantId,
       allowedProviderIds: product?.sandboxProviderIds ?? [],
       repositoryUrl: input.repositoryUrl,
-      needsDocker: await needsDockerOf(dependencies, input),
+      // docs/specs/change-sets.md. A change set needs Docker when any target does.
+      needsDocker: await anyNeedsDocker(dependencies, input),
     });
     await dependencies.runs.setSandboxProvider(input.tenantId, input.runId, providerId);
     dependencies.logger.info("the run is pinned to a sandbox provider", {

@@ -324,6 +324,13 @@ const egressOf = (prepared: PrepareSandboxActivityOutput): EgressFacts | null =>
   };
 };
 
+/**
+ * docs/specs/change-sets.md. The targets of a change set for an activity input, or nothing for a
+ * sandbox of one target, so an activity of one target gets the input it got before.
+ */
+const setTargetsInput = (prepared: { targets?: Array<{ repository: string; path: string; baseSha: string }> }) =>
+  prepared.targets !== undefined && prepared.targets.length > 1 ? { targets: prepared.targets } : {};
+
 /** docs/specs/run-speed.md. How the reviewer that runs beside user validation ended. */
 /** docs/specs/early-review-sprite.md. The build of the reviewer's check sprite of one attempt. */
 type ReviewSpriteBuild =
@@ -1237,6 +1244,8 @@ export async function agentRunWorkflow(
         adapter: attemptInput.prepared.adapter,
         workspacePath: attemptInput.prepared.workspacePath,
         primaryPath: attemptInput.prepared.primaryPath,
+        // docs/specs/change-sets.md. An activity input adds no workflow command.
+        ...setTargetsInput(attemptInput.prepared),
         referencePaths: attemptInput.prepared.referencePaths,
         goal: attemptInput.goal,
         contextContract: attemptInput.contextContract,
@@ -1357,6 +1366,7 @@ export async function agentRunWorkflow(
         workspacePath: attemptInput.prepared.workspacePath,
         primaryPath: attemptInput.prepared.primaryPath,
         baseSha: attemptInput.prepared.baseSha,
+        ...setTargetsInput(attemptInput.prepared),
         goal: attemptInput.goal,
         contextContract: attemptInput.contextContract,
         constraints: attemptInput.constraints,
@@ -2478,6 +2488,17 @@ export async function agentRunWorkflow(
         tenantId: input.tenantId,
         productId: input.productId,
         primary: sandbox.primary,
+        // docs/specs/change-sets.md. Each target of a change set at its base, with its installation.
+        ...(targetBases.length > 1
+          ? {
+              targets: targetBases.map((target) => ({
+                repository: target.slug,
+                url: buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug),
+                ref: target.sha,
+                githubInstallationId: target.githubInstallationId,
+              })),
+            }
+          : {}),
         references: sandbox.references,
         defaults: sandbox.defaults,
         environment: {},
@@ -2525,6 +2546,9 @@ export async function agentRunWorkflow(
               tenantId: input.tenantId,
               productId: input.productId,
               repositoryUrl: sandbox.primary.url,
+              ...(targetBases.length > 1
+                ? { targetRepositoryUrls: targetBases.slice(1).map((target) => buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug)) }
+                : {}),
             });
             try {
               return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(workInput);
@@ -2609,6 +2633,7 @@ export async function agentRunWorkflow(
             adapter: preparedSandbox.adapter,
             workspacePath: preparedSandbox.workspacePath,
             primaryPath: preparedSandbox.primaryPath,
+            ...setTargetsInput(preparedSandbox),
             // DI-21.54. The kept human comments are Work Item text too, so the refiner reads them
             // and the gate finds a criterion quoted from a comment.
             workItemText:
@@ -2914,6 +2939,7 @@ export async function agentRunWorkflow(
               workspacePath: preparedSandbox.workspacePath,
               primaryPath: preparedSandbox.primaryPath,
               baseSha: preparedSandbox.baseSha,
+              ...setTargetsInput(preparedSandbox),
             },
             previous:
               previousCheck === null
@@ -2967,6 +2993,7 @@ export async function agentRunWorkflow(
                 workspacePath: preparedSandbox.workspacePath,
                 primaryPath: preparedSandbox.primaryPath,
                 baseSha: preparedSandbox.baseSha,
+                ...setTargetsInput(preparedSandbox),
               },
               previous:
                 previousReview === null
@@ -3494,6 +3521,17 @@ export async function agentRunWorkflow(
             "",
             "Every check passed. By its level, this Run opens no pull request.",
           ].join("\n"),
+        );
+      }
+
+      // docs/specs/change-sets.md, DI-21.134. Publication of one target publishes one patch. A change
+      // set publishes all or nothing (slice 7), so until then it opens no pull request at all: no half
+      // change reaches GitHub. Only a run with two or more targets takes this path.
+      if (runTargets.length > 1) {
+        return await failRun(
+          "PUBLICATION_FAILED",
+          `Every check of the change set ${runTargets.map((target) => target.fullName).join(", ")} passed, and this Factoree ` +
+            "release cannot publish a change set as one step, so it opened no pull request. The last patch of each target is kept for a follow-up run.",
         );
       }
 

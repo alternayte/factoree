@@ -6,9 +6,9 @@ import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import { SandboxCreateError, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { SandboxProviderDownError } from "~/domain/runs/sandbox-slot-error.js";
 import { PROVIDER_DOWN_MS } from "~/domain/settings/sandbox-providers.js";
-import type { PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
+import type { BeforeBootstrap, PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
 import type { VerifiedPatch } from "~/domain/publishing/patch.js";
-import { applyPatch, capturePatch, PatchError } from "~/domain/publishing/patch.js";
+import { applyPatch, capturePatch, PatchError, setPatchSha256 } from "~/domain/publishing/patch.js";
 import { checkDefiningFilesOf } from "~/domain/runs/check-defining-files.js";
 import type {
   PreviewConfig,
@@ -109,6 +109,11 @@ export interface PrepareSandboxActivityInput {
   tenantId: string;
   productId: string;
   primary: RepositorySpec;
+  /**
+   * docs/specs/change-sets.md. Every target of a change set, in set order, at its base SHA, with the
+   * installation that grants it. `primary` is the first of them. Absent for a run with one target.
+   */
+  targets?: TargetInput[];
   references: RepositorySpec[];
   defaults: ProjectDefaults;
   environment: Record<string, string>;
@@ -149,12 +154,45 @@ export interface PrepareSandboxActivityInput {
   pullRequestMerge?: boolean;
 }
 
+/** docs/specs/change-sets.md. One target of a change set, at its base SHA. */
+export interface TargetInput extends RepositorySpec {
+  /** The `owner/repo` name. */
+  repository: string;
+  githubInstallationId: string;
+}
+
+/** docs/specs/change-sets.md. Where one target is checked out in a sandbox, and at which base. */
+export interface SandboxTarget {
+  repository: string;
+  path: string;
+  baseSha: string;
+}
+
+/** docs/specs/change-sets.md. The captured patch of one target in a check sprite. */
+export interface CheckedTarget extends SandboxTarget {
+  patchSha256: string;
+  /** The tree of the base SHA plus the patch, before any project code ran in the check sprite. */
+  treeSha: string;
+  /** Relative to the target checkout. */
+  changedFiles: string[];
+}
+
+/** docs/specs/change-sets.md. The targets of a sandbox, or null for a sandbox of one target. */
+export const setTargetsOf = (prepared: { targets?: SandboxTarget[] }): SandboxTarget[] | null =>
+  prepared.targets !== undefined && prepared.targets.length > 1 ? prepared.targets : null;
+
 export interface PrepareSandboxActivityOutput {
   spriteId: string;
   adapter: string;
   workspacePath: string;
+  /** The primary checkout. In a change set, the target user validation runs in (DI-21.132). */
   primaryPath: string;
   baseSha: string;
+  /**
+   * docs/specs/change-sets.md. Every target, in set order. One entry for a run with one target.
+   * Absent in a history recorded before change sets.
+   */
+  targets?: SandboxTarget[];
   referencePaths: string[];
   /** SDD section 55 requires the recorded commit SHA of every repository. */
   referenceBaseShas: string[];
@@ -200,6 +238,8 @@ export interface WorkSandbox {
   workspacePath: string;
   primaryPath: string;
   baseSha: string;
+  /** docs/specs/change-sets.md. Every target of a change set. Absent for a run with one target. */
+  targets?: SandboxTarget[];
 }
 
 /** docs/specs/check-isolation.md. The preparation input of the Run, and the work sprite to read. */
@@ -223,6 +263,12 @@ export interface PrepareCheckSandboxActivityOutput extends PrepareSandboxActivit
   changedFiles: string[];
   /** The changed files that define a check. docs/specs/check-isolation.md. */
   checkDefiningFiles: string[];
+  /**
+   * docs/specs/change-sets.md. The patch of each target of a change set. `patchSha256` is then the
+   * set patch hash (DI-21.133), and `changedFiles` names each file as `<owner/repo>/<path>`. Absent
+   * for a run with one target.
+   */
+  checkedTargets?: CheckedTarget[];
 }
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
@@ -258,7 +304,7 @@ const release = async (
 const build = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
-  beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
+  beforeBootstrap?: BeforeBootstrap,
   /**
    * A work sprite hosts the refiner and the implementer, and a check sprite the validator and the
    * reviewer. Absent, a sandbox with a patch hook is a check sprite.
@@ -301,22 +347,18 @@ const build = async (
   // mints it fresh for this one preparation, scoped to `contents: read`, so the credential this
   // sandbox receives can never push. An empty installation id means the repository carries no
   // GitHub App installation. Factoree then mints no credential.
-  let repositoryCredential: string | null;
-  if (input.githubInstallationId === "") {
-    repositoryCredential = null;
-  } else {
+  // docs/specs/change-sets.md. A target of a change set can belong to another installation. Each
+  // installation mints one credential that reads its own targets, and the installation of the
+  // primary also reads the references and the organization skills.
+  const setTargets = input.targets !== undefined && input.targets.length > 1 ? input.targets : null;
+  const mint = async (githubInstallationId: string, urls: string[]): Promise<string | null> => {
+    if (githubInstallationId === "") return null;
     try {
       // The clone credential reads the repositories this sandbox checks out, and no other
       // repository of the installation.
-      repositoryCredential = await dependencies.tokens.tokenForInstallation(
-        input.githubInstallationId,
-        { contents: "read" },
-        repositoryNamesOf([
-          input.primary.url,
-          ...input.references.map((reference) => reference.url),
-          ...(input.organizationSkills === null ? [] : [input.organizationSkills.url]),
-        ]),
-      );
+      const token = await dependencies.tokens.tokenForInstallation(githubInstallationId, { contents: "read" }, repositoryNamesOf(urls));
+      dependencies.redactor.addSecret(token);
+      return token;
     } catch (error) {
       // A rejected mint of the clone credential is a configuration fault, not an
       // infrastructure fault, so it must map to the same `RunConfigurationError` the publish
@@ -324,8 +366,28 @@ const build = async (
       // every mint site applies.
       throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
     }
+  };
+  const sharedUrls = [
+    ...input.references.map((reference) => reference.url),
+    ...(input.organizationSkills === null ? [] : [input.organizationSkills.url]),
+  ];
+  const repositoryCredential = await mint(input.githubInstallationId, [
+    ...(setTargets === null
+      ? [input.primary.url]
+      : setTargets.filter((target) => target.githubInstallationId === input.githubInstallationId).map((target) => target.url)),
+    ...sharedUrls,
+  ]);
+  const targetCredentials = new Map<string, string | null>([[input.githubInstallationId, repositoryCredential]]);
+  for (const target of setTargets ?? []) {
+    if (targetCredentials.has(target.githubInstallationId)) continue;
+    targetCredentials.set(
+      target.githubInstallationId,
+      await mint(
+        target.githubInstallationId,
+        setTargets?.filter((other) => other.githubInstallationId === target.githubInstallationId).map((other) => other.url) ?? [],
+      ),
+    );
   }
-  if (repositoryCredential !== null) dependencies.redactor.addSecret(repositoryCredential);
 
   // docs/specs/skill-registry.md. The worker resolves the registry and checks every archive before
   // the sandbox exists. Only the work sprite gets the skills, because only the implementer reads
@@ -368,6 +430,14 @@ const build = async (
     tenantId: input.tenantId,
     productId: input.productId,
     primary: input.primary,
+    ...(setTargets === null
+      ? {}
+      : {
+          targets: setTargets.map((target) => {
+            const credential = targetCredentials.get(target.githubInstallationId) ?? null;
+            return { repository: target.repository, url: target.url, ref: target.ref, ...(credential === null ? {} : { credential }) };
+          }),
+        }),
     references: input.references,
     // Issue #43, DI-21.67. The Product repair budget applies when the repository sets none.
     defaults: { ...input.defaults, runners, ...(product === null ? {} : { repairMaxAttempts: product.repairMaxAttempts }) },
@@ -405,6 +475,7 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
   workspacePath: prepared.ref.workspacePath,
   primaryPath: prepared.checkout.primary.path,
   baseSha: prepared.checkout.primary.baseSha,
+  targets: prepared.targets.map((target) => ({ repository: target.repository, path: target.checkout.path, baseSha: target.checkout.baseSha })),
   referencePaths: prepared.checkout.references.map((entry) => entry.path),
   // SDD section 55 requires the recorded SHA of every reference repository, not only the
   // primary one.
@@ -603,6 +674,110 @@ const deliverCheckSpriteImages = async (
   return delivery.lines;
 };
 
+/**
+ * Deletes the check sprite of the previous attempt before the new one starts, so one Run holds at
+ * most three live sandboxes (DI-15.14).
+ */
+const releasePrevious = async (dependencies: SandboxActivityDependencies, previous: PrepareCheckSandboxActivityInput["previous"]): Promise<void> => {
+  if (previous === null) return;
+  const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
+    dependencies.sandbox.destroy({ id: previous.spriteId, adapter: previous.adapter, workspacePath: previous.workspacePath }),
+  );
+  if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
+};
+
+/**
+ * docs/specs/change-sets.md, docs/specs/check-isolation.md. The check sprite of a change set: each
+ * target's patch is captured in the work sprite, applied to the same target in a new check sprite
+ * before its bootstrap, and proven to be the same patch there. The set patch hash (DI-21.133) names
+ * the whole set.
+ */
+const prepareSetCheckSandbox = async (
+  dependencies: SandboxActivityDependencies,
+  input: PrepareCheckSandboxActivityInput,
+  workTargets: SandboxTarget[],
+): Promise<PrepareCheckSandboxActivityOutput> => {
+  const patchDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
+  const workRef = { id: input.work.spriteId, adapter: input.work.adapter, workspacePath: input.work.workspacePath };
+  const captured: Array<SandboxTarget & VerifiedPatch> = [];
+  for (const target of workTargets) {
+    captured.push({ ...target, ...(await capturePatch(patchDependencies, { ref: workRef, primaryPath: target.path, baseSha: target.baseSha })) });
+  }
+  // docs/specs/run-recovery.md. A follow-up run reads what each target last tried. A failed write
+  // costs the follow-up its reference and nothing else.
+  for (const target of captured) {
+    await dependencies.runs.recordLastPatch(input.tenantId, input.runId, target.repository, target.patchBase64, input.attempt).catch((error: unknown) => {
+      dependencies.logger.warn("the last patch of a target was not recorded", { run_id: input.runId, repository: target.repository, error: String(error) });
+    });
+  }
+  const setSha256 = setPatchSha256(captured);
+  const expected = input.expectedPatchSha256;
+  if (expected !== undefined && setSha256 !== expected) {
+    throw new PatchError(`the work sprite now holds the set patch ${setSha256}, and this attempt verified the set patch ${expected}.`);
+  }
+  await releasePrevious(dependencies, input.previous);
+
+  const applied = new Map<string, VerifiedPatch>();
+  const checkInput: PrepareSandboxActivityInput = { ...input };
+  delete checkInput.pullRequestHead;
+  delete checkInput.pullRequestMerge;
+  const prepared = await build(dependencies, checkInput, async (ref, _primaryPath, targets) => {
+    for (const target of captured) {
+      const path = targets.find((candidate) => candidate.repository === target.repository)?.path;
+      if (path === undefined) throw new PatchError(`the check sprite holds no checkout of ${target.repository}.`);
+      await applyPatch(patchDependencies, { ref, primaryPath: path, baseSha: target.baseSha, patchBase64: target.patchBase64 });
+      const recaptured = await capturePatch(patchDependencies, { ref, primaryPath: path, baseSha: target.baseSha });
+      if (recaptured.patchSha256 !== target.patchSha256) {
+        throw new PatchError(
+          `the check sprite holds patch ${recaptured.patchSha256} of ${target.repository}, and the work sprite holds patch ` +
+            `${target.patchSha256}. Factoree checks only the patch it captured.`,
+        );
+      }
+      applied.set(target.repository, recaptured);
+    }
+  });
+  const sameBases = captured.every(
+    (target) => prepared.targets.find((candidate) => candidate.repository === target.repository)?.checkout.baseSha === target.baseSha,
+  );
+  if (applied.size !== captured.length || !sameBases) {
+    await release(dependencies, prepared.ref.id, prepared.ref.adapter, () => dependencies.sandboxManager.release(prepared));
+    throw new PatchError("the check sprite did not check out the base SHA of each target of the work sprite");
+  }
+
+  metrics.sandboxesCreated.inc({ tenant_id: input.tenantId, product_id: input.productId, adapter: prepared.ref.adapter });
+  dependencies.logger.info("check sandbox prepared", {
+    tenant_id: input.tenantId,
+    product_id: input.productId,
+    run_id: input.runId,
+    sprite_id: prepared.ref.id,
+    work_sprite_id: input.work.spriteId,
+    attempt: input.attempt,
+    patch_sha256: setSha256,
+    targets: captured.length,
+    step: "prepare_check",
+  });
+  const imageFiles = await deliverCheckSpriteImages(dependencies, input, prepared.ref);
+  const checkedTargets: CheckedTarget[] = captured.map((target) => ({
+    repository: target.repository,
+    path: prepared.targets.find((candidate) => candidate.repository === target.repository)?.checkout.path ?? target.path,
+    baseSha: target.baseSha,
+    patchSha256: target.patchSha256,
+    treeSha: applied.get(target.repository)?.treeSha ?? "",
+    changedFiles: target.changedFiles,
+  }));
+  const changedFiles = checkedTargets.flatMap((target) => target.changedFiles.map((file) => `${target.repository}/${file}`));
+  return {
+    ...toOutput(prepared),
+    imageFiles,
+    patchSha256: setSha256,
+    // The trees of the set, one line per target, as the set patch hash names the patches.
+    treeSha: setPatchSha256(checkedTargets.map((target) => ({ repository: target.repository, patchSha256: target.treeSha }))),
+    changedFiles,
+    checkDefiningFiles: checkedTargets.flatMap((target) => checkDefiningFilesOf(target.changedFiles).map((file) => `${target.repository}/${file}`)),
+    checkedTargets,
+  };
+};
+
 const prepare = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
@@ -757,6 +932,8 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
         dependencies.logger,
         { tenantId: input.tenantId, runId: input.runId, stage: "prepare_check_sprite", attempt: input.attempt, sandboxId: null },
         async () => {
+          const workTargets = setTargetsOf(input.work);
+          if (workTargets !== null) return await prepareSetCheckSandbox(dependencies, input, workTargets);
           const captured = await capturePatch(patchDependencies, {
             ref: { id: input.work.spriteId, adapter: input.work.adapter, workspacePath: input.work.workspacePath },
             primaryPath: input.work.primaryPath,
@@ -780,17 +957,7 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
           // before the new one starts, so one Run holds at most three live sandboxes (the work
           // sprite and the two check sprites of docs/specs/run-speed.md), and a Run at the
           // provider limit never waits on a slot its own old sprite holds (DI-15.14).
-          if (input.previous !== null) {
-            const previous = input.previous;
-            const destroyed = await release(dependencies, previous.spriteId, previous.adapter, () =>
-              dependencies.sandbox.destroy({
-                id: previous.spriteId,
-                adapter: previous.adapter,
-                workspacePath: previous.workspacePath,
-              }),
-            );
-            if (destroyed) metrics.sandboxesDestroyed.inc({ adapter: previous.adapter, reason: "SUPERSEDED" });
-          }
+          await releasePrevious(dependencies, input.previous);
 
           let applied: VerifiedPatch | null = null;
           // D2. A check sprite takes the captured patch, which already holds the pull request change.

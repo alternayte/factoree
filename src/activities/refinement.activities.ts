@@ -12,7 +12,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
-import { worktreeFingerprint } from "~/domain/review/source-diff.js";
+import { setFingerprintOf, worktreeFingerprint } from "~/domain/review/source-diff.js";
 import type { ValidationCriterion } from "~/domain/validation/validation-contract-builder.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import {
@@ -109,6 +109,8 @@ export interface ProposeRefinementActivityInput {
   adapter: string;
   workspacePath: string;
   primaryPath: string;
+  /** docs/specs/change-sets.md. Every target of a change set in the work sprite. Absent for one target. */
+  targets?: Array<{ repository: string; path: string }>;
   /** The ticket title and description, as Linear holds them. The gate checks quotes against it. */
   workItemText: string;
   goal: string;
@@ -282,7 +284,13 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     // A hung session can leave a partial proposal, and the fresh session must never read it.
     const proposalPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}.json`;
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
-    const before = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
+    // docs/specs/change-sets.md. The refiner must not change any target of a change set.
+    const setTargets = input.targets !== undefined && input.targets.length > 1 ? input.targets : null;
+    const treeOf = (): Promise<string> =>
+      setTargets === null
+        ? worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath })
+        : setFingerprintOf(setTargets, (path) => worktreeFingerprint(fingerprint, { ref, primaryPath: path }));
+    const before = await treeOf();
 
     const repository = { previewConfigured: input.previewConfigured };
     const actionPolicy = buildActionPolicy({ role: "refiner" });
@@ -296,6 +304,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         contextFiles: input.contextFiles ?? [],
         imageFiles: input.imageFiles ?? [],
         primaryRepositoryPath: input.primaryPath,
+        ...(setTargets === null ? {} : { targetRepositories: setTargets }),
         proposalPath: path,
         proposalSchema: REFINER_PROPOSAL_SCHEMA,
         criteriaLimit,
@@ -495,7 +504,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         );
       }
 
-      const after = await worktreeFingerprint(fingerprint, { ref, primaryPath: input.primaryPath });
+      const after = await treeOf();
       const empty = { accepted: [], decisions: [], visualEvidenceGap: null, hang: null };
       if (after !== before) {
         return {

@@ -49,6 +49,11 @@ export interface ImplementActivityInput {
   adapter: string;
   workspacePath: string;
   primaryPath: string;
+  /**
+   * docs/specs/change-sets.md. Every target of a change set in the work sprite. The session then works
+   * from `<workspace>/targets`. Absent for a run with one target.
+   */
+  targets?: Array<{ repository: string; path: string }>;
   referencePaths: string[];
   goal: string;
   /** SDD section 21. The rendered Context Contract of this Run. */
@@ -207,6 +212,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     if (resultPath !== null) {
       await dependencies.sandbox.exec(sandboxRef, { file: "mkdir", args: ["-p", `${input.workspacePath}/implementer`], cwd: "/" });
     }
+    const setTargets = input.targets !== undefined && input.targets.length > 1 ? input.targets : null;
     const implementerInput = buildImplementerInput({
       goal: input.goal,
       humanDecisions: input.humanDecisions,
@@ -216,6 +222,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       contextFiles: input.contextFiles ?? [],
       imageFiles: input.imageFiles ?? [],
       primaryRepositoryPath: input.primaryPath,
+      ...(setTargets === null ? {} : { targetRepositories: setTargets }),
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,
       skills: input.skills,
@@ -312,7 +319,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         role: "implementer",
         sandbox: dependencies.sandbox,
         ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
-        workingDirectory: input.primaryPath,
+        // docs/specs/change-sets.md. A change set works from the folder that holds every target.
+        workingDirectory: setTargets === null ? input.primaryPath : `${input.workspacePath}/targets`,
         repositoryPath: input.primaryPath,
         prompt: implementerInput.prompt,
         promptVersion: implementerInput.promptVersion,

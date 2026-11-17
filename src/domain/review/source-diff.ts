@@ -167,3 +167,45 @@ export const worktreeGitStateFingerprint = async (
   ).trim();
   return createHash("sha256").update(`${head}\n${refs}\n`).digest("hex");
 };
+
+/** docs/specs/change-sets.md. One target of a change set, at its base SHA. */
+export interface DiffTarget {
+  repository: string;
+  path: string;
+  baseSha: string;
+}
+
+/**
+ * docs/specs/change-sets.md. The diff of every target of a change set, one section per target in
+ * set order. Each target gets an equal share of the ceiling. A changed file is named
+ * `<owner/repo>/<path>`, so two targets never share a name.
+ */
+export const captureSetDiff = async (
+  dependencies: SourceDiffDependencies,
+  input: { ref: SandboxRef; targets: DiffTarget[]; maxBytes?: number },
+): Promise<SourceDiff> => {
+  const share = Math.floor((input.maxBytes ?? MAX_REVIEW_DIFF_BYTES) / Math.max(1, input.targets.length));
+  const sections: string[] = [];
+  const changedFiles: string[] = [];
+  let truncated = false;
+  for (const target of input.targets) {
+    const diff = await captureSourceDiff(dependencies, { ref: input.ref, primaryPath: target.path, baseSha: target.baseSha, maxBytes: share });
+    sections.push(`## ${target.repository} at ${target.path}\n\n${diff.text}`);
+    changedFiles.push(...diff.changedFiles.map((file) => `${target.repository}/${file}`));
+    truncated = truncated || diff.truncated;
+  }
+  return { text: sections.join("\n\n"), truncated, changedFiles };
+};
+
+/**
+ * docs/specs/change-sets.md. The fingerprint of every target of a change set: the SHA-256 of one
+ * line `<owner/repo> <value>` per target, in set order. `read` takes the value of one checkout.
+ */
+export const setFingerprintOf = async (
+  targets: ReadonlyArray<{ repository: string; path: string }>,
+  read: (path: string) => Promise<string>,
+): Promise<string> => {
+  const lines: string[] = [];
+  for (const target of targets) lines.push(`${target.repository} ${await read(target.path)}\n`);
+  return createHash("sha256").update(lines.join("")).digest("hex");
+};

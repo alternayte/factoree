@@ -36,6 +36,21 @@ export const DOCKER_ENVIRONMENT: Readonly<Record<string, string>> = {
   DOTNET_NOLOGO: "1",
 };
 
+/**
+ * docs/specs/change-sets.md. The environment of a command that Factoree runs in one target of a
+ * change set: mise reads the `.factoree/mise.toml` of that target.
+ */
+export const targetEnvironmentOf = (targetPath: string): Record<string, string> => ({
+  MISE_CONFIG_FILE: `${targetPath}/.factoree/mise.toml`,
+});
+
+/**
+ * docs/specs/change-sets.md. The compose project name of one target of a change set: its
+ * `owner-repo` name in lower case, with every character compose refuses as `-`.
+ */
+export const composeProjectOf = (repository: string): string =>
+  repository.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+
 /** The root-owned script in the sandbox image that starts rootless Docker, or does nothing when it runs. */
 export const DOCKER_START_SCRIPT = "/opt/factoree/bin/factoree-docker-start";
 
@@ -97,6 +112,7 @@ const composeArguments = async (
   }
   return [
     "compose",
+    ...(services.project === undefined ? [] : ["-p", services.project]),
     ...files.flatMap((file) => ["-f", file]),
     ...services.profiles.flatMap((profile) => ["--profile", profile]),
   ];
@@ -139,9 +155,11 @@ export const seedServices = async (
   ref: SandboxRef,
   primaryPath: string,
   services: ServicesConfig,
+  /** docs/specs/change-sets.md. The environment of a target of a change set, its MISE_CONFIG_FILE. */
+  env?: Record<string, string>,
 ): Promise<void> => {
   if (services.seed === null) return;
-  const result = await sandbox.exec(ref, { file: "sh", args: ["-c", services.seed], cwd: primaryPath });
+  const result = await sandbox.exec(ref, { file: "sh", args: ["-c", services.seed], cwd: primaryPath, ...(env === undefined ? {} : { env }) });
   if (result.exitCode !== 0) {
     throw new RunConfigurationError(`the seed command failed with exit code ${result.exitCode}: ${tail(result.stdout, result.stderr)}`);
   }

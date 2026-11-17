@@ -1,7 +1,8 @@
-import type { CheckoutResult, RepositorySpec } from "./checkout.js";
+import type { CheckedOutRepository, CheckoutResult, RepositorySpec } from "./checkout.js";
 import {
   checkoutOrganizationSkills,
   checkoutPrimary,
+  checkoutTarget,
   overlayPullRequestHead,
   checkoutReferences,
   refreshPrimary,
@@ -28,7 +29,14 @@ import {
   type WarmSnapshotStore,
 } from "./warm-snapshot.js";
 import { bootstrapAllowListOf } from "./project-runtime-config.js";
-import { ensureDocker, listRepositoryFiles, seedServices, startServices } from "./services.js";
+import {
+  composeProjectOf,
+  ensureDocker,
+  listRepositoryFiles,
+  seedServices,
+  startServices,
+  targetEnvironmentOf,
+} from "./services.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { credentialKeyOf, NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
@@ -48,6 +56,12 @@ export interface PrepareSandboxInput {
   primary: RepositorySpec;
   references: RepositorySpec[];
   defaults: ProjectDefaults;
+  /**
+   * docs/specs/change-sets.md. Every target of a change set, in set order, each with its own
+   * read-only credential. Two or more check out at `<workspace>/targets/<owner>/<repo>`, and
+   * `primary` then names the first of them. Absent, or one entry, for a run with one target.
+   */
+  targets?: TargetSpec[];
   /** Project test secrets only. SDD section 30 forbids every other credential here. */
   environment?: Record<string, string>;
   /** SDD section 16. The organization-wide skills repository of the Project, when it has one. */
@@ -98,6 +112,71 @@ export interface PrepareSandboxInput {
   pullRequestMerge?: boolean;
 }
 
+/** docs/specs/change-sets.md. One target of a change set to check out. */
+export interface TargetSpec extends RepositorySpec {
+  /** The `owner/repo` name of the target. */
+  repository: string;
+  /** The read-only clone credential of the installation that grants the target. */
+  credential?: string;
+}
+
+/** docs/specs/change-sets.md. One checked-out target, with the configuration its own file gives. */
+export interface PreparedTarget {
+  repository: string;
+  checkout: CheckedOutRepository;
+  runtime: ProjectRuntimeConfig;
+  verifyCommands: VerificationCommand[];
+  preview: PreviewConfig | null;
+  /** The environment of a command Factoree runs in the target. Empty for a run with one target. */
+  environment: Record<string, string>;
+}
+
+/** The `owner/repo` name of a clone URL, or the URL itself when it names none, as a local path in a test. */
+const repositoryOfUrl = (url: string): string => {
+  const parts = url.replace(/\/+$/, "").replace(/\.git$/, "").split("/").slice(-2);
+  return parts.length === 2 ? parts.join("/") : url;
+};
+
+/**
+ * docs/specs/change-sets.md, DI-21.132. The sandbox configuration of a change set from the file of
+ * each target. User validation runs in one target until assertions name their target: the first
+ * target with an enabled preview, else the first target. Its runtime is the base. The allow lists
+ * are the union of the targets' lists, each already capped by the product ceiling. The repair
+ * budget is the smallest of the targets. Each verify command runs in its own target, named after it.
+ */
+export const combineTargets = (
+  targets: PreparedTarget[],
+): { validation: PreparedTarget; runtime: ProjectRuntimeConfig; verifyCommands: VerificationCommand[]; preview: PreviewConfig | null } => {
+  const first = targets[0];
+  if (first === undefined) throw new Error("a sandbox needs at least one target");
+  if (targets.length === 1) return { validation: first, runtime: first.runtime, verifyCommands: first.verifyCommands, preview: first.preview };
+  const validation = targets.find((target) => target.preview !== null && target.preview.enabled) ?? first;
+  const union = (pick: (runtime: ProjectRuntimeConfig) => string[]): string[] => [...new Set(targets.flatMap((target) => pick(target.runtime)))];
+  const strictest = targets.reduce((least, target) => (target.runtime.repairMaxAttempts < least.runtime.repairMaxAttempts ? target : least), first);
+  return {
+    validation,
+    runtime: {
+      ...validation.runtime,
+      allowedDomains: union((runtime) => runtime.allowedDomains),
+      bootstrapAllowedDomains: union((runtime) => runtime.bootstrapAllowedDomains ?? []),
+      sandboxAllowListDeclared: targets.some((target) => target.runtime.sandboxAllowListDeclared === true),
+      docker: targets.some((target) => target.runtime.docker === true),
+      agentsBlockIgnored: targets.some((target) => target.runtime.agentsBlockIgnored === true),
+      repairMaxAttempts: strictest.runtime.repairMaxAttempts,
+      ...(strictest.runtime.repairBudgetSource === undefined ? {} : { repairBudgetSource: strictest.runtime.repairBudgetSource }),
+    },
+    verifyCommands: targets.flatMap((target) =>
+      target.verifyCommands.map((command) => ({
+        name: `${target.repository}: ${command.name}`,
+        run: command.run,
+        workingDirectory: target.checkout.path,
+        env: target.environment,
+      })),
+    ),
+    preview: validation.preview,
+  };
+};
+
 /** docs/specs/run-speed.md. What one build-ahead did. */
 export type BuildAheadOutcome =
   | { kind: "built"; snapshotId: string; bootstrapKey: string }
@@ -105,7 +184,13 @@ export type BuildAheadOutcome =
 
 export interface PreparedSandbox {
   ref: SandboxRef;
+  /**
+   * The primary checkout is the target user validation runs in. For a change set it is one of
+   * `targets` (DI-21.132).
+   */
   checkout: CheckoutResult;
+  /** docs/specs/change-sets.md. Every target, in set order. One entry, the primary, for one target. */
+  targets: PreparedTarget[];
   baselineCheckpoint: CheckpointRef | null;
   /** Built from `.factoree/config.yaml` and the Project defaults. SDD sections 15 and 57. */
   runtime: ProjectRuntimeConfig;
@@ -138,6 +223,12 @@ export interface PreparedSandbox {
    */
   allowedHosts: string[];
 }
+
+/**
+ * docs/specs/check-isolation.md. The step after the configuration read and before the bootstrap. A
+ * check sprite applies the captured patch there, to each target of a change set.
+ */
+export type BeforeBootstrap = (ref: SandboxRef, primaryPath: string, targets: Array<{ repository: string; path: string }>) => Promise<void>;
 
 /** docs/specs/skill-registry.md. One skill that reached a sandbox. SDD section 55 records it. */
 export interface DeliveredSkill {
@@ -236,6 +327,10 @@ const bootstrapFailureDetail = (stdout: string, stderr: string): string => {
   return parts.length === 0 ? "the command wrote no output" : parts.join(" | ");
 };
 
+/** docs/specs/change-sets.md. True when the sandbox checks out two or more targets. */
+const isChangeSet = (input: PrepareSandboxInput): input is PrepareSandboxInput & { targets: TargetSpec[] } =>
+  input.targets !== undefined && input.targets.length > 1;
+
 const checkoutHosts = (specs: RepositorySpec[]): string[] => {
   const hosts = new Set<string>();
   for (const spec of specs) {
@@ -292,7 +387,7 @@ export class SandboxManager {
    */
   async prepare(
     input: PrepareSandboxInput,
-    beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
+    beforeBootstrap?: BeforeBootstrap,
   ): Promise<PreparedSandbox> {
     // docs/specs/release-0-1-0.md. The install settings choose the provider of each new sandbox.
     await this.options.sandbox.refresh?.();
@@ -315,7 +410,8 @@ export class SandboxManager {
       });
     }
 
-    const warm = await this.warmSnapshotFor(input);
+    // docs/specs/change-sets.md. A change set starts cold. Set warm snapshots are a later slice.
+    const warm = isChangeSet(input) ? null : await this.warmSnapshotFor(input);
     if (warm !== null) {
       const prepared = await this.prepareIn(input, beforeBootstrap, warm);
       if (prepared !== null) return prepared;
@@ -382,15 +478,16 @@ export class SandboxManager {
    */
   private async prepareIn(
     input: PrepareSandboxInput,
-    beforeBootstrap: ((ref: SandboxRef, primaryPath: string) => Promise<void>) | undefined,
+    beforeBootstrap: BeforeBootstrap | undefined,
     warm: WarmSnapshot | null,
     onSaved?: (snapshot: { snapshotId: string; bootstrapKey: string }) => void,
   ): Promise<PreparedSandbox | null> {
     const sandbox = await this.sandboxOf(input.provider);
     // docs/specs/host-credentials.md. The credentials are read before the create, so a provider
     // that cannot bind them fails the preparation before it costs a sandbox.
+    const setTargets = isChangeSet(input) ? input.targets : null;
     const checkoutRepositories = githubRepositoriesOf([
-      input.primary.url,
+      ...(setTargets === null ? [input.primary.url] : setTargets.map((target) => target.url)),
       ...input.references.map((reference) => reference.url),
       ...(input.organizationSkills === undefined ? [] : [input.organizationSkills.url]),
     ]);
@@ -441,7 +538,7 @@ export class SandboxManager {
     try {
       // The organization skills repository is checked out under the first policy, so its host
       // must be allowed there.
-      const specs = [input.primary, ...input.references];
+      const specs = [...(setTargets ?? [input.primary]), ...input.references];
       if (input.organizationSkills !== undefined) specs.push(input.organizationSkills);
       const repositoryHosts = checkoutHosts(specs);
 
@@ -464,14 +561,61 @@ export class SandboxManager {
 
       await probeCredentialHosts(sandbox, ref, access);
 
-      const primary =
-        warm === null
-          ? await checkoutPrimary(sandbox, ref, input.primary, input.repositoryCredential)
-          : await refreshPrimary(sandbox, ref, input.primary, input.repositoryCredential);
+      let primary: CheckedOutRepository;
+      let targets: PreparedTarget[];
+      let bootstrapKey: string | null = null;
+      if (setTargets === null) {
+        primary =
+          warm === null
+            ? await checkoutPrimary(sandbox, ref, input.primary, input.repositoryCredential)
+            : await refreshPrimary(sandbox, ref, input.primary, input.repositoryCredential);
 
-      // SDD section 15. The primary repository owns the configuration of the Run.
-      const file = await readRepositoryConfig(sandbox, ref, primary.path);
-      const { runtime, verifyCommands, preview } = toProjectRuntimeConfig(file, input.defaults);
+        // SDD section 15. The primary repository owns the configuration of the Run.
+        const file = await readRepositoryConfig(sandbox, ref, primary.path);
+        const resolved = toProjectRuntimeConfig(file, input.defaults);
+        targets = [{ repository: repositoryOfUrl(primary.url), checkout: primary, ...resolved, environment: {} }];
+
+        // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
+        // allow list. A change of any of them means the snapshot no longer fits, and the cold run
+        // takes a new one. A change to any other field keeps the snapshot.
+        // docs/specs/repository-setup-and-services.md. The compose stack and the key files join the key.
+        const runtime = resolved.runtime;
+        bootstrapKey = bootstrapKeyOf({
+          bootstrapCommand: runtime.bootstrapCommand,
+          warmCommand: runtime.warmCommand ?? null,
+          allowedDomains: bootstrapAllowListOf(runtime),
+          services: runtime.services ?? null,
+          docker: runtime.docker === true,
+          files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, primary.path), keyFilePatternsOf(runtime)),
+          credentials: credentialKeyOf(access.credentials),
+        });
+        if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
+          this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
+            run_id: input.runId,
+            snapshot_id: warm.snapshotId,
+          });
+          await sandbox.destroy(ref).catch(() => undefined);
+          return null;
+        }
+      } else {
+        // docs/specs/change-sets.md. Each target checks out in its own folder and owns its own
+        // configuration: its bootstrap, its compose project, its MISE_CONFIG_FILE and its verify commands.
+        targets = [];
+        for (const target of setTargets) {
+          const checkout = await checkoutTarget(sandbox, ref, target, target.credential ?? input.repositoryCredential);
+          const resolved = toProjectRuntimeConfig(await readRepositoryConfig(sandbox, ref, checkout.path), input.defaults);
+          const services = resolved.runtime.services ?? null;
+          targets.push({
+            repository: target.repository,
+            checkout,
+            ...resolved,
+            runtime: { ...resolved.runtime, services: services === null ? null : { ...services, project: composeProjectOf(target.repository) } },
+            environment: targetEnvironmentOf(checkout.path),
+          });
+        }
+        primary = combineTargets(targets).validation.checkout;
+      }
+      const { runtime, verifyCommands, preview } = combineTargets(targets);
       // docs/specs/claude-code-runner.md. The Product selects the runners, and the run log says so.
       if (runtime.agentsBlockIgnored === true) {
         this.options.logger?.warn("Factoree ignores the agents block of .factoree/config.yaml: the Product selects the runner of each role", {
@@ -480,32 +624,16 @@ export class SandboxManager {
         });
       }
 
-      // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
-      // allow list. A change of any of them means the snapshot no longer fits, and the cold run
-      // takes a new one. A change to any other field keeps the snapshot.
-      // docs/specs/repository-setup-and-services.md. The compose stack and the key files join the key.
-      const bootstrapKey = bootstrapKeyOf({
-        bootstrapCommand: runtime.bootstrapCommand,
-        warmCommand: runtime.warmCommand ?? null,
-        allowedDomains: bootstrapAllowListOf(runtime),
-        services: runtime.services ?? null,
-        docker: runtime.docker === true,
-        files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, primary.path), keyFilePatternsOf(runtime)),
-        credentials: credentialKeyOf(access.credentials),
-      });
-      if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
-        this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
-          run_id: input.runId,
-          snapshot_id: warm.snapshotId,
-        });
-        await sandbox.destroy(ref).catch(() => undefined);
-        return null;
-      }
-
       if (input.pullRequestHead !== undefined) {
         await overlayPullRequestHead(sandbox, ref, primary, input.pullRequestHead, input.repositoryCredential, input.pullRequestMerge === true);
       }
-      if (beforeBootstrap !== undefined) await beforeBootstrap(ref, primary.path);
+      if (beforeBootstrap !== undefined) {
+        await beforeBootstrap(
+          ref,
+          primary.path,
+          targets.map((target) => ({ repository: target.repository, path: target.checkout.path })),
+        );
+      }
 
       // docs/specs/proof-pack-and-visual-evidence.md. A work sprite with a preview gets the browser
       // tools for the implementer's self-check. The install runs beside the bootstrap, under
@@ -520,7 +648,7 @@ export class SandboxManager {
       await applyEgress(
         sandbox,
         ref,
-        [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime), ...(browserTools ? BROWSER_TOOL_HOSTS : [])])],
+        [...new Set([...repositoryHosts, ...targets.flatMap((target) => bootstrapAllowListOf(target.runtime)), ...(browserTools ? BROWSER_TOOL_HOSTS : [])])],
         egress,
       );
       const install = browserTools
@@ -534,11 +662,13 @@ export class SandboxManager {
       // docs/specs/repository-setup-and-services.md. Rootless Docker and the compose stack start
       // under policy two, before the bootstrap, so a bootstrap can migrate the database. A warm
       // sandbox already holds them, and both calls change nothing on a healthy stack.
-      const services = runtime.services ?? null;
       if (runtime.docker === true) {
         const servicesStarted = Date.now();
         await ensureDocker(sandbox, ref);
-        if (services !== null) await startServices(sandbox, ref, primary.path, services);
+        for (const target of targets) {
+          const services = target.runtime.services ?? null;
+          if (services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+        }
         this.options.logger?.info("the services are ready", {
           run_id: input.runId,
           step: "prepare_services",
@@ -547,24 +677,40 @@ export class SandboxManager {
         });
       }
 
-      if (runtime.bootstrapCommand !== null) {
+      // docs/specs/change-sets.md. Each target runs its own bootstrap in its own folder, in set order.
+      for (const target of targets) {
+        const command = target.runtime.bootstrapCommand;
+        if (command === null) continue;
         const result = await sandbox.exec(ref, {
           file: "sh",
-          args: ["-c", bootstrapScript(runtime.bootstrapCommand)],
-          cwd: primary.path,
+          args: ["-c", bootstrapScript(command)],
+          cwd: target.checkout.path,
+          ...(Object.keys(target.environment).length === 0 ? {} : { env: target.environment }),
         });
         if (result.exitCode !== 0) {
           // The bootstrap command comes from the repository configuration, so a failure of it is
           // a configuration fault. A retry runs the same command and fails again.
           throw new RunConfigurationError(
-            `the bootstrap command failed with exit code ${result.exitCode}: ` +
+            `${targets.length > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command"} failed with exit code ${result.exitCode}: ` +
               withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
           );
         }
       }
 
       // The seed fills the stack once. A warm sandbox holds the seeded data of its snapshot.
-      if (services !== null && warm === null) await seedServices(sandbox, ref, primary.path, services);
+      if (warm === null) {
+        for (const target of targets) {
+          const services = target.runtime.services ?? null;
+          if (services === null) continue;
+          await seedServices(
+            sandbox,
+            ref,
+            target.checkout.path,
+            services,
+            ...(Object.keys(target.environment).length === 0 ? [] : [target.environment]),
+          );
+        }
+      }
 
       const selfCheckReady = sandbox.capabilities.supportsCustomImage
         ? wantsBrowserTools
@@ -575,7 +721,7 @@ export class SandboxManager {
       // docs/specs/kiln-sandbox-provider.md. A cold work sprite saves itself here, after the clone
       // and the bootstrap and before any agent runs. A check sprite holds the patch, so it never
       // saves itself.
-      if (warm === null && beforeBootstrap === undefined) {
+      if (warm === null && beforeBootstrap === undefined && bootstrapKey !== null) {
         const saved = await this.saveWarmSnapshot(input, ref, primary.path, runtime.warmCommand ?? null, bootstrapKey);
         if (saved !== null) onSaved?.({ snapshotId: saved, bootstrapKey });
       }
@@ -587,7 +733,17 @@ export class SandboxManager {
         return null;
       }
 
-      const repositoryInstructions = await readRepositoryInstructions(sandbox, ref, primary.path);
+      // docs/specs/change-sets.md. The instructions of each target, under its name and its folder.
+      let repositoryInstructions: string;
+      if (setTargets === null) {
+        repositoryInstructions = await readRepositoryInstructions(sandbox, ref, primary.path);
+      } else {
+        const sections: string[] = [];
+        for (const target of targets) {
+          sections.push(`### ${target.repository} at ${target.checkout.path}\n\n${await readRepositoryInstructions(sandbox, ref, target.checkout.path)}`);
+        }
+        repositoryInstructions = sections.join("\n\n");
+      }
 
       // SDD section 16. The organization skills repository is read-only, and it lives outside
       // the `reference/` tree. It is checked out while the checkout hosts are still allowed.
@@ -616,7 +772,7 @@ export class SandboxManager {
       // reaches `git status` or the verified patch.
       const registryRoot =
         input.registrySkills === undefined ? null : await this.deliverRegistrySkills(sandbox, ref, input.registrySkills);
-      const roots: SkillRoot[] = [{ scope: "repository", path: primary.path }];
+      const roots: SkillRoot[] = targets.map((target) => ({ scope: "repository", path: target.checkout.path }));
       if (registryRoot !== null) roots.push({ scope: "registry", path: registryRoot });
       if (organizationSkills !== null) roots.push({ scope: "organization", path: organizationSkills.path });
       const skillSet = await discoverSkills(sandbox, ref, roots, this.options.logger);
@@ -629,6 +785,7 @@ export class SandboxManager {
       return {
         ref,
         checkout,
+        targets,
         baselineCheckpoint,
         runtime,
         verifyCommands,

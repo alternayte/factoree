@@ -16,9 +16,12 @@ import { buildActionPolicy, type ActionPolicy } from "~/domain/policy/action-pol
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { buildReviewerInput } from "~/domain/review/reviewer-input.js";
 import {
+  captureSetDiff,
   captureSourceDiff,
+  setFingerprintOf,
   worktreeFingerprint,
   worktreeGitStateFingerprint,
+  type DiffTarget,
 } from "~/domain/review/source-diff.js";
 import {
   parseReviewReport,
@@ -50,6 +53,11 @@ export interface ReviewActivityInput {
   workspacePath: string;
   primaryPath: string;
   baseSha: string;
+  /**
+   * docs/specs/change-sets.md. Every target of a change set, at its base SHA, in this check sprite.
+   * The reviewer reads the diff of each one. Absent for a run with one target.
+   */
+  targets?: DiffTarget[];
   goal: string;
   contextContract: string | null;
   constraints: string[];
@@ -394,27 +402,33 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
       // Step 5. A `SourceDiffError` is a real fault, so it must propagate rather than be caught
       // here.
-      const diff = await captureSourceDiff(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        { ref, primaryPath: input.primaryPath, baseSha: input.baseSha },
-      );
+      // docs/specs/change-sets.md. A change set shows the diff of every target, and the guard below
+      // covers every target.
+      const gitDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
+      const setTargets = input.targets !== undefined && input.targets.length > 1 ? input.targets : null;
+      const diff =
+        setTargets === null
+          ? await captureSourceDiff(gitDependencies, { ref, primaryPath: input.primaryPath, baseSha: input.baseSha })
+          : await captureSetDiff(gitDependencies, { ref, targets: setTargets });
+      const treeFingerprint = (): Promise<string> =>
+        setTargets === null
+          ? worktreeFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath })
+          : setFingerprintOf(setTargets, (path) => worktreeFingerprint(gitDependencies, { ref, primaryPath: path }));
+      const gitStateFingerprint = (): Promise<string> =>
+        setTargets === null
+          ? worktreeGitStateFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath })
+          : setFingerprintOf(setTargets, (path) => worktreeGitStateFingerprint(gitDependencies, { ref, primaryPath: path }));
 
       // Step 6. The staged tree object of the primary worktree, before the Reviewer session
       // runs. The activity compares this to the same fingerprint taken after the session
       // returns. A Reviewer write to the tracked content of the primary worktree is a fact
       // Factoree can detect.
-      const beforeFingerprint = await worktreeFingerprint(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        { ref, primaryPath: input.primaryPath },
-      );
+      const beforeFingerprint = await treeFingerprint();
 
       // The tree object cannot see `HEAD` or the ref set. A Reviewer that commits, resets, or
       // creates a branch changes the base the patch is taken against, and no tree comparison
       // catches that. SDD section 40 requires an independent review, not an edit.
-      const beforeGitState = await worktreeGitStateFingerprint(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        { ref, primaryPath: input.primaryPath },
-      );
+      const beforeGitState = await gitStateFingerprint();
 
       // Step 7. The Project test secrets marked for injection. Same rule as the Implementer,
       // SDD section 30.
@@ -523,14 +537,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // A changed fingerprint proves the tracked content of the primary worktree changed, so
       // Factoree refuses this review and publishes nothing. This check must run before the
       // report is read, so a Reviewer write can never decide the Run.
-      const afterFingerprint = await worktreeFingerprint(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        { ref, primaryPath: input.primaryPath },
-      );
-      const afterGitState = await worktreeGitStateFingerprint(
-        { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
-        { ref, primaryPath: input.primaryPath },
-      );
+      const afterFingerprint = await treeFingerprint();
+      const afterGitState = await gitStateFingerprint();
       if (afterFingerprint !== beforeFingerprint || afterGitState !== beforeGitState) {
         return {
           passed: false,

@@ -141,6 +141,36 @@ export const checkoutPrimary = async (
 };
 
 /**
+ * docs/specs/change-sets.md. The checkout of one target of a change set:
+ * `<workspace>/targets/<owner>/<repo>`. A run with one target keeps `<workspace>/primary`, so its
+ * warm snapshots stay valid. Each segment must be one safe path segment, so no name escapes the
+ * `targets/` directory.
+ */
+export const targetPathOf = (workspacePath: string, repository: string): string => {
+  const parts = repository.split("/");
+  const safe = (segment: string | undefined): segment is string =>
+    segment !== undefined && segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment);
+  const [owner, name] = parts;
+  if (parts.length !== 2 || !safe(owner) || !safe(name)) {
+    throw new RunConfigurationError(`the target repository name "${repository}" is not one owner and one repository name`);
+  }
+  return `${workspacePath}/targets/${owner}/${name}`;
+};
+
+/** docs/specs/change-sets.md. Checks out one target of a change set. The worktree is writable. */
+export const checkoutTarget = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec & { repository: string },
+  credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> => {
+  const path = targetPathOf(ref.workspacePath, spec.repository);
+  // `git clone` makes the leading directories of its target.
+  const baseSha = await cloneRepository(sandbox, ref, spec, path, credential);
+  return { url: spec.url, path, baseSha, readOnly: false };
+};
+
+/**
  * docs/specs/kiln-sandbox-provider.md. Moves the primary checkout of a sandbox restored from a warm
  * snapshot to the ref of this Run. `git clean` keeps ignored files, so the dependencies the
  * bootstrap installed stay, and the bootstrap that follows only updates them.
