@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  gateTargetProposals,
   gateRefinerProposal,
   overLimitMessage,
   parseRefinerProposal,
@@ -232,5 +233,51 @@ describe("by-eye criteria (docs/specs/by-eye-criteria-and-selector-recheck.md)",
     expect(gated.forYourEye).toEqual([]);
     expect(gated.unverifiable).toEqual(["Not visible.", "No route.", "Foreign route."]);
     expect(gated.notBuilt).toEqual(["Uncited."]);
+  });
+});
+
+describe("gateTargetProposals (docs/specs/change-sets.md, DI-21.139)", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const lines: Record<string, string> = { "acme/web\nsrc/api.ts\n12": "fetch('/v1/orders')", "acme/api\nsrc/routes.ts\n4": "router.get('/v1/orders')" };
+  const context = {
+    targets: ["acme/api"],
+    siblings: [{ repository: "acme/web", commitSha: SHA }],
+    cited: (repository: string, file: string, line: number) => lines[`${repository}\n${file}\n${String(line)}`] ?? null,
+  };
+
+  it("adds a cited sibling as a determined target at the SHA it read, and records the cited edge", () => {
+    const gated = gateTargetProposals(
+      {
+        targets: [{ repository: "Acme/Web", file: "src/api.ts", line: 12, reason: "it calls the renamed endpoint." }],
+        edges: [{ provider: "acme/api", consumer: "acme/web", file: "src/api.ts", line: 12 }],
+      },
+      context,
+    );
+    expect(gated.added.map((target) => [target.repository, target.commitSha, target.decision.kind, target.decision.statement])).toEqual([
+      ["acme/web", SHA, "target", "added acme/web as a target at 0123456"],
+    ]);
+    expect(gated.added[0]?.decision.reason).toContain("src/api.ts line 12");
+    expect(gated.edges).toEqual([{ provider: "acme/api", consumer: "acme/web", file: "src/api.ts", line: 12 }]);
+    expect(gated.refused).toEqual([]);
+  });
+
+  it("refuses a target with no such line, a repository it did not read, and an edge outside the set", () => {
+    const gated = gateTargetProposals(
+      {
+        targets: [
+          { repository: "acme/web", file: "src/api.ts", line: 99, reason: "x" },
+          { repository: "other/repo", file: "a.ts", line: 1, reason: "x" },
+        ],
+        edges: [{ provider: "acme/api", consumer: "acme/web", file: "src/api.ts", line: 12 }],
+      },
+      context,
+    );
+    expect(gated.added).toEqual([]);
+    expect(gated.edges).toEqual([]);
+    expect(gated.refused.map((decision) => decision.statement)).toEqual([
+      "did not add acme/web as a target",
+      "did not add other/repo as a target",
+      "did not record the edge from acme/api to acme/web",
+    ]);
   });
 });

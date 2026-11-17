@@ -3,7 +3,7 @@ import { contextFilesBody, imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/12";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/13";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -145,6 +145,16 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
                 `{ "missingHosts": [{ "host": string, "reason": string }] } to ${fields.resultPath}, and end the session. ` +
                 "Factoree stops the Run and asks a human to allow the host. A new Run then gets the new allow list.",
             ),
+          ),
+        ]),
+    ...(fields.resultPath === undefined || fields.resultPath === null
+      ? []
+      : [
+          section(
+            "Other repositories",
+            "The repositories this Run changes are fixed. Change no other repository. When the change also needs a change in another repository, " +
+              `finish the work in the repositories of this Run, and write { "missingRepositories": [{ "repository": "owner/repo", "reason": string }] } to ${fields.resultPath}. ` +
+              "Factoree lists the repository as not built, and a human decides on it.",
           ),
         ]),
     section("Repair findings", list(fields.repairFindings, "None. This is the first attempt.")),

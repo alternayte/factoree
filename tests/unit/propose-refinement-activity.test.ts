@@ -166,7 +166,7 @@ describe("the proposeRefinement activity (docs/specs/refiner-agent.md)", () => {
     expect(output.status).toBe("proposed");
     expect(runner.resumes).toHaveLength(0);
     expect(runner.runs).toHaveLength(2);
-    expect(runner.runs[1]?.promptVersion).toBe("refiner@10+refiner-limit-correction@1");
+    expect(runner.runs[1]?.promptVersion).toBe("refiner@11+refiner-limit-correction@1");
     expect(recorded.map((entry) => entry.idempotencyKey)).toContain("run:run-1:refiner:limit-correction");
   });
 
@@ -187,5 +187,42 @@ describe("the proposeRefinement activity (docs/specs/refiner-agent.md)", () => {
     expect(output.status).toBe("unavailable");
     expect(output.message).toBeUndefined();
     expect(runner.resumes).toHaveLength(0);
+  });
+});
+
+describe("the proposeRefinement activity, targets and edges (docs/specs/change-sets.md, DI-21.139)", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const proposal = JSON.stringify({
+    ...JSON.parse(PROPOSAL),
+    targets: [{ repository: "acme/web", file: "src/api.ts", line: 12, reason: "it calls the renamed endpoint" }],
+    edges: [{ provider: "acme/api", consumer: "acme/web", file: "src/api.ts", line: 12 }],
+  });
+  const siblingInput: ProposeRefinementActivityInput = {
+    ...input,
+    primaryRepository: "acme/api",
+    siblings: [{ repository: "acme/web", path: "/workspace/siblings/acme/web", commitSha: SHA }],
+    targetsOpen: true,
+  };
+
+  it("reads each cited line in its clone and returns the target the gate accepted", async () => {
+    const { activities, sandbox, runner } = build({ trees: ["a".repeat(40)], proposal });
+    const base = sandbox.onExec!;
+    sandbox.onExec = (command) =>
+      command.file === "sh" && command.args[1] === "/workspace/siblings/acme/web" && command.args[2] === "src/api.ts" && command.args[3] === "12"
+        ? { exitCode: 0, stdout: "fetch('/v1/orders')\n", stderr: "" }
+        : base(command);
+    const output = await run(activities, siblingInput);
+
+    expect(output.status).toBe("proposed");
+    expect(output.addedTargets?.map((target) => [target.repository, target.commitSha])).toEqual([["acme/web", SHA]]);
+    expect(output.edges).toEqual([{ provider: "acme/api", consumer: "acme/web", file: "src/api.ts", line: 12 }]);
+    expect(runner.runs[0]?.prompt).toContain(`- acme/web: /workspace/siblings/acme/web at ${SHA}`);
+  });
+
+  it("adds nothing when the run cannot add a target", async () => {
+    const { activities } = build({ trees: ["a".repeat(40)], proposal });
+    const output = await run(activities, { ...siblingInput, targetsOpen: false });
+    expect(output.addedTargets).toBeUndefined();
+    expect(output.decisions.some((decision) => decision.kind === "target")).toBe(false);
   });
 });

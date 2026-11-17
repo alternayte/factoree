@@ -111,6 +111,7 @@ const build = (
     createRunTarget: vi.fn().mockResolvedValue({ id: "target-1" }),
     updateRunTarget: vi.fn().mockResolvedValue(undefined),
     listRunTargets: vi.fn().mockResolvedValue([]),
+    recordTargetEdges: vi.fn().mockResolvedValue(undefined),
     setConfigSha: vi.fn().mockResolvedValue(undefined),
     setPullRequestPreview: vi.fn().mockResolvedValue(null),
     appendDecision: vi.fn().mockResolvedValue(undefined),

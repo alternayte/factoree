@@ -6,7 +6,11 @@ import type { SpriteReaper } from "~/domain/runs/sprite-reaper.js";
 import { SandboxCreateError, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { SandboxProviderDownError } from "~/domain/runs/sandbox-slot-error.js";
 import { PROVIDER_DOWN_MS } from "~/domain/settings/sandbox-providers.js";
-import type { BeforeBootstrap, PreparedSandbox } from "~/domain/runs/sandbox-manager.js";
+import type { BeforeBootstrap, PreparedSandbox, SiblingCheckout, SiblingReader } from "~/domain/runs/sandbox-manager.js";
+import type { EvidenceStore } from "~/domain/evidence/evidence.js";
+import type { AgentRunProductRepositoryInput } from "~/domain/runs/product-repository.js";
+import { buildSiblingCloner } from "~/domain/runs/sibling-clone.js";
+import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
 import type { VerifiedPatch } from "~/domain/publishing/patch.js";
 import { applyPatch, capturePatch, PatchError, setPatchSha256 } from "~/domain/publishing/patch.js";
 import { checkDefiningFilesOf } from "~/domain/runs/check-defining-files.js";
@@ -102,6 +106,11 @@ export interface SandboxActivityDependencies {
    * delivery. Without it an image or a Linear or GitHub link is skipped with the reason.
    */
   workItemContent?: WorkItemContentPort | undefined;
+  /**
+   * docs/specs/change-sets.md, DI-21.138. Where each sibling clone records its `sibling_read`
+   * evidence. Without it the work sprite clones no sibling.
+   */
+  evidence?: EvidenceStore | undefined;
 }
 
 export interface PrepareSandboxActivityInput {
@@ -115,6 +124,12 @@ export interface PrepareSandboxActivityInput {
    */
   targets?: TargetInput[];
   references: RepositorySpec[];
+  /**
+   * docs/specs/change-sets.md, DI-21.138. The other present repositories of the product, which the
+   * refiner reads through `clone_sibling`. Only the work sprite of a run that can add a target gets
+   * them. Absent for every other sandbox.
+   */
+  siblings?: { repositoryBaseUrl: string; repositories: AgentRunProductRepositoryInput[] };
   defaults: ProjectDefaults;
   environment: Record<string, string>;
   /** SDD section 16. The organization skills repository of the Project, or null. */
@@ -193,6 +208,8 @@ export interface PrepareSandboxActivityOutput {
    * Absent in a history recorded before change sets.
    */
   targets?: SandboxTarget[];
+  /** DI-21.138. The read-only sibling clones of the work sprite. Absent when it holds none. */
+  siblings?: SiblingCheckout[];
   referencePaths: string[];
   /** SDD section 55 requires the recorded commit SHA of every repository. */
   referenceBaseShas: string[];
@@ -389,6 +406,58 @@ const build = async (
     );
   }
 
+  // docs/specs/change-sets.md, DI-21.138. The refiner reads each other repository of the product
+  // through `clone_sibling`: the Action Policy decides, the clone is read-only at the head of the
+  // default branch, and each clone records `sibling_read` evidence with that SHA. Each installation
+  // mints one credential that reads its own siblings. A sibling that does not clone is left out,
+  // because a sibling read is context for the refiner and never a precondition of the run.
+  let siblings: SiblingReader | undefined;
+  const siblingInput = kind === "work" ? (input.siblings ?? null) : null;
+  const evidence = dependencies.evidence;
+  if (siblingInput !== null && siblingInput.repositories.length > 0 && evidence !== undefined) {
+    const urlOf = (fullName: string): string => buildRepositoryUrl(siblingInput.repositoryBaseUrl, fullName);
+    const siblingCredentials = new Map<string, string | null>();
+    for (const repository of siblingInput.repositories) {
+      if (siblingCredentials.has(repository.githubInstallationId)) continue;
+      siblingCredentials.set(
+        repository.githubInstallationId,
+        await mint(
+          repository.githubInstallationId,
+          siblingInput.repositories.filter((other) => other.githubInstallationId === repository.githubInstallationId).map((other) => urlOf(other.fullName)),
+        ),
+      );
+    }
+    siblings = {
+      urls: siblingInput.repositories.map((repository) => urlOf(repository.fullName)),
+      read: async (sandbox, ref) => {
+        const read: SiblingCheckout[] = [];
+        for (const repository of siblingInput.repositories) {
+          const credential = siblingCredentials.get(repository.githubInstallationId) ?? null;
+          try {
+            const clone = await buildSiblingCloner({
+              sandbox,
+              ref,
+              evidence,
+              tenantId: input.tenantId,
+              repositories: siblingInput.repositories,
+              repositoryBaseUrl: siblingInput.repositoryBaseUrl,
+              ...(credential === null ? {} : { credential }),
+            }).cloneSibling({ fullName: repository.fullName, runId: input.runId, role: "refiner" });
+            read.push({ repository: repository.fullName, path: clone.path, commitSha: clone.commitSha });
+          } catch (error) {
+            dependencies.logger.warn("a sibling repository did not clone, so the refiner does not read it", {
+              run_id: input.runId,
+              repository: repository.fullName,
+              error: dependencies.redactor.redactText(String(error)).slice(0, 500),
+              step: "prepare",
+            });
+          }
+        }
+        return read;
+      },
+    };
+  }
+
   // docs/specs/skill-registry.md. The worker resolves the registry and checks every archive before
   // the sandbox exists. Only the work sprite gets the skills, because only the implementer reads
   // them. A fault that repeats on a retry is a configuration fault.
@@ -439,6 +508,7 @@ const build = async (
           }),
         }),
     references: input.references,
+    ...(siblings === undefined ? {} : { siblings }),
     // Issue #43, DI-21.67. The Product repair budget applies when the repository sets none.
     defaults: { ...input.defaults, runners, ...(product === null ? {} : { repairMaxAttempts: product.repairMaxAttempts }) },
     environment: { ...input.environment, ...runnerEnvironment },
@@ -476,6 +546,7 @@ const toOutput = (prepared: PreparedSandbox): PrepareSandboxActivityOutput => ({
   primaryPath: prepared.checkout.primary.path,
   baseSha: prepared.checkout.primary.baseSha,
   targets: prepared.targets.map((target) => ({ repository: target.repository, path: target.checkout.path, baseSha: target.checkout.baseSha })),
+  ...(prepared.siblings.length === 0 ? {} : { siblings: prepared.siblings }),
   referencePaths: prepared.checkout.references.map((entry) => entry.path),
   // SDD section 55 requires the recorded SHA of every reference repository, not only the
   // primary one.

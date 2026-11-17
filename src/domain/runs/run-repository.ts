@@ -166,6 +166,14 @@ export interface TargetPatch {
   attempt: number | null;
 }
 
+/** docs/specs/change-sets.md. One edge between two run targets, named by their repositories. */
+export interface TargetEdgeRecord {
+  providerRepositoryId: string;
+  consumerRepositoryId: string;
+  file: string;
+  line: number;
+}
+
 /** SDD section 44 and section 46. The immutable publication facts of one run target. */
 export interface TargetPublication {
   patchSha256: string;
@@ -312,6 +320,12 @@ export interface RunRepository {
   ): Promise<void>;
   /** Specification section 18. The `RunTarget` rows of one Run, in the order they were selected. */
   listRunTargets(tenantId: string, runId: string): Promise<RunTargetRecord[]>;
+  /**
+   * docs/specs/change-sets.md, DI-21.141. Replaces the provider-to-consumer edges of a run and the
+   * merge order of its targets: each place from 1, and null for a target with no place. A retry
+   * writes the same rows.
+   */
+  recordTargetEdges(tenantId: string, runId: string, edges: TargetEdgeRecord[], places: Array<{ repositoryId: string; place: number }>): Promise<void>;
   /**
    * Specification section 8, docs/specs/change-sets.md. Records the SHA-256 of
    * `.factoree/config.yaml` as read at the base commit of the run target of `repositoryFullName`.

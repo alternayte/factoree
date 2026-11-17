@@ -68,6 +68,12 @@ export interface PrepareSandboxInput {
    * `primary` then names the first of them. Absent, or one entry, for a run with one target.
    */
   targets?: TargetSpec[];
+  /**
+   * docs/specs/change-sets.md, DI-21.138. The other repositories of the product that the refiner
+   * reads. `read` clones them while the checkout hosts are still allowed, through `clone_sibling`.
+   * Only the work sprite of a run that can add a target gets it.
+   */
+  siblings?: SiblingReader;
   /** Project test secrets only. SDD section 30 forbids every other credential here. */
   environment?: Record<string, string>;
   /** SDD section 16. The organization-wide skills repository of the Project, when it has one. */
@@ -124,6 +130,20 @@ export interface TargetSpec extends RepositorySpec {
   repository: string;
   /** The read-only clone credential of the installation that grants the target. */
   credential?: string;
+}
+
+/** docs/specs/change-sets.md, DI-21.138. One read-only sibling clone, at the commit it read. */
+export interface SiblingCheckout {
+  repository: string;
+  path: string;
+  commitSha: string;
+}
+
+/** DI-21.138. Clones the sibling repositories. A sibling that does not clone is left out. */
+export interface SiblingReader {
+  /** The clone URLs, so the checkout policy and the credential binding hold their hosts. */
+  urls: string[];
+  read(sandbox: Sandbox, ref: SandboxRef): Promise<SiblingCheckout[]>;
 }
 
 /** docs/specs/change-sets.md. One checked-out target, with the configuration its own file gives. */
@@ -197,6 +217,8 @@ export interface PreparedSandbox {
   checkout: CheckoutResult;
   /** docs/specs/change-sets.md. Every target, in set order. One entry, the primary, for one target. */
   targets: PreparedTarget[];
+  /** DI-21.138. The read-only sibling clones of the refiner. Empty for every other sandbox. */
+  siblings: SiblingCheckout[];
   baselineCheckpoint: CheckpointRef | null;
   /** Built from `.factoree/config.yaml` and the Project defaults. SDD sections 15 and 57. */
   runtime: ProjectRuntimeConfig;
@@ -553,6 +575,7 @@ export class SandboxManager {
       ...(setTargets === null ? [input.primary.url] : setTargets.map((target) => target.url)),
       ...input.references.map((reference) => reference.url),
       ...(input.organizationSkills === undefined ? [] : [input.organizationSkills.url]),
+      ...(input.siblings?.urls ?? []),
     ]);
     const access = await this.credentialAccessOf(input, checkoutRepositories);
     assertBindable(sandbox, access);
@@ -603,6 +626,7 @@ export class SandboxManager {
       // must be allowed there.
       const specs = [...(setTargets ?? [input.primary]), ...input.references];
       if (input.organizationSkills !== undefined) specs.push(input.organizationSkills);
+      for (const url of input.siblings?.urls ?? []) specs.push({ url, ref: "HEAD" });
       const repositoryHosts = checkoutHosts(specs);
 
       // Policy one. Only the repository hosts. The file that names the real allow list does not
@@ -861,6 +885,10 @@ export class SandboxManager {
               input.repositoryCredential,
             );
 
+      // docs/specs/change-sets.md, DI-21.138. The siblings clone while the checkout hosts are allowed,
+      // after the warm snapshot, so no snapshot holds them.
+      const siblings = input.siblings === undefined ? [] : await input.siblings.read(sandbox, ref);
+
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.
       // SDD section 29.
@@ -890,6 +918,7 @@ export class SandboxManager {
         ref,
         checkout,
         targets,
+        siblings,
         baselineCheckpoint,
         runtime,
         verifyCommands,

@@ -4,7 +4,7 @@
  */
 export interface FactoreeDecision {
   /** What the decision settled. */
-  kind: "target" | "criterion" | "dropped" | "not_built" | "visual_evidence" | "refiner";
+  kind: "target" | "criterion" | "dropped" | "not_built" | "visual_evidence" | "refiner" | "merge_order";
   /** The decision as a verb phrase after "Factoree", for example "chose alternayte/c-dash". */
   statement: string;
   /** Why, as a clause after "because". */

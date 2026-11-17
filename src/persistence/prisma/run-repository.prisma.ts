@@ -14,6 +14,7 @@ import type {
   RunRecord,
   RunRepository,
   RunStatusPatch,
+  TargetEdgeRecord,
   TargetPatch,
   TargetPublication,
 } from "~/domain/runs/run-repository.js";
@@ -422,6 +423,40 @@ export class PrismaRunRepository implements RunRepository {
       configSha: row.configSha,
       mergeOrder: row.mergeOrder,
     }));
+  }
+
+  async recordTargetEdges(
+    tenantId: string,
+    runId: string,
+    edges: TargetEdgeRecord[],
+    places: Array<{ repositoryId: string; place: number }>,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // The tenant filter is part of the query. SDD section 52 forbids a write across the boundary.
+      const targets = await tx.runTarget.findMany({ where: { tenantId, runId }, select: { id: true, repositoryId: true } });
+      const targetOf = (repositoryId: string): string => {
+        const target = targets.find((candidate) => candidate.repositoryId === repositoryId);
+        if (target === undefined) throw new Error(`no RunTarget for run "${runId}" and repository "${repositoryId}" of tenant "${tenantId}"`);
+        return target.id;
+      };
+      await tx.runTargetEdge.deleteMany({ where: { tenantId, runId } });
+      if (edges.length > 0) {
+        await tx.runTargetEdge.createMany({
+          data: edges.map((edge) => ({
+            tenantId,
+            runId,
+            providerTargetId: targetOf(edge.providerRepositoryId),
+            consumerTargetId: targetOf(edge.consumerRepositoryId),
+            citationFile: edge.file,
+            citationLine: edge.line,
+          })),
+        });
+      }
+      await tx.runTarget.updateMany({ where: { tenantId, runId }, data: { mergeOrder: null } });
+      for (const place of places) {
+        await tx.runTarget.update({ where: { id: targetOf(place.repositoryId) }, data: { mergeOrder: place.place } });
+      }
+    });
   }
 
   async appendDecision(tenantId: string, runId: string, decision: FactoreeDecision): Promise<void> {

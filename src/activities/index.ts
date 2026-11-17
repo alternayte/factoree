@@ -326,6 +326,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     contextContracts: dependencies.contextContracts,
     contextDelivery: dependencies.contextDelivery,
     workItemContent: dependencies.workItemContent,
+    evidence: dependencies.evidence,
   }),
   ...createWorkItemActivities({
     content: dependencies.workItemContent ?? NO_WORK_ITEM_CONTENT,

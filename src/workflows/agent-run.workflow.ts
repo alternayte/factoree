@@ -78,6 +78,7 @@ import {
   type TargetSetOutcome,
 } from "../domain/routing/select-targets.js";
 import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
+import { mergeOrderDecision } from "../domain/runs/merge-order.js";
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time but
 // `sandbox.js`, which imports nothing.
 import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from "../domain/runs/egress.js";
@@ -310,6 +311,13 @@ const PR_WORKFLOW_PATCH = "pr-workflow";
  * the set of the run it follows. An older history selects one target.
  */
 const CHANGE_SET_PATCH = "change-sets";
+
+/**
+ * docs/specs/change-sets.md, slice 5. The refiner can add a target and cite edges, the work sprite
+ * prepares again for an added target, and an implementer that names another repository gets a
+ * not-built decision. An older history adds nothing after the refiner.
+ */
+const CHANGE_SET_REFINER_PATCH = "change-set-refiner-targets";
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -2483,7 +2491,8 @@ export async function agentRunWorkflow(
       await activities.setRunStatus({ runId: id, status });
 
       // The work sprite and every check sprite are prepared from the same input.
-      const prepareInput = {
+      // docs/specs/change-sets.md, DI-21.140. A target the refiner adds joins it.
+      let prepareInput = {
         runId: id,
         tenantId: input.tenantId,
         productId: input.productId,
@@ -2527,59 +2536,82 @@ export async function agentRunWorkflow(
           ? prepareInput
           : { ...prepareInput, pullRequestHead: prFollowUp.headSha, ...(prFollowUp.baseUpdate === undefined ? {} : { pullRequestMerge: true }) };
 
+      // docs/specs/change-sets.md, DI-21.138. The refiner of a run that can add a target reads the
+      // other present repositories of the product. A PR follow-up run and a bring-current run keep
+      // their target, so they read none.
+      const refinerTargetsOpen = prFollowUp === null && bringCurrent === null;
+      const siblingRepositories = refinerTargetsOpen
+        ? targetRepositories.filter(
+            (repository) =>
+              repository.absentSince === null &&
+              !targetBases.some((target) => target.slug.toLowerCase() === repository.fullName.toLowerCase()),
+          )
+        : [];
+      const firstWorkInput =
+        siblingRepositories.length === 0
+          ? workInput
+          : { ...workInput, siblings: { repositoryBaseUrl: input.product.repositoryBaseUrl, repositories: siblingRepositories } };
+
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
       // retention window of SDD section 51 has passed.
-      // A const holds the prepared sandbox, because narrowing of a let does not survive into a
-      // closure.
-      let preparedSandbox: PrepareSandboxActivityOutput;
-      try {
-        const work = await withSandboxSlot(async (budgetMs) => {
-          if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(workInput);
-          // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
-          // there, then prepares the work sprite on it. A provider that fails the create is marked
-          // down, the run gives its slots back, and it selects again. With no provider that has
-          // room, the selection throws the slot error, and `withSandboxSlot` waits.
-          for (;;) {
-            const budget = Math.max(1, Math.min(budgetMs, remainingMs()));
-            await buildSandboxActivities(budget).selectSandboxProvider({
-              runId: id,
-              tenantId: input.tenantId,
-              productId: input.productId,
-              repositoryUrl: sandbox.primary.url,
-              ...(targetBases.length > 1
-                ? { targetRepositoryUrls: targetBases.slice(1).map((target) => buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug)) }
-                : {}),
-            });
-            try {
-              return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(workInput);
-            } catch (error) {
-              if (!isSandboxProviderDown(error)) throw error;
+      // docs/specs/change-sets.md, DI-21.140. A target the refiner adds prepares the work sprite again.
+      const prepareWorkSprite = async (
+        workSpriteInput: typeof firstWorkInput,
+      ): Promise<{ prepared: PrepareSandboxActivityOutput } | { ended: AgentRunWorkflowResult }> => {
+        try {
+          const work = await withSandboxSlot(async (budgetMs) => {
+            if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(workSpriteInput);
+            // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
+            // there, then prepares the work sprite on it. A provider that fails the create is marked
+            // down, the run gives its slots back, and it selects again. With no provider that has
+            // room, the selection throws the slot error, and `withSandboxSlot` waits.
+            for (;;) {
+              const budget = Math.max(1, Math.min(budgetMs, remainingMs()));
+              await buildSandboxActivities(budget).selectSandboxProvider({
+                runId: id,
+                tenantId: input.tenantId,
+                productId: input.productId,
+                repositoryUrl: sandbox.primary.url,
+                ...(targetBases.length > 1
+                  ? { targetRepositoryUrls: targetBases.slice(1).map((target) => buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug)) }
+                  : {}),
+              });
+              try {
+                return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(workSpriteInput);
+              } catch (error) {
+                if (!isSandboxProviderDown(error)) throw error;
+              }
             }
+          });
+          if (work === null) {
+            if (stopRequested) return { ended: await cancelRun() };
+            return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
           }
-        });
-        if (work === null) {
-          if (stopRequested) return await cancelRun();
-          return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return { prepared: work };
+        } catch (error) {
+          // A configuration fault is not an infrastructure fault. The Run ends in
+          // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
+          if (isConfigurationFault(error)) {
+            return {
+              ended: await failRun(
+                "CONFIGURATION_INVALID",
+                withCause(
+                  "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
+                    "Repair the repository reference, the reference repositories, or the bootstrap command.",
+                  error,
+                ),
+              ),
+            };
+          }
+          // Preparation is bounded by the remaining budget. A budget that ran out during
+          // preparation is a Run timeout, not an internal fault.
+          if (remainingMs() > 0) throw error;
+          return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
         }
-        preparedSandbox = work;
-      } catch (error) {
-        // A configuration fault is not an infrastructure fault. The Run ends in
-        // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
-        if (isConfigurationFault(error)) {
-          return await failRun(
-            "CONFIGURATION_INVALID",
-            withCause(
-              "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
-                "Repair the repository reference, the reference repositories, or the bootstrap command.",
-              error,
-            ),
-          );
-        }
-        // Preparation is bounded by the remaining budget. A budget that ran out during
-        // preparation is a Run timeout, not an internal fault.
-        if (remainingMs() > 0) throw error;
-        return await failRun("RUN_TIMEOUT", timeoutMessage);
-      }
+      };
+      const firstWork = await prepareWorkSprite(firstWorkInput);
+      if ("ended" in firstWork) return firstWork.ended;
+      let preparedSandbox: PrepareSandboxActivityOutput = firstWork.prepared;
       sprite = preparedSandbox;
       // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The Run ends FAILED_CONFIGURATION
       // and the post names each host, its reason and where to add it. A reply starts a follow-up run
@@ -2634,6 +2666,10 @@ export async function agentRunWorkflow(
             workspacePath: preparedSandbox.workspacePath,
             primaryPath: preparedSandbox.primaryPath,
             ...setTargetsInput(preparedSandbox),
+            // docs/specs/change-sets.md, DI-21.139. The refiner may add a target and cite edges.
+            primaryRepository: resolvedContext.primary.slug,
+            ...(preparedSandbox.siblings === undefined ? {} : { siblings: preparedSandbox.siblings }),
+            ...(refinerTargetsOpen ? { targetsOpen: true } : {}),
             // DI-21.54. The kept human comments are Work Item text too, so the refiner reads them
             // and the gate finds a criterion quoted from a comment.
             workItemText:
@@ -2706,6 +2742,78 @@ export async function agentRunWorkflow(
       // docs/specs/own-proposals-and-parallel-runs.md. Every proposal of the gate is determined, so
       // Factoree takes it and asks nobody. The proof pack lists each one for the reviewer.
       for (const decision of proposal.decisions) await takeDecision(decision);
+
+      // docs/specs/change-sets.md, DI-21.140. Each target the gate accepted joins the run at the SHA
+      // the refiner read, after the identity check of its base. Its decision is a determined
+      // proposal, so nobody is asked. The edges give the merge order (DI-21.141). The work sprite then
+      // prepares again with the whole set, from a set snapshot when one exists. The set freezes here,
+      // with the Validation Contract that follows.
+      if (refinerTargetsOpen && patched(CHANGE_SET_REFINER_PATCH)) {
+        let joined = 0;
+        for (const added of proposal.addedTargets ?? []) {
+          const repository = targetRepositories.find((candidate) => candidate.fullName.toLowerCase() === added.repository.toLowerCase());
+          if (repository === undefined) continue;
+          await activities.recordRunTarget({
+            tenantId: input.tenantId,
+            runId: id,
+            repositoryId: repository.id,
+            selectionReason: `the refiner cited ${added.file} line ${String(added.line)}: ${added.reason}`,
+          });
+          const identity = await activities.verifyTargetIdentity({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            productSlug: input.product.productSlug,
+            repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.fullName),
+            baseSha: added.commitSha,
+            githubInstallationId: repository.githubInstallationId,
+          });
+          if (stopRequested) return await cancelRun();
+          if (!identity.matched) {
+            return await endRoutingMismatch(input.product.productSlug, identity.declaredProduct ?? "an unknown Product");
+          }
+          await activities.recordRunTargetFacts({ tenantId: input.tenantId, runId: id, repositoryId: repository.id, baseSha: added.commitSha });
+          if (runTargets.length === 0) {
+            runTargets = [{ id: primaryRepositoryId, fullName: resolvedContext.primary.slug, githubInstallationId: primaryRepositoryInstallationId }];
+          }
+          runTargets.push({ id: repository.id, fullName: repository.fullName, githubInstallationId: repository.githubInstallationId });
+          targetBases.push({
+            id: repository.id,
+            fullName: repository.fullName,
+            githubInstallationId: repository.githubInstallationId,
+            slug: repository.fullName,
+            sha: added.commitSha,
+          });
+          await takeDecision(added.decision);
+          joined += 1;
+        }
+        const edges = proposal.edges ?? [];
+        if (runTargets.length > 1 && edges.length > 0) {
+          const order = await activities.recordRunTargetEdges({ tenantId: input.tenantId, runId: id, edges });
+          const decision = mergeOrderDecision(order, edges);
+          if (decision !== null) await takeDecision(decision);
+        }
+        if (joined > 0) {
+          if (stopRequested) return await cancelRun();
+          prepareInput = {
+            ...prepareInput,
+            targets: targetBases.map((target) => ({
+              repository: target.slug,
+              url: buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug),
+              ref: target.sha,
+              githubInstallationId: target.githubInstallationId,
+            })),
+          };
+          status = "PREPARING";
+          await activities.setRunStatus({ runId: id, status });
+          const again = await prepareWorkSprite(prepareInput);
+          if ("ended" in again) return again.ended;
+          preparedSandbox = again.prepared;
+          sprite = preparedSandbox;
+          if (stopRequested) return await cancelRun();
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+      }
 
       // docs/specs/refiner-agent.md. The Validation Contract freezes after the refiner and before
       // the Implementer. SDD section 24 requires the contract to freeze before implementation
@@ -2797,6 +2905,10 @@ export async function agentRunWorkflow(
       // docs/specs/pr-review-merge-and-deploy.md. The first attempt of a PR reviewer follow-up repairs
       // the findings the triage kept.
       let repairFindings: string[] = initialRepairFindings;
+      // docs/specs/change-sets.md, DI-21.142. The repositories outside the frozen set an implementer
+      // named, and the finding each later attempt reads.
+      const frozenSetRepositories = new Set<string>();
+      const frozenSetFindings: string[] = [];
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
       // Issue #43, DI-21.67. A spent budget names its size and where it comes from. Only the
@@ -2877,6 +2989,27 @@ export async function agentRunWorkflow(
         // the allow list does not hold ends the Run, whatever else the session reported.
         const implementerMissingHosts = implementation?.missingHosts ?? [];
         if (implementerMissingHosts.length > 0) return await failMissingHosts("implementer", implementerMissingHosts);
+
+        // docs/specs/change-sets.md, DI-21.142. The set froze with the Validation Contract. A
+        // repository the implementer names outside it is a new criterion: Factoree lists it as not
+        // built, and each later attempt reads the finding.
+        if (patched(CHANGE_SET_REFINER_PATCH)) {
+          for (const missing of implementation?.missingRepositories ?? []) {
+            const name = missing.repository.trim();
+            const key = name.toLowerCase();
+            if (name === "" || frozenSetRepositories.has(key) || targetBases.some((target) => target.slug.toLowerCase() === key)) continue;
+            frozenSetRepositories.add(key);
+            const reason = missing.reason.trim().replace(/[.\s]+$/, "");
+            await takeDecision({
+              kind: "not_built",
+              statement: `did not build the change to ${name}`,
+              reason: `the targets froze with the Validation Contract, and a change to another repository is a new criterion${reason === "" ? "" : `: ${reason}`}`,
+            });
+            frozenSetFindings.push(
+              `${name} is not a target of this Run, and the targets froze with the Validation Contract. Make the change work in the targets alone. Factoree lists ${name} as not built.`,
+            );
+          }
+        }
 
         // docs/specs/agent-session-usage-and-hangs.md. The first hang resumes the session once
         // with "continue", and that attempt uses the repair budget. A second hang in the same
@@ -3102,7 +3235,7 @@ export async function agentRunWorkflow(
           repairCount += 1;
           signalRepairs = repairCount;
           attempt += 1;
-          repairFindings = verification.failures;
+          repairFindings = [...frozenSetFindings, ...verification.failures];
           status = "REPAIRING";
           await activities.setRunStatus({
             runId: id,
@@ -3274,7 +3407,7 @@ export async function agentRunWorkflow(
             repairCount += 1;
             signalRepairs = repairCount;
             attempt += 1;
-            repairFindings = [...userValidation.failures, ...reviewFindings];
+            repairFindings = [...frozenSetFindings, ...userValidation.failures, ...reviewFindings];
             status = "REPAIRING";
             await activities.setRunStatus({
               runId: id,
@@ -3452,7 +3585,7 @@ export async function agentRunWorkflow(
         repairCount += 1;
         signalRepairs = repairCount;
         attempt += 1;
-        repairFindings = review.failures;
+        repairFindings = [...frozenSetFindings, ...review.failures];
         status = "REPAIRING";
         await activities.setRunStatus({ runId: id, status, repairCount, repairReason: "REVIEW" });
         await announceRepair(repairCount, maxRepairs, "the independent review found blocking findings", repairFindings.length);

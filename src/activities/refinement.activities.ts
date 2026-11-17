@@ -27,6 +27,10 @@ import {
   REFINER_PROPOSAL_SCHEMA,
   REFINER_QUESTIONS_LIMIT,
   RefinerProposalError,
+  citationKey,
+  gateTargetProposals,
+  type AddedTarget,
+  type GatedTargets,
 } from "~/domain/refinement/refiner-proposal.js";
 import {
   REFINER_LIMIT_CORRECTION_VERSION,
@@ -45,6 +49,7 @@ import type { WorkItemSource } from "~/domain/refinement/work-item.js";
 import type { RunStageStore } from "~/domain/runs/run-stage.js";
 import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
 import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
+import type { TargetEdge } from "~/domain/runs/merge-order.js";
 
 export interface RefineActivityInput {
   runId: string;
@@ -111,6 +116,18 @@ export interface ProposeRefinementActivityInput {
   primaryPath: string;
   /** docs/specs/change-sets.md. Every target of a change set in the work sprite. Absent for one target. */
   targets?: Array<{ repository: string; path: string }>;
+  /** docs/specs/change-sets.md. The `owner/repo` name of the primary target. Absent in an older history. */
+  primaryRepository?: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.138. The other repositories of the product, cloned read-only
+   * at their default-branch head. Absent when the run can add no target.
+   */
+  siblings?: Array<{ repository: string; path: string; commitSha: string }>;
+  /**
+   * DI-21.139. True when the gate takes the proposed targets and edges. False or absent for a PR
+   * follow-up run, a bring-current run and an older history: the proposal then adds nothing.
+   */
+  targetsOpen?: boolean;
   /** The ticket title and description, as Linear holds them. The gate checks quotes against it. */
   workItemText: string;
   goal: string;
@@ -180,6 +197,13 @@ export interface ProposeRefinementActivityOutput {
    * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
    */
   missingHosts?: MissingHost[];
+  /**
+   * docs/specs/change-sets.md, DI-21.139. The targets the gate accepted, each with its decision,
+   * which the workflow records once the target joins the run. Absent when no target is open.
+   */
+  addedTargets?: AddedTarget[];
+  /** DI-21.139. The edges the gate accepted, between targets of the set after the additions. */
+  edges?: TargetEdge[];
 }
 
 const REFINER_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -191,6 +215,34 @@ interface RunnerWithActiveSession {
 const activeSessionOf = (runner: AgentRunner, runId: string): AgentSessionRef | undefined => {
   const candidate = runner as Partial<RunnerWithActiveSession>;
   return typeof candidate.activeSession === "function" ? candidate.activeSession(runId) : undefined;
+};
+
+/**
+ * docs/specs/change-sets.md, DI-21.139. One cited line of a file in a checkout, or null when the
+ * path leaves the checkout, names no file, or the file holds no such line. The sandbox resolves
+ * every link first, so a link cannot read outside the checkout.
+ */
+const readCitation = async (
+  sandbox: Sandbox,
+  ref: { id: string; adapter: string; workspacePath: string },
+  root: string,
+  file: string,
+  line: number,
+): Promise<string | null> => {
+  if (file.startsWith("/") || file.split("/").includes("..") || !Number.isInteger(line) || line < 1) return null;
+  const result = await sandbox.exec(ref, {
+    file: "sh",
+    args: [
+      "-c",
+      'r=$(realpath -e -- "$0") || exit 3; p=$(realpath -e -- "$0/$1") || exit 3; case "$p" in "$r"/*) ;; *) exit 4;; esac; ' +
+        '[ -f "$p" ] || exit 5; awk -v n="$2" \'NR == n { print; found = 1; exit } END { exit found ? 0 : 6 }\' "$p"',
+      root,
+      file,
+      String(line),
+    ],
+    cwd: "/",
+  });
+  return result.exitCode === 0 ? result.stdout.replace(/\n$/, "") : null;
 };
 
 /** Gates a proposal text, or answers null when the text is not a valid proposal. */
@@ -305,6 +357,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         imageFiles: input.imageFiles ?? [],
         primaryRepositoryPath: input.primaryPath,
         ...(setTargets === null ? {} : { targetRepositories: setTargets }),
+        ...(input.targetsOpen === true && (input.siblings ?? []).length > 0 ? { siblingRepositories: input.siblings } : {}),
         proposalPath: path,
         proposalSchema: REFINER_PROPOSAL_SCHEMA,
         criteriaLimit,
@@ -522,8 +575,10 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         return { status: "unavailable", ...empty, reason: "The refiner wrote no proposal." };
       }
       let gated;
+      let parsed;
       try {
-        gated = gateRefinerProposal(parseRefinerProposal(read.stdout, criteriaLimit), input.workItemText, repository);
+        parsed = parseRefinerProposal(read.stdout, criteriaLimit);
+        gated = gateRefinerProposal(parsed, input.workItemText, repository);
       } catch (error) {
         // Issue #39. Still over a cap after the correction round: the human splits the Work Item
         // or raises the limit, so the message names that and not the schema.
@@ -543,6 +598,32 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           hosts: hosts.dropped.map((entry) => entry.host).join(", "),
         });
       }
+      // docs/specs/change-sets.md, DI-21.139. Each citation is read from the clone it names before the
+      // gate decides, so the gate itself stays a pure function of the proposal and the lines.
+      let targetGate: GatedTargets | null = null;
+      if (input.targetsOpen === true) {
+        const primaryName = input.primaryRepository ?? null;
+        const targetRoots = setTargets ?? (primaryName === null ? [] : [{ repository: primaryName, path: input.primaryPath }]);
+        const roots = new Map<string, { repository: string; path: string }>();
+        for (const root of [...targetRoots, ...(input.siblings ?? [])]) roots.set(root.repository.toLowerCase(), root);
+        const citations = new Map<string, string | null>();
+        const wanted = [
+          ...parsed.targets.map((target) => ({ repository: target.repository, file: target.file, line: target.line })),
+          ...parsed.edges.map((edge) => ({ repository: edge.consumer, file: edge.file, line: edge.line })),
+        ];
+        for (const citation of wanted) {
+          const root = roots.get(citation.repository.trim().toLowerCase());
+          const key = citationKey(citation.repository.trim(), citation.file, citation.line);
+          if (root === undefined || citations.has(key)) continue;
+          const text = await readCitation(agent.sandbox, ref, root.path, citation.file, citation.line);
+          citations.set(key, text === null ? null : agent.redactor.redactText(text));
+        }
+        targetGate = gateTargetProposals(parsed, {
+          targets: targetRoots.map((root) => root.repository),
+          siblings: (input.siblings ?? []).map((sibling) => ({ repository: sibling.repository, commitSha: sibling.commitSha })),
+          cited: (name, file, line) => citations.get(citationKey(name, file, line)) ?? null,
+        });
+      }
       dependencies.logger.info("refinement proposed", {
         tenant_id: input.tenantId,
         run_id: input.runId,
@@ -551,16 +632,19 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         implied: gated.implied.length,
         not_built: gated.notBuilt.length,
         for_your_eye: gated.forYourEye.length,
+        targets_added: targetGate?.added.length ?? 0,
+        edges: targetGate?.edges.length ?? 0,
       });
       return {
         status: "proposed",
         accepted: gated.accepted,
-        decisions: refinementDecisions(gated),
+        decisions: [...refinementDecisions(gated), ...(targetGate?.refused ?? [])],
         visualEvidenceGap: gated.visualEvidenceGap,
         forYourEye: gated.forYourEye,
         reason: "",
         hang: null,
         missingHosts: hosts.missing,
+        ...(targetGate === null ? {} : { addedTargets: targetGate.added, edges: targetGate.edges }),
       };
     } finally {
       clearInterval(heartbeat);
