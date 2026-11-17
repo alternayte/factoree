@@ -22,8 +22,8 @@ A product can select `cursor-cloud` as the runner of its implementer. The implem
 - The session usage holds the tokens of `GET /v1/agents/{id}/usage`. The cost comes from the models.dev price of the model, or stays null — the API reports no cost.
 - A launch refused for the plan or for missing GitHub App access fails the run with `CONFIGURATION_INVALID`, and the message names the cause — cloud agents need a Premium plan or higher and the Cursor GitHub App on the repository.
 - The runner polls the run status and reads the stream. It uses no webhook — v1 has none yet.
-
 - A change set whose product selects the `cursor-cloud` implementer fails at preparation with `CONFIGURATION_INVALID`, and the message names the cause — this runner takes one repository (docs/specs/change-sets.md).
+
 ## Out
 - `cursor-cloud` for the refiner, the user validator, the reviewer and the setup agent.
 - Factoree control of Cursor's network mode or environment through the Environments API.
