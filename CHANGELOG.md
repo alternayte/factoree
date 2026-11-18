@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-19
+
 ### Changed
 
 - A context conflict needs a cited disagreement (`docs/specs/context-authority-and-cited-conflicts.md`, GitHub issue 60). The refiner reports two context items that disagree, each with a quoted passage, and Factoree checks both quotes in the pinned content. The ladder resolves a pair of two classes. A pair of one class asks a human, with both quotes, and "neither" settles it. Two documents that only share a word never stop a run.
