@@ -42,10 +42,24 @@ describe("the provider-unreachable classifier", () => {
     expect(isProviderUnreachableText("The change is applied. Every test passes.")).toBe(false);
   });
 
+  it.each(["ETIMEDOUT", "ENOTFOUND", "ECONNRESET", "EAI_AGAIN"])(
+    "does not match a tool or test line that merely echoes %s",
+    (code) => {
+      expect(isProviderUnreachableText(`npm error network request to https://registry failed: ${code}`)).toBe(false);
+      expect(isProviderUnreachableText(`{"type":"tool_result","content":"fetch failed: ${code}"}`)).toBe(false);
+    },
+  );
+
   it("reads only the tail of the output for the fast-fail", () => {
     const old = `${API_ERROR}\n`;
     expect(endsInProviderUnreachable(`${old}${"working\n".repeat(500)}`)).toBe(false);
     expect(endsInProviderUnreachable(`${"working\n".repeat(500)}${old}`)).toBe(true);
+  });
+
+  it("does not fast-fail when a tool result echoing ETIMEDOUT is the last line", () => {
+    expect(endsInProviderUnreachable(`${API_ERROR}\n{"type":"tool_result","content":"curl: (28) ETIMEDOUT"}\n`)).toBe(
+      false,
+    );
   });
 });
 
@@ -90,6 +104,24 @@ describe("CliAgentRunner and an unreachable provider", () => {
     const started = runner.run(runInput(sandbox, ref));
     await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
     sandbox.finishProcess("process-2", { exitCode: 1, stderr: "tests failed\n" });
+
+    const result = await started;
+
+    expect(result.failureKind).toBeUndefined();
+    expect(result.outcome).toBe("failed");
+  });
+
+  it("leaves a failed session whose tool output merely echoes ETIMEDOUT as an ordinary failure", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    const started = runner.run(runInput(sandbox, ref));
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    sandbox.finishProcess("process-2", {
+      exitCode: 1,
+      stdout: '{"type":"tool_result","content":"curl: (28) ETIMEDOUT reaching test host"}\n',
+      stderr: "the change did not apply\n",
+    });
 
     const result = await started;
 
