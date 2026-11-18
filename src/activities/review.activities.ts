@@ -462,7 +462,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // report, so a partial report of the hung session is never read.
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
-      const reportPath = `${reviewDirectory}/report-${input.attempt}${afterHang ? "-after-hang" : ""}.json`;
+      const reportPath = `${reviewDirectory}/report-${input.attempt}${afterHang ? "-after-hang" : ""}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}.json`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -753,7 +753,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
     const unreachableRetry = input.unreachableRetry ?? 0;
     const afterHang = input.afterHang === true || unreachableRetry > 0;
-    const reportPath = `${triageDirectory}/report${afterHang ? "-after-hang" : ""}.json`;
+    const reportPath = `${triageDirectory}/report${afterHang ? "-after-hang" : ""}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}.json`;
     const prompt = renderTriagePrompt({
       pullRequestUrl: input.pullRequestUrl,
       reviewerName: input.reviewerName,

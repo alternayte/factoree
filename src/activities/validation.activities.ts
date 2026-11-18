@@ -593,7 +593,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
       // A hung session can leave a partial plan, and the fresh session must never read it.
-      const planPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}.json`;
+      const planBase = `${afterHang ? "plan-after-hang" : "plan"}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}`;
+      const planPath = `${validationDirectory}/${planBase}.json`;
       const validatorInput = buildUserValidatorInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -773,7 +774,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         // the file on one pass and not on the next, from the same prompt. One reminder costs a few
         // seconds and recovers the pass, so the session is asked once more before the Run gives up.
         // A hung session gets no reminder. The workflow starts one fresh session instead.
-        if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung") {
+        if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung" && providerUnreachableOf(invocations) === null) {
           dependencies.logger.warn("the validator wrote no plan, asking once more", {
             tenant_id: input.tenantId,
             product_id: input.productId,
@@ -965,7 +966,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         });
 
         // A new file, so a session that writes nothing cannot leave the rejected plan in place.
-        const correctedPlanPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}-corrected.json`;
+        const correctedPlanPath = `${validationDirectory}/${planBase}-corrected.json`;
         const correction = buildPlanCorrection({
           reasons,
           assertions: storedContract.assertions,

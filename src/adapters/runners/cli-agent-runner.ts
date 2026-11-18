@@ -392,6 +392,8 @@ export abstract class CliAgentRunner implements AgentRunner {
     let lastOutputAt = startedAt;
     // docs/specs/provider-unreachable.md. When the output began to end in a connectivity error.
     let unreachableSince: number | null = null;
+    let lastStdout: string | null = null;
+    let lastStderr: string | null = null;
 
     for (;;) {
       const snapshot = await live.sandbox.readProcess(live.ref, live.process);
@@ -400,7 +402,16 @@ export abstract class CliAgentRunner implements AgentRunner {
       if (output !== lastOutput) {
         lastOutput = output;
         lastOutputAt = this.clock();
-        if (!endsInProviderUnreachable(output)) unreachableSince = null;
+        // Each stream is judged alone. New stdout after an old stderr error is model activity, so
+        // the stale error must not keep the timer armed. New stderr is judged on its own tail.
+        const stdoutChanged = snapshot.stdout !== lastStdout;
+        const stderrChanged = snapshot.stderr !== lastStderr;
+        lastStdout = snapshot.stdout;
+        lastStderr = snapshot.stderr;
+        const newestEndsUnreachable = stdoutChanged
+          ? endsInProviderUnreachable(snapshot.stdout)
+          : stderrChanged && endsInProviderUnreachable(snapshot.stderr);
+        if (!newestEndsUnreachable) unreachableSince = null;
         else unreachableSince ??= lastOutputAt;
       }
 

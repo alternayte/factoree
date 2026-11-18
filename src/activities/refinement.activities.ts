@@ -342,7 +342,8 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     const unreachableRetry = input.unreachableRetry ?? 0;
     const afterHang = input.afterHang === true || unreachableRetry > 0;
     // A hung session can leave a partial proposal, and the fresh session must never read it.
-    const proposalPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}.json`;
+    const proposalBase = `${afterHang ? "proposal-after-hang" : "proposal"}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}`;
+    const proposalPath = `${directory}/${proposalBase}.json`;
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
     // docs/specs/change-sets.md. The refiner must not change any target of a change set.
     const setTargets = input.targets !== undefined && input.targets.length > 1 ? input.targets : null;
@@ -405,7 +406,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       });
       invocations.push(result);
       // A reminder is pointless once the session hung. The workflow decides what follows.
-      const live = (): boolean => !context.cancellationSignal.aborted && hangOf(invocations) === null;
+      const live = (): boolean => !context.cancellationSignal.aborted && hangOf(invocations) === null && providerUnreachableOf(invocations) === null;
       let read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
       if (read.exitCode !== 0 && live()) {
         // A session can answer in a message and forget the file. One reminder recovers it.
@@ -423,7 +424,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       let currentPath = proposalPath;
       const over = read.exitCode === 0 && live() ? proposalOverLimitOf(read.stdout, criteriaLimit) : null;
       if (over !== null) {
-        const correctedPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}-corrected.json`;
+        const correctedPath = `${directory}/${proposalBase}-corrected.json`;
         const correction = renderRefinerLimitCorrectionPrompt({ ...over, proposalPath: correctedPath });
         dependencies.logger.warn("the refiner proposal is over its limits; asking the refiner to correct it", {
           tenant_id: input.tenantId,

@@ -1109,6 +1109,9 @@ export async function agentRunWorkflow(
     role: AgentSessionRole,
     first: T,
     again: (retry: number) => Promise<T>,
+    // A retry after a hang counts on its own, and its numbers follow those of the first series, so
+    // no retry reuses the session key or the files of another.
+    retryOffset = 0,
   ): Promise<T> => {
     let result = first;
     for (let retry = 1; retry < PROVIDER_UNREACHABLE_ATTEMPTS; retry += 1) {
@@ -1121,7 +1124,7 @@ export async function agentRunWorkflow(
             `so Factoree starts one fresh session (retry ${retry} of ${PROVIDER_UNREACHABLE_ATTEMPTS - 1}).`,
         }),
       );
-      result = await again(retry);
+      result = await again(retryOffset + retry);
     }
     return result;
   };
@@ -2084,6 +2087,7 @@ export async function agentRunWorkflow(
         if (triage !== null && hang !== null && !stopRequested && remainingMs() > 0) {
           await reportHang("reviewer", hang, "starts one fresh session");
           triage = await triageOnce(true);
+          triage = await retryWhileUnreachable("reviewer", triage, (retry) => triageOnce(true, retry), PROVIDER_UNREACHABLE_ATTEMPTS - 1);
         }
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -2769,21 +2773,24 @@ export async function agentRunWorkflow(
       // Slice 4, DI-21.119. A base update merges the head into the new base, conflict markers and all.
       // docs/specs/change-sets.md, slice 9, DI-21.159. A set PR follow-up run applies each open pull
       // request of the set to its own target, and leaves each merged one at its merge commit.
-      const setWorkTargets =
-        prChangeSet === null || prFollowUp === null || prepareInput.targets === undefined
-          ? null
-          : prepareInput.targets.map((target) => {
-              const member = setMemberOf(target.repository);
-              if (member === null || member.state !== "open") return target;
-              const merges = prFollowUp.baseUpdate !== undefined && member.pullRequestId === prFollowUp.pullRequestId;
-              return { ...target, pullRequestHead: member.headSha, ...(merges ? { pullRequestMerge: true } : {}) };
-            });
-      const workInput =
-        prFollowUp === null
-          ? prepareInput
+      // The overlays apply to whatever the prepare input holds now, so a rebuilt sandbox keeps them.
+      const workInputOf = (base: typeof prepareInput): typeof prepareInput & { pullRequestHead?: string; pullRequestMerge?: boolean } => {
+        const setWorkTargets =
+          prChangeSet === null || prFollowUp === null || base.targets === undefined
+            ? null
+            : base.targets.map((target) => {
+                const member = setMemberOf(target.repository);
+                if (member === null || member.state !== "open") return target;
+                const merges = prFollowUp.baseUpdate !== undefined && member.pullRequestId === prFollowUp.pullRequestId;
+                return { ...target, pullRequestHead: member.headSha, ...(merges ? { pullRequestMerge: true } : {}) };
+              });
+        return prFollowUp === null
+          ? base
           : setWorkTargets !== null
-            ? { ...prepareInput, targets: setWorkTargets }
-            : { ...prepareInput, pullRequestHead: prFollowUp.headSha, ...(prFollowUp.baseUpdate === undefined ? {} : { pullRequestMerge: true }) };
+            ? { ...base, targets: setWorkTargets }
+            : { ...base, pullRequestHead: prFollowUp.headSha, ...(prFollowUp.baseUpdate === undefined ? {} : { pullRequestMerge: true }) };
+      };
+      const workInput = workInputOf(prepareInput);
 
       // docs/specs/change-sets.md, DI-21.138. The refiner of a run that can add a target reads the
       // other present repositories of the product. A PR follow-up run and a bring-current run keep
@@ -2948,6 +2955,7 @@ export async function agentRunWorkflow(
         if (firstHang !== null && !stopRequested && remainingMs() > 0) {
           await reportHang("refiner", firstHang, "starts one fresh session");
           proposal = await proposeOnce(true);
+          proposal = await retryWhileUnreachable("refiner", proposal, (retry) => proposeOnce(true, retry), PROVIDER_UNREACHABLE_ATTEMPTS - 1);
         }
       } catch (error) {
         if (isCancellation(error)) throw error;
@@ -3318,7 +3326,7 @@ export async function agentRunWorkflow(
           if (freshSandbox) {
             status = "PREPARING";
             await activities.setRunStatus({ runId: id, status });
-            const again = await prepareWorkSprite(prepareInput);
+            const again = await prepareWorkSprite(workInputOf(prepareInput));
             if ("ended" in again) return again.ended;
             preparedSandbox = again.prepared;
             sprite = preparedSandbox;
@@ -3619,6 +3627,12 @@ export async function agentRunWorkflow(
               if (hang !== null && !stopRequested && remainingMs() > 0) {
                 await reportHang("reviewer", hang, "starts one fresh session");
                 result = await runReview({ ...reviewInput, afterHang: true });
+                result = await retryWhileUnreachable(
+                  "reviewer",
+                  result,
+                  (retry) => runReview({ ...reviewInput, afterHang: true, unreachableRetry: retry }),
+                  PROVIDER_UNREACHABLE_ATTEMPTS - 1,
+                );
               }
               return result === null ? { kind: "unavailable" } : { kind: "review", review: result };
             } catch (error) {
@@ -3658,6 +3672,12 @@ export async function agentRunWorkflow(
           if (validatorHang !== null && remainingMs() > 0) {
             await reportHang("validator", validatorHang, "starts one fresh session");
             result = await runUserValidate({ prepared: checked, goal: sandbox.goal, attempt, afterHang: true });
+            result = await retryWhileUnreachable(
+              "validator",
+              result,
+              (retry) => runUserValidate({ prepared: checked, goal: sandbox.goal, attempt, afterHang: true, unreachableRetry: retry }),
+              PROVIDER_UNREACHABLE_ATTEMPTS - 1,
+            );
             if (stopRequested) return await cancelRun();
           }
           if (result === null) {
@@ -3848,6 +3868,12 @@ export async function agentRunWorkflow(
           if (reviewerHang !== null && remainingMs() > 0) {
             await reportHang("reviewer", reviewerHang, "starts one fresh session");
             result = await runReview({ ...reviewInput, afterHang: true });
+            result = await retryWhileUnreachable(
+              "reviewer",
+              result,
+              (retry) => runReview({ ...reviewInput, afterHang: true, unreachableRetry: retry }),
+              PROVIDER_UNREACHABLE_ATTEMPTS - 1,
+            );
             if (stopRequested) return await cancelRun();
           }
           if (result === null) {
