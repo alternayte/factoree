@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@12";
+export const SETUP_PROMPT_VERSION = "setup@13";
 
 export interface SetupPromptFields {
   repository: string;
@@ -76,6 +76,8 @@ identity:
 bootstrap:
   command: mise install && dotnet restore && (cd web && npm ci)
   keyFiles: ["mise.toml", "**/packages.lock.json", "web/package-lock.json"]
+warm:                     # optional: fills build caches, only when Factoree takes a warm snapshot
+  command: dotnet build
 verify:
   commands:
     - name: build
@@ -144,6 +146,9 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "List in context.authority the Markdown files that state the current architecture or design, as paths or globs relative to the root, with no leading `./`. " +
           "Leave out plans, per-ticket notes, reports, guides and runbooks: the agents read them anyway, and only a listed file can make Factoree ask which document governs. " +
           "ADRs need no entry, because Factoree reads their status. Leave context.authority out when no document states the architecture.",
+        "The bootstrap runs in every sandbox: once in a fresh one, and again in each run sandbox that Factoree restores from a warm snapshot, where everything it installed is already there. It must pass both times. " +
+          "Skip a download when its result already exists, as in `test -d <cache> || <download>`, and list in bootstrap.keyFiles the file that names the version of the download, such as `host.json` for the Azure Functions extension bundle. A change to that file then builds a new warm snapshot, and the check never keeps an old download.",
+        "warm.command runs only when Factoree takes a warm snapshot, never in the sandbox that proves the setup and never on a provider without snapshots. Use it only to fill build caches that speed up later commands, never for anything a verify command, the seed or the preview needs.",
         "Use the repository's own compose file in services.compose. Put every extra service, and every fake, in `.factoree/compose.yaml`. Factoree passes it after the repository file, so it can add a service and change the environment of an existing one.",
         "A seed creates the data and the accounts the app needs, through the app's own path: its CLI, its migrations, or its registration endpoint. Put a seed script in `.factoree/`.",
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",

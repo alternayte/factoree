@@ -188,6 +188,35 @@ describe("proveAndPublishSetup (DI-21.20)", () => {
     expect(proof).toEqual({ status: "unchanged", pullRequestUrl: null, failureMessage: null });
     expect(sandbox.calls).toContain("destroy");
   });
+
+  it("proves the bootstrap with pipefail, as a run does (GitHub issue 59)", async () => {
+    const { activities, sandbox } = build("");
+    const shellScripts: string[] = [];
+    const exec = sandbox.onExec;
+    sandbox.onExec = (command) => {
+      if (command.file === "sh") shellScripts.push(command.args.at(-1) ?? "");
+      return exec?.(command) ?? { exitCode: 0, stdout: "", stderr: "" };
+    };
+    await activities.proveAndPublishSetup({
+      setupId: "setup-1",
+      session: {
+        kind: "proposed",
+        defaultBranch: "main",
+        baseSha: "a".repeat(40),
+        patchBase64: "",
+        proposal:
+          "version: 1\nidentity:\n  product: anthology\n  linear:\n    teamKey: FAC\nbootstrap:\n  command: curl -fsSL https://example.test/install.sh | sh\nverify:\n  commands:\n    - name: build\n      run: dotnet build\n",
+        observedHosts: [],
+        deniedHosts: [],
+        egressRecorded: true,
+        appChanges: [],
+        warm: false,
+      },
+    });
+    const bootstrap = shellScripts.find((script) => script.includes("install.sh"));
+    expect(bootstrap).toContain("set -o pipefail");
+    expect(bootstrap).toContain("curl -fsSL https://example.test/install.sh | sh");
+  });
 });
 
 describe("prepareSetup (docs/specs/setup-speed-and-history.md)", () => {

@@ -24,6 +24,7 @@ import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import { PreviewStartError, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import { bootstrapAllowListOf, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 import { narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
+import { bootstrapScript } from "~/domain/runs/sandbox-manager.js";
 import { ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { alreadyRequested, type AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
@@ -361,7 +362,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           }
         }
         if (runtime.bootstrapCommand !== null) {
-          const bootstrap = await dependencies.sandbox.exec(ref, { file: "sh", args: ["-c", runtime.bootstrapCommand], cwd: primary.path, timeoutMs: PROOF_COMMAND_TIMEOUT_MS });
+          const bootstrap = await dependencies.sandbox.exec(ref, { file: "sh", args: ["-c", bootstrapScript(runtime.bootstrapCommand)], cwd: primary.path, timeoutMs: PROOF_COMMAND_TIMEOUT_MS });
           record(
             bootstrap.exitCode === 0
               ? { kind: "bootstrap", name: "bootstrap", passed: true, reason: null }

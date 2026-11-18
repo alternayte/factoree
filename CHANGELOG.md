@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The setup agent learns that the bootstrap runs again in each sandbox restored from a warm snapshot, so it skips a download whose result already exists and lists the file that names its version, such as `host.json`, in `bootstrap.keyFiles`. It also learns that `warm.command` is only for build caches (`setup@13`, GitHub issue 59).
+- The setup proof wraps the bootstrap in the same `pipefail` script as a run, where the shell has the option. The proof still runs the bootstrap once, in a fresh sandbox. The sandbox image's `sh` is dash, which has no `pipefail`, so there it behaves as before.
+
 ## [0.17.0] - 2026-11-19
 
 ### Added
