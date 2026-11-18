@@ -269,6 +269,12 @@ export interface RunRepository {
     publication: TargetPublication,
   ): Promise<void>;
   /**
+   * docs/specs/change-sets.md, DI-21.153. Removes the commit and the pull request of the run target of
+   * `repositoryFullName` after Factoree closed that pull request to undo a change set, so the closed
+   * event of it matches no run. The patch hash stays. A target with no publication changes nothing.
+   */
+  clearPublication(tenantId: string, runId: string, repositoryFullName: string): Promise<void>;
+  /**
    * SDD section 47 and section 68. Records the Proof Pack of one Run. The method throws when it
    * reaches no Run of that tenant, because a silent success hides a caller defect.
    */

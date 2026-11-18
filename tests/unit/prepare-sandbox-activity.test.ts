@@ -105,6 +105,7 @@ const build = (
     setPublication: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the publication facts'),
     ),
+    clearPublication: vi.fn().mockResolvedValue(undefined),
     setProofPack: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the Proof Pack facts'),
     ),

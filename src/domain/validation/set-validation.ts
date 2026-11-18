@@ -63,6 +63,10 @@ export interface SetValidationOutcome extends UserValidationOutcome {
   notes: string[];
   /** DI-21.149. One repair finding per consumer that failed the in-between check. */
   inBetweenFailures: string[];
+  /** docs/specs/change-sets.md, DI-21.154. The target each assertion ran against. */
+  servedBy: Record<string, string>;
+  /** DI-21.154. The consumers that failed the in-between check. */
+  inBetweenFailedConsumers: string[];
 }
 
 const sameName = (left: string, right: string): boolean => left.toLowerCase() === right.toLowerCase();
@@ -114,7 +118,7 @@ export const runSetUserValidation = async (
       ...(input.signal === undefined ? {} : { signal: input.signal }),
       forYourEye,
     });
-    return { ...whole, fakes, notes, inBetweenFailures: [] };
+    return { ...whole, fakes, notes, inBetweenFailures: [], servedBy: {}, inBetweenFailedConsumers: [] };
   }
 
   const served = new Map<string, string>();
@@ -234,7 +238,8 @@ export const runSetUserValidation = async (
   const ranPlan: ValidationPlan = { ...plan, entries: plan.entries.map((entry) => ranEntries.get(entry.assertionId) ?? entry) };
 
   // DI-21.149. Production runs the state between the two merges, so a set that passed is checked there.
-  const inBetweenFailures = summary.passed ? await inBetweenCheck(dependencies, input, { plan: ranPlan, served, groups, runServed, withGroup, remaining }) : [];
+  const inBetween = summary.passed ? await inBetweenCheck(dependencies, input, { plan: ranPlan, served, groups, runServed, withGroup, remaining }) : [];
+  const inBetweenFailures = inBetween.map((entry) => entry.finding);
   const inBetweenLine =
     inBetweenFailures.length === 0
       ? ""
@@ -249,6 +254,8 @@ export const runSetUserValidation = async (
     fakes,
     notes,
     inBetweenFailures,
+    servedBy: Object.fromEntries(served),
+    inBetweenFailedConsumers: inBetween.map((entry) => entry.consumer),
   };
 };
 
@@ -294,8 +301,8 @@ const inBetweenCheck = async (
     withGroup: <T>(group: readonly string[], work: (running: RunningGroup | null) => Promise<T>) => Promise<T>;
     remaining: () => number;
   },
-): Promise<string[]> => {
-  const findings: string[] = [];
+): Promise<Array<{ consumer: string; finding: string }>> => {
+  const findings: Array<{ consumer: string; finding: string }> = [];
   const patchDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
   for (const { consumer, providers } of inBetweenConsumersOf(input.facts, input.edges, input.changed)) {
     const target = input.facts.targets.find((candidate) => candidate.repository === consumer);
@@ -354,11 +361,13 @@ const inBetweenCheck = async (
     }
     if (failures.length === 0) continue;
     dependencies.logger.warn("the in-between check failed", { run_id: input.runId, step: "user_validate", consumer, providers: providers.join(", ") });
-    findings.push(
-      `The in-between check failed: the patch of ${providers.join(" and ")} breaks ${consumer} at its base ${target.baseSha.slice(0, 7)}, ` +
+    findings.push({
+      consumer,
+      finding:
+        `The in-between check failed: the patch of ${providers.join(" and ")} breaks ${consumer} at its base ${target.baseSha.slice(0, 7)}, ` +
         "the state production runs between the two merges. Change the provider so that the consumer still works before its own change merges. " +
         `With the provider ${providers.length === 1 ? "patch" : "patches"} applied and ${consumer} at its base, ${failures.join("; ")}`,
-    );
+    });
   }
   return findings;
 };

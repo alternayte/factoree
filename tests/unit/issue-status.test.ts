@@ -135,6 +135,16 @@ describe("the pull_request closed event (DI-21.51)", () => {
     expect(lines).toEqual([]);
   });
 
+  it("moves a change set issue to done only when the last of its pull requests merges (docs/specs/change-sets.md)", async () => {
+    const first = build("In Progress", { ...tracked, pullRequestStates: ["merged", "open"] });
+    await first.close(true);
+    expect(first.issue.moves).toEqual([]);
+    expect(first.lines).toEqual([]);
+    const last = build("In Progress", { ...tracked, pullRequestStates: ["merged", "merged"] });
+    await last.close(true);
+    expect(last.issue.current).toBe("Done");
+  });
+
   it("moves the issue back and posts one line when every pull request closed without a merge", async () => {
     const { issue, lines, close } = build("In Progress", { ...tracked, pullRequestStates: ["closed"] });
     await close(false);

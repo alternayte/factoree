@@ -8,6 +8,12 @@ export interface PullRequestRecord {
    * the publication record needs no second network read and no credential on a command line.
    */
   headSha: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.152. Open, merged or closed, and the base branch, when GitHub
+   * answers them. The preflight of a change set reads them to find a foreign pull request.
+   */
+  state?: "open" | "merged" | "closed";
+  baseBranch?: string;
 }
 
 export interface CreatePullRequestInput {
@@ -29,6 +35,14 @@ export interface PullRequestPort {
   /** The open pull request for that head branch, or null. DI-9.8 needs it. */
   findByHead(slug: string, headBranch: string, githubInstallationId: string): Promise<PullRequestRecord | null>;
   create(input: CreatePullRequestInput, githubInstallationId: string): Promise<PullRequestRecord>;
+  /** docs/specs/change-sets.md, DI-21.152. Replaces the body, to add the links to the sibling pull requests. */
+  updateBody(slug: string, number: number, body: string, githubInstallationId: string): Promise<void>;
+  /** DI-21.153. One comment on the conversation of the pull request. */
+  comment(slug: string, number: number, body: string, githubInstallationId: string): Promise<void>;
+  /** DI-21.153. Closes the pull request without a merge. */
+  close(slug: string, number: number, githubInstallationId: string): Promise<void>;
+  /** DI-21.153. Deletes the branch. A branch that does not exist is no error. */
+  deleteBranch(slug: string, branch: string, githubInstallationId: string): Promise<void>;
 }
 
 const MAX_TITLE = 120;
@@ -54,6 +68,11 @@ export interface PullRequestBodyInput {
    * body, and the closing sentence names the last patch, not a verified one.
    */
   draftWarning?: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.152. The change set section: the sibling pull requests and the
+   * merge order. It ends the body.
+   */
+  changeSet?: string[];
 }
 
 /**
@@ -87,4 +106,5 @@ export const buildPullRequestBody = (input: PullRequestBodyInput): string =>
           "Factoree applied the last patch a check sprite received to a clean trusted checkout and",
           "proved its hash again before it created this draft. Only a human marks it ready.",
         ]),
+    ...(input.changeSet === undefined ? [] : ["", ...input.changeSet]),
   ].join("\n");

@@ -316,6 +316,13 @@ export class PrismaRunRepository implements RunRepository {
     }
   }
 
+  async clearPublication(tenantId: string, runId: string, repositoryFullName: string): Promise<void> {
+    await this.prisma.runTarget.updateMany({
+      where: this.targetWhere(tenantId, runId, repositoryFullName),
+      data: { commitSha: null, pullRequestUrl: null, pullRequestNumber: null, pullRequestState: null },
+    });
+  }
+
   async setProofPack(
     tenantId: string,
     runId: string,

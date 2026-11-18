@@ -82,6 +82,10 @@ const memoryPullRequests = (existing: PullRequestRecord | null = null): MemoryPu
         headSha: COMMIT,
       });
     },
+    updateBody: () => Promise.reject(new Error("a single target writes its body once")),
+    comment: () => Promise.reject(new Error("a single target never comments")),
+    close: () => Promise.reject(new Error("a single target never closes")),
+    deleteBranch: () => Promise.reject(new Error("a single target never deletes a branch")),
   };
 };
 

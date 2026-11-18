@@ -79,6 +79,7 @@ import {
 } from "../domain/routing/select-targets.js";
 import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
 import { mergeOrderDecision } from "../domain/runs/merge-order.js";
+import { targetResultsSentence } from "../domain/publishing/change-set.js";
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time but
 // `sandbox.js`, which imports nothing.
 import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from "../domain/runs/egress.js";
@@ -323,6 +324,23 @@ const CHANGE_SET_REFINER_PATCH = "change-set-refiner-targets";
  * whole set, and freezes a new Context Contract revision that lists every target.
  */
 const CHANGE_SET_CONTEXT_PATCH = "change-set-context-refreeze";
+/**
+ * docs/specs/change-sets.md, slice 7, DI-21.151. A change set that passes publishes all or nothing:
+ * preflight every target, push and open each pull request, write each body with the sibling links,
+ * and undo the opened part on a permanent failure. An older history ends PUBLICATION_FAILED before
+ * publication, as DI-21.134 did.
+ */
+const CHANGE_SET_PUBLICATION_PATCH = "change-set-publication";
+
+/** docs/specs/change-sets.md, slice 7. One target whose pull request opened. */
+interface PublishedTarget {
+  repositoryId: string;
+  slug: string;
+  installationId: string;
+  baseBranch: string;
+  baseSha: string;
+  publication: PublishActivityOutput;
+}
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -804,6 +822,12 @@ export async function agentRunWorkflow(
   const referenceRepositorySlugs: string[] = [];
   const defaultBranchForSlug = (slug: string) =>
     targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
+  // docs/specs/change-sets.md, DI-21.154. A change set that fails its checks names the result of each
+  // target. One target adds nothing to its message.
+  const setResultsOf = (results: Parameters<typeof targetResultsSentence>[1]): string => {
+    const sentence = targetResultsSentence(runTargets.map((target) => target.fullName), results);
+    return sentence === "" ? "" : `${sentence} `;
+  };
 
   setHandler(stopSignal, (request?: StopRequest) => {
     if (!stopRequested) stopRequest = readStopRequest(request);
@@ -3295,7 +3319,7 @@ export async function agentRunWorkflow(
             return await failRun(
               "VERIFICATION_FAILED",
               `Deterministic verification did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
-                `${verification.summary} Factoree published nothing.`,
+                `${verification.summary} ${setResultsOf({ verification: verification.checks })}Factoree published nothing.`,
             );
           }
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -3467,7 +3491,7 @@ export async function agentRunWorkflow(
               return await failRun(
                 "VALIDATION_FAILED",
                 `User validation did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
-                  `${userValidation.summary} Factoree published nothing.`,
+                  `${userValidation.summary} ${setResultsOf({ validation: userValidation.results, ...(userValidation.inBetweenFailedConsumers === undefined ? {} : { inBetweenFailed: userValidation.inBetweenFailedConsumers }) })}Factoree published nothing.`,
               );
             }
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -3726,10 +3750,11 @@ export async function agentRunWorkflow(
         );
       }
 
-      // docs/specs/change-sets.md, DI-21.134. Publication of one target publishes one patch. A change
-      // set publishes all or nothing (slice 7), so until then it opens no pull request at all: no half
-      // change reaches GitHub. Only a run with two or more targets takes this path.
-      if (runTargets.length > 1) {
+      // docs/specs/change-sets.md, slice 7, DI-21.151. A change set publishes all or nothing. A PR
+      // follow-up run keeps the one repository of its pull request until slice 9. An older history
+      // ends here as DI-21.134 did: no half change reaches GitHub.
+      const changeSetPublication = runTargets.length > 1 && prFollowUp === null && patched(CHANGE_SET_PUBLICATION_PATCH);
+      if (runTargets.length > 1 && !changeSetPublication) {
         return await failRun(
           "PUBLICATION_FAILED",
           `Every check of the change set ${runTargets.map((target) => target.fullName).join(", ")} passed, and this Factoree ` +
@@ -3779,7 +3804,194 @@ export async function agentRunWorkflow(
       // The publication commits on the verified base and reports how far the branch moved.
       if (stopRequested) return await cancelRun();
 
+      /**
+       * docs/specs/change-sets.md, slice 7. The publication of a change set: the preflight of every
+       * target before any push (DI-21.151), then each push and pull request in set order, then each
+       * body with the sibling links (DI-21.152). A permanent failure after the preflight undoes every
+       * pull request that opened (DI-21.153). A moved base never stops a target: each one publishes
+       * on its verified base, and its three-way apply check reports the move.
+       */
+      const publishChangeSet = async (
+        checked: PrepareCheckSandboxActivityOutput,
+      ): Promise<{ ended: AgentRunWorkflowResult } | { published: PublishedTarget[]; unchanged: Array<{ slug: string; baseSha: string }> }> => {
+        const facts = checked.checkedTargets ?? [];
+        const entries = facts.map((fact) => {
+          const target = runTargets.find((candidate) => candidate.fullName.toLowerCase() === fact.repository.toLowerCase());
+          return {
+            fact,
+            repositoryId: target?.id ?? "",
+            slug: target?.fullName ?? fact.repository,
+            installationId: target?.githubInstallationId ?? "",
+            baseBranch: defaultBranchForSlug(target?.fullName ?? fact.repository),
+          };
+        });
+        const missing = runTargets.filter((target) => !entries.some((entry) => entry.repositoryId === target.id));
+        if (missing.length > 0 || entries.some((entry) => entry.repositoryId === "")) {
+          return {
+            ended: await failRun(
+              "COMPLETION_INVARIANT_UNMET",
+              `The check sandbox holds no verified patch of ${missing.map((target) => target.fullName).join(", ") || "every target"}, so Factoree published nothing.`,
+            ),
+          };
+        }
+        let preflight: Awaited<ReturnType<typeof publishingActivities.preflightChangeSet>>;
+        try {
+          preflight = await publishingActivities.preflightChangeSet({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            spriteId: checked.spriteId,
+            adapter: checked.adapter,
+            workspacePath: checked.workspacePath,
+            repositoryBaseUrl: input.product.repositoryBaseUrl,
+            targets: entries.map((entry) => ({
+              repositorySlug: entry.slug,
+              githubInstallationId: entry.installationId,
+              primaryPath: entry.fact.path,
+              baseBranch: entry.baseBranch,
+              baseSha: entry.fact.baseSha,
+              verifiedPatchSha256: entry.fact.patchSha256,
+              reviewedChangedFiles: entry.fact.changedFiles,
+              reviewedWorktreeSha: entry.fact.treeSha,
+            })),
+            verifiedSetPatchSha256: checked.patchSha256,
+            reviewedSetTreeSha: publishedWorktreeSha,
+          });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          if (stopRequested) return { ended: await cancelRun() };
+          if (isConfigurationFault(error)) {
+            return {
+              ended: await failRun(
+                "CONFIGURATION_INVALID",
+                withCause(
+                  "Factoree checked every repository of the change set before any push, and the GitHub App installation cannot " +
+                    "mint the write credential one of them needs, so it opened no pull request. Repair the installation or its " +
+                    "permissions as the cause says.",
+                  error,
+                ),
+              ),
+            };
+          }
+          return {
+            ended: await failRun(
+              publicationFailureReasonOf(error),
+              withCause("Factoree checked every repository of the change set before any push, and one check failed, so it opened no pull request.", error),
+            ),
+          };
+        }
+        const changed = entries.filter((entry) => preflight.targets.some((target) => target.repositorySlug === entry.slug && target.changed));
+        const unchanged = entries.filter((entry) => !changed.includes(entry)).map((entry) => ({ slug: entry.slug, baseSha: entry.fact.baseSha }));
+        if (changed.length === 0) {
+          return { ended: await failRun("EMPTY_PATCH", "Every check passed and no repository of the change set holds a change, so Factoree had nothing to publish.") };
+        }
+        const names = changed.map((entry) => entry.slug);
+        // DI-21.153. The rollback looks up the run's own branch in each target, so it also finds a pull
+        // request that a failed attempt opened before it could answer.
+        const undo = async (failed: string, error: unknown): Promise<AgentRunWorkflowResult> => {
+          const cause = causeOf(error);
+          let undone: string;
+          try {
+            const rolled = await publishingActivities.rollbackChangeSet({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              targets: changed.map((entry) => ({ repositorySlug: entry.slug, githubInstallationId: entry.installationId })),
+              failedRepository: failed,
+              cause: cause === "" ? "an unknown error" : cause,
+            });
+            undone =
+              rolled.closed.length === 0
+                ? "No pull request had opened."
+                : `Factoree closed ${rolled.closed.map((entry) => entry.url).join(", ")} with a comment that names ${failed}, and deleted the branches.`;
+          } catch (rollbackError) {
+            if (isCancellation(rollbackError)) throw rollbackError;
+            undone = withCause("Factoree could not close every pull request it had opened. Close them by hand.", rollbackError);
+          }
+          return await failRun(
+            "PUBLICATION_FAILED",
+            withCauseText(`The publication of ${failed} failed, so Factoree published no part of the change set ${names.join(", ")}. ${undone}`, cause),
+          );
+        };
+        const opened: PublishedTarget[] = [];
+        for (const entry of changed) {
+          try {
+            const publication = await publishingActivities.publish({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              spriteId: checked.spriteId,
+              adapter: checked.adapter,
+              workspacePath: checked.workspacePath,
+              primaryPath: entry.fact.path,
+              verifiedPatchSha256: entry.fact.patchSha256,
+              draft: publishDraft,
+              repositorySlug: entry.slug,
+              repositoryBaseUrl: input.product.repositoryBaseUrl,
+              baseBranch: entry.baseBranch,
+              baseSha: entry.fact.baseSha,
+              reviewedChangedFiles: entry.fact.changedFiles,
+              reviewedWorktreeSha: entry.fact.treeSha,
+              workItemTitle: input.workItem.title,
+              workItemUrl: input.workItem.url,
+              verificationSummary: publishedVerificationSummary,
+              repairCount,
+              githubInstallationId: entry.installationId,
+              changeSetRepositories: names,
+            });
+            opened.push({
+              repositoryId: entry.repositoryId,
+              slug: entry.slug,
+              installationId: entry.installationId,
+              baseBranch: entry.baseBranch,
+              baseSha: entry.fact.baseSha,
+              publication,
+            });
+          } catch (error) {
+            if (isCancellation(error)) throw error;
+            return { ended: await undo(entry.slug, error) };
+          }
+        }
+        const pullRequests = opened.map((target) => ({ repository: target.slug, url: target.publication.pullRequestUrl }));
+        for (const target of opened) {
+          try {
+            await publishingActivities.writeChangeSetBody({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              repositorySlug: target.slug,
+              githubInstallationId: target.installationId,
+              pullRequestNumber: target.publication.pullRequestNumber,
+              baseSha: target.baseSha,
+              patchSha256: target.publication.patchSha256,
+              changedFileCount: preflight.targets.find((entry) => entry.repositorySlug === target.slug)?.changedFiles.length ?? 0,
+              workItemTitle: input.workItem.title,
+              workItemUrl: input.workItem.url,
+              verificationSummary: publishedVerificationSummary,
+              repairCount,
+              pullRequests,
+              edges: runEdges,
+            });
+          } catch (error) {
+            if (isCancellation(error)) throw error;
+            return { ended: await undo(target.slug, error) };
+          }
+        }
+        return { published: opened, unchanged };
+      };
+
       let publication: PublishActivityOutput;
+      let publishedTargets: PublishedTarget[];
+      let unchangedTargets: Array<{ slug: string; baseSha: string }> = [];
+      if (changeSetPublication) {
+        const set = await publishChangeSet(published);
+        if ("ended" in set) return set.ended;
+        publishedTargets = set.published;
+        unchangedTargets = set.unchanged;
+        const first = publishedTargets[0];
+        if (first === undefined) throw ApplicationFailure.nonRetryable("the change set publication opened no pull request");
+        publication = first.publication;
+      } else {
       try {
         if (prFollowUp === null) {
           publication = await publishingActivities.publish(publishInput);
@@ -3836,12 +4048,26 @@ export async function agentRunWorkflow(
                 ),
         );
       }
+      publishedTargets = [
+        {
+          repositoryId: primaryRepositoryId,
+          slug: resolvedContext.primary.slug,
+          installationId: primaryRepositoryInstallationId,
+          baseBranch: publishInput.baseBranch,
+          baseSha: publishInput.baseSha,
+          publication,
+        },
+      ];
+      }
+      const publishedUrls = publishedTargets.map((target) => target.publication.pullRequestUrl);
 
       await notify(() =>
         activities.postProgress({
           sessionId: input.agentSessionId,
           message:
-            prFollowUp === null
+            changeSetPublication
+              ? `Factoree opened the pull requests of the change set: ${publishedTargets.map((target) => `${target.slug} ${target.publication.pullRequestUrl}`).join(", ")}.`
+              : prFollowUp === null
               ? `Factoree opened the pull request: ${publication.pullRequestUrl}.`
               : `Factoree pushed the verified commit ${publication.commitSha.slice(0, 12)} to the pull request ${publication.pullRequestUrl} ` +
                 `(contract revision ${String(prFollowUp.contractRevision)}).`,
@@ -3850,57 +4076,67 @@ export async function agentRunWorkflow(
 
       // The publication succeeded. A later stop message and a later timeout message read this
       // value, so neither one claims that Factoree published nothing.
-      publishedPullRequestUrls.push(publication.pullRequestUrl);
+      publishedPullRequestUrls.push(...publishedUrls);
 
       // DI-21.52. The issue shows its pull request as an attachment, and the session as a link.
       // A PR follow-up run shares the agent session of the run that linked the pull request.
+      // docs/specs/change-sets.md: one attachment and one session link per pull request of a set.
       let pullRequestLinked = prFollowUp !== null;
       if (prFollowUp === null && patched(PULL_REQUEST_LINK_PATCH)) {
-        const linkedUrl = publication.pullRequestUrl;
-        await notify(async () => {
-          await activities.linkPullRequest({
-            tenantId: input.tenantId,
-            sessionId: input.agentSessionId,
-            issueId: input.workItem.issueId,
-            pullRequestUrl: linkedUrl,
-            repositorySlug: resolvedContext.primary.slug,
+        let linked = 0;
+        for (const target of publishedTargets) {
+          const linkedUrl = target.publication.pullRequestUrl;
+          await notify(async () => {
+            await activities.linkPullRequest({
+              tenantId: input.tenantId,
+              sessionId: input.agentSessionId,
+              issueId: input.workItem.issueId,
+              pullRequestUrl: linkedUrl,
+              repositorySlug: target.slug,
+              ...(changeSetPublication ? { label: `Pull request ${target.slug}` } : {}),
+            });
+            linked += 1;
           });
-          pullRequestLinked = true;
-        });
+        }
+        pullRequestLinked = linked === publishedTargets.length;
       }
 
       // Specification section 14. The patch hash and commit SHA are known after publication, and
       // the pull request URL is known once the pull request exists. All three describe the same
       // moment here.
-      await activities.recordRunTargetFacts({
-        tenantId: input.tenantId,
-        runId: id,
-        repositoryId: primaryRepositoryId,
-        patchSha256: publication.patchSha256,
-        commitSha: publication.commitSha,
-        pullRequestUrl: publication.pullRequestUrl,
-      });
+      for (const target of publishedTargets) {
+        await activities.recordRunTargetFacts({
+          tenantId: input.tenantId,
+          runId: id,
+          repositoryId: target.repositoryId,
+          patchSha256: target.publication.patchSha256,
+          commitSha: target.publication.commitSha,
+          pullRequestUrl: target.publication.pullRequestUrl,
+        });
+      }
 
       // docs/specs/pr-review-merge-and-deploy.md, D3. The pull request record names this run as its
       // origin, and the PR workflow takes the events after the run ends. ABANDON keeps that workflow
       // open after this run closes. A failure here costs only the PR workflow: the close then takes
       // the webhook path of DI-21.51.
+      // docs/specs/change-sets.md: one record and one PR workflow per pull request of a set.
+      for (const target of publishedTargets) {
       if (patched(PR_WORKFLOW_PATCH)) {
         const recordInput = {
           tenantId: input.tenantId,
           runId: id,
-          repositoryId: primaryRepositoryId,
-          number: publication.pullRequestNumber,
-          url: publication.pullRequestUrl,
-          headBranch: publication.branch,
-          headSha: publication.commitSha,
-          baseBranch: publishInput.baseBranch,
+          repositoryId: target.repositoryId,
+          number: target.publication.pullRequestNumber,
+          url: target.publication.pullRequestUrl,
+          headBranch: target.publication.branch,
+          headSha: target.publication.commitSha,
+          baseBranch: target.baseBranch,
           // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run. DI-21.112: a
           // PR follow-up commit that a first run would publish as a draft lands on the open pull
           // request, so its head records L2, and auto-merge stays off for it.
           autonomyLevel: prFollowUp !== null && publishDraft ? "L2" : refined.autonomyLevel,
           // D2. The next PR follow-up run starts from this base.
-          baseSha: publishInput.baseSha,
+          baseSha: target.baseSha,
           ...(prFollowUp === null ? {} : { contractRevision: prFollowUp.contractRevision }),
         };
         await notify(async () => {
@@ -3918,6 +4154,7 @@ export async function agentRunWorkflow(
             if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
           }
         });
+      }
       }
 
       // SDD section 50. A stop that arrived during the publication ends the Run CANCELLED. The
@@ -3945,10 +4182,11 @@ export async function agentRunWorkflow(
           pullRequestUrl: publication.pullRequestUrl,
           pullRequestLinked,
           commitSha: publication.commitSha,
-          patchSha256: publication.patchSha256,
-          baseSha: publishInput.baseSha,
+          // DI-21.154. A change set names its set patch hash and the base of its first target.
+          patchSha256: changeSetPublication ? published.patchSha256 : publication.patchSha256,
+          baseSha: changeSetPublication ? (publishedTargets[0]?.baseSha ?? publishInput.baseSha) : publishInput.baseSha,
           changedFiles: publishedChangedFiles,
-          patchByteLength: publication.patchByteLength,
+          patchByteLength: publishedTargets.reduce((total, target) => total + target.publication.patchByteLength, 0),
           previewUrl: publishedPreviewUrl,
           fakes: publishedFakes,
           ...(publishedSetCheckNotes.length === 0 ? {} : { setCheckNotes: publishedSetCheckNotes }),
@@ -3962,9 +4200,26 @@ export async function agentRunWorkflow(
           ...(forYourEye.length === 0 ? {} : { forYourEye }),
           decisions: factoreeDecisions,
           baseMove:
-            publication.baseMove === null
+            changeSetPublication || publication.baseMove === null
               ? null
               : { baseBranch: publishInput.baseBranch, ...publication.baseMove },
+          ...(changeSetPublication
+            ? {
+                targetResults: (published.checkedTargets ?? []).map((fact) => {
+                  const target = publishedTargets.find((candidate) => candidate.slug.toLowerCase() === fact.repository.toLowerCase());
+                  const unchanged = unchangedTargets.find((candidate) => candidate.slug.toLowerCase() === fact.repository.toLowerCase());
+                  return target === undefined
+                    ? { repository: unchanged?.slug ?? fact.repository, baseSha: fact.baseSha, result: "unchanged" as const, pullRequestUrl: null, baseMove: null }
+                    : {
+                        repository: target.slug,
+                        baseSha: target.baseSha,
+                        result: "published" as const,
+                        pullRequestUrl: target.publication.pullRequestUrl,
+                        baseMove: target.publication.baseMove === null ? null : { baseBranch: target.baseBranch, ...target.publication.baseMove },
+                      };
+                }),
+              }
+            : {}),
           autonomyLevel: refined.autonomyLevel,
           autonomyReasons: refined.autonomyReasons,
           checkDefiningFiles: published.checkDefiningFiles,
@@ -4000,7 +4255,7 @@ export async function agentRunWorkflow(
         return await failRun(
           "COMPLETION_INVARIANT_UNMET",
           "Factoree published the verified change and could not post the Proof Pack. Review the " +
-            `pull request by hand. Pull request: ${publication.pullRequestUrl}.`,
+            `pull request by hand. ${publishedUrls.length === 1 ? "Pull request" : "Pull requests"}: ${publishedUrls.join(", ")}.`,
         );
       }
 
@@ -4023,13 +4278,12 @@ export async function agentRunWorkflow(
         repairCount,
         repairLimit: maxRepairs,
         // docs/specs/change-sets.md. One verified patch and one pull request per target of the run.
-        targets: [
-          {
-            repositoryFullName: primaryRepositorySlug,
-            patchSha256: publication.patchSha256,
-            pullRequestUrl: publication.pullRequestUrl,
-          },
-        ],
+        // docs/specs/change-sets.md, DI-21.154. A target whose patch changes no file opens no pull request.
+        targets: publishedTargets.map((target) => ({
+          repositoryFullName: changeSetPublication ? target.slug : primaryRepositorySlug,
+          patchSha256: target.publication.patchSha256,
+          pullRequestUrl: target.publication.pullRequestUrl,
+        })),
         proofPackSha256: proofPack.sha256,
       });
 
@@ -4037,7 +4291,7 @@ export async function agentRunWorkflow(
         return await failRun(
           "COMPLETION_INVARIANT_UNMET",
           "Factoree published the verified change and cannot report it complete. " +
-            `${unmet.join(" ")} Pull request: ${publication.pullRequestUrl}.`,
+            `${unmet.join(" ")} ${publishedUrls.length === 1 ? "Pull request" : "Pull requests"}: ${publishedUrls.join(", ")}.`,
         );
       }
 

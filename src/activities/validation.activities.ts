@@ -177,7 +177,10 @@ export interface UserValidateActivityInput {
 
 export interface UserValidateActivityOutput {
   passed: boolean;
-  results: Array<{ assertionId: string; result: AssertionResult; reason: string }>;
+  /** docs/specs/change-sets.md, DI-21.154. A change set names the target of each result. */
+  results: Array<{ assertionId: string; result: AssertionResult; reason: string; target?: string }>;
+  /** DI-21.154. The consumers of a change set that failed the in-between check. */
+  inBetweenFailedConsumers?: string[];
   /** True when at least one assertion is FAIL. Only then can a repair help. */
   hasFailure: boolean;
   /** True when at least one assertion is MANUAL_REQUIRED. */
@@ -1216,7 +1219,9 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           assertionId: assertionOutcome.assertionId,
           result: assertionOutcome.result,
           reason: assertionOutcome.reason,
+          ...(setOutcome?.servedBy[assertionOutcome.assertionId] === undefined ? {} : { target: setOutcome.servedBy[assertionOutcome.assertionId] }),
         })),
+        ...(setOutcome === null || setOutcome.inBetweenFailedConsumers.length === 0 ? {} : { inBetweenFailedConsumers: setOutcome.inBetweenFailedConsumers }),
         // DI-21.149. A failed in-between check is a failure a repair can fix.
         hasFailure:
           outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "FAIL") || (setOutcome?.inBetweenFailures.length ?? 0) > 0,

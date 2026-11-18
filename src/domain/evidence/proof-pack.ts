@@ -225,6 +225,11 @@ export interface ProofPackInput {
    * the reason. "Needs your attention" lists each one.
    */
   setCheckNotes?: string[];
+  /**
+   * docs/specs/change-sets.md, DI-21.154. The result of each target of a change set, in set order,
+   * with how far its base branch moved. Absent for one target.
+   */
+  targetResults?: ProofPackTargetResult[];
   /** SDD section 18. Present only for a Run that a routed Product produced. */
   routing?: ProofPackRouting;
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
@@ -326,6 +331,17 @@ export interface ProofPackBaseMove {
   conflicts: string[];
 }
 
+/** docs/specs/change-sets.md, DI-21.154. What publication did with one target of a change set. */
+export interface ProofPackTargetResult {
+  repository: string;
+  /** The verified base of the target. */
+  baseSha: string;
+  /** "published" with a pull request, or "unchanged" when its patch changed no file and it opened none. */
+  result: "published" | "unchanged";
+  pullRequestUrl: string | null;
+  baseMove: ProofPackBaseMove | null;
+}
+
 /** The JSON document an agent reads. `GET /admin/runs/:id` returns the same value. */
 export interface ProofPackDocument {
   version: 1;
@@ -361,6 +377,8 @@ export interface ProofPackDocument {
     checkDefiningFiles: string[];
   };
   routing: ProofPackRouting | null;
+  /** DI-21.154. Each target of a change set, or empty for one target. */
+  targetResults: ProofPackTargetResult[];
   decisions: FactoreeDecision[];
   baseMove: ProofPackBaseMove | null;
   /** docs/specs/agent-session-usage-and-hangs.md. The totals per role, or null when none was recorded. */
@@ -427,6 +445,18 @@ export const needsAttention = (input: ProofPackInput): string[] => {
         `${move.ahead} ${move.ahead === 1 ? "commit" : "commits"} ahead.`,
     );
   }
+  // DI-21.154. A change set publishes each target on its verified base, and states each move.
+  for (const target of input.targetResults ?? []) {
+    const moved = target.baseMove;
+    if (moved === null) continue;
+    if (moved.conflicts.length > 0) {
+      items.push(`${target.repository} conflicts with ${moved.baseBranch} in ${moved.conflicts.map((file) => `\`${file}\``).join(", ")}.`);
+    }
+    items.push(
+      `${target.repository} was verified on \`${target.baseSha.slice(0, 7)}\`. ${moved.baseBranch} is now \`${moved.headSha.slice(0, 7)}\`, ` +
+        `${moved.ahead} ${moved.ahead === 1 ? "commit" : "commits"} ahead.`,
+    );
+  }
   for (const decision of input.decisions ?? []) {
     items.push(decision.kind === "not_built" ? `Not built: ${decision.statement.replace(/^did not build /, "")}.` : describeDecision(decision));
   }
@@ -487,6 +517,7 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
     checkDefiningFiles: input.checkDefiningFiles ?? [],
   },
   routing: input.routing ?? null,
+  targetResults: input.targetResults ?? [],
   agentUsage: input.agentUsage ?? null,
   skills: { loaded: input.skills ?? [], proposals: input.skillProposals ?? [] },
   run: {
@@ -502,6 +533,18 @@ export const buildProofPackDocument = (input: ProofPackInput): ProofPackDocument
 });
 
 const pullRequestLines = (input: ProofPackInput): string[] => {
+  // DI-21.154. A change set lists each target with its base and its result.
+  const results = input.targetResults ?? [];
+  if (results.length > 1) {
+    return [
+      "**Pull requests:**",
+      ...results.map(
+        (target) =>
+          `- ${target.repository}: ${target.result === "published" ? (target.pullRequestUrl ?? "") : "unchanged, so no pull request"}, ` +
+          `base \`${target.baseSha.slice(0, 7)}\`${target.baseMove === null ? "" : `, ${target.baseMove.baseBranch} moved ${String(target.baseMove.ahead)} ahead`}`,
+      ),
+    ];
+  }
   const targets = input.routing?.targets.filter((target) => target.pullRequestUrl !== "") ?? [];
   if (targets.length <= 1) return [`**Pull request:** ${input.pullRequestUrl}`];
   return [
