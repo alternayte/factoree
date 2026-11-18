@@ -120,6 +120,12 @@ model Run {
   // docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input of the last proof pack,
   // so an amendment after publication renders the whole proof pack again.
   proofPackInput           Json?     @map("proof_pack_input")
+  // docs/specs/change-sets.md, slice 9, DI-21.158. On the run that opened a change set: the PR
+  // workflow that runs the one set run of the set, the workflow id of that run, and the time it took
+  // the set. Null while no set run runs.
+  changeSetLockHolder      String?   @map("change_set_lock_holder")
+  changeSetLockRun         String?   @map("change_set_lock_run")
+  changeSetLockAt          DateTime? @map("change_set_lock_at")
   // docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking.
   decisions                Json      @default("[]")
   repairCount              Int       @default(0)

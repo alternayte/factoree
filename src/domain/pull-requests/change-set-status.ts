@@ -165,6 +165,37 @@ export interface ChangeSetStore {
   changeSetOfRun(tenantId: string, originRunId: string): Promise<ChangeSet | null>;
   /** Records the last status Factoree set on the pull request. */
   markChangeSetStatus(tenantId: string, pullRequestId: string, key: string): Promise<void>;
+  /** DI-21.158. The PR workflow that holds the set run of the set, and its run. */
+  changeSetLock(tenantId: string, originRunId: string): Promise<ChangeSetLock>;
+  /**
+   * DI-21.158. Takes the set for one set run, in one conditional write: only when no PR workflow
+   * holds it, when this one holds it, or when `replaces` (a stale holder) still holds it.
+   */
+  acquireChangeSetLock(
+    tenantId: string,
+    originRunId: string,
+    lock: { holder: string; runWorkflowId: string | null; at: Date; replaces: string | null },
+  ): Promise<boolean>;
+  /**
+   * DI-21.162. Records an unchanged head that a set run checked as the verified head of its pull
+   * request, only while the record still names that head. False when the head moved.
+   */
+  recordCheckedHead(
+    tenantId: string,
+    pullRequestId: string,
+    head: { headSha: string; baseSha: string; runId: string; autonomyLevel: string },
+  ): Promise<boolean>;
+  /** DI-21.158. Gives the set back. Only its holder can. */
+  releaseChangeSetLock(tenantId: string, originRunId: string, holder: string): Promise<void>;
+}
+
+/** DI-21.158. Who runs the one set run of a change set. */
+export interface ChangeSetLock {
+  /** The PR workflow id that holds the set, or null. */
+  holder: string | null;
+  /** The workflow id of the set run, which a close stops. */
+  runWorkflowId: string | null;
+  at: Date | null;
 }
 
 /** The GitHub call of the change-set status. It mints a Commit statuses write token for the one repository. */

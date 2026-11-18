@@ -146,6 +146,14 @@ export interface TargetSpec extends RepositorySpec {
   repository: string;
   /** The read-only clone credential of the installation that grants the target. */
   credential?: string;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.159. The pull request head of this target in a set run:
+   * the diff from the base to this head lands in its worktree after the configuration read, as
+   * `pullRequestHead` does for one target. Absent for a target that takes no pull request change.
+   */
+  pullRequestHead?: string;
+  /** DI-21.119 per target. True when the base is a new base that the head does not hold. */
+  pullRequestMerge?: boolean;
 }
 
 /** docs/specs/change-sets.md, DI-21.138. One read-only sibling clone, at the commit it read. */
@@ -776,6 +784,14 @@ export class SandboxManager {
 
       if (input.pullRequestHead !== undefined) {
         await overlayPullRequestHead(sandbox, ref, primary, input.pullRequestHead, input.repositoryCredential, input.pullRequestMerge === true);
+      }
+      // docs/specs/change-sets.md, slice 9, DI-21.159. Each target of a set run takes the change of its
+      // own pull request.
+      for (const target of setTargets ?? []) {
+        if (target.pullRequestHead === undefined) continue;
+        const checkout = targets.find((candidate) => candidate.repository === target.repository)?.checkout;
+        if (checkout === undefined) throw new Error(`the sandbox holds no checkout of ${target.repository}`);
+        await overlayPullRequestHead(sandbox, ref, checkout, target.pullRequestHead, target.credential ?? input.repositoryCredential, target.pullRequestMerge === true);
       }
       if (beforeBootstrap !== undefined) {
         await beforeBootstrap(

@@ -268,6 +268,11 @@ export interface PublishFollowUpActivityInput extends Omit<PublishActivityInput,
   pullRequestNumber: number;
   /** The contract revision of the new head. The commit message names it. */
   contractRevision: number;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.162. A target of a set PR follow-up run whose verified
+   * tree equals its head pushes nothing and answers `unchanged`.
+   */
+  allowUnchanged?: boolean;
 }
 
 export interface PublishFollowUpActivityOutput {
@@ -275,6 +280,8 @@ export interface PublishFollowUpActivityOutput {
   commitSha: string;
   patchByteLength: number;
   baseMove: BaseMove | null;
+  /** DI-21.162. True when the target changed nothing on its pull request, so nothing was pushed. */
+  unchanged?: boolean;
 }
 
 /** docs/specs/pr-review-merge-and-deploy.md, slice 4. The trusted merge of the base into a pull request branch. */
@@ -720,6 +727,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         authorEmail: author.email,
         parentSha: input.parentSha,
         ...(input.mergeParentSha === undefined ? {} : { mergeParentSha: input.mergeParentSha }),
+        ...(input.allowUnchanged === true ? { allowUnchanged: true } : {}),
         pushToken: async (pushedFiles: string[]) => {
           const pushToken = await mintPublishToken(dependencies, input, pushedFiles);
           dependencies.redactor.addSecret(pushToken);
@@ -735,6 +743,17 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           });
         },
       });
+      if (publication.unchanged === true) {
+        dependencies.logger.info("the target changed nothing on its pull request, so Factoree pushed nothing to it", {
+          tenant_id: input.tenantId,
+          product_id: input.productId,
+          run_id: input.runId,
+          step: "publish",
+          branch: input.branch,
+          pull_request: input.pullRequestNumber,
+        });
+        return { patchSha256: patch.patchSha256, commitSha: publication.commitSha, patchByteLength: patch.byteLength, baseMove: null, unchanged: true };
+      }
       await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: patch.patchSha256,
         commitSha: publication.commitSha,

@@ -26,7 +26,39 @@ export interface PrBaseUpdate {
   failure: string | null;
 }
 
-/** The spec: each pull request takes at most 3 PR follow-up runs from the PR reviewer. Human reviews have no limit. */
+/**
+ * docs/specs/change-sets.md, slice 9, DI-21.159. One pull request of the change set that a set run
+ * holds. An open member checks out at its verified base with the diff to its head applied. A merged
+ * member stays fixed at its merge commit, and takes no new commit.
+ */
+export interface PrSetMember {
+  pullRequestId: string;
+  repositoryId: string;
+  repositoryFullName: string;
+  number: number;
+  url: string;
+  headBranch: string;
+  /** The head the run read. A new commit's parent. */
+  headSha: string;
+  /** The verified base of an open member, or the merge commit of a merged member. */
+  baseSha: string;
+  baseBranch: string;
+  state: "open" | "merged";
+  contractRevision: number;
+  /** The autonomy level of the verified head. An unchanged member keeps it. */
+  autonomyLevel: string;
+}
+
+/** DI-21.159. The change set of a set run: its members in set order and the edges of its origin run. */
+export interface PrChangeSet {
+  members: PrSetMember[];
+  edges: Array<{ provider: string; consumer: string }>;
+}
+
+/**
+ * The spec: each pull request takes at most 3 PR follow-up runs from the PR reviewer. Human reviews
+ * have no limit. docs/specs/change-sets.md: in a change set the limit counts per set (DI-21.160).
+ */
 export const MAX_REVIEWER_FOLLOW_UPS = 3;
 
 /** The longest text of one finding that a PR follow-up run carries. */
@@ -100,6 +132,11 @@ export interface PrFollowUpInput {
   plainComments: string[];
   /** Slice 4. The bring-current update this run finishes, for the base trigger. Absent otherwise. */
   baseUpdate?: PrBaseUpdate;
+  /**
+   * docs/specs/change-sets.md, slice 9. The change set of the pull request: the run holds every
+   * member in one work sprite. Absent for a pull request of one repository.
+   */
+  changeSet?: PrChangeSet;
 }
 
 /** The verdict of the PR reviewer that one check run event or commit status event reports. */
@@ -170,6 +207,7 @@ export const renderPrFollowUpDescription = (input: {
     `This run changes the open pull request ${followUp.url} at its head ${followUp.headSha.slice(0, 12)}. ` +
       "The work starts from the full change of the pull request. Keep every part of it that the review below does not ask to change.",
     "",
+    ...(followUp.changeSet === undefined ? [] : changeSetSection(followUp.changeSet)),
   ];
   if (followUp.trigger === "base" && followUp.baseUpdate !== undefined) {
     return [...header, ...baseUpdateSection(followUp.baseBranch, followUp.baseSha, followUp.baseUpdate)].join("\n");
@@ -200,6 +238,25 @@ export const renderPrFollowUpDescription = (input: {
     }),
   ].join("\n");
 };
+
+/**
+ * docs/specs/change-sets.md, slice 9. The work item section of a set PR follow-up run: every pull
+ * request of the set, each open one at its head, and each merged one fixed at its merge.
+ */
+const changeSetSection = (changeSet: PrChangeSet): string[] => [
+  "## Change set",
+  "",
+  "This pull request belongs to a change set. The work sprite holds every pull request of the set, each in its own folder. " +
+    "Change any open one that the review needs. Factoree pushes a new commit only to the pull requests that change.",
+  "",
+  ...changeSet.members.map((member) =>
+    member.state === "merged"
+      ? `- ${member.repositoryFullName}: ${member.url} merged. It stays fixed at its merge commit ${member.baseSha.slice(0, 12)}. Do not change it.`
+      : `- ${member.repositoryFullName}: ${member.url}, open at its head ${member.headSha.slice(0, 12)}.`,
+  ),
+  ...(changeSet.edges.length === 0 ? [] : ["", ...changeSet.edges.map((edge) => `- ${edge.consumer} calls ${edge.provider}.`)]),
+  "",
+];
 
 /** Slice 4. The work item section of a PR follow-up run that finishes a bring-current update. */
 const baseUpdateSection = (baseBranch: string, baseSha: string, update: PrBaseUpdate): string[] => [
@@ -241,12 +298,12 @@ export const droppedFindingReply = (finding: TriagedFinding): string =>
   ].join("\n");
 
 /** The "Needs your attention" post at the limit of PR reviewer follow-up runs. */
-export const reviewerLimitNotice = (url: string, checkName: string): string =>
+export const reviewerLimitNotice = (url: string, checkName: string, changeSet = false): string =>
   [
     "### Needs your attention",
     "",
     `The PR reviewer check "${checkName}" failed again on ${url}. Factoree already ran ${String(MAX_REVIEWER_FOLLOW_UPS)} PR follow-up runs ` +
-      "for the PR reviewer on this pull request, so it starts no other one. A human decides now: request changes, fix the branch, or close the pull request.",
+      `for the PR reviewer on this ${changeSet ? "change set" : "pull request"}, so it starts no other one. A human decides now: request changes, fix the branch, or close the pull request.`,
   ].join("\n");
 
 /** A human review as GitHub answers it: its author, and its body and comments as findings. */

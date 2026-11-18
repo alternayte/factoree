@@ -292,6 +292,10 @@ const NO_CHANGE_SETS: ChangeSetStore = {
   changeSetOfPullRequest: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
   changeSetOfRun: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
   markChangeSetStatus: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  changeSetLock: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  acquireChangeSetLock: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  releaseChangeSetLock: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  recordCheckedHead: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
 };
 
 /** A worker built without the commit status port sets no `factoree/change-set` status. */

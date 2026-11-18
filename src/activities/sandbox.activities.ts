@@ -175,7 +175,22 @@ export interface TargetInput extends RepositorySpec {
   /** The `owner/repo` name. */
   repository: string;
   githubInstallationId: string;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.159. The pull request head of this target in the work
+   * sprite of a set PR follow-up run, or of a sibling in the check sprite of a set bring-current run.
+   */
+  pullRequestHead?: string;
+  /** DI-21.119 per target. The work sprite merges the head into a new base. */
+  pullRequestMerge?: boolean;
 }
+
+/** DI-21.159. A check sprite takes the captured patch of each target, never a pull request head. */
+const withoutPullRequestHead = (target: TargetInput): TargetInput => {
+  const stripped = { ...target };
+  delete stripped.pullRequestHead;
+  delete stripped.pullRequestMerge;
+  return stripped;
+};
 
 /** docs/specs/change-sets.md. Where one target is checked out in a sandbox, and at which base. */
 export interface SandboxTarget {
@@ -510,7 +525,14 @@ const build = async (
       : {
           targets: setTargets.map((target) => {
             const credential = targetCredentials.get(target.githubInstallationId) ?? null;
-            return { repository: target.repository, url: target.url, ref: target.ref, ...(credential === null ? {} : { credential }) };
+            return {
+              repository: target.repository,
+              url: target.url,
+              ref: target.ref,
+              ...(credential === null ? {} : { credential }),
+              ...(target.pullRequestHead === undefined ? {} : { pullRequestHead: target.pullRequestHead }),
+              ...(target.pullRequestMerge === true ? { pullRequestMerge: true } : {}),
+            };
           }),
         }),
     references: input.references,
@@ -796,7 +818,7 @@ const prepareSetCheckSandbox = async (
   await releasePrevious(dependencies, input.previous);
 
   const applied = new Map<string, VerifiedPatch>();
-  const checkInput: PrepareSandboxActivityInput = { ...input };
+  const checkInput: PrepareSandboxActivityInput = { ...input, ...(input.targets === undefined ? {} : { targets: input.targets.map(withoutPullRequestHead) }) };
   delete checkInput.pullRequestHead;
   delete checkInput.pullRequestMerge;
   const prepared = await build(dependencies, checkInput, async (ref, _primaryPath, targets) => {
@@ -849,6 +871,94 @@ const prepareSetCheckSandbox = async (
     imageFiles,
     patchSha256: setSha256,
     // The trees of the set, one line per target, as the set patch hash names the patches.
+    treeSha: setPatchSha256(checkedTargets.map((target) => ({ repository: target.repository, patchSha256: target.treeSha }))),
+    changedFiles,
+    checkDefiningFiles: checkedTargets.flatMap((target) => checkDefiningFilesOf(target.changedFiles).map((file) => `${target.repository}/${file}`)),
+    checkedTargets,
+  };
+};
+
+/**
+ * docs/specs/change-sets.md, slice 9, DI-21.161. The check sprite of a merge that brings one pull
+ * request of a change set current. The merged target checks out at the new base with the patch of
+ * the trusted merge applied and proven, each other open target at its verified base with the diff to
+ * its pull request head, and a merged target at its merge commit. No agent touched any of them. The
+ * patch of each target is captured before the bootstrap, so the in-between check and the set patch
+ * hash name what the sprite holds.
+ */
+const prepareSetBringCurrentSandbox = async (
+  dependencies: SandboxActivityDependencies,
+  input: PrepareSandboxActivityInput & { patchSha256: string; mergeRepository: string },
+): Promise<PrepareCheckSandboxActivityOutput> => {
+  const patchDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
+  const merged = (input.targets ?? []).find((target) => target.repository.toLowerCase() === input.mergeRepository.toLowerCase());
+  if (merged === undefined) throw new PatchError(`the change set holds no target ${input.mergeRepository}, so Factoree checks nothing.`);
+  const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId, merged.repository);
+  if (patchBase64 === null) throw new PatchError("the run holds no patch of the merge of the base, so Factoree checks nothing.");
+  const checkInput: PrepareSandboxActivityInput = { ...input };
+  delete checkInput.pullRequestHead;
+  delete checkInput.pullRequestMerge;
+  const captured = new Map<string, VerifiedPatch>();
+  const prepared = await build(dependencies, checkInput, async (ref, _primaryPath, targets) => {
+    for (const target of targets) {
+      const spec = (input.targets ?? []).find((candidate) => candidate.repository === target.repository);
+      if (spec === undefined) continue;
+      if (spec === merged) {
+        await applyPatch(patchDependencies, { ref, primaryPath: target.path, baseSha: spec.ref, patchBase64 });
+        const applied = await capturePatch(patchDependencies, { ref, primaryPath: target.path, baseSha: spec.ref });
+        if (applied.patchSha256 !== input.patchSha256) {
+          throw new PatchError(
+            `the check sprite holds patch ${applied.patchSha256} of ${target.repository}, and the trusted merge produced patch ${input.patchSha256}. ` +
+              "Factoree checks only the merge it computed.",
+          );
+        }
+        captured.set(target.repository, applied);
+      } else {
+        captured.set(target.repository, await capturePatch(patchDependencies, { ref, primaryPath: target.path, baseSha: spec.ref }));
+      }
+    }
+  });
+  const sameBases = (input.targets ?? []).every(
+    (spec) => prepared.targets.find((candidate) => candidate.repository === spec.repository)?.checkout.baseSha === spec.ref,
+  );
+  if (captured.size !== (input.targets ?? []).length || !sameBases) {
+    await release(dependencies, prepared.ref.id, prepared.ref.adapter, () => dependencies.sandboxManager.release(prepared));
+    throw new PatchError("the check sprite did not check out the base of each target of the change set");
+  }
+  for (const [repository, patch] of captured) {
+    if (repository === merged.repository) continue;
+    await dependencies.runs.recordLastPatch(input.tenantId, input.runId, repository, patch.patchBase64, 1).catch((error: unknown) => {
+      dependencies.logger.warn("the last patch of a target was not recorded", { run_id: input.runId, repository, error: String(error) });
+    });
+  }
+  metrics.sandboxesCreated.inc({ tenant_id: input.tenantId, product_id: input.productId, adapter: prepared.ref.adapter });
+  const checkedTargets: CheckedTarget[] = prepared.targets.map((target) => {
+    const patch = captured.get(target.repository);
+    return {
+      repository: target.repository,
+      path: target.checkout.path,
+      baseSha: target.checkout.baseSha,
+      patchSha256: patch?.patchSha256 ?? "",
+      treeSha: patch?.treeSha ?? "",
+      changedFiles: patch?.changedFiles ?? [],
+    };
+  });
+  const setSha256 = setPatchSha256(checkedTargets);
+  dependencies.logger.info("bring-current check sandbox of a change set prepared", {
+    tenant_id: input.tenantId,
+    product_id: input.productId,
+    run_id: input.runId,
+    sprite_id: prepared.ref.id,
+    merged_repository: merged.repository,
+    patch_sha256: setSha256,
+    targets: checkedTargets.length,
+    step: "prepare_check",
+  });
+  const changedFiles = checkedTargets.flatMap((target) => target.changedFiles.map((file) => `${target.repository}/${file}`));
+  return {
+    ...toOutput(prepared),
+    imageFiles: [],
+    patchSha256: setSha256,
     treeSha: setPatchSha256(checkedTargets.map((target) => ({ repository: target.repository, patchSha256: target.treeSha }))),
     changedFiles,
     checkDefiningFiles: checkedTargets.flatMap((target) => checkDefiningFilesOf(target.changedFiles).map((file) => `${target.repository}/${file}`)),
@@ -1148,7 +1258,17 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
    * before the bootstrap, and proven to be the patch the trusted checkout computed. No agent touched
    * it. Verification and the replay of the Validation Plan run there.
    */
-  async prepareBringCurrentSandbox(input: PrepareSandboxActivityInput & { patchSha256: string }): Promise<PrepareCheckSandboxActivityOutput> {
+  async prepareBringCurrentSandbox(
+    input: PrepareSandboxActivityInput & {
+      patchSha256: string;
+      /**
+       * docs/specs/change-sets.md, slice 9, DI-21.161. The target the merge brings current, in a check
+       * sprite of a change set. Each other open target takes the diff to its pull request head, and a
+       * merged target stays at its merge commit.
+       */
+      mergeRepository?: string;
+    },
+  ): Promise<PrepareCheckSandboxActivityOutput> {
     await registerProjectSecrets(dependencies.redactor, dependencies.secrets, input.tenantId, input.productId, dependencies.logger);
     const patchDependencies = { sandbox: dependencies.sandbox, redactor: dependencies.redactor };
     const baseSha = input.primary.ref;
@@ -1158,6 +1278,9 @@ export const createSandboxActivities = (dependencies: SandboxActivityDependencie
         dependencies.logger,
         { tenantId: input.tenantId, runId: input.runId, stage: "prepare_check_sprite", attempt: 1, sandboxId: null },
         async () => {
+          if (input.mergeRepository !== undefined && input.targets !== undefined && input.targets.length > 1) {
+            return await prepareSetBringCurrentSandbox(dependencies, { ...input, mergeRepository: input.mergeRepository });
+          }
           const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId, repositorySlugOfUrl(input.primary.url));
           if (patchBase64 === null) throw new PatchError("the run holds no patch of the merge of the base, so Factoree checks nothing.");
           let applied: VerifiedPatch | null = null;

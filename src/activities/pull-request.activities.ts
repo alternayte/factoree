@@ -9,6 +9,7 @@ import {
   MAX_REVIEWER_FOLLOW_UPS,
   reviewerLimitNotice,
   reviewerVerdictOfEvent,
+  type PrChangeSet,
   type PrFollowUpInput,
   type PrFollowUpTrigger,
   type PrReviewFinding,
@@ -59,6 +60,7 @@ import {
   CHANGE_SET_STATUS_CONTEXT,
   changeSetStatusKey,
   decideChangeSetStatuses,
+  providersNotMerged,
   type ChangeSet,
   type ChangeSetStore,
   type CommitStatusPort,
@@ -108,10 +110,64 @@ const proofPackDeploys = (deploys: readonly PullRequestDeployRecord[]): ProofPac
     resolved: deploy.resolvedAt !== null,
   }));
 
-/** What one event of the PR workflow asks for: nothing, or one PR follow-up run. */
+/**
+ * What one event of the PR workflow asks for: nothing, or one PR follow-up run. `changeSet` marks a
+ * set run, which takes the set first (DI-21.158).
+ */
 export type PullRequestFollowUpPlan =
   | { kind: "none"; reason: string }
-  | { kind: "start"; workflowId: string; input: AgentRunWorkflowInput };
+  | { kind: "start"; workflowId: string; input: AgentRunWorkflowInput; changeSet?: boolean };
+
+/** DI-21.158. A PR workflow that held the set longer than this died with it, so another one may take it. */
+const CHANGE_SET_LOCK_STALE_MS = 24 * 60 * 60_000;
+
+/**
+ * docs/specs/change-sets.md, slice 9, DI-21.159. The members of a set run: every open pull request of
+ * the set at its head and verified base, and every merged one at its merge commit. A closed pull
+ * request leaves the set. The answer is null when fewer than two members stay, and a problem when an
+ * open member holds no verified base. `base` replaces the base of the pull request a base update
+ * brings current.
+ */
+const setRunOf = (
+  set: ChangeSet,
+  base?: { pullRequestId: string; baseSha: string },
+): { changeSet: PrChangeSet } | { problem: string } | null => {
+  const members: PrChangeSet["members"] = [];
+  for (const member of set.members) {
+    const record = member.record;
+    if (record === null) return { problem: `Factoree holds no record of ${member.url} yet.` };
+    if (record.state === "closed") continue;
+    const baseSha =
+      record.state === "merged" ? record.mergeCommitSha : base !== undefined && base.pullRequestId === record.id ? base.baseSha : record.verifiedBaseSha;
+    if (baseSha === null) {
+      return { problem: record.state === "merged" ? `Factoree holds no merge commit of ${record.url}.` : `Factoree holds no verified base of ${record.url}.` };
+    }
+    members.push({
+      pullRequestId: record.id,
+      repositoryId: record.repositoryId,
+      repositoryFullName: record.repositoryFullName,
+      number: record.number,
+      url: record.url,
+      headBranch: record.headBranch,
+      headSha: record.headSha,
+      baseSha,
+      baseBranch: record.baseBranch,
+      state: record.state === "merged" ? "merged" : "open",
+      contractRevision: record.contractRevision,
+      // DI-21.104. An unknown level never takes auto-merge, and neither does L3.
+      autonomyLevel: record.autonomyLevel ?? "L3",
+    });
+  }
+  if (members.length < 2) return null;
+  const inSet = (name: string) => members.some((member) => member.repositoryFullName.toLowerCase() === name.toLowerCase());
+  return { changeSet: { members, edges: set.edges.filter((edge) => inSet(edge.provider) && inSet(edge.consumer)) } };
+};
+
+/** DI-21.160. The PR reviewer follow-up runs of a whole set: each counted run id once. */
+const setReviewerFollowUps = (set: ChangeSet): number => {
+  const keys = new Set(set.members.flatMap((member) => member.record?.reviewerFollowUpKeys ?? []));
+  return Math.max(keys.size, ...set.members.map((member) => member.record?.reviewerFollowUps ?? 0));
+};
 
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -539,6 +595,8 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
         dependencies.logger.warn("the PR follow-up notice did not reach Linear", { ...log, error: String(error) });
       }
     };
+    // docs/specs/change-sets.md, slice 9. A PR follow-up run on any open pull request of a set runs as a set.
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, record.id);
 
     let trigger: PrFollowUpTrigger;
     let reviewer: PrReviewer | null = null;
@@ -579,9 +637,11 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       if (sha !== record.headSha) return { kind: "none", reason: "the check names an old head" };
       handledKey = event.kind === "check_run" ? `check_run:${String(event.checkRunId)}` : `status:${sha}:${event.context}`;
       if (record.reviewerHandledKey === handledKey) return { kind: "none", reason: "the check already started a triage" };
-      if (record.reviewerFollowUps >= MAX_REVIEWER_FOLLOW_UPS) {
+      // docs/specs/change-sets.md, DI-21.160. In a change set the limit counts per set.
+      const counted = changeSet === null ? record.reviewerFollowUps : setReviewerFollowUps(changeSet);
+      if (counted >= MAX_REVIEWER_FOLLOW_UPS) {
         if (!(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) return { kind: "none", reason: "the check was handled" };
-        const notice = reviewerLimitNotice(record.url, reviewer.checkName);
+        const notice = reviewerLimitNotice(record.url, reviewer.checkName, changeSet !== null);
         dependencies.logger.info("the PR reviewer follow-up limit holds", log);
         await say(notice);
         try {
@@ -629,6 +689,13 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
         reviewer === null ? null : { login: `${reviewer.appSlug}[bot]`, sha: record.headSha },
       ),
     };
+    const setRun = changeSet === null ? null : setRunOf(changeSet);
+    if (setRun !== null && "problem" in setRun) {
+      dependencies.logger.warn("the change set of the pull request cannot run as a set, so no PR follow-up run starts", { ...log, problem: setRun.problem });
+      await say(`Factoree cannot start a PR follow-up run on ${record.url}, which runs as its whole change set. ${setRun.problem}`);
+      return { kind: "none", reason: setRun.problem };
+    }
+    if (setRun !== null) followUp.changeSet = setRun.changeSet;
     if (handledKey !== null && !(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) {
       return { kind: "none", reason: "the check already started a triage" };
     }
@@ -641,8 +708,14 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       log,
       extra: { prFollowUp: followUp },
     });
-    dependencies.logger.info("a PR follow-up run starts", { ...log, trigger, workflow_id: start.workflowId, findings: findings.length });
-    return { kind: "start", ...start };
+    dependencies.logger.info("a PR follow-up run starts", {
+      ...log,
+      trigger,
+      workflow_id: start.workflowId,
+      findings: findings.length,
+      change_set: setRun === null ? 0 : setRun.changeSet.members.length,
+    });
+    return { kind: "start", ...start, ...(changeSet === null ? {} : { changeSet: true }) };
   },
 
   /**
@@ -701,6 +774,25 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       autonomyLevel: record.autonomyLevel ?? "L3",
       reason: input.reason,
     };
+    // docs/specs/change-sets.md, slice 9, DI-21.161. A merge that brings one pull request of a set
+    // current gets the set check. An open sibling with a head that Factoree did not check would make
+    // that check prove nothing, so the update waits for a set PR follow-up run.
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, record.id);
+    const setRun = changeSet === null ? null : setRunOf(changeSet);
+    if (setRun !== null && "problem" in setRun) return { kind: "none", reason: setRun.problem };
+    if (setRun !== null) {
+      const unchecked = setRun.changeSet.members.filter(
+        (member) => member.state === "open" && changeSet?.members.find((candidate) => candidate.record?.id === member.pullRequestId)?.record?.verifiedHeadSha !== member.headSha,
+      );
+      if (unchecked.length > 0) {
+        dependencies.logger.info("a pull request of the change set holds a head Factoree did not check, so Factoree does not bring it current", {
+          ...log,
+          unchecked: unchecked.map((member) => member.url).join(", "),
+        });
+        return { kind: "none", reason: "a pull request of the change set holds an unchecked head" };
+      }
+      bringCurrent.changeSet = setRun.changeSet;
+    }
     const start = await runStartOf(dependencies, {
       tenantId: input.tenantId,
       record,
@@ -710,8 +802,8 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       log,
       extra: { bringCurrent },
     });
-    dependencies.logger.info("a bring-current run starts", { ...log, workflow_id: start.workflowId });
-    return { kind: "start", ...start };
+    dependencies.logger.info("a bring-current run starts", { ...log, workflow_id: start.workflowId, change_set: setRun === null ? 0 : setRun.changeSet.members.length });
+    return { kind: "start", ...start, ...(changeSet === null ? {} : { changeSet: true }) };
   },
 
   /**
@@ -764,6 +856,12 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
         failure: input.failure,
       },
     };
+    // docs/specs/change-sets.md, slice 9. The base update of a set member runs as a set, with the new
+    // base for the member it brings current.
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, record.id);
+    const setRun = changeSet === null ? null : setRunOf(changeSet, { pullRequestId: record.id, baseSha: input.baseSha });
+    if (setRun !== null && "problem" in setRun) return { kind: "none", reason: setRun.problem };
+    if (setRun !== null) followUp.changeSet = setRun.changeSet;
     const start = await runStartOf(dependencies, {
       tenantId: input.tenantId,
       record,
@@ -774,7 +872,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       extra: { prFollowUp: followUp },
     });
     dependencies.logger.info("a PR follow-up run starts", { ...log, workflow_id: start.workflowId, conflicts: input.conflicts.length });
-    return { kind: "start", ...start };
+    return { kind: "start", ...start, ...(changeSet === null ? {} : { changeSet: true }) };
   },
 
   /** DI-21.118. Records that a bring-current update of this head pushed nothing. */
@@ -824,6 +922,98 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     if (record === null) throw new Error(`no pull request "${input.pullRequestId}" of tenant "${input.tenantId}"`);
     if (record.reviewerFollowUpKeys.includes(input.runId)) return { count: record.reviewerFollowUps };
     return { count: await dependencies.pullRequests.countReviewerFollowUp(input.tenantId, input.pullRequestId, input.runId) };
+  },
+
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.158. Takes the set for one set run of a PR workflow. Only
+   * one set run runs at a time across the PR workflows of a set. A holder whose pull request ended,
+   * or that held the set for a day, died with it, and the set passes on. The answer names the run of
+   * the holder, which a close in the queue of another member stops. A pull request of no set needs
+   * no lock.
+   */
+  async acquireChangeSetRun(input: {
+    tenantId: string;
+    pullRequestId: string;
+    holderWorkflowId: string;
+    /** The set run, or null while the holder still plans it. */
+    runWorkflowId: string | null;
+  }): Promise<{ acquired: boolean; heldBy: string | null }> {
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, input.pullRequestId);
+    if (changeSet === null) return { acquired: true, heldBy: null };
+    const lock = await dependencies.changeSets.changeSetLock(input.tenantId, changeSet.originRunId);
+    let replaces: string | null = null;
+    if (lock.holder !== null && lock.holder !== input.holderWorkflowId) {
+      const holder = changeSet.members.find((member) => member.workflowId === lock.holder);
+      const stale =
+        lock.at === null || Date.now() - lock.at.getTime() > CHANGE_SET_LOCK_STALE_MS || (holder !== undefined && holder.record !== null && holder.record.state !== "open");
+      if (!stale) return { acquired: false, heldBy: lock.runWorkflowId };
+      replaces = lock.holder;
+      dependencies.logger.warn("a stale holder held the change set, so another PR workflow takes it", {
+        origin_run_id: changeSet.originRunId,
+        holder: lock.holder,
+        step: "change_set_lock",
+      });
+    }
+    const acquired = await dependencies.changeSets.acquireChangeSetLock(input.tenantId, changeSet.originRunId, {
+      holder: input.holderWorkflowId,
+      runWorkflowId: input.runWorkflowId,
+      at: new Date(),
+      replaces,
+    });
+    if (!acquired) return { acquired: false, heldBy: (await dependencies.changeSets.changeSetLock(input.tenantId, changeSet.originRunId)).runWorkflowId };
+    dependencies.logger.info("a PR workflow took the change set for a set run", {
+      origin_run_id: changeSet.originRunId,
+      holder: input.holderWorkflowId,
+      run: input.runWorkflowId,
+      step: "change_set_lock",
+    });
+    return { acquired: true, heldBy: input.runWorkflowId };
+  },
+
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.162. A set run checked an open member that it changed
+   * nothing on: its head becomes the verified head, with the run, its base and its level, while the
+   * record still names that head.
+   */
+  async recordCheckedHead(input: {
+    tenantId: string;
+    pullRequestId: string;
+    headSha: string;
+    baseSha: string;
+    runId: string;
+    autonomyLevel: string;
+  }): Promise<{ recorded: boolean }> {
+    const recorded = await dependencies.changeSets.recordCheckedHead(input.tenantId, input.pullRequestId, {
+      headSha: input.headSha,
+      baseSha: input.baseSha,
+      runId: input.runId,
+      autonomyLevel: input.autonomyLevel,
+    });
+    if (!recorded) dependencies.logger.info("the head moved after the set run checked it, so it stays unverified", { pull_request_id: input.pullRequestId, step: "pull_request_record" });
+    return { recorded };
+  },
+
+  /** DI-21.158. Gives the set back after a set run, and names the other PR workflows of the set, which wait for it. */
+  async releaseChangeSetRun(input: { tenantId: string; pullRequestId: string; holderWorkflowId: string }): Promise<{ siblings: string[] }> {
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, input.pullRequestId);
+    if (changeSet === null) return { siblings: [] };
+    await dependencies.changeSets.releaseChangeSetLock(input.tenantId, changeSet.originRunId, input.holderWorkflowId);
+    return { siblings: changeSet.members.map((member) => member.workflowId).filter((workflowId) => workflowId !== input.holderWorkflowId) };
+  },
+
+  /**
+   * DI-21.158. Whether another PR workflow of the set holds the set now, and its run. A PR workflow of
+   * the set takes no event while it is held, so a push of the set run never reads as a human push.
+   */
+  async changeSetRunHolder(input: { tenantId: string; pullRequestId: string; holderWorkflowId: string }): Promise<{ held: boolean; runWorkflowId: string | null }> {
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, input.pullRequestId);
+    if (changeSet === null) return { held: false, runWorkflowId: null };
+    const lock = await dependencies.changeSets.changeSetLock(input.tenantId, changeSet.originRunId);
+    if (lock.holder === null || lock.holder === input.holderWorkflowId) return { held: false, runWorkflowId: null };
+    const holder = changeSet.members.find((member) => member.workflowId === lock.holder);
+    const stale =
+      lock.at === null || Date.now() - lock.at.getTime() > CHANGE_SET_LOCK_STALE_MS || (holder !== undefined && holder.record !== null && holder.record.state !== "open");
+    return stale ? { held: false, runWorkflowId: null } : { held: true, runWorkflowId: lock.runWorkflowId };
   },
 
   /**
@@ -917,6 +1107,11 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       reviewerVerdict,
       changeRequests,
     });
+    // docs/specs/pr-review-merge-and-deploy.md, D7, DI-21.157. In a change set, a consumer pull request
+    // takes auto-merge only after every provider pull request merged.
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, record.id);
+    const providersWaiting = changeSet === null ? null : providersNotMerged(changeSet, record.id);
+    if (providersWaiting !== null) unmet.push(providersWaiting);
     const action = decideAutoMerge({ state, unmet, pullRequest });
     const write = async (next: AutoMergeState, nextReason: string | null) => {
       await store.setAutoMerge(input.tenantId, record.id, { state: next, reason: nextReason });

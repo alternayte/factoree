@@ -11,7 +11,7 @@ import type {
   RecordPublishedPullRequestInput,
 } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
-import type { ChangeSet, ChangeSetMember, ChangeSetStore } from "~/domain/pull-requests/change-set-status.js";
+import type { ChangeSet, ChangeSetLock, ChangeSetMember, ChangeSetStore } from "~/domain/pull-requests/change-set-status.js";
 import { deployKeyOf, type DeployIssueMoveState, type OpenDeployFailure, type PullRequestDeployRecord, type RecordDeployInput } from "~/domain/pull-requests/deploys.js";
 
 const include = { repository: { select: { fullName: true } } } as const;
@@ -151,6 +151,55 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
 
   async markChangeSetStatus(tenantId: string, pullRequestId: string, key: string): Promise<void> {
     await this.prisma.pullRequest.updateMany({ where: { id: pullRequestId, tenantId }, data: { changeSetStatusKey: key } });
+  }
+
+  async changeSetLock(tenantId: string, originRunId: string): Promise<ChangeSetLock> {
+    const row = await this.prisma.run.findFirst({
+      where: { id: originRunId, tenantId },
+      select: { changeSetLockHolder: true, changeSetLockRun: true, changeSetLockAt: true },
+    });
+    if (row === null) throw new Error(`no run "${originRunId}" of tenant "${tenantId}"`);
+    return { holder: row.changeSetLockHolder, runWorkflowId: row.changeSetLockRun, at: row.changeSetLockAt };
+  }
+
+  async acquireChangeSetLock(
+    tenantId: string,
+    originRunId: string,
+    lock: { holder: string; runWorkflowId: string | null; at: Date; replaces: string | null },
+  ): Promise<boolean> {
+    // DI-21.158. One conditional write, so two PR workflows of the set never both take it.
+    const updated = await this.prisma.run.updateMany({
+      where: {
+        id: originRunId,
+        tenantId,
+        OR: [
+          { changeSetLockHolder: null },
+          { changeSetLockHolder: lock.holder },
+          ...(lock.replaces === null ? [] : [{ changeSetLockHolder: lock.replaces }]),
+        ],
+      },
+      data: { changeSetLockHolder: lock.holder, changeSetLockRun: lock.runWorkflowId, changeSetLockAt: lock.at },
+    });
+    return updated.count > 0;
+  }
+
+  async recordCheckedHead(
+    tenantId: string,
+    pullRequestId: string,
+    head: { headSha: string; baseSha: string; runId: string; autonomyLevel: string },
+  ): Promise<boolean> {
+    const updated = await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId, headSha: head.headSha, state: "open" },
+      data: { verifiedHeadSha: head.headSha, verifiedBaseSha: head.baseSha, verifiedRunId: head.runId, autonomyLevel: head.autonomyLevel },
+    });
+    return updated.count > 0;
+  }
+
+  async releaseChangeSetLock(tenantId: string, originRunId: string, holder: string): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: originRunId, tenantId, changeSetLockHolder: holder },
+      data: { changeSetLockHolder: null, changeSetLockRun: null, changeSetLockAt: null },
+    });
   }
 
   async recordPublished(input: RecordPublishedPullRequestInput): Promise<PublishedPullRequest> {

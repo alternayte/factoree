@@ -47,6 +47,12 @@ export interface PullRequestWorkflowState {
 
 export const pullRequestStateQuery = defineQuery<PullRequestWorkflowState>("pullRequestState");
 
+/**
+ * docs/specs/change-sets.md, slice 9, DI-21.158. The PR workflow that held the set for a set run gave
+ * it back. Each other PR workflow of the set that waits reads the set again.
+ */
+export const changeSetReleasedSignal = defineSignal("changeSetReleased");
+
 export interface PullRequestWorkflowInput {
   tenantId: string;
   pullRequestId: string;
@@ -97,6 +103,15 @@ const DEPLOYS_PATCH = "deploys";
  * activity runs only for a pull request of a change set, so one pull request alone adds no command.
  */
 const CHANGE_SET_STATUS_PATCH = "change-set-status";
+
+/**
+ * docs/specs/change-sets.md, slice 9. A history from before the set rules starts the run of one pull
+ * request and waits for no other PR workflow. The activities run only for a pull request of a set.
+ */
+const SET_RUN_PATCH = "change-set-runs";
+
+/** DI-21.158. A waiting PR workflow reads the set again this often, in case a release signal was lost. */
+const SET_WAIT = "5 minutes";
 
 /** DI-21.155. The events that change the merge-order status of a change set: a new head, a reopen and a close. */
 const movesSetStatus = (event: PullRequestEvent): boolean => event.kind === "synchronized" || event.kind === "reopened" || event.kind === "closed";
@@ -162,6 +177,152 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     view.pending = queue.length;
   });
   setHandler(pullRequestStateQuery, () => view);
+  // DI-21.158. Set when another PR workflow of the change set gave the set back.
+  let setReleased = false;
+  setHandler(changeSetReleasedSignal, () => {
+    setReleased = true;
+  });
+  const closeQueued = (): boolean => queue.some((queued) => queued.kind === "closed");
+
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.158. Waits while another PR workflow of the set runs a
+   * set run. The events wait in the queue, and none is lost. A close of this pull request stops that
+   * run once, because its push would land on a set that changed.
+   */
+  const waitWhileSetHeld = async (closing: boolean, heldBy: string | null = null): Promise<void> => {
+    let runWorkflowId = heldBy;
+    let stopSent = false;
+    for (;;) {
+      if (runWorkflowId === null) {
+        let holder: { held: boolean; runWorkflowId: string | null };
+        try {
+          holder = await activities.changeSetRunHolder({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, holderWorkflowId: workflowInfo().workflowId });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          log.warn("the change set holder was not read, so the workflow goes on", { error: String(error) });
+          return;
+        }
+        if (!holder.held) return;
+        runWorkflowId = holder.runWorkflowId;
+      }
+      if (!stopSent && runWorkflowId !== null && (closing || closeQueued())) {
+        stopSent = true;
+        const stop: StopRequest = { source: "pull_request" };
+        try {
+          await getExternalWorkflowHandle(runWorkflowId).signal("stop", stop);
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          // The set run ended between the read and the signal.
+        }
+      }
+      setReleased = false;
+      await condition(() => setReleased || (!stopSent && closeQueued()), SET_WAIT);
+      runWorkflowId = null;
+    }
+  };
+
+  /** DI-21.158. True while this PR workflow holds the set for its set run. */
+  let holdingSet = false;
+
+  /**
+   * DI-21.158. Takes the set for a set run before it starts. While another PR workflow holds it, this
+   * one waits and plans again, because the other run may have moved the heads. A plan of one pull
+   * request needs no set.
+   */
+  const takeSet = async (plan: PullRequestFollowUpPlan, replan: () => Promise<PullRequestFollowUpPlan>): Promise<PullRequestFollowUpPlan> => {
+    let current = plan;
+    for (;;) {
+      if (current.kind === "none" || current.changeSet !== true || !patched(SET_RUN_PATCH)) return current;
+      if (closeQueued()) return { kind: "none", reason: "the pull request closed" };
+      let taken: { acquired: boolean; heldBy: string | null };
+      try {
+        taken = await activities.acquireChangeSetRun({
+          tenantId: input.tenantId,
+          pullRequestId: input.pullRequestId,
+          holderWorkflowId: workflowInfo().workflowId,
+          runWorkflowId: current.workflowId,
+        });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        log.warn("the change set was not taken, so the set run does not start", { workflow_id: current.workflowId, error: String(error) });
+        return { kind: "none", reason: "the change set was not taken" };
+      }
+      if (taken.acquired) {
+        holdingSet = true;
+        return current;
+      }
+      await waitWhileSetHeld(false, taken.heldBy);
+      try {
+        current = await replan();
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        log.warn("the set run plan failed", { error: String(error) });
+        return { kind: "none", reason: "the plan failed" };
+      }
+    }
+  };
+
+  /**
+   * DI-21.158. Takes the set before a plan that marks what it handled, so the plan runs once and
+   * reads the heads after any other set run. The set run is named once the plan starts one; a plan
+   * that starts nothing gives the set back.
+   */
+  const planInSet = async (inSet: boolean, planOnce: () => Promise<PullRequestFollowUpPlan>): Promise<PullRequestFollowUpPlan> => {
+    if (!inSet || !patched(SET_RUN_PATCH)) return await planOnce();
+    for (;;) {
+      if (closeQueued()) return { kind: "none", reason: "the pull request closed" };
+      let taken: { acquired: boolean; heldBy: string | null };
+      try {
+        taken = await activities.acquireChangeSetRun({
+          tenantId: input.tenantId,
+          pullRequestId: input.pullRequestId,
+          holderWorkflowId: workflowInfo().workflowId,
+          runWorkflowId: null,
+        });
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        log.warn("the change set was not taken, so no set run starts", { error: String(error) });
+        return { kind: "none", reason: "the change set was not taken" };
+      }
+      if (taken.acquired) break;
+      await waitWhileSetHeld(false, taken.heldBy);
+    }
+    holdingSet = true;
+    let plan: PullRequestFollowUpPlan;
+    try {
+      plan = await planOnce();
+    } catch (error) {
+      await releaseSet();
+      throw error;
+    }
+    if (plan.kind === "none") {
+      await releaseSet();
+      return plan;
+    }
+    return await takeSet(plan, planOnce);
+  };
+
+  /** DI-21.158. Gives the set back, and wakes each other PR workflow of the set. */
+  const releaseSet = async (): Promise<void> => {
+    if (!holdingSet) return;
+    holdingSet = false;
+    let siblings: string[] = [];
+    try {
+      ({ siblings } = await activities.releaseChangeSetRun({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, holderWorkflowId: workflowInfo().workflowId }));
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      // A held set passes on after a day, or when this pull request ends.
+      log.warn("the change set was not given back", { error: String(error) });
+    }
+    for (const sibling of siblings) {
+      try {
+        await getExternalWorkflowHandle(sibling).signal(changeSetReleasedSignal);
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        // The PR workflow of an ended pull request takes no signal.
+      }
+    }
+  };
 
   /** Steers auto-merge, and answers the bring-current update the steer asks for, or null. */
   const steer = async (trigger: AutoMergeTrigger, eventHeadSha: string | null): Promise<BringCurrentReason | null> => {
@@ -184,7 +345,14 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
    * answers the result of the run, or null when the run did not start or failed.
    */
   const runChild = async (plan: PullRequestFollowUpPlan): Promise<AgentRunWorkflowResult | null> => {
-    if (plan.kind === "none") return null;
+    try {
+      return plan.kind === "none" ? null : await runChildHeld(plan);
+    } finally {
+      await releaseSet();
+    }
+  };
+
+  const runChildHeld = async (plan: Extract<PullRequestFollowUpPlan, { kind: "start" }>): Promise<AgentRunWorkflowResult | null> => {
     let finished = false;
     let outcome: AgentRunWorkflowResult | null = null;
     let result: Promise<AgentRunWorkflowResult>;
@@ -227,10 +395,11 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
   };
 
   /** Slice 3. One event may start one PR follow-up run. */
-  const followUp = async (event: PullRequestEvent): Promise<void> => {
+  const followUp = async (event: PullRequestEvent, inSet: boolean): Promise<void> => {
     let plan: PullRequestFollowUpPlan;
+    const planOnce = () => followUpActivities.planPullRequestFollowUp({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, event });
     try {
-      plan = await followUpActivities.planPullRequestFollowUp({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, event });
+      plan = await planInSet(inSet, planOnce);
     } catch (error) {
       if (isCancellation(error)) throw error;
       log.warn("the PR follow-up plan failed", { delivery_id: event.deliveryId, error: String(error) });
@@ -269,14 +438,18 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
    */
   const bringCurrent = async (reason: BringCurrentReason, triggerKey: string): Promise<void> => {
     let plan: PullRequestFollowUpPlan;
+    const planOnce = () => followUpActivities.planBringCurrent({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, reason, triggerKey });
     try {
-      plan = await followUpActivities.planBringCurrent({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, reason, triggerKey });
+      plan = await takeSet(await planOnce(), planOnce);
     } catch (error) {
       if (isCancellation(error)) throw error;
       log.warn("the bring-current plan failed", { trigger: triggerKey, error: String(error) });
       return;
     }
-    if (plan.kind === "none") return;
+    if (plan.kind === "none") {
+      await releaseSet();
+      return;
+    }
     const headSha = plan.input.bringCurrent?.headSha ?? null;
     const result = await runChild(plan);
     const outcome = result?.bringCurrent ?? { kind: "ended" as const };
@@ -289,16 +462,19 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     }
     if (outcome.kind === "ended" || outcome.kind === "current") return;
     let followUpPlan: PullRequestFollowUpPlan;
-    try {
-      followUpPlan = await followUpActivities.planBaseUpdateFollowUp({
+    const bringCurrentWorkflowId = plan.workflowId;
+    const planFollowUp = () =>
+      followUpActivities.planBaseUpdateFollowUp({
         tenantId: input.tenantId,
         pullRequestId: input.pullRequestId,
         headSha,
         baseSha: outcome.baseSha,
         conflicts: outcome.kind === "conflict" ? outcome.conflicts : [],
         failure: outcome.kind === "failed" ? outcome.failure : null,
-        bringCurrentWorkflowId: plan.workflowId,
+        bringCurrentWorkflowId,
       });
+    try {
+      followUpPlan = await takeSet(await planFollowUp(), planFollowUp);
     } catch (error) {
       if (isCancellation(error)) throw error;
       log.warn("the PR follow-up plan of the base update failed", { error: String(error) });
@@ -389,6 +565,9 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     const event = queue.shift() as PullRequestEvent;
     view.pending = queue.length;
     const taken = await activities.takePullRequestEvent({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, event });
+    // docs/specs/change-sets.md, slice 9, DI-21.158. While another PR workflow of the set runs a set
+    // run, this one acts on no event. The record took the event, and the handling waits.
+    if (taken.isNew && taken.changeSet === true && patched(SET_RUN_PATCH)) await waitWhileSetHeld(event.kind === "closed");
     view.taken += 1;
     view.state = taken.state;
     view.headSha = taken.headSha;
@@ -426,7 +605,7 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
       if (taken.changeSet === true && movesSetStatus(event) && patched(CHANGE_SET_STATUS_PATCH)) await setStatuses(event);
       const trigger = autoMergeTriggerOf(event);
       const wanted = trigger === null ? null : await steer(trigger, event.kind === "auto_merge_disabled" ? event.headSha : null);
-      if (mayStartFollowUp(event) && patched(PR_FOLLOW_UP_PATCH)) await followUp(event);
+      if (mayStartFollowUp(event) && patched(PR_FOLLOW_UP_PATCH)) await followUp(event, taken.changeSet === true);
       // Slice 4. A conflict at any level, or a branch an L4 merge needs up to date, is brought current.
       if ((wanted !== null || mayConflict(event)) && patched(BRING_CURRENT_PATCH)) {
         const reason = wanted ?? ((await conflicts(event)) ? "conflict" : null);

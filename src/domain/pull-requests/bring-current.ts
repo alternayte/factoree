@@ -6,6 +6,7 @@
  * The agent-run and PR workflows import this module, so it imports nothing at run time.
  */
 import type { BringCurrentReason } from "./auto-merge.js";
+import type { PrChangeSet } from "./pr-follow-up.js";
 
 /** The pull request a bring-current run updates. The agent-run input `bringCurrent` carries it. */
 export interface BringCurrentInput {
@@ -27,6 +28,12 @@ export interface BringCurrentInput {
   /** The autonomy level of the verified head. The merge commit keeps it (DI-21.104). */
   autonomyLevel: string;
   reason: BringCurrentReason;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.161. The change set of the pull request: the check
+   * sprite holds every member, and the set check and the in-between check run on the merge. Absent
+   * for a pull request of one repository.
+   */
+  changeSet?: PrChangeSet;
 }
 
 /**

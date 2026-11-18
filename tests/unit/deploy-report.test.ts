@@ -167,7 +167,7 @@ const build = (options: { previousSuccess?: string | null; failIssueMoveWrites?:
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
     // docs/specs/change-sets.md. The pull request belongs to no change set.
-    changeSets: { changeSetOfPullRequest: () => Promise.resolve(null), changeSetOfRun: () => Promise.resolve(null), markChangeSetStatus: reject },
+    changeSets: { changeSetOfPullRequest: () => Promise.resolve(null), changeSetOfRun: () => Promise.resolve(null), markChangeSetStatus: reject, changeSetLock: reject, acquireChangeSetLock: reject, releaseChangeSetLock: reject, recordCheckedHead: reject },
     commitStatuses: { setStatus: reject },
   });
   const deployment = (state: string, sha: string, deploymentId = 9): PullRequestEvent => ({
