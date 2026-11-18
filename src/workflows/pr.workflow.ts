@@ -92,6 +92,15 @@ const BRING_CURRENT_PATCH = "bring-current";
  */
 const DEPLOYS_PATCH = "deploys";
 
+/**
+ * docs/specs/change-sets.md, slice 8. A history from before the change-set status sets none. The
+ * activity runs only for a pull request of a change set, so one pull request alone adds no command.
+ */
+const CHANGE_SET_STATUS_PATCH = "change-set-status";
+
+/** DI-21.155. The events that change the merge-order status of a change set: a new head, a reopen and a close. */
+const movesSetStatus = (event: PullRequestEvent): boolean => event.kind === "synchronized" || event.kind === "reopened" || event.kind === "closed";
+
 /** DI-21.115. GitHub computes the merge state after a push. The workflow reads it this often at most. */
 const MERGEABILITY_READS = 4;
 const MERGEABILITY_WAIT = "30 seconds";
@@ -343,6 +352,20 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     }
   };
 
+  /**
+   * docs/specs/change-sets.md, slice 8, DI-21.155. Sets the `factoree/change-set` status of each
+   * consumer of the set again, from the records after the event. A failure costs only the status:
+   * the next event of the set sets it again.
+   */
+  const setStatuses = async (event: PullRequestEvent): Promise<void> => {
+    try {
+      await activities.setChangeSetStatuses({ tenantId: input.tenantId, pullRequestId: input.pullRequestId });
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      log.warn("the change-set status was not set", { delivery_id: event.deliveryId, error: String(error) });
+    }
+  };
+
   // DI-21.121. A merged pull request takes deploys until this time, in milliseconds since the epoch.
   let mergedAt: number | null = input.mergedAt ?? null;
 
@@ -383,6 +406,8 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
         merged: event.merged,
         mergeCommitSha: event.mergeCommitSha,
       });
+      // DI-21.155. A provider that merged or closed moves the status of each consumer of its set.
+      if (taken.changeSet === true && patched(CHANGE_SET_STATUS_PATCH)) await setStatuses(event);
       // Slice 5, DI-21.121. A merge keeps the workflow open for the deploys of the merge commit. The
       // events that arrived with it stay in the queue and are taken as events of a merged pull request.
       if (view.state === "merged" && patched(DEPLOYS_PATCH)) {
@@ -397,6 +422,8 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
         return view.state;
       }
     } else {
+      // DI-21.155. A new head of a provider or a consumer moves the status of the set.
+      if (taken.changeSet === true && movesSetStatus(event) && patched(CHANGE_SET_STATUS_PATCH)) await setStatuses(event);
       const trigger = autoMergeTriggerOf(event);
       const wanted = trigger === null ? null : await steer(trigger, event.kind === "auto_merge_disabled" ? event.headSha : null);
       if (mayStartFollowUp(event) && patched(PR_FOLLOW_UP_PATCH)) await followUp(event);

@@ -156,7 +156,7 @@ describe("missingGitHubAccess (docs/specs/pr-review-merge-and-deploy.md, D4)", (
     expect(missing.permissions).toEqual([
       { name: "pull_requests", required: "write", granted: "read" },
       { name: "checks", required: "read", granted: null },
-      { name: "statuses", required: "read", granted: null },
+      { name: "statuses", required: "write", granted: null },
     ]);
     expect(missing.events).toEqual(["pull_request_review", "check_run", "status"]);
   });

@@ -1116,6 +1116,9 @@ model PullRequest {
   // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
   // starts no other one on that head until the base branch moves.
   bringCurrentHeadSha String?  @map("bring_current_head_sha")
+  // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
+  // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
+  changeSetStatusKey String?   @map("change_set_status_key")
   workflowId        String     @map("workflow_id")
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")

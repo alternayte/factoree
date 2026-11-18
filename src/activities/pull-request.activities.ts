@@ -55,6 +55,14 @@ import {
   type PullRequestDeployRecord,
 } from "~/domain/pull-requests/deploys.js";
 import type { ProofPackDeploy } from "~/domain/evidence/proof-pack.js";
+import {
+  CHANGE_SET_STATUS_CONTEXT,
+  changeSetStatusKey,
+  decideChangeSetStatuses,
+  type ChangeSet,
+  type ChangeSetStore,
+  type CommitStatusPort,
+} from "~/domain/pull-requests/change-set-status.js";
 import type { AmendProofPackActivityInput } from "./evidence.activities.js";
 
 export interface PullRequestActivityDependencies {
@@ -74,6 +82,10 @@ export interface PullRequestActivityDependencies {
   productPageUrl?: ((productId: string) => string) | undefined;
   /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The GitHub reads of the deploy report. */
   deploys: DeployPort;
+  /** docs/specs/change-sets.md, slices 8 and 9. The pull requests of a change set. */
+  changeSets: ChangeSetStore;
+  /** docs/specs/change-sets.md, slice 8. The `factoree/change-set` commit status. */
+  commitStatuses: CommitStatusPort;
 }
 
 /**
@@ -151,6 +163,16 @@ export interface TakePullRequestEventOutput {
   headSha: string;
   /** Slice 5, DI-21.121. The time of the merge, as an ISO string, or null when the pull request did not merge. */
   mergedAt?: string | null;
+  /** docs/specs/change-sets.md, DI-21.155. True when the pull request belongs to a change set of two or more. */
+  changeSet?: boolean;
+}
+
+/** DI-21.155. What one pass over the statuses of a change set did. */
+export interface SetChangeSetStatusesOutput {
+  /** Each status Factoree set, as `<repository>#<number> <state>`. */
+  set: string[];
+  /** Each status that failed to reach GitHub, with the cause. */
+  failed: string[];
 }
 
 /**
@@ -240,12 +262,59 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       new: isNew,
       step: "pull_request_event",
     });
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, input.pullRequestId);
     return {
       isNew,
       state: pullRequest.state,
       headSha: pullRequest.headSha,
       mergedAt: pullRequest.state === "merged" && pullRequest.closedAt !== null ? pullRequest.closedAt.toISOString() : null,
+      ...(changeSet === null ? {} : { changeSet: true }),
     };
+  },
+
+  /**
+   * docs/specs/change-sets.md, slice 8, DI-21.155. Sets the `factoree/change-set` commit status on the
+   * head of each open consumer pull request of the set, from the records of every pull request of
+   * the set. A status equal to the last one Factoree set on that head is not set again. A set with no
+   * safe order gets no status. A failed GitHub call costs only that status: the next event of the set
+   * sets it again, and the activity then fails so that Temporal retries it.
+   */
+  async setChangeSetStatuses(input: { tenantId: string; pullRequestId?: string; originRunId?: string }): Promise<SetChangeSetStatusesOutput> {
+    let changeSet: ChangeSet | null = null;
+    if (input.pullRequestId !== undefined) changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, input.pullRequestId);
+    else if (input.originRunId !== undefined) changeSet = await dependencies.changeSets.changeSetOfRun(input.tenantId, input.originRunId);
+    if (changeSet === null) return { set: [], failed: [] };
+    const set: string[] = [];
+    const failed: string[] = [];
+    for (const status of decideChangeSetStatuses(changeSet)) {
+      const record = status.member.record;
+      if (record === null) continue;
+      const key = changeSetStatusKey(status);
+      const name = `${status.member.repositoryFullName}#${String(status.member.number)}`;
+      if (status.member.statusKey === key) continue;
+      try {
+        await dependencies.commitStatuses.setStatus(
+          status.member.repositoryFullName,
+          status.sha,
+          { state: status.state, context: CHANGE_SET_STATUS_CONTEXT, description: status.description, targetUrl: status.targetUrl },
+          status.member.githubInstallationId,
+        );
+        await dependencies.changeSets.markChangeSetStatus(input.tenantId, record.id, key);
+        set.push(`${name} ${status.state}`);
+        dependencies.logger.info("the change-set status was set", {
+          pull_request: name,
+          state: status.state,
+          sha: status.sha,
+          origin_run_id: changeSet.originRunId,
+          step: "change_set_status",
+        });
+      } catch (error) {
+        failed.push(`${name}: ${String(error)}`);
+        dependencies.logger.warn("the change-set status did not reach GitHub", { pull_request: name, error: String(error), step: "change_set_status" });
+      }
+    }
+    if (failed.length > 0) throw new Error(`Factoree could not set the change-set status on ${failed.join("; ")}`);
+    return { set, failed };
   },
 
   /**

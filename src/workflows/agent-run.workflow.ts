@@ -332,6 +332,12 @@ const CHANGE_SET_CONTEXT_PATCH = "change-set-context-refreeze";
  */
 const CHANGE_SET_PUBLICATION_PATCH = "change-set-publication";
 
+/**
+ * docs/specs/change-sets.md, slice 8. A set publication sets the `factoree/change-set` status of each
+ * consumer pull request. An older history sets none.
+ */
+const CHANGE_SET_STATUS_PATCH = "change-set-status";
+
 /** docs/specs/change-sets.md, slice 7. One target whose pull request opened. */
 interface PublishedTarget {
   repositoryId: string;
@@ -4155,6 +4161,15 @@ export async function agentRunWorkflow(
           }
         });
       }
+      }
+
+      // docs/specs/change-sets.md, slice 8, DI-21.155. Each consumer pull request of the set gets its
+      // `factoree/change-set` status: pending while a provider pull request is open. A set with no
+      // safe order gets none. A failure costs only the status, and the next event of the set sets it.
+      if (changeSetPublication && patched(CHANGE_SET_STATUS_PATCH)) {
+        await notify(async () => {
+          await activities.setChangeSetStatuses({ tenantId: input.tenantId, originRunId: id });
+        });
       }
 
       // SDD section 50. A stop that arrived during the publication ends the Run CANCELLED. The

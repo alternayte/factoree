@@ -132,6 +132,9 @@ const build = (
     repositories: { listByProduct: reject },
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
+    // docs/specs/change-sets.md. The pull request belongs to no change set.
+    changeSets: { changeSetOfPullRequest: () => Promise.resolve(null), changeSetOfRun: () => Promise.resolve(null), markChangeSetStatus: reject },
+    commitStatuses: { setStatus: reject },
   });
   const steer = (trigger: "start" | "new_head" | "auto_merge_disabled" | "event" | "base_moved", eventHeadSha: string | null = null) =>
     activities.steerAutoMerge({ tenantId: "tenant-1", pullRequestId: "pr-1", trigger, eventHeadSha });
