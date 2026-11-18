@@ -406,7 +406,8 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       });
       invocations.push(result);
       // A reminder is pointless once the session hung. The workflow decides what follows.
-      const live = (): boolean => !context.cancellationSignal.aborted && hangOf(invocations) === null && providerUnreachableOf(invocations) === null;
+      const live = (): boolean => !context.cancellationSignal.aborted && hangOf([...invocations, ...correctionInvocations]) === null &&
+        providerUnreachableOf([...invocations, ...correctionInvocations]) === null;
       let read = await agent.sandbox.exec(ref, { file: "cat", args: [proposalPath] });
       if (read.exitCode !== 0 && live()) {
         // A session can answer in a message and forget the file. One reminder recovers it.
