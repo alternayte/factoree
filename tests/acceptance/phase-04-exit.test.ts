@@ -28,6 +28,7 @@ const {
   implementCalls,
   postedProgress,
   prepared,
+  refinerOutcomes,
   runStatusQuery,
   runWorker,
   start,
@@ -99,6 +100,23 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
     // reads what Factoree explained. Without the hold the Run passes through the state faster
     // than a query can observe it.
     const release = hold(heldImplementations, RUN_ID);
+    // docs/specs/context-authority-and-cited-conflicts.md. The refiner quotes the README against the
+    // accepted ADR, and Factoree checks both quotes in the fixture before it records the conflict.
+    refinerOutcomes.set(RUN_ID, {
+      status: "proposed",
+      accepted: [],
+      decisions: [],
+      visualEvidenceGap: null,
+      reason: "",
+      hang: null,
+      conflicts: [
+        {
+          subject: "notification retry",
+          left: { item: `${PRIMARY_SLUG} README.md`, quote: "This service owns notification retry." },
+          right: { item: `${PRIMARY_SLUG} docs/ADR-031.md`, quote: "The sibling service owns notification retry." },
+        },
+      ],
+    });
 
     await runWorker(async () => {
       const handle = await start(SESSION, {
@@ -137,7 +155,8 @@ describe("Phase 4 exit condition — Factoree explains its context before code c
 
         // The contract is frozen and recorded on the Run.
         expect(snapshot.contextContractVersion).toMatch(/^[0-9a-f]{64}$/);
-        const stored = contracts.all()[0];
+        // The refiner's report froze a second revision, which holds the conflict.
+        const stored = contracts.all().at(-1);
         expect(stored?.runId).toBe(RUN_ID);
         expect(stored?.sha256).toBe(snapshot.contextContractVersion);
         // SDD section 53. The frozen version reached the Run row as well.

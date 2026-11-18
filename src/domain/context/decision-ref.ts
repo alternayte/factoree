@@ -10,8 +10,10 @@ import type { AuthorityDomain } from "./authority.js";
  * answer about the architecture of "notification" must not settle the interface contract of
  * "notification", because no human saw that second question.
  *
- * `detectConflicts` builds the same reference for the pair it examines. Both sides use this one
- * helper, so the two forms cannot drift apart.
+ * docs/specs/context-authority-and-cited-conflicts.md. For a conflict the refiner reported, the
+ * subject is the key of the pair (`pairKey`), not the subject word, because the refiner words the
+ * subject freely and the pair is the stable key. `conflictsOf` builds the same reference for the
+ * pair it examines. Both sides use this one helper, so the two forms cannot drift apart.
  */
 export const conflictDecisionRef = (domain: AuthorityDomain, subject: string): string =>
   `linear:decision:subject:${domain}:${subject}`;

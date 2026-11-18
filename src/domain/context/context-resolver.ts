@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
-import type { ContextConflictRecord, SelectedContextItem } from "./conflicts.js";
-import { detectConflicts, firstUnresolved } from "./conflicts.js";
+import type { CheckedConflict, ConflictReport, ContextConflictRecord, DroppedConflict, SelectedContextItem } from "./conflicts.js";
+import { conflictsOf, firstUnresolved, normalizeQuote, pairOfReport } from "./conflicts.js";
 import type {
   ContextCandidate,
   ContextClassification,
@@ -38,6 +38,11 @@ export interface ResolveContextInput {
   contextConfiguration: RepositoryContextConfiguration;
   /** docs/specs/work-item-images-and-links.md. Absent for a run that read none. */
   workItemContent?: WorkItemContextContent;
+  /**
+   * docs/specs/context-authority-and-cited-conflicts.md. The conflicts the refiner reported. Absent
+   * before the refiner ran. Each one is a claim the resolver checks against the pinned content.
+   */
+  conflictReports?: ConflictReport[];
 }
 
 export interface ResolvedContext {
@@ -54,6 +59,8 @@ export interface ResolvedContext {
   };
   /** SDD section 23. A non-null value means implementation must not start. */
   unresolvedConflict: ContextConflictRecord | null;
+  /** The reports the resolver dropped, each with its reason. The caller logs them. */
+  droppedReports: DroppedConflict[];
 }
 
 /**
@@ -244,9 +251,9 @@ export class ContextResolver {
     // resolver reads it once and hashes it. An item the resolver cannot read becomes
     // `discoverable` instead of fatal, because one unreadable file must not fail a Run.
     //
-    // The fetched text also carries topics. A source derives a topic from the path alone, and a
-    // path names too few subjects for SDD section 23. The resolver therefore adds the topics of
-    // the content before it detects a conflict.
+    // The fetched text also carries topics, which the contract records for each required item.
+    // docs/specs/context-authority-and-cited-conflicts.md: topics rank context and never make a
+    // conflict.
     //
     // The resolver reads the content to hash it and to derive its topics, and then discards it on
     // purpose. SDD section 55 forbids a copy of repository content into the control plane. The
@@ -274,12 +281,52 @@ export class ContextResolver {
     // one. The stable reference of an answer is the reliable key. A source version is not: the
     // Work Item body records the Run identifier, and a Run identifier can equal a question
     // identifier.
-    const answerRefs = new Set(input.decisions.map(linearDecisionRef));
-    const decisionRefs = items
-      .filter((item) => answerRefs.has(item.reference.ref))
-      .map((item) => item.reference.ref);
+    const answers = new Map(
+      input.decisions.map((decision) => {
+        const ref = linearDecisionRef(decision);
+        return [ref, { ref, answer: decision.answer }] as const;
+      }),
+    );
 
-    const conflicts = detectConflicts(items, { decisionRefs });
+    // docs/specs/context-authority-and-cited-conflicts.md. A conflict exists only when the refiner
+    // quoted two items that disagree. An agent claim is never evidence, so the resolver reads each
+    // quote in the pinned content of its item, and drops a report that fails a check.
+    const checked: CheckedConflict[] = [];
+    const droppedReports: DroppedConflict[] = [];
+    const contentOf = new Map<string, string | null>();
+    const read = async (item: SelectedContextItem): Promise<string | null> => {
+      if (contentOf.has(item.reference.ref)) return contentOf.get(item.reference.ref) ?? null;
+      let text: string | null;
+      try {
+        text = normalizeQuote((await input.sources.get(item.reference.sourceId).fetch(item.reference)).content);
+      } catch {
+        text = null;
+      }
+      contentOf.set(item.reference.ref, text);
+      return text;
+    };
+    for (const report of input.conflictReports ?? []) {
+      const pair = pairOfReport(items, report);
+      if ("dropped" in pair) {
+        droppedReports.push({ report, reason: pair.dropped });
+        continue;
+      }
+      const leftText = await read(pair.left);
+      const rightText = await read(pair.right);
+      if (leftText === null || rightText === null) {
+        droppedReports.push({ report, reason: "Factoree could not read an item at its pinned version" });
+        continue;
+      }
+      const leftQuote = normalizeQuote(report.left.quote);
+      const rightQuote = normalizeQuote(report.right.quote);
+      if (!leftText.includes(leftQuote) || !rightText.includes(rightQuote)) {
+        droppedReports.push({ report, reason: "a quote does not occur in the pinned content of its item" });
+        continue;
+      }
+      checked.push({ subject: report.subject.trim(), left: pair.left, right: pair.right, leftQuote, rightQuote });
+    }
+
+    const conflicts = conflictsOf(checked, answers);
 
     const contract: ContextContract = {
       version: CONTEXT_CONTRACT_VERSION,
@@ -339,6 +386,7 @@ export class ContextResolver {
         targets: (contract.targetRepositories ?? []).map((repository) => ({ slug: repository.repo, sha: repository.sha })),
       },
       unresolvedConflict: firstUnresolved(conflicts),
+      droppedReports,
     };
   }
 }

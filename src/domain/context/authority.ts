@@ -28,6 +28,7 @@ export type AuthorityClass =
   | "approved_architecture_specification"
   | "architecture_documentation"
   | "repository_readme"
+  | "documentation"
   | "machine_readable_contract"
   | "contract_tests"
   | "api_documentation"
@@ -50,6 +51,9 @@ const LADDERS: Record<AuthorityDomain, readonly (readonly AuthorityClass[])[]> =
     ["approved_architecture_specification"],
     ["architecture_documentation"],
     ["repository_readme"],
+    // docs/specs/context-authority-and-cited-conflicts.md. A document the repository did not name
+    // in `context.authority`. The agents read it, and it never enters a conflict.
+    ["documentation"],
   ],
   interface_contract: [
     ["machine_readable_contract"],

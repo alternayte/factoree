@@ -135,6 +135,28 @@ describe("E2BSandbox (docs/specs/e2b-sandbox-provider.md)", () => {
     expect(recorded.egress).toEqual([["*.npmjs.org", "github.com"], []]);
   });
 
+  it("confirms new egress rules with an HTTPS request to an allowed host until one answers (issue 59)", async () => {
+    let probes = 0;
+    const commands: { command: string; user: string }[] = [];
+    const { gateway } = fakeGateway({
+      run: (_id, command, options) => {
+        if (!command.includes("curl")) return Promise.resolve({ timedOut: false, exitCode: 0, stdout: "", stderr: "" });
+        commands.push({ command, user: options.user });
+        probes += 1;
+        return Promise.resolve({ timedOut: false, exitCode: probes < 3 ? 7 : 0, stdout: "", stderr: "" });
+      },
+    });
+    const sandbox = new E2BSandbox({ gateway, image: IMAGE, networkPolicyDelayMs: 0 });
+    const ref = await sandbox.create(input);
+    await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["*.npmjs.org", "github.com"] });
+    expect(probes).toBe(3);
+    expect(commands.at(-1)?.command).toContain("https://github.com/");
+    expect(commands.at(-1)?.user).toBe("agent");
+    // A list of wildcards alone names no host to reach, so nothing is probed.
+    await sandbox.applyNetworkPolicy(ref, { allowedDomains: ["*.npmjs.org"] });
+    expect(probes).toBe(3);
+  });
+
   it("keeps the attached environment from an isolated command, and sends no limit for a command without one", async () => {
     const { gateway, recorded } = fakeGateway();
     const sandbox = new E2BSandbox({ gateway, image: IMAGE });

@@ -32,7 +32,21 @@ export interface E2BSandboxOptions {
   cancelRetryMs?: number;
   /** The clock of the keep-alive. A test replaces it. */
   now?: () => number;
+  /** The tries of the egress confirmation after `applyNetworkPolicy`. A test sets fewer. */
+  networkPolicyAttempts?: number;
+  /** The delay between two tries of the egress confirmation. A test sets it to zero. */
+  networkPolicyDelayMs?: number;
 }
+
+/**
+ * GitHub issue 59, DI-21.170. `updateNetwork` returns before E2B is known to apply the rules. A
+ * command that starts at once, such as a bootstrap whose tool probes its host in 2 seconds, can
+ * then meet the old rules. E2B allows names by SNI and Host, so a name lookup proves nothing: the
+ * confirmation opens one HTTPS connection to an allowed host. Any HTTP answer proves the rule.
+ */
+const NETWORK_POLICY_ATTEMPTS = 10;
+const NETWORK_POLICY_DELAY_MS = 250;
+const NETWORK_PROBE_TIMEOUT_MS = 10_000;
 
 // sandbox/Dockerfile creates this user. Every command and file write runs as it, and the runner
 // CLIs in /opt/factoree/bin stay root-owned (B-2).
@@ -120,6 +134,28 @@ export class E2BSandbox implements Sandbox {
       headers[binding.host] = { ...(headers[binding.host] ?? {}), [binding.header]: binding.value };
     }
     await this.options.gateway.setEgress(ref.id, normalized.allowedDomains, headers);
+
+    // A wildcard entry names no host to connect to, so it cannot be confirmed this way.
+    const host = normalized.allowedDomains.find((domain) => !domain.includes("*"));
+    if (host === undefined) return;
+    const attempts = this.options.networkPolicyAttempts ?? NETWORK_POLICY_ATTEMPTS;
+    const delayMs = this.options.networkPolicyDelayMs ?? NETWORK_POLICY_DELAY_MS;
+    const probe = commandLine(["curl", "-sS", "-o", "/dev/null", "--connect-timeout", "2", "--max-time", "4", `https://${host}/`], { PATH: E2B_PATH });
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) await delay(delayMs);
+      try {
+        const result = await this.options.gateway.run(ref.id, probe, {
+          cwd: "/",
+          envs: {},
+          user: SANDBOX_USER,
+          timeoutMs: NETWORK_PROBE_TIMEOUT_MS,
+        });
+        if (!result.timedOut && result.exitCode === 0) return;
+      } catch {
+        // A failed probe is not a fault of its own. The loop tries again, and the command that
+        // follows reports the real problem when the rules never arrive.
+      }
+    }
   }
 
   async exec(ref: SandboxRef, command: Command): Promise<CommandResult> {

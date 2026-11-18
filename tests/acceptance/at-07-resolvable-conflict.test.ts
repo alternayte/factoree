@@ -14,7 +14,20 @@ const README_REF = `repository:${PRIMARY_SLUG}:README.md`;
 
 beforeAll(async () => {
   fixture = await buildContextFixture();
-  resolved = await resolveFixtureContext({ fixture, reader, runId: "run-at-07" });
+  // docs/specs/context-authority-and-cited-conflicts.md. The refiner quotes both files, and the
+  // resolver checks both quotes in the pinned content before the ladder decides.
+  resolved = await resolveFixtureContext({
+    fixture,
+    reader,
+    runId: "run-at-07",
+    conflictReports: [
+      {
+        subject: "notification",
+        left: { item: `${PRIMARY_SLUG} README.md`, quote: "This service owns notification retry." },
+        right: { item: `${PRIMARY_SLUG} docs/ADR-031.md`, quote: "The sibling service owns notification retry." },
+      },
+    ],
+  });
 });
 
 afterAll(() => {
@@ -47,7 +60,7 @@ describe("AT-07 — a resolvable context conflict", () => {
     expect(conflict?.resolution).toBe("resolved");
     expect(conflict?.winnerRef).toBe(ADR_REF);
     expect(conflict?.loserRef).toBe(README_REF);
-    expect(conflict?.reason).toBe(
+    expect(conflict?.reason).toContain(
       "accepted ADR has higher architecture authority than repository README",
     );
 

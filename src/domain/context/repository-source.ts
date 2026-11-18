@@ -1,7 +1,9 @@
+import { posix } from "node:path";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { RepositoryReadError } from "~/adapters/github/git-repository-reader.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
-import { FACTOREE_CONFIG_PATH } from "~/domain/products/factoree-config.js";
+import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { readAdrStatus } from "./adr-status.js";
 import type { AuthorityClass } from "./authority.js";
 import type {
   ContextCandidate,
@@ -53,8 +55,14 @@ const extensionOf = (name: string): string => {
  * rule. A path that matches no rule is not context, so the caller skips it. The rule order
  * follows the specification: a machine-readable contract outranks a test, a test outranks
  * documentation, and the README is the lowest architecture rung.
+ *
+ * docs/specs/context-authority-and-cited-conflicts.md. `authority` holds the `context.authority`
+ * globs of the repository. A Markdown file one of them matches, at any path, is architecture
+ * documentation. Every other Markdown file under `doc/` or `docs/` is `documentation`, which never
+ * enters a conflict. An ADR path stays `accepted_adr` here. The caller reads its status, because
+ * a path names no status.
  */
-export const classifyPath = (path: string): PathClassification | null => {
+export const classifyPath = (path: string, authority: readonly string[] = []): PathClassification | null => {
   const segments = path.split("/");
   const name = segments[segments.length - 1] ?? "";
   const directories = new Set(segments.slice(0, -1).map((segment) => segment.toLowerCase()));
@@ -97,6 +105,14 @@ export const classifyPath = (path: string): PathClassification | null => {
     };
   }
 
+  if (extension === ".md" && authority.some((pattern) => posix.matchesGlob(path, pattern))) {
+    return {
+      authority: "architecture_documentation",
+      reason: "architecture documentation the repository names in context.authority",
+      rule: "accepted_adr_reference",
+    };
+  }
+
   // Only the file at the repository root is the README of SDD section 22. A nested file is
   // ordinary documentation.
   if (segments.length === 1 && lowerName === "readme.md") {
@@ -109,8 +125,8 @@ export const classifyPath = (path: string): PathClassification | null => {
 
   if (extension === ".md" && [...directories].some((directory) => DOC_DIRECTORIES.has(directory))) {
     return {
-      authority: "architecture_documentation",
-      reason: "repository architecture documentation",
+      authority: "documentation",
+      reason: "repository documentation that context.authority does not name",
       rule: "accepted_adr_reference",
     };
   }
@@ -181,6 +197,7 @@ export class RepositoryContextSource implements ContextSource {
     this.shas.set(repository.slug, sha);
 
     const tree = await this.options.reader.listTree(repository.url, sha);
+    const authority = await this.authorityOf(repository.url, sha);
 
     const repositoryReason =
       role === "primary"
@@ -214,8 +231,24 @@ export class RepositoryContextSource implements ContextSource {
     ];
 
     for (const entry of tree.entries) {
-      const classification = classifyPath(entry.path);
+      let classification = classifyPath(entry.path, authority);
       if (classification === null) continue;
+
+      // docs/specs/context-authority-and-cited-conflicts.md. A path names no status, so the source
+      // reads the record. A superseded, deprecated or rejected ADR is not selected. One that states
+      // no accepted status is documentation.
+      if (classification.authority === "accepted_adr") {
+        const content = await this.options.reader.readBlob(repository.url, sha, entry.path).catch(() => null);
+        const status = content === null ? "documentation" : readAdrStatus(content);
+        if (status === "excluded") continue;
+        if (status === "documentation") {
+          classification = {
+            authority: "documentation",
+            reason: "a decision record that states no accepted status",
+            rule: classification.rule,
+          };
+        }
+      }
 
       const topics = topicsIn(entry.path, request.topics);
 
@@ -266,6 +299,21 @@ export class RepositoryContextSource implements ContextSource {
       references.push(...(await this.discoverRepository(repository, request, "reference")));
     }
     return [...primary, ...references];
+  }
+
+  /**
+   * docs/specs/context-authority-and-cited-conflicts.md. The `context.authority` globs of one
+   * repository, from its own `.factoree/config.yaml` at the pinned SHA. A missing or invalid file
+   * names none, so nothing under `docs/` carries authority. SDD section 15 is enforced against the
+   * checkout in `SandboxManager`, so this read never fails the Run (DI-5.3).
+   */
+  private async authorityOf(url: string, sha: string): Promise<string[]> {
+    try {
+      const text = await this.options.reader.readBlob(url, sha, FACTOREE_CONFIG_PATH);
+      return text === null ? [] : parseFactoreeConfig(text).context.authority;
+    } catch {
+      return [];
+    }
   }
 
   async fetch(ref: ContextReference): Promise<ContextDocument> {

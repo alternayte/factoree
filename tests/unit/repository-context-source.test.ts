@@ -71,11 +71,20 @@ describe("classifyPath", () => {
   });
 
   it("classifies a nested README as documentation, not as the repository README", () => {
-    expect(classifyPath("docs/README.md")?.authority).toBe("architecture_documentation");
+    expect(classifyPath("docs/README.md")?.authority).toBe("documentation");
   });
 
-  it("classifies other repository documentation", () => {
-    expect(classifyPath("docs/overview.md")?.authority).toBe("architecture_documentation");
+  it("classifies documentation that context.authority does not name as documentation (issue 60)", () => {
+    expect(classifyPath("docs/overview.md")?.authority).toBe("documentation");
+  });
+
+  it("classifies a Markdown file that context.authority names as architecture documentation, at any path", () => {
+    const authority = ["docs/design/**", "ARCHITECTURE.md"];
+    expect(classifyPath("docs/design/queue.md", authority)?.authority).toBe("architecture_documentation");
+    expect(classifyPath("ARCHITECTURE.md", authority)?.authority).toBe("architecture_documentation");
+    expect(classifyPath("docs/plan.md", authority)?.authority).toBe("documentation");
+    // An ADR path is read for its status, so the list does not decide it.
+    expect(classifyPath("docs/decisions/0007-queue.md", ["docs/**"])?.authority).toBe("accepted_adr");
   });
 
   it("classifies a source file", () => {
@@ -241,6 +250,32 @@ describe("RepositoryContextSource", () => {
     expect(isDeterministicRemoteFailure("fatal: unable to access: Connection reset by peer")).toBe(
       false,
     );
+  });
+
+  it("reads the status of each ADR and the context.authority of the repository (issue 60)", async () => {
+    const config = files[".factoree/config.yaml"] + "context:\n  authority: [\"docs/design/**\"]\n";
+    const source = new RepositoryContextSource({
+      reader: new FakeRepositoryReader({
+        [PRIMARY_URL]: {
+          sha: "a".repeat(40),
+          files: {
+            ".factoree/config.yaml": config,
+            "docs/decisions/0001-queue.md": "# Queue\n\n## Status\n\nAccepted\n",
+            "docs/decisions/0002-old.md": "# Old\n\n## Status\n\nAccepted, superseded by 0003\n",
+            "docs/decisions/0003-draft.md": "---\nstatus: proposed\n---\n# Draft\n",
+            "docs/design/queue.md": "The queue design.\n",
+            "docs/plans/sprint.md": "A plan.\n",
+          },
+        },
+      }),
+    });
+    const found = await source.discover(request({ referenceRepositories: [] }));
+    const authorityOf = (path: string) => found.find((candidate) => candidate.reference.path === path)?.authority;
+    expect(authorityOf("docs/decisions/0001-queue.md")).toBe("accepted_adr");
+    expect(authorityOf("docs/decisions/0002-old.md")).toBeUndefined();
+    expect(authorityOf("docs/decisions/0003-draft.md")).toBe("documentation");
+    expect(authorityOf("docs/design/queue.md")).toBe("architecture_documentation");
+    expect(authorityOf("docs/plans/sprint.md")).toBe("documentation");
   });
 
   it("exposes the pinned SHA of every repository after discovery", async () => {

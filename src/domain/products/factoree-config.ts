@@ -223,9 +223,16 @@ const schema = z
           .object({ automaticDiscovery: z.boolean().default(false) })
           .strict()
           .default({ automaticDiscovery: false }),
+        // docs/specs/context-authority-and-cited-conflicts.md, the project override of SDD section 22.
+        // The globs of the Markdown files that carry architecture authority. With none, nothing under
+        // `docs/` carries authority. A leading `./` matches no path, so the schema refuses it.
+        authority: z
+          .array(REPOSITORY_PATH.refine((value) => !value.startsWith("./"), "must not start with ./"))
+          .max(100)
+          .default([]),
       })
       .strict()
-      .default({ backstage: { enabled: false }, referenceRepositories: { automaticDiscovery: false } }),
+      .default({ backstage: { enabled: false }, referenceRepositories: { automaticDiscovery: false }, authority: [] }),
     // The repository can only name a secret it needs. The Product owns the value.
     secrets: z
       .object({ require: z.array(z.string().min(1)).default([]) })

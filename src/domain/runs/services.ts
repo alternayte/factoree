@@ -34,6 +34,11 @@ export const DOCKER_ENVIRONMENT: Readonly<Record<string, string>> = {
   // banner into every captured output.
   DOTNET_CLI_TELEMETRY_OPTOUT: "1",
   DOTNET_NOLOGO: "1",
+  // GitHub issue 65, DI-21.169. Azure Functions Core Tools 4.11 and later probe their CDN with a
+  // HEAD request and a 2-second timeout before an online command, and switch to offline mode when
+  // the probe fails. Through the sandbox egress the probe can take longer, and `func bundles
+  // download` then refuses to run. `false` skips the probe. A cached bundle still serves.
+  FUNCTIONS_CORE_TOOLS_OFFLINE: "false",
 };
 
 /**
