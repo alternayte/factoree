@@ -57,9 +57,31 @@ describe("the provider-unreachable classifier", () => {
   });
 
   it("does not fast-fail when a tool result echoing ETIMEDOUT is the last line", () => {
-    expect(endsInProviderUnreachable(`${API_ERROR}\n{"type":"tool_result","content":"curl: (28) ETIMEDOUT"}\n`)).toBe(
+    expect(endsInProviderUnreachable(`working on it\n{"type":"tool_result","content":"curl: (28) ETIMEDOUT"}\n`)).toBe(
       false,
     );
+  });
+
+  it("skips a tool_result or user event that echoes the API Error marker", () => {
+    const toolResult = `{"type":"tool_result","content":"API Error: fetch failed (ETIMEDOUT)"}`;
+    const userTurn = `{"type":"user","message":{"content":[{"type":"tool_result","content":"API Error: ENOTFOUND"}]}}`;
+    expect(isProviderUnreachableText(toolResult)).toBe(false);
+    expect(isProviderUnreachableText(userTurn)).toBe(false);
+    expect(endsInProviderUnreachable(`working on it\n${toolResult}\n`)).toBe(false);
+  });
+
+  it("matches the Claude api_retry event the CLI writes during its backoff", () => {
+    const retry = `{"type":"system","subtype":"api_retry","error_status":null,"error":"unknown"}`;
+    expect(endsInProviderUnreachable(`{"type":"system","subtype":"init"}\n${retry}\n${retry}\n`)).toBe(true);
+    expect(isProviderUnreachableText(`${retry}\n${retry}\n`)).toBe(true);
+  });
+
+  it("does not treat an api_retry that recovered as an outage", () => {
+    const retry = `{"type":"system","subtype":"api_retry","error_status":null,"error":"unknown"}`;
+    const output = `${retry}\n{"type":"assistant","message":{"content":[{"type":"text","text":"back to work"}]}}\n`;
+    // The last signal line is model activity, not a retry, so a session that recovered is not an outage.
+    expect(isProviderUnreachableText(output)).toBe(false);
+    expect(endsInProviderUnreachable(output)).toBe(false);
   });
 });
 
@@ -76,6 +98,12 @@ describe("the Claude output parser and a connectivity error", () => {
 
   it("reports no error message for a clean run", () => {
     expect(parseClaudeOutput('{"type":"result","result":"ok"}').errorMessage).toBeUndefined();
+  });
+
+  it("names the provider from api_retry events when nothing better was written", () => {
+    const retry = `{"type":"system","subtype":"api_retry","error_status":null,"error":"unknown"}`;
+    const parsed = parseClaudeOutput(`{"type":"system","subtype":"init"}\n${retry}\n${retry}\n`);
+    expect(parsed.errorMessage).toContain("provider could not be reached");
   });
 });
 
@@ -148,6 +176,31 @@ describe("CliAgentRunner and an unreachable provider", () => {
     expect(result.cancelled).toBe(true);
     expect(result.failureKind).toBe("PROVIDER_UNREACHABLE");
     expect(result.outcome).toBe("unreachable");
+  });
+
+  it("fast-fails on Claude api_retry events that carry no error text", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new ClaudeCodeRunner({
+      redactor: new Redactor(),
+      pollIntervalMs: 1,
+      silenceLimitMs: 60_000,
+      providerUnreachableGraceMs: 20,
+    });
+    const started = runner.run(runInput(sandbox, ref));
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    // The CLI stays alive and only writes api_retry events during its backoff.
+    sandbox.updateProcess("process-2", {
+      running: true,
+      stdout: `{"type":"system","subtype":"api_retry","error_status":null,"error":"unknown"}\n`,
+    });
+
+    const result = await started;
+
+    expect(result.cancelled).toBe(true);
+    expect(result.failureKind).toBe("PROVIDER_UNREACHABLE");
+    expect(result.outcome).toBe("unreachable");
+    expect(result.summary).toContain("provider could not be reached");
   });
 
   it("does not fast-fail while the session writes other output after the error", async () => {

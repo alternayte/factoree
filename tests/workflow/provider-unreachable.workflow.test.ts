@@ -24,7 +24,9 @@ describe("an unreachable model provider in the Run workflow", () => {
   const preparesOf = (runId: string) => harness.prepared.filter((entry) => entry.runId === runId);
 
   it("starts a fresh session in the same sandbox after one failure, and continues the Run", async () => {
-    harness.implementProviderUnreachable.set("run-unreachable-once", (call) => (call.attempt === 1 ? unreachable : null));
+    // docs/specs/provider-unreachable.md. The retry keeps the attempt ordinal and carries an
+    // unreachableRetry number instead, so the first session (retry 0) fails and the retry succeeds.
+    harness.implementProviderUnreachable.set("run-unreachable-once", (call) => ((call.unreachableRetry ?? 0) === 0 ? unreachable : null));
 
     const result = await harness.runWorker(async () => (await harness.start("unreachable-once")).result());
 

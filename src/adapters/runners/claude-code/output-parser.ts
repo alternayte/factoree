@@ -93,6 +93,10 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   let model: string | null = null;
   let errorMessage: string | null = null;
   let lastUnreachableLine: string | null = null;
+  // docs/specs/provider-unreachable.md. During its backoff Claude Code writes only
+  // `api_retry` system events, with no error text. They name no cause on their own, so the
+  // last one becomes the error message when nothing better was written.
+  let apiRetry: string | null = null;
   const toolInputs: string[] = [];
 
   for (const rawLine of text.split(/\r\n|\r|\n/)) {
@@ -121,6 +125,18 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
       continue;
     }
 
+    // docs/specs/provider-unreachable.md. A retry of the provider during the CLI backoff.
+    if (parsed["type"] === "system" && parsed["subtype"] === "api_retry") {
+      const status = parsed["error_status"];
+      const error = parsed["error"];
+      const statusText = typeof status === "number" || typeof status === "string" ? ` (status ${String(status)})` : "";
+      apiRetry =
+        "The model provider could not be reached: the Claude CLI retried the API" +
+        statusText +
+        `${typeof error === "string" && error.length > 0 && error !== "unknown" ? `: ${error}` : ""}.`;
+      continue;
+    }
+
     if (parsed["type"] === "result") {
       const value = parsed["result"];
       if (typeof value === "string") resultSummary = value;
@@ -137,6 +153,6 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   }
 
   const summary = resultSummary ?? lastAssistant ?? lastPlainLine;
-  const failure = errorMessage ?? lastUnreachableLine;
+  const failure = errorMessage ?? lastUnreachableLine ?? apiRetry;
   return { sessionId, summary, usage, model, toolInputs, ...(failure === null ? {} : { errorMessage: failure }) };
 };

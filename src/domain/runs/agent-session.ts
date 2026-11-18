@@ -254,22 +254,22 @@ const PLAN_CORRECTION_SUFFIX = ":plan-correction";
  * DI-15.23. The key of the one session that corrects a rejected Validation Plan. It keeps the
  * attempt of its pass and adds a marker, so it writes its own row beside the first session.
  */
-export const planCorrectionSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
-  `${agentSessionKey(runId, "validator", attempt, afterHang)}${PLAN_CORRECTION_SUFFIX}`;
+export const planCorrectionSessionKey = (runId: string, attempt: number, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "validator", attempt, afterHang, unreachableRetry)}${PLAN_CORRECTION_SUFFIX}`;
 
 /**
  * docs/specs/by-eye-criteria-and-selector-recheck.md. The key of the one selector re-check round of
  * a pass. It writes its own row beside the first session, as the plan correction does.
  */
-export const selectorRecheckSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
-  `${agentSessionKey(runId, "validator", attempt, afterHang)}:selector-recheck`;
+export const selectorRecheckSessionKey = (runId: string, attempt: number, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "validator", attempt, afterHang, unreachableRetry)}:selector-recheck`;
 
 /**
  * Issue #39, DI-21.66. The key of the one fresh refiner session that corrects an over-limit
  * proposal when the first session cannot be resumed. It writes its own row beside the first.
  */
-export const refinerLimitCorrectionSessionKey = (runId: string, afterHang: boolean): string =>
-  `${agentSessionKey(runId, "refiner", null, afterHang)}:limit-correction`;
+export const refinerLimitCorrectionSessionKey = (runId: string, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "refiner", null, afterHang, unreachableRetry)}:limit-correction`;
 
 /** True for the row of a plan correction session. The Proof Pack reads it. */
 export const isPlanCorrectionSession = (row: Pick<RecordAgentSessionInput, "role" | "idempotencyKey">): boolean =>

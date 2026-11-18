@@ -2157,7 +2157,7 @@ export type ListProductAgentSessionsResponses = {
     runner: string;
     model: string | null;
     effort: string | null;
-    outcome: "finished" | "hung" | "failed";
+    outcome: "finished" | "hung" | "failed" | "unreachable";
     durationMs: number;
     createdAt: string;
   }>;

@@ -1334,6 +1334,7 @@ export async function agentRunWorkflow(
     prepared: PrepareSandboxActivityOutput;
     goal: string;
     attempt: number;
+    unreachableRetry?: number;
     repairFindings: string[];
     /**
      * SDD section 21 and AT-09. The prompt carries the rendered contract and the
@@ -1389,6 +1390,7 @@ export async function agentRunWorkflow(
         egress: egressOf(attemptInput.prepared),
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
+        ...((attemptInput.unreachableRetry ?? 0) > 0 ? { unreachableRetry: attemptInput.unreachableRetry } : {}),
         ...((attemptInput.continueSession ?? null) === null ? {} : { continueSession: attemptInput.continueSession }),
       }),
     );
@@ -3265,6 +3267,7 @@ export async function agentRunWorkflow(
           prepared: preparedSandbox,
           goal: sandbox.goal,
           attempt,
+          unreachableRetry: unreachableRetries,
           repairFindings,
           contextContract: resolvedContext.document,
           requiredContext: resolvedContext.requiredContext,
@@ -3326,14 +3329,30 @@ export async function agentRunWorkflow(
           if (freshSandbox) {
             status = "PREPARING";
             await activities.setRunStatus({ runId: id, status });
-            const again = await prepareWorkSprite(workInputOf(prepareInput));
+            // docs/specs/provider-unreachable.md. Release the old work sandbox before the fresh one
+            // is built, so the run never holds a fourth live sandbox against its hold of three.
+            await cancelActivities.destroySandbox({
+              tenantId: input.tenantId,
+              runId: id,
+              spriteId: preparedSandbox.spriteId,
+              adapter: preparedSandbox.adapter,
+              workspacePath: preparedSandbox.workspacePath,
+              reason: "SUPERSEDED",
+            });
+            const freshWorkInput =
+              siblingRepositories.length === 0
+                ? workInputOf(prepareInput)
+                : {
+                    ...workInputOf(prepareInput),
+                    siblings: { repositoryBaseUrl: input.product.repositoryBaseUrl, repositories: siblingRepositories },
+                  };
+            const again = await prepareWorkSprite(freshWorkInput);
             if ("ended" in again) return again.ended;
             preparedSandbox = again.prepared;
             sprite = preparedSandbox;
             if (stopRequested) return await cancelRun();
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
           }
-          attempt += 1;
           continue;
         }
         unreachableRetries = 0;
@@ -3377,7 +3396,9 @@ export async function agentRunWorkflow(
           // deadline decides which of the two outcomes this is.
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
           // docs/specs/provider-unreachable.md. The message carries the agent's own error.
-          const cause = patched(PROVIDER_UNREACHABLE_PATCH) ? (implementation?.summary ?? "").trim() : "";
+          // docs/specs/provider-unreachable.md. Cap the agent output at 1000 characters, matching
+          // the precedent in src/activities/setup.activities.ts, so the Linear post stays bounded.
+          const cause = patched(PROVIDER_UNREACHABLE_PATCH) ? (implementation?.summary ?? "").trim().slice(0, 1_000) : "";
           return await failRun(
             "IMPLEMENTATION_FAILED",
             `The Implementer did not complete the change. Factoree ended the Run.${cause === "" ? "" : ` Agent output: ${cause}`}`,
@@ -3743,6 +3764,16 @@ export async function agentRunWorkflow(
             // blockers join the validation failures, so one repair fixes both.
             const parallel = await awaitReview();
             if (stopRequested) return await cancelRun();
+            // docs/specs/provider-unreachable.md. A reviewer that exhausted its retries on an
+            // outage must end the Run as PROVIDER_UNREACHABLE, not read as "no findings" and spend
+            // a repair. The serial path (below) already does this.
+            if (parallel?.kind === "review") {
+              const reviewerUnreachable = providerUnreachableOf(parallel.review);
+              if (reviewerUnreachable !== null) {
+                if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+                return await failProviderUnreachable("reviewer", reviewerUnreachable);
+              }
+            }
             const reviewFindings =
               parallel?.kind === "review" &&
               hangOf(parallel.review) === null &&

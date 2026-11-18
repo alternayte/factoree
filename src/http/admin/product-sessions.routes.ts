@@ -22,7 +22,7 @@ export const productAgentSessionSchema = z.object({
   /** The model the CLI reported for the session, else the model Factoree asked for, else null. */
   model: z.string().nullable(),
   effort: z.string().nullable(),
-  outcome: z.enum(["finished", "hung", "failed"]),
+  outcome: z.enum(["finished", "hung", "failed", "unreachable"]),
   durationMs: z.number(),
   createdAt: z.string(),
 });

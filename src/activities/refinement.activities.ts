@@ -388,7 +388,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     const invocations: AgentRunResult[] = [];
     // Issue #39. A fresh session that corrects an over-limit proposal writes its own rows.
     const correctionInvocations: AgentRunResult[] = [];
-    const correctionKey = refinerLimitCorrectionSessionKey(input.runId, afterHang);
+    const correctionKey = refinerLimitCorrectionSessionKey(input.runId, afterHang, unreachableRetry);
     try {
       const result = await runner.run({
         runId: input.runId,
@@ -449,8 +449,12 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           }
         }
         let corrected = await agent.sandbox.exec(ref, { file: "cat", args: [correctedPath] });
+        // docs/specs/provider-unreachable.md. An outage is not a session that cannot be resumed.
+        // It leaves the fallback, so a fresh correction is not started and then thrown away by the
+        // outage the workflow retries on.
         const resumeFailed =
-          resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
+          resumed === null ||
+          (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung" && resumed.outcome !== "unreachable");
         if (resumeFailed && corrected.exitCode !== 0 && !context.cancellationSignal.aborted) {
           dependencies.logger.warn("the refiner session cannot be resumed; starting one fresh session to correct the proposal", {
             tenant_id: input.tenantId,

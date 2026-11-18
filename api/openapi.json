@@ -8199,7 +8199,8 @@
                         "enum": [
                           "finished",
                           "hung",
-                          "failed"
+                          "failed",
+                          "unreachable"
                         ]
                       },
                       "durationMs": {
