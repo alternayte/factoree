@@ -12,9 +12,10 @@ export type AgentSessionRole = "implementer" | "validator" | "reviewer" | "refin
 
 /**
  * How one session ended. `hung` means it wrote no output for the silence limit, and Factoree
- * stopped it. `failed` covers every other session that did not finish, a human stop included.
+ * stopped it. `unreachable` means the session could not reach the model provider, an
+ * infrastructure fault (docs/specs/provider-unreachable.md). `failed` covers every other session that did not finish, a human stop included.
  */
-export type AgentSessionOutcome = "finished" | "hung" | "failed";
+export type AgentSessionOutcome = "finished" | "hung" | "unreachable" | "failed";
 
 /**
  * The usage of one session, as the agent CLI recorded it. A field the CLI does not report is
@@ -137,6 +138,8 @@ export interface AgentRoleTotals {
   role: AgentSessionRole;
   sessions: number;
   hung: number;
+  /** docs/specs/provider-unreachable.md. The sessions that could not reach the model provider. */
+  unreachable: number;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -169,6 +172,7 @@ export const summarizeAgentSessions = (rows: ReadonlyArray<RecordAgentSessionInp
       role,
       sessions: own.length,
       hung: own.filter((row) => row.outcome === "hung").length,
+      unreachable: own.filter((row) => row.outcome === "unreachable").length,
       inputTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
@@ -232,8 +236,17 @@ export const describeAgentRole = (role: AgentSessionRole): string =>
  * AgentExecution row always had. The fresh session after a hang adds a suffix, so it writes its
  * own row instead of colliding with the hung one. DI-14.44.
  */
-export const agentSessionKey = (runId: string, role: AgentSessionRole, attempt: number | null, afterHang: boolean): string =>
-  `run:${runId}:${role}${attempt === null ? "" : `:${attempt}`}${afterHang ? ":after-hang" : ""}`;
+export const agentSessionKey = (
+  runId: string,
+  role: AgentSessionRole,
+  attempt: number | null,
+  afterHang: boolean,
+  /** docs/specs/provider-unreachable.md. 0 for the first session, 1 or 2 after an unreachable provider. */
+  unreachableRetry = 0,
+): string =>
+  `run:${runId}:${role}${attempt === null ? "" : `:${attempt}`}${afterHang ? ":after-hang" : ""}${
+    unreachableRetry > 0 ? `:unreachable-${unreachableRetry}` : ""
+  }`;
 
 const PLAN_CORRECTION_SUFFIX = ":plan-correction";
 

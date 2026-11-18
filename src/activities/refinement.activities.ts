@@ -4,7 +4,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import { agentSessionKey, refinerLimitCorrectionSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
+import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
 import { AgentSessionUnavailableError, UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -153,6 +153,11 @@ export interface ProposeRefinementActivityInput {
    */
   afterHang?: boolean;
   /**
+   * docs/specs/provider-unreachable.md. 1 or 2 for the fresh session that follows an unreachable
+   * provider. It writes its own files and its own rows, as the session after a hang does.
+   */
+  unreachableRetry?: number;
+  /**
    * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
@@ -192,6 +197,8 @@ export interface ProposeRefinementActivityOutput {
   message?: string;
   /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
   hang: AgentHang;
+  /** docs/specs/provider-unreachable.md. Set when the session could not reach the model provider. */
+  providerUnreachable?: AgentProviderUnreachable;
   /**
    * docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The named hosts the effective allow
    * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
@@ -332,7 +339,8 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     await attachRunnerEnvironment(agent.sandbox, ref, agent.secrets, input.tenantId, input.productId);
     const directory = `${input.workspacePath}/refinement`;
     await agent.sandbox.exec(ref, { file: "mkdir", args: ["-p", directory] });
-    const afterHang = input.afterHang === true;
+    const unreachableRetry = input.unreachableRetry ?? 0;
+    const afterHang = input.afterHang === true || unreachableRetry > 0;
     // A hung session can leave a partial proposal, and the fresh session must never read it.
     const proposalPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}.json`;
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
@@ -507,6 +515,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         }
       }
       const hang = hangOf([...invocations, ...correctionInvocations]);
+      const providerUnreachable = providerUnreachableOf([...invocations, ...correctionInvocations]);
 
       await agent.executions.record({
         tenantId: input.tenantId,
@@ -523,7 +532,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           cancelled: result.cancelled,
           summary: result.summary,
         },
-        idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang),
+        idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang, unreachableRetry),
       });
       // The refiner runs before the first Implementer attempt, so its row carries attempt 1.
       await recordAgentSession(
@@ -535,7 +544,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           role: "refiner",
           attempt: 1,
           runner: runner.name,
-          idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang),
+          idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang, unreachableRetry),
           sandboxId: input.spriteId,
         },
         invocations,
@@ -570,6 +579,11 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       // partial proposal exists. The workflow starts one fresh session.
       if (hang !== null) {
         return { status: "unavailable", ...empty, hang, reason: "The refiner session wrote no output for the silence limit." };
+      }
+      // docs/specs/provider-unreachable.md. The session could not reach the model provider, so it
+      // wrote no proposal. The workflow retries it.
+      if (providerUnreachable !== null) {
+        return { status: "unavailable", ...empty, providerUnreachable, reason: "The refiner session could not reach the model provider." };
       }
       if (read.exitCode !== 0) {
         return { status: "unavailable", ...empty, reason: "The refiner wrote no proposal." };

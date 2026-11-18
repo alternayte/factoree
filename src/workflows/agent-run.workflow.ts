@@ -304,6 +304,12 @@ const SANDBOX_PROVIDER_PATCH = "sandbox-provider-spillover";
  */
 const DRAFT_OFFER_PATCH = "draft-offer";
 /**
+ * docs/specs/provider-unreachable.md. A session that cannot reach the model provider is retried
+ * up to twice, then ends the Run with PROVIDER_UNREACHABLE. A failure message names the agent's
+ * own error. An older history takes the paths from before.
+ */
+const PROVIDER_UNREACHABLE_PATCH = "provider-unreachable";
+/**
  * docs/specs/pr-review-merge-and-deploy.md. Publication records the pull request and starts its PR
  * workflow. An older history starts none, and its close takes the webhook path of DI-21.51.
  */
@@ -692,6 +698,8 @@ const cancelActivities = proxyActivities<Activities>({
 // The first Implementer attempt of a Run. A later repair loop attempt increments this value, so
 // each attempt writes its own AgentExecution row.
 const FIRST_IMPLEMENTER_ATTEMPT = 1;
+/** docs/specs/provider-unreachable.md. The sessions of one step before the Run ends: the first and two retries. */
+const PROVIDER_UNREACHABLE_ATTEMPTS = 3;
 
 /**
  * Specification section 10. Matches a human reply against the ambiguous candidates by whole
@@ -979,6 +987,7 @@ export async function agentRunWorkflow(
       | "RUN_TIMEOUT"
       | "IMPLEMENTATION_FAILED"
       | "AGENT_HUNG"
+      | "PROVIDER_UNREACHABLE"
       | "CONFIGURATION_INVALID"
       | "VERIFICATION_FAILED"
       | "REFINEMENT_UNRESOLVED"
@@ -1066,6 +1075,56 @@ export async function agentRunWorkflow(
    */
   const hangOf = (output: { hang?: { silenceLimitMs: number } | null } | null): { silenceLimitMs: number } | null =>
     output?.hang ?? null;
+
+  /**
+   * docs/specs/provider-unreachable.md. The provider failure an agent activity reported. An older
+   * history carries no field, and a replay must read it as none.
+   */
+  const providerUnreachableOf = (
+    output: { providerUnreachable?: { summary: string } | null } | null,
+  ): { summary: string } | null => (patched(PROVIDER_UNREACHABLE_PATCH) ? (output?.providerUnreachable ?? null) : null);
+
+  /**
+   * docs/specs/provider-unreachable.md. Ends the Run when a role could not reach the model
+   * provider on its last retry. The message names the role and the agent's own API error, so the
+   * Proof Pack and the Linear post need no look into Temporal.
+   */
+  const failProviderUnreachable = async (
+    role: AgentSessionRole,
+    unreachable: { summary: string },
+  ): Promise<AgentRunWorkflowResult> =>
+    await failRun(
+      "PROVIDER_UNREACHABLE",
+      `The ${describeAgentRole(role)} session could not reach the model provider ${PROVIDER_UNREACHABLE_ATTEMPTS} times in the same step, ` +
+        `so Factoree ended the Run. Provider error: ${unreachable.summary.trim() === "" ? "none reported" : unreachable.summary.trim()} ` +
+        "Factoree published nothing.",
+    );
+
+  /**
+   * docs/specs/provider-unreachable.md. Runs a session again while the provider stays unreachable,
+   * at most twice, and returns the last result. The caller decides what a result that is still
+   * unreachable means. A retry does not touch the repair budget.
+   */
+  const retryWhileUnreachable = async <T extends { providerUnreachable?: { summary: string } | null } | null>(
+    role: AgentSessionRole,
+    first: T,
+    again: (retry: number) => Promise<T>,
+  ): Promise<T> => {
+    let result = first;
+    for (let retry = 1; retry < PROVIDER_UNREACHABLE_ATTEMPTS; retry += 1) {
+      if (providerUnreachableOf(result) === null || stopRequested || remainingMs() === 0) break;
+      await notify(() =>
+        activities.postProgress({
+          sessionId: input.agentSessionId,
+          message:
+            `The ${describeAgentRole(role)} session could not reach the model provider, ` +
+            `so Factoree starts one fresh session (retry ${retry} of ${PROVIDER_UNREACHABLE_ATTEMPTS - 1}).`,
+        }),
+      );
+      result = await again(retry);
+    }
+    return result;
+  };
 
   /**
    * docs/specs/agent-session-usage-and-hangs.md. One hung session gets one more try, and the
@@ -1356,6 +1415,8 @@ export async function agentRunWorkflow(
     attempt: number;
     /** docs/specs/agent-session-usage-and-hangs.md. The one fresh session after a hang. */
     afterHang?: boolean;
+    /** docs/specs/provider-unreachable.md. 1 or 2 for the fresh session after an unreachable provider. */
+    unreachableRetry?: number;
     /** Slice 4, D1. Replays the stored passing plan of the run with no validator session. */
     replay?: boolean;
   }): Promise<UserValidateActivityOutput | null> => {
@@ -1386,6 +1447,7 @@ export async function agentRunWorkflow(
         imageFiles: attemptInput.prepared.imageFiles ?? [],
         egress: egressOf(attemptInput.prepared),
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
+        ...((attemptInput.unreachableRetry ?? 0) > 0 ? { unreachableRetry: attemptInput.unreachableRetry } : {}),
         ...(forYourEye.length === 0 ? {} : { forYourEye }),
         ...(attemptInput.replay === true ? { replay: true } : {}),
         // docs/specs/change-sets.md, slice 6. The set check of a change set: its groups, its edges and
@@ -1418,6 +1480,8 @@ export async function agentRunWorkflow(
     validationEvidence?: string[];
     /** docs/specs/agent-session-usage-and-hangs.md. The one fresh session after a hang. */
     afterHang?: boolean;
+    /** docs/specs/provider-unreachable.md. 1 or 2 for the fresh session after an unreachable provider. */
+    unreachableRetry?: number;
   }): Promise<ReviewActivityOutput | null> => {
     const budgetMs = remainingMs();
     const reviewActivities = buildReviewActivities(budgetMs);
@@ -1444,6 +1508,7 @@ export async function agentRunWorkflow(
         timeoutMs: budgetMs,
         attempt: attemptInput.attempt,
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
+        ...((attemptInput.unreachableRetry ?? 0) > 0 ? { unreachableRetry: attemptInput.unreachableRetry } : {}),
       }),
     );
   };
@@ -1989,7 +2054,7 @@ export async function agentRunWorkflow(
       }
       const sprite = triageSprite;
       const reviewerName = prFollowUp.reviewer === null ? "PR reviewer" : `${prFollowUp.reviewer.appSlug} (${prFollowUp.reviewer.checkName})`;
-      const triageOnce = (afterHang: boolean): Promise<TriageActivityOutput | null> =>
+      const triageOnce = (afterHang: boolean, unreachableRetry = 0): Promise<TriageActivityOutput | null> =>
         runAgentActivity(() =>
           buildReviewActivities(remainingMs()).triagePullRequestFindings({
             runId: id,
@@ -2007,11 +2072,13 @@ export async function agentRunWorkflow(
             repositoryInstructions: sprite.repositoryInstructions,
             timeoutMs: remainingMs(),
             ...(afterHang ? { afterHang: true } : {}),
+            ...(unreachableRetry > 0 ? { unreachableRetry } : {}),
           }),
         );
       let triage: TriageActivityOutput | null;
       try {
         triage = await triageOnce(false);
+        triage = await retryWhileUnreachable("reviewer", triage, (retry) => triageOnce(false, retry));
         // docs/specs/agent-session-usage-and-hangs.md. A hung session gets one fresh session.
         const hang = hangOf(triage);
         if (triage !== null && hang !== null && !stopRequested && remainingMs() > 0) {
@@ -2041,6 +2108,8 @@ export async function agentRunWorkflow(
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
         return await failRun("REVIEW_UNAVAILABLE", `The triage of the PR reviewer findings on ${prFollowUp.url} did not finish.`);
       }
+      const triageUnreachable = providerUnreachableOf(triage);
+      if (triageUnreachable !== null) return await failProviderUnreachable("reviewer", triageUnreachable);
       const triageHang = hangOf(triage);
       if (triageHang !== null) return await failHung("reviewer", triageHang);
       if (!triage.reportUsable) {
@@ -2832,7 +2901,7 @@ export async function agentRunWorkflow(
       status = "REFINING";
       await activities.setRunStatus({ runId: id, status });
       let proposal: ProposeRefinementActivityOutput | null;
-      const proposeOnce = (afterHang: boolean): Promise<ProposeRefinementActivityOutput | null> =>
+      const proposeOnce = (afterHang: boolean, unreachableRetry = 0): Promise<ProposeRefinementActivityOutput | null> =>
         runAgentActivity(() =>
           buildUserValidateActivities(remainingMs()).proposeRefinement({
             runId: id,
@@ -2867,11 +2936,13 @@ export async function agentRunWorkflow(
             egress: egressOf(preparedSandbox),
             timeoutMs: remainingMs(),
             ...(afterHang ? { afterHang: true } : {}),
+            ...(unreachableRetry > 0 ? { unreachableRetry } : {}),
             ...(input.product.refinerCriteriaLimit === undefined ? {} : { criteriaLimit: input.product.refinerCriteriaLimit }),
           }),
         );
       try {
         proposal = await proposeOnce(false);
+        proposal = await retryWhileUnreachable("refiner", proposal, (retry) => proposeOnce(false, retry));
         // docs/specs/agent-session-usage-and-hangs.md. A hung refiner gets one fresh session.
         const firstHang = hangOf(proposal);
         if (firstHang !== null && !stopRequested && remainingMs() > 0) {
@@ -2897,6 +2968,11 @@ export async function agentRunWorkflow(
       if (proposal === null) {
         if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
         return await failRun("REFINEMENT_UNAVAILABLE", "The Refiner did not finish, so Factoree published nothing.");
+      }
+      const refinerUnreachable = providerUnreachableOf(proposal);
+      if (refinerUnreachable !== null) {
+        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        return await failProviderUnreachable("refiner", refinerUnreachable);
       }
       const refinerHang = hangOf(proposal);
       if (refinerHang !== null) {
@@ -3120,6 +3196,9 @@ export async function agentRunWorkflow(
       // resumes, and whether the current step already resumed one. One step allows one hang.
       let continueSession: AgentSessionRef | null = null;
       let resumedAfterHang = false;
+      // docs/specs/provider-unreachable.md. The consecutive Implementer sessions that could not reach
+      // the model provider: 0, 1 or 2. It is a counter of the workflow, so a replay takes the same ladder.
+      let unreachableRetries = 0;
 
       // SDD section 46 needs these two values after the loop ends, and the loop scope does not
       // survive the `break`. The successful pass writes them just before it breaks.
@@ -3215,6 +3294,42 @@ export async function agentRunWorkflow(
           }
         }
 
+        // docs/specs/provider-unreachable.md. The provider could not be reached. The first retry is a
+        // fresh session in the same sandbox, the second one runs in a fresh sandbox, and a third
+        // failure ends the Run. None of them uses the repair budget.
+        const implementerUnreachable = providerUnreachableOf(implementation);
+        if (implementation !== null && implementerUnreachable !== null) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          if (unreachableRetries >= PROVIDER_UNREACHABLE_ATTEMPTS - 1) {
+            return await failProviderUnreachable("implementer", implementerUnreachable);
+          }
+          unreachableRetries += 1;
+          // A fresh sandbox starts from the base commit, so it is only right while the Run holds no
+          // earlier change. After a repair the same sandbox keeps the work, and a fresh session runs there.
+          const freshSandbox = unreachableRetries === 2 && repairCount === 0;
+          await notify(() =>
+            activities.postProgress({
+              sessionId: input.agentSessionId,
+              message:
+                `The Implementer session could not reach the model provider, so Factoree starts one fresh session ` +
+                `${freshSandbox ? "in a fresh sandbox" : "in the same sandbox"} (retry ${unreachableRetries} of ${PROVIDER_UNREACHABLE_ATTEMPTS - 1}).`,
+            }),
+          );
+          if (freshSandbox) {
+            status = "PREPARING";
+            await activities.setRunStatus({ runId: id, status });
+            const again = await prepareWorkSprite(prepareInput);
+            if ("ended" in again) return again.ended;
+            preparedSandbox = again.prepared;
+            sprite = preparedSandbox;
+            if (stopRequested) return await cancelRun();
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          }
+          attempt += 1;
+          continue;
+        }
+        unreachableRetries = 0;
+
         // docs/specs/agent-session-usage-and-hangs.md. The first hang resumes the session once
         // with "continue", and that attempt uses the repair budget. A second hang in the same
         // step ends the Run.
@@ -3253,9 +3368,11 @@ export async function agentRunWorkflow(
           // The runner reports a cancelled agent process as an incomplete attempt, so the
           // deadline decides which of the two outcomes this is.
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          // docs/specs/provider-unreachable.md. The message carries the agent's own error.
+          const cause = patched(PROVIDER_UNREACHABLE_PATCH) ? (implementation?.summary ?? "").trim() : "";
           return await failRun(
             "IMPLEMENTATION_FAILED",
-            "The Implementer did not complete the change. Factoree ended the Run.",
+            `The Implementer did not complete the change. Factoree ended the Run.${cause === "" ? "" : ` Agent output: ${cause}`}`,
           );
         }
 
@@ -3493,6 +3610,9 @@ export async function agentRunWorkflow(
                 verificationSummary,
               };
               let result = await runReview(reviewInput);
+              result = await retryWhileUnreachable("reviewer", result, (retry) =>
+                runReview({ ...reviewInput, unreachableRetry: retry }),
+              );
               // docs/specs/agent-session-usage-and-hangs.md. A hung Reviewer gets one fresh session
               // in the same review pass.
               const hang = hangOf(result);
@@ -3529,6 +3649,10 @@ export async function agentRunWorkflow(
           });
           // A stop that arrived while the validator ran must end the Run here.
           if (stopRequested) return await cancelRun();
+          result = await retryWhileUnreachable("validator", result, (retry) =>
+            runUserValidate({ prepared: checked, goal: sandbox.goal, attempt, unreachableRetry: retry }),
+          );
+          if (stopRequested) return await cancelRun();
           // docs/specs/agent-session-usage-and-hangs.md. A hung validator gets one fresh session.
           const validatorHang = hangOf(result);
           if (validatorHang !== null && remainingMs() > 0) {
@@ -3562,6 +3686,11 @@ export async function agentRunWorkflow(
           return await failRun("RUN_TIMEOUT", timeoutMessage);
         }
 
+        const validatorUnreachable = providerUnreachableOf(userValidation);
+        if (validatorUnreachable !== null) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failProviderUnreachable("validator", validatorUnreachable);
+        }
         const validatorHang = hangOf(userValidation);
         if (validatorHang !== null) {
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -3709,6 +3838,10 @@ export async function agentRunWorkflow(
           };
           let result = await runReview(reviewInput);
           if (stopRequested) return await cancelRun();
+          result = await retryWhileUnreachable("reviewer", result, (retry) =>
+            runReview({ ...reviewInput, unreachableRetry: retry }),
+          );
+          if (stopRequested) return await cancelRun();
           // docs/specs/agent-session-usage-and-hangs.md. A hung Reviewer gets one fresh session in
           // the same review pass.
           const reviewerHang = hangOf(result);
@@ -3740,6 +3873,11 @@ export async function agentRunWorkflow(
           return await failRun("RUN_TIMEOUT", timeoutMessage);
         }
 
+        const reviewerUnreachable = providerUnreachableOf(review);
+        if (reviewerUnreachable !== null) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failProviderUnreachable("reviewer", reviewerUnreachable);
+        }
         const reviewerHang = hangOf(review);
         if (reviewerHang !== null) {
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);

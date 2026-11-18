@@ -65,6 +65,9 @@ export const RUN_FAILURE_REASONS = [
   // docs/specs/agent-session-usage-and-hangs.md. An agent session wrote no output for the silence
   // limit twice in the same step. Two hangs are a pattern that a human must see.
   "AGENT_HUNG",
+  // docs/specs/provider-unreachable.md. An agent session could not reach the model provider three
+  // times in the same step: twice in its sandbox, once in a fresh one.
+  "PROVIDER_UNREACHABLE",
   // SDD section 35. Deterministic verification did not pass, and the repair budget of SDD
   // section 42 is spent. SDD section 48 fixes the state names, not the failure reasons.
   "VERIFICATION_FAILED",

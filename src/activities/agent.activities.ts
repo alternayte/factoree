@@ -4,7 +4,7 @@ import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js"
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import { AgentSessionUnavailableError } from "~/domain/runs/agent-runner.js";
 import { agentSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
+import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -132,6 +132,11 @@ export interface ImplementActivityOutput {
   cancelledSession: boolean;
   /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
   hang: AgentHang;
+  /**
+   * docs/specs/provider-unreachable.md. Set when the session could not reach the model provider.
+   * Absent in a history recorded before it existed.
+   */
+  providerUnreachable?: AgentProviderUnreachable;
   /**
    * docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The named hosts the effective allow
    * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
@@ -520,6 +525,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       durationMs: result.durationMs,
       cancelledSession,
       hang: hangOf([result]),
+      providerUnreachable: providerUnreachableOf([result]),
       missingHosts,
       ...(missingRepositories.length === 0 ? {} : { missingRepositories }),
     };

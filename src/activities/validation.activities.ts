@@ -28,7 +28,7 @@ import {
   selectorRecheckSessionKey,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
+import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -138,6 +138,11 @@ export interface UserValidateActivityInput {
    * hung one in the same pass. It writes its own plan file and its own rows.
    */
   afterHang?: boolean;
+  /**
+   * docs/specs/provider-unreachable.md. 1 or 2 for the fresh session that follows an unreachable
+   * provider. It writes its own files and its own rows, as the session after a hang does.
+   */
+  unreachableRetry?: number;
   /** docs/specs/repository-setup-and-services.md. The accounts of the config. Absent in an old history. */
   accounts?: AccountConfig[];
   /** Issue #44, DI-21.68. The browser check limits of the config. Absent in an old history. */
@@ -207,6 +212,8 @@ export interface UserValidateActivityOutput {
    * for the silence limit. The pass then ran no check and recorded no result.
    */
   hang: AgentHang;
+  /** docs/specs/provider-unreachable.md. Set when the session could not reach the model provider. */
+  providerUnreachable?: AgentProviderUnreachable;
   /**
    * docs/specs/repository-setup-and-services.md. The fakes of the stack the pass ran against.
    * docs/specs/change-sets.md: each names its target, and a fake a wired provider replaced is absent.
@@ -583,7 +590,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             );
       const promptPath = setCheck === undefined ? input.primaryPath : `${input.workspacePath}/targets`;
 
-      const afterHang = input.afterHang === true;
+      const unreachableRetry = input.unreachableRetry ?? 0;
+      const afterHang = input.afterHang === true || unreachableRetry > 0;
       // A hung session can leave a partial plan, and the fresh session must never read it.
       const planPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}.json`;
       const validatorInput = buildUserValidatorInput({
@@ -752,7 +760,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             cancelled: sessionResult.cancelled,
             summary: sessionResult.summary,
           },
-          idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+          idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang, unreachableRetry),
         });
         invocations = [sessionResult];
         passSessionId = sessionResult.session.sessionId;
@@ -791,7 +799,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             role: "validator",
             attempt: input.attempt,
             runner: runner.name,
-            idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+            idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang, unreachableRetry),
             sandboxId: input.spriteId,
           },
           invocations,
@@ -799,6 +807,22 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
 
         // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
         // runs no check and records no result. The `finally` below stops the early preview.
+        const providerUnreachable = providerUnreachableOf(invocations);
+        if (providerUnreachable !== null) {
+          return {
+            passed: false,
+            results: [],
+            hasFailure: false,
+            hasManual: false,
+            hasBlocked: false,
+            summary: "The User Validator session could not reach the model provider.",
+            failures: [],
+            sessionId: passSessionId,
+            previewUrl: null,
+            hang: null,
+            providerUnreachable,
+          };
+        }
         const hang = hangOf(invocations);
         if (hang !== null) {
           return {

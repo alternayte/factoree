@@ -1,4 +1,5 @@
 import type { AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import { isProviderUnreachableText } from "../provider-unreachable.js";
 
 export interface ClaudeOutput {
   sessionId: string | null;
@@ -12,6 +13,11 @@ export interface ClaudeOutput {
   model: string | null;
   /** docs/specs/skill-registry.md. The input of every tool use block, as JSON. */
   toolInputs: string[];
+  /**
+   * docs/specs/provider-unreachable.md. The failure the CLI reported: the text of an error result,
+   * or a plain line that names a provider connectivity error such as `EAI_AGAIN`.
+   */
+  errorMessage?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -85,6 +91,8 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   let lastPlainLine = "";
   let usage: AgentSessionUsage | null = null;
   let model: string | null = null;
+  let errorMessage: string | null = null;
+  let lastUnreachableLine: string | null = null;
   const toolInputs: string[] = [];
 
   for (const rawLine of text.split(/\r\n|\r|\n/)) {
@@ -96,6 +104,7 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
       parsed = JSON.parse(trimmed);
     } catch {
       lastPlainLine = trimmed;
+      if (isProviderUnreachableText(trimmed)) lastUnreachableLine = trimmed;
       continue;
     }
     if (!isRecord(parsed)) {
@@ -115,6 +124,7 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
     if (parsed["type"] === "result") {
       const value = parsed["result"];
       if (typeof value === "string") resultSummary = value;
+      if (parsed["is_error"] === true && typeof value === "string" && value.length > 0) errorMessage = value;
       usage = resultUsage(parsed) ?? usage;
       continue;
     }
@@ -127,5 +137,6 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   }
 
   const summary = resultSummary ?? lastAssistant ?? lastPlainLine;
-  return { sessionId, summary, usage, model, toolInputs };
+  const failure = errorMessage ?? lastUnreachableLine;
+  return { sessionId, summary, usage, model, toolInputs, ...(failure === null ? {} : { errorMessage: failure }) };
 };

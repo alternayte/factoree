@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A session that cannot reach the model provider (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`) ends within a minute, retries in a fresh session and then in a fresh sandbox, and fails the run with `PROVIDER_UNREACHABLE` in the new category `INFRASTRUCTURE` after the third failure. The session row shows the outcome `unreachable` (`docs/specs/provider-unreachable.md`, GitHub issue 61).
+
+### Changed
+
+- The `IMPLEMENTATION_FAILED` message carries the agent output, so the post names the real cause.
+
 ## [0.13.0] - 2026-11-18
 
 ### Added

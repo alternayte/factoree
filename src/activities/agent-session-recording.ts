@@ -38,6 +38,18 @@ export const hangOf = (results: ReadonlyArray<AgentRunResult>): AgentHang => {
 };
 
 /**
+ * docs/specs/provider-unreachable.md. The provider failure an activity reports to the workflow, or
+ * null. `summary` is the redacted API error text, so the failure message can name it.
+ */
+export type AgentProviderUnreachable = { summary: string } | null;
+
+/** The provider failure of one session, from all its invocations. */
+export const providerUnreachableOf = (results: ReadonlyArray<AgentRunResult>): AgentProviderUnreachable => {
+  const failed = results.find((result) => result.failureKind === "PROVIDER_UNREACHABLE");
+  return failed === undefined ? null : { summary: failed.summary };
+};
+
+/**
  * docs/specs/agent-session-usage-and-hangs.md. Writes the `AgentSession` row of one session and
  * logs "agent session finished". `results` holds every invocation of the session in order: the
  * first run, then each reminder that resumed it. The row sums their usage.

@@ -188,6 +188,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * docs/specs/agent-session-usage-and-hangs.md. A run id in this map decides, per Implementer
    * call, whether the session hung.
    */
+  // docs/specs/provider-unreachable.md. Makes an Implementer call report an unreachable provider.
+  const implementProviderUnreachable = new Map<string, (call: ImplementActivityInput) => { summary: string } | null>();
   const implementHangs = new Map<string, (call: ImplementActivityInput) => { silenceLimitMs: number } | null>();
   /** The run ids whose live Implementer session the activity cancelled. */
   const cancelledLiveSessions: string[] = [];
@@ -702,6 +704,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         durationMs: 10,
         cancelledSession: cancelledLiveSessions.includes(activityInput.runId),
         hang: implementHangs.get(activityInput.runId)?.(activityInput) ?? null,
+        providerUnreachable: implementProviderUnreachable.get(activityInput.runId)?.(activityInput) ?? null,
       };
     },
     verify: async (activityInput: VerifyActivityInput) => {
@@ -1084,6 +1087,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldStatuses,
     failingImplementations,
     implementHangs,
+    implementProviderUnreachable,
     cancelledLiveSessions,
     postedErrors,
     postedProgress,

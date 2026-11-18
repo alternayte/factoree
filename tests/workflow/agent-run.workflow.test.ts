@@ -270,7 +270,10 @@ describe("agentRunWorkflow", () => {
       });
       expect(result.status).toBe("FAILED");
       expect(completions.at(-1)?.failureReason).toBe("IMPLEMENTATION_FAILED");
-      expect(postedErrors.at(-1)).toBe("The Implementer did not complete the change. Factoree ended the Run.");
+      // docs/specs/provider-unreachable.md. The message carries the agent output.
+      expect(postedErrors.at(-1)).toBe(
+        "The Implementer did not complete the change. Factoree ended the Run. Agent output: The change is applied. Every test passes.",
+      );
     } finally {
       failingImplementations.delete("run-session-k");
     }
