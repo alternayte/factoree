@@ -139,7 +139,7 @@ export function RunsPage({ search }: { search: RunsSearch }) {
             <tbody className="stagger">
               {items.map((run) => (
                 <tr key={run.id}>
-                  <td className="min-w-[240px] max-w-[420px]">
+                  <td className="min-w-[220px] max-w-[340px]">
                     <Link
                       to="/runs/$runId"
                       params={{ runId: run.id }}
@@ -152,7 +152,7 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                       {issueIdentifier(run.workItemUrl) ?? run.id.slice(0, 8)}
                     </div>
                   </td>
-                  <td className="whitespace-nowrap">{run.productName}</td>
+                  <td className="min-w-[120px]">{run.productName}</td>
                   <td>
                     <Badge tone={statusTone(run.status)}>{run.status}</Badge>
                     {run.failureReason ? (
@@ -181,15 +181,15 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                     {run.repairLimit === null ? "" : ` of ${run.repairLimit}`}
                   </td>
                   <td className="whitespace-nowrap text-mute">{formatDate(run.createdAt)}</td>
-                  <td>
+                  <td className="min-w-[170px]">
                     {/* docs/specs/change-sets.md. Each target with its base, its pull request and its status. */}
                     {run.targets.length === 0 ? (
                       <span className="text-mute">—</span>
                     ) : (
                       <ul className="space-y-1">
                         {run.targets.map((target) => (
-                          <li key={target.repositoryFullName} className="whitespace-nowrap">
-                            <div className="flex items-center gap-2">
+                          <li key={target.repositoryFullName}>
+                            <div className="flex flex-wrap items-center gap-2">
                               {target.pullRequestUrl ? (
                                 <a className="link" href={target.pullRequestUrl} target="_blank" rel="noreferrer">
                                   {pullRequestLabel(target.pullRequestUrl)}
@@ -202,8 +202,8 @@ export function RunsPage({ search }: { search: RunsSearch }) {
                               ) : null}
                             </div>
                             <div className="mt-1 font-mono text-xs text-mute">
-                              {target.repositoryFullName}
-                              {target.baseSha ? ` @ ${target.baseSha.slice(0, 12)}` : ""}
+                              <div className="break-all">{target.repositoryFullName}</div>
+                              {target.baseSha ? <div>base {target.baseSha.slice(0, 7)}</div> : null}
                             </div>
                           </li>
                         ))}
