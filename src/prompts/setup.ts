@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@11";
+export const SETUP_PROMPT_VERSION = "setup@12";
 
 export interface SetupPromptFields {
   repository: string;
@@ -104,6 +104,8 @@ accounts:                 # optional: users the seed creates, for signed-in brow
       - { action: fill, selector: "#password", value: "{password}" }
       - { action: click, selector: "button[type=submit]" }
     check: { action: expectVisible, selector: "[data-testid=user-menu]" }
+context:                  # optional
+  authority: ["ARCHITECTURE.md", "docs/design/**"]  # the docs that state current architecture
 sandbox:
   allowedDomains: []      # Factoree fills this from what the bootstrap reached
 secrets:
@@ -139,6 +141,9 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         `Set identity.product to "${fields.productSlug}" and identity.linear.teamKey to "${fields.linearTeamKey}".`,
         "Install each toolchain the image lacks with mise: write `.factoree/mise.toml` when the repository has no mise.toml or .tool-versions, and start the bootstrap with `mise install`. Every command already reads `.factoree/mise.toml` through MISE_CONFIG_FILE, so a command needs no mise prefix. A global.json names the .NET SDK version.",
         "List in bootstrap.keyFiles every lockfile and toolchain file the bootstrap reads.",
+        "List in context.authority the Markdown files that state the current architecture or design, as paths or globs relative to the root, with no leading `./`. " +
+          "Leave out plans, per-ticket notes, reports, guides and runbooks: the agents read them anyway, and only a listed file can make Factoree ask which document governs. " +
+          "ADRs need no entry, because Factoree reads their status. Leave context.authority out when no document states the architecture.",
         "Use the repository's own compose file in services.compose. Put every extra service, and every fake, in `.factoree/compose.yaml`. Factoree passes it after the repository file, so it can add a service and change the environment of an existing one.",
         "A seed creates the data and the accounts the app needs, through the app's own path: its CLI, its migrations, or its registration endpoint. Put a seed script in `.factoree/`.",
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",

@@ -29,6 +29,12 @@ export interface ContextConflictRecord {
   loserRef: string | null;
   reason: string;
   resolution: "resolved" | "unresolved";
+  /**
+   * docs/specs/context-authority-and-cited-conflicts.md. The two item references of the pair,
+   * sorted. A human answer is keyed by them. The store keeps no column for it, because only an
+   * unresolved conflict needs it, and Factoree never freezes a contract that holds one.
+   */
+  refs?: [string, string];
 }
 
 /** A readable name for an authority class. The recorded reason uses this name. */
@@ -61,12 +67,12 @@ const DOMAIN_NAMES: Record<string, string> = {
 
 const nameOf = (authority: AuthorityClass): string => NAMES[authority] ?? authority;
 
-/** An item can conflict only when Factoree puts it in front of an agent. */
-const conflictable = (classification: ContextClassification): boolean =>
-  classification === "required" || classification === "reference";
-
-/** The reason text for the human-decision rule below. Task 10 matches on this exact string. */
-const DECISION_REASON = "a recorded human decision settles this subject";
+/**
+ * An item can conflict only when Factoree puts it in front of an agent. A `documentation` item is
+ * read, but docs/specs/context-authority-and-cited-conflicts.md keeps it out of every conflict.
+ */
+export const isConflictable = (item: Pick<SelectedContextItem, "classification" | "authority">): boolean =>
+  (item.classification === "required" || item.classification === "reference") && item.authority !== "documentation";
 
 /**
  * SDD section 22 writes these two domains with `+`, not with `>`. The specification calls them
@@ -80,146 +86,166 @@ const COMBINED_EVIDENCE_DOMAINS = new Set(["current_implementation", "system_top
 /**
  * docs/specs/work-item-images-and-links.md, DI-21.39. The description, the kept comments and the
  * images are one author's Work Item text. A later sentence supersedes an earlier one on the same
- * point, and the comments item says so, so two of them never pair as a conflict. The resolver adds
- * content topics to every required item, so the empty topic list of the comments item alone does
- * not keep it out of a pair.
+ * point, so two of them never pair as a conflict.
  */
 const isWorkItemText = (ref: string): boolean =>
   ref.startsWith("linear:issue:") || ref === WORK_ITEM_COMMENTS_REF || ref.startsWith("linear:image:");
 
-export interface DetectConflictsOptions {
-  /**
-   * SDD section 23. The stable reference of every recorded human decision of this Run. A recorded
-   * decision is an answer a human gave to a question Factoree asked. The Work Item body is not
-   * one, although it carries the same authority class, because it answers no question.
-   *
-   * The caller names the answers, because only the caller holds the Run decisions. An absent list
-   * means no answer exists, so no item settles a conflict. A permissive default lets one
-   * forgetful call site restore the defect this option removes.
-   */
-  decisionRefs?: readonly string[];
-}
+/** The longest quote a report may carry, so a quote stays a passage and never a copy of a file. */
+export const CONFLICT_QUOTE_MAX = 400;
+/** The shortest quote a report may carry. A few characters occur in almost any file. */
+export const CONFLICT_QUOTE_MIN = 20;
 
 /**
- * SDD section 23. Factoree must record a material conflict. It can resolve a conflict
- * automatically only when authority policy gives a clear winner.
- *
- * The detector is deterministic by design. Two selected items conflict when they sit in one
- * authority domain and both carry the same Work Item topic. SDD section 8 forbids Refinement
- * to resolve an ambiguous architecture choice without a human answer. A similarity model
- * guesses, so it is the wrong control here. The domain-and-topic rule never guesses.
- *
- * A separate rule then applies. SDD section 22 makes an explicit Work Item decision the highest
- * product-intent authority. SDD section 23 requires the human answer to persist as a Run
- * decision that governs the Run. The detector builds the decision reference of the pair from the
- * authority domain of the pair and from the subject of the pair. A `work_item_decision` item
- * with that exact reference resolves the pair. This happens whatever the ordinary domain pairing
- * found. The caller names those decision items through `decisionRefs`. Only a recorded answer
- * settles a pair, and the Work Item body is not one.
- *
- * SDD section 23 makes a human answer decisive for the one question Factoree asked. That
- * question names one authority domain and one subject, so the answer settles that pair only. One
- * subject can raise a conflict in two domains. An answer about the architecture of a subject
- * therefore leaves the interface conflict of the same subject unresolved, and Factoree asks the
- * second question.
- *
- * A recorded decision never enters a pair. It is an override, not a competitor, so it cannot
- * conflict with the Work Item body or with a second answer. This second rule is a reference
- * check, not a pairing. The rule applies to every pair, not only to an unresolved pair. It is
- * an out-of-band override keyed by the domain and the subject, so it never weighs one authority
- * ladder against another. It is why the workflow can make progress after one human answer.
- * Without the rule, the same question repeats without end.
+ * docs/specs/context-authority-and-cited-conflicts.md. The refiner reports a conflict as data: the
+ * subject, and for each side the context item and a passage quoted from it. The report is a
+ * claim. Factoree checks it before it records anything.
  */
-export const detectConflicts = (
-  items: SelectedContextItem[],
-  options: DetectConflictsOptions = {},
-): ContextConflictRecord[] => {
-  const decisionRefs = new Set(options.decisionRefs ?? []);
-  const conflictables = items.filter((item) => conflictable(item.classification));
-  // The decisions are keyed by their own stable reference. `conflictDecisionRef` builds the same
-  // reference from the domain and the subject of a pair, so the lookup is exact.
-  const decisions = new Map<string, SelectedContextItem>(
-    conflictables
-      .filter(
-        (item) => item.authority === "work_item_decision" && decisionRefs.has(item.reference.ref),
-      )
-      .map((item) => [item.reference.ref, item]),
+export interface ConflictReport {
+  subject: string;
+  left: { item: string; quote: string };
+  right: { item: string; quote: string };
+}
+
+/** A report whose two items Factoree found and whose two quotes it read in the pinned content. */
+export interface CheckedConflict {
+  subject: string;
+  left: SelectedContextItem;
+  right: SelectedContextItem;
+  leftQuote: string;
+  rightQuote: string;
+}
+
+/** A report Factoree dropped, with the reason the log records. */
+export interface DroppedConflict {
+  report: ConflictReport;
+  reason: string;
+}
+
+/** Whitespace-insensitive text, so a quote that spans a line break still matches. */
+export const normalizeQuote = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/**
+ * The item a report names. The refiner names an item as the Context Contract shows it: its stable
+ * reference, `owner/repo path`, `owner/repo:path`, or a path that only one item holds.
+ */
+export const findReportedItem = (items: readonly SelectedContextItem[], name: string): SelectedContextItem | null => {
+  const wanted = name.trim();
+  const exact = items.find(
+    (item) =>
+      item.reference.ref === wanted ||
+      (item.reference.repository !== null &&
+        item.reference.path !== null &&
+        (`${item.reference.repository} ${item.reference.path}` === wanted || `${item.reference.repository}:${item.reference.path}` === wanted)),
   );
-  // A recorded answer is an out-of-band override, not a competitor. It settles a subject, and it
-  // never enters a pair itself. Otherwise the Work Item body pairs with the answer a human gave to
-  // a question about it, and the contract renders a conflict that does not exist.
-  const candidates = conflictables.filter((item) => !decisionRefs.has(item.reference.ref));
-  const found: Omit<ContextConflictRecord, "id">[] = [];
+  if (exact !== undefined) return exact;
+  const byPath = items.filter((item) => item.reference.path === wanted);
+  return byPath.length === 1 ? (byPath[0] ?? null) : null;
+};
 
-  for (let i = 0; i < candidates.length; i += 1) {
-    for (let j = i + 1; j < candidates.length; j += 1) {
-      const left = candidates[i];
-      const right = candidates[j];
-      if (left === undefined || right === undefined) continue;
-      if (left.reference.ref === right.reference.ref) continue;
-      if (isWorkItemText(left.reference.ref) && isWorkItemText(right.reference.ref)) continue;
-      const authorityDomain = authorityDomainOf(left.authority);
-      if (authorityDomain !== authorityDomainOf(right.authority)) continue;
-      // SDD section 22 joins the members of these two domains with `+`. They are combined
-      // evidence about one behavior, so they never compete. `compareAuthority` reports `equal`,
-      // because they do sit on one rung, and the detector must not read that as a conflict.
-      if (COMBINED_EVIDENCE_DOMAINS.has(authorityDomain)) continue;
-
-      const shared = left.topics.filter((topic) => right.topics.includes(topic)).sort();
-      const subject = shared[0];
-      if (subject === undefined) continue;
-
-      const decision = decisions.get(conflictDecisionRef(authorityDomain, subject));
-      if (decision !== undefined) {
-        found.push({
-          subject,
-          authorityDomain,
-          winnerRef: decision.reference.ref,
-          loserRef: null,
-          reason: DECISION_REASON,
-          resolution: "resolved",
-        });
-        continue;
-      }
-
-      const order = compareAuthority(left.authority, right.authority);
-      if (order === "unrelated") continue;
-
-      if (order === "equal") {
-        // SDD section 23. No safe resolution exists, so a human must decide.
-        const [first, second] = [left.reference.ref, right.reference.ref].sort();
-        found.push({
-          subject,
-          authorityDomain,
-          winnerRef: null,
-          loserRef: null,
-          reason:
-            `"${first}" and "${second}" are equally authoritative ` +
-            `${nameOf(left.authority)} sources for "${subject}"`,
-          resolution: "unresolved",
-        });
-        continue;
-      }
-
-      const winner = order === "a" ? left : right;
-      const loser = order === "a" ? right : left;
-      const domain = DOMAIN_NAMES[authorityDomain] ?? "";
-      found.push({
-        subject,
-        authorityDomain,
-        winnerRef: winner.reference.ref,
-        loserRef: loser.reference.ref,
-        reason: `${nameOf(winner.authority)} has higher ${domain} authority than ${nameOf(loser.authority)}`,
-        resolution: "resolved",
-      });
+/**
+ * The checks a report must pass before Factoree reads its quotes: two different selected items
+ * that can conflict, in one SDD section 22 domain that is not combined evidence, and two quotes
+ * of a length a passage has. Answers the pair, or the reason to drop the report.
+ */
+export const pairOfReport = (
+  items: readonly SelectedContextItem[],
+  report: ConflictReport,
+): { left: SelectedContextItem; right: SelectedContextItem } | { dropped: string } => {
+  const left = findReportedItem(items, report.left.item);
+  const right = findReportedItem(items, report.right.item);
+  if (left === null || right === null) return { dropped: "it names an item the Context Contract does not hold" };
+  if (left.reference.ref === right.reference.ref) return { dropped: "both sides name one item" };
+  if (!isConflictable(left) || !isConflictable(right)) {
+    return { dropped: "an item is documentation or not selected, so it never enters a conflict" };
+  }
+  if (isWorkItemText(left.reference.ref) && isWorkItemText(right.reference.ref)) {
+    return { dropped: "both items are Work Item text, where a later sentence supersedes an earlier one" };
+  }
+  const domain = authorityDomainOf(left.authority);
+  if (domain !== authorityDomainOf(right.authority)) return { dropped: "the items sit in different authority domains" };
+  if (COMBINED_EVIDENCE_DOMAINS.has(domain)) return { dropped: "the items are combined evidence of one behavior" };
+  for (const quote of [report.left.quote, report.right.quote]) {
+    const length = normalizeQuote(quote).length;
+    if (length < CONFLICT_QUOTE_MIN || length > CONFLICT_QUOTE_MAX) {
+      return { dropped: `a quote is not between ${String(CONFLICT_QUOTE_MIN)} and ${String(CONFLICT_QUOTE_MAX)} characters` };
     }
+  }
+  return { left, right };
+};
+
+/** The key of a pair. It names the answer that settles the pair, whatever the subject reads. */
+export const pairKey = (left: string, right: string): string => [left, right].sort().join(" | ");
+
+const DECISION_REASON = "a recorded human decision settles this pair";
+
+/**
+ * SDD section 23 and docs/specs/context-authority-and-cited-conflicts.md. Each checked report is a
+ * real disagreement. A recorded human answer for the pair settles it, and the record carries the
+ * answer so every agent that reads the contract reads it. Otherwise SDD section 22 decides: a
+ * higher class wins, and two items of one rung leave the conflict unresolved, so a human decides.
+ *
+ * `answers` maps the decision reference of each answered pair to the answer text. Only a recorded
+ * answer settles a pair. The Work Item body is not one.
+ */
+export const conflictsOf = (
+  checked: readonly CheckedConflict[],
+  answers: ReadonlyMap<string, { ref: string; answer: string }>,
+): ContextConflictRecord[] => {
+  const found: Omit<ContextConflictRecord, "id">[] = [];
+  const seen = new Set<string>();
+  for (const conflict of checked) {
+    const { left, right } = conflict;
+    const key = pairKey(left.reference.ref, right.reference.ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const authorityDomain = authorityDomainOf(left.authority);
+    const quoted = `"${left.reference.ref}" says "${conflict.leftQuote}", and "${right.reference.ref}" says "${conflict.rightQuote}"`;
+    const answer = answers.get(conflictDecisionRef(authorityDomain, key));
+    if (answer !== undefined) {
+      found.push({
+        subject: conflict.subject,
+        authorityDomain,
+        winnerRef: answer.ref,
+        loserRef: null,
+        reason: `${DECISION_REASON}: "${answer.answer}". ${quoted}`,
+        resolution: "resolved",
+        refs: [left.reference.ref, right.reference.ref].sort() as [string, string],
+      });
+      continue;
+    }
+    const order = compareAuthority(left.authority, right.authority);
+    if (order === "equal") {
+      found.push({
+        subject: conflict.subject,
+        authorityDomain,
+        winnerRef: null,
+        loserRef: null,
+        reason: `${quoted}. Both are ${nameOf(left.authority)}`,
+        resolution: "unresolved",
+        refs: [left.reference.ref, right.reference.ref].sort() as [string, string],
+      });
+      continue;
+    }
+    if (order === "unrelated") continue;
+    const winner = order === "a" ? left : right;
+    const loser = order === "a" ? right : left;
+    const domain = DOMAIN_NAMES[authorityDomain] ?? "";
+    found.push({
+      subject: conflict.subject,
+      authorityDomain,
+      winnerRef: winner.reference.ref,
+      loserRef: loser.reference.ref,
+      reason: `${nameOf(winner.authority)} has higher ${domain} authority than ${nameOf(loser.authority)}. ${quoted}`,
+      resolution: "resolved",
+      refs: [left.reference.ref, right.reference.ref].sort() as [string, string],
+    });
   }
 
   // A deterministic order, so the identifiers of one Run stay stable across two resolutions.
   found.sort((a, b) => {
-    if (a.subject !== b.subject) return a.subject < b.subject ? -1 : 1;
-    const left = `${a.winnerRef ?? ""}|${a.loserRef ?? ""}|${a.reason}`;
-    const right = `${b.winnerRef ?? ""}|${b.loserRef ?? ""}|${b.reason}`;
+    const left = `${a.subject}|${(a.refs ?? []).join("|")}`;
+    const right = `${b.subject}|${(b.refs ?? []).join("|")}`;
     return left < right ? -1 : left > right ? 1 : 0;
   });
 
@@ -229,6 +255,10 @@ export const detectConflicts = (
 export const firstUnresolved = (conflicts: ContextConflictRecord[]): ContextConflictRecord | null =>
   conflicts.find((conflict) => conflict.resolution === "unresolved") ?? null;
 
-/** SDD section 23 requires one focused question. */
+/**
+ * SDD section 23 requires one focused question. It quotes both passages and carries no proposal,
+ * because a pick among equals has no reason a reviewer can check. "Neither" settles the pair.
+ */
 export const conflictQuestion = (conflict: ContextConflictRecord): string =>
-  `${conflict.reason}. Which one governs "${conflict.subject}" for this change, and why?`;
+  `Two context items disagree on "${conflict.subject}": ${conflict.reason}. ` +
+  'Which one governs this change? Reply with one of them, or "neither".';

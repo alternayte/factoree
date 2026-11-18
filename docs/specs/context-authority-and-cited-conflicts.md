@@ -1,6 +1,6 @@
 # Context authority and cited conflicts
 
-Amends `docs/factoree-sdd.md` §22, §23, AT-07 and AT-08, and `docs/specs/refiner-agent.md`. Supersedes DI-4.7. Closes issue #60.
+Amends `docs/factoree-sdd.md` §15, §22, §23, AT-07 and AT-08, and `docs/specs/refiner-agent.md`. Supersedes DI-4.7. Closes issue #60.
 
 ## What it does
 A context conflict exists only when the refiner quotes two context items that disagree. Factoree checks both quotes against the pinned content. The §22 ladder then resolves the pair, or Factoree asks a human when both items are in one authority class. A shared word between two documents is never a conflict. A repository names the documents with architecture authority in `.factoree/config.yaml`. Every other document is context that the agents read but that never enters a conflict.

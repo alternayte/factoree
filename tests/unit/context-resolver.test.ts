@@ -12,6 +12,7 @@ import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repos
 import type { ResolveContextInput } from "~/domain/context/context-resolver.js";
 import type { ContextCandidate, ContextSource } from "~/domain/context/context-source.js";
 import { DISCOVERY_PRIORITY } from "~/domain/context/context-source.js";
+import { pairKey, type ConflictReport } from "~/domain/context/conflicts.js";
 
 /**
  * A stub `ContextSource` that mimics a Backstage discovery pass. It reports one candidate per
@@ -101,6 +102,38 @@ const input = (
   ...over,
 });
 
+const refOf = (path: string): string => `repository:acme/webhook-service:${path}`;
+
+/** docs/specs/context-authority-and-cited-conflicts.md. A conflict the refiner quoted from two files. */
+const reportOf = (left: string, leftQuote: string, right: string, rightQuote: string): ConflictReport => ({
+  subject: "notification retry",
+  left: { item: `acme/webhook-service ${left}`, quote: leftQuote },
+  right: { item: `acme/webhook-service ${right}`, quote: rightQuote },
+});
+
+const twoAdrs = {
+  "docs/ADR-031.md": "Status: accepted. Notification retry lives here.\n",
+  "docs/ADR-042.md": "Status: accepted. Notification retry lives elsewhere.\n",
+};
+
+const fourFiles = {
+  ...twoAdrs,
+  "api/openapi.yaml": "openapi: 3.1.0\n\ninfo: the notification payload holds a retry count\n",
+  "api/events.proto": "message Notification { string notification = 1; } // no retry count is sent\n",
+};
+
+const adrReport = reportOf("docs/ADR-031.md", "Notification retry lives here", "docs/ADR-042.md", "Notification retry lives elsewhere");
+const contractReport = reportOf("api/openapi.yaml", "the notification payload holds a retry count", "api/events.proto", "no retry count is sent");
+
+/** SDD section 23. The answer recorded for one pair in one authority domain. */
+const answerFor = (left: string, right: string, domain: "architecture_intent" | "interface_contract" = "architecture_intent") => ({
+  questionId: "CTX-1",
+  question: "Which one governs notification retry?",
+  answer: domain === "architecture_intent" ? "ADR-031 governs it." : "The OpenAPI document governs it.",
+  subject: pairKey(refOf(left), refOf(right)),
+  domain,
+});
+
 describe("ContextResolver", () => {
   it("pins the primary repository and every reference repository to an explicit SHA", async () => {
     const resolved = await build().resolve(input());
@@ -155,8 +188,10 @@ describe("ContextResolver", () => {
     expect(refs).toContain("repository:acme/webhook-service:src/retry.ts");
   });
 
-  it("records the accepted ADR as the winner over the README", async () => {
-    const resolved = await build().resolve(input());
+  it("records the accepted ADR as the winner over the README the refiner quoted against it (AT-07)", async () => {
+    const resolved = await build().resolve(
+      input({ conflictReports: [reportOf("README.md", "notification retry is owned here", "docs/ADR-031.md", "Notification retry is owned elsewhere")] }),
+    );
     const conflict = resolved.contract.conflicts.find(
       (candidate) =>
         candidate.winnerRef === "repository:acme/webhook-service:docs/ADR-031.md" &&
@@ -166,15 +201,23 @@ describe("ContextResolver", () => {
     expect(resolved.unresolvedConflict).toBeNull();
   });
 
-  it("reports an unresolved conflict between two accepted ADRs", async () => {
-    const resolved = await build({
-      primary: {
-        "docs/ADR-031.md": "Status: accepted. Notification retry lives here.\n",
-        "docs/ADR-042.md": "Status: accepted. Notification retry lives elsewhere.\n",
-      },
-    }).resolve(input());
+  it("raises no conflict without a report, although the README and the ADR share every topic (issue 60)", async () => {
+    const resolved = await build().resolve(input());
+    expect(resolved.contract.conflicts).toEqual([]);
+  });
+
+  it("reports an unresolved conflict between two accepted ADRs the refiner quoted (AT-08)", async () => {
+    const resolved = await build({ primary: twoAdrs }).resolve(input({ conflictReports: [adrReport] }));
     expect(resolved.unresolvedConflict?.resolution).toBe("unresolved");
-    expect(resolved.unresolvedConflict?.subject).toBe("notification");
+    expect(resolved.unresolvedConflict?.subject).toBe("notification retry");
+    expect(resolved.droppedReports).toEqual([]);
+  });
+
+  it("drops a report whose quote the pinned file does not hold", async () => {
+    const invented = reportOf("docs/ADR-031.md", "Notification retry lives on the moon", "docs/ADR-042.md", "Notification retry lives elsewhere");
+    const resolved = await build({ primary: twoAdrs }).resolve(input({ conflictReports: [invented] }));
+    expect(resolved.unresolvedConflict).toBeNull();
+    expect(resolved.droppedReports.map((dropped) => dropped.reason)).toEqual(["a quote does not occur in the pinned content of its item"]);
   });
 
   it("keeps a human decision as a required product intent item", async () => {
@@ -278,211 +321,42 @@ describe("ContextResolver", () => {
     expect(resolved.document).toContain("docs/ADR-031.md");
   });
 
-  it("records no conflict between the Work Item body and a recorded answer", async () => {
-    const resolved = await build().resolve(
-      input({ decisions: [{ questionId: "Q-1", question: "Retry a 4xx?", answer: "No." }] }),
-    );
-    // The body and the answer share every topic of the Run, and `delivery` sorts first among
-    // them. A pair between the two therefore shows up as a conflict on `delivery`. The only real
-    // conflict is the one the README and the ADR raise on `notification`.
-    expect(resolved.contract.conflicts.map((conflict) => conflict.subject)).toEqual([
-      "notification",
-    ]);
-  });
-
-  it("lets no conflict be settled by the Work Item body when a runId equals a questionId", async () => {
-    // The Work Item body records the Run identifier as its source version, so a decision set keyed
-    // on that field admits the body under this collision. The resolver keys on the stable
-    // reference instead, and `linear:issue:run-1` never equals `linear:decision:run-1`.
-    const resolved = await build().resolve(
+  it("lets no conflict be settled by the Work Item body or a refinement answer when a runId equals a questionId", async () => {
+    // The Work Item body records the Run identifier as its source version. The resolver keys on the
+    // stable reference instead, and `linear:issue:run-1` never equals `linear:decision:run-1`.
+    const resolved = await build({ primary: twoAdrs }).resolve(
       input({
         runId: "run-1",
-        decisions: [
-          { questionId: "run-1", question: "Retry a 4xx?", answer: "No." },
-          {
-            questionId: "CTX-1",
-            question: "Which one governs notification?",
-            answer: "The ADR.",
-            subject: "notification",
-            domain: "architecture_intent",
-          },
-        ],
+        decisions: [{ questionId: "run-1", question: "Retry a 4xx?", answer: "No." }],
+        conflictReports: [adrReport],
       }),
     );
-    expect(
-      resolved.contract.conflicts.filter(
-        (conflict) => conflict.winnerRef === "linear:issue:run-1",
-      ),
-    ).toEqual([]);
-    // The answer that settles a subject is the one recorded against that subject. The refinement
-    // answer, whose source version collides with the Run identifier, settles nothing.
-    const settled = resolved.contract.conflicts.find(
-      (conflict) =>
-        conflict.winnerRef === "linear:decision:subject:architecture_intent:notification",
-    );
-    expect(settled?.reason).toBe("a recorded human decision settles this subject");
-    expect(
-      resolved.contract.conflicts.filter(
-        (conflict) => conflict.winnerRef === "linear:decision:run-1",
-      ),
-    ).toEqual([]);
+    expect(resolved.unresolvedConflict).not.toBeNull();
   });
 
-  // Two independent conflicts of one Run. Each pair sits in the architecture domain, holds one
-  // topic, and holds no topic of the other pair. So the pairs never cross, and each pair raises
-  // one unresolved conflict of its own subject.
-  const twoSubjects = {
-    "docs/ADR-031.md": "Status: accepted\n\nThe notification is owned here.\n",
-    "docs/ADR-042.md": "Status: accepted\n\nThe notification is owned elsewhere.\n",
-    "docs/ADR-051.md": "Status: accepted\n\nThe billing is owned here.\n",
-    "docs/ADR-052.md": "Status: accepted\n\nThe billing is owned elsewhere.\n",
-  };
-  const twoSubjectInput = (
-    decisions: ResolveContextInput["decisions"],
-  ): Omit<ResolveContextInput, "sources" | "contextConfiguration"> =>
-    input({
-      goal: "Retry a failed notification delivery and correct the billing invoice.",
-      acceptanceCriteria: ["A failed notification is retried.", "The billing invoice is correct."],
-      decisions,
-    });
-
-  it("leaves a second subject unresolved after a decision on the first subject", async () => {
-    const resolved = await build({ primary: twoSubjects }).resolve(
-      twoSubjectInput([
-        {
-          questionId: "CTX-1",
-          question: "Which one governs billing?",
-          answer: "ADR-051 governs it.",
-          subject: "billing",
-          domain: "architecture_intent",
-        },
-      ]),
+  it("settles a pair with the answer recorded for the pair, and leaves another pair open", async () => {
+    const resolved = await build({ primary: fourFiles }).resolve(
+      input({ decisions: [answerFor("docs/ADR-031.md", "docs/ADR-042.md")], conflictReports: [adrReport, contractReport] }),
     );
-    const billing = resolved.contract.conflicts.find((conflict) => conflict.subject === "billing");
-    expect(billing?.resolution).toBe("resolved");
-    expect(billing?.reason).toBe("a recorded human decision settles this subject");
-    // The human never saw this question, so the answer must not settle it.
-    const notification = resolved.contract.conflicts.find(
-      (conflict) => conflict.subject === "notification",
-    );
-    expect(notification?.resolution).toBe("unresolved");
-    expect(resolved.unresolvedConflict?.subject).toBe("notification");
+    const architecture = resolved.contract.conflicts.find((conflict) => conflict.authorityDomain === "architecture_intent");
+    expect(architecture?.resolution).toBe("resolved");
+    expect(architecture?.reason).toContain("ADR-031 governs it.");
+    // The human never saw the interface question, so the answer must not settle it.
+    expect(resolved.unresolvedConflict?.authorityDomain).toBe("interface_contract");
   });
 
   it("keeps two answers to two conflicts that carry the same conflict identifier", async () => {
     // Factoree numbers a conflict after a sort of one resolution, so two rounds of one Run can
-    // each answer a conflict named `CTX-1`. The recorded reference comes from the subject, so the
-    // two answers never collide, and the contract validator accepts both.
-    const resolved = await build({ primary: twoSubjects }).resolve(
-      twoSubjectInput([
-        {
-          questionId: "CTX-1",
-          question: "Which one governs billing?",
-          answer: "ADR-051 governs it.",
-          subject: "billing",
-          domain: "architecture_intent",
-        },
-        {
-          questionId: "CTX-1",
-          question: "Which one governs notification?",
-          answer: "ADR-031 governs it.",
-          subject: "notification",
-          domain: "architecture_intent",
-        },
-      ]),
-    );
-    expect(
-      resolved.contract.items
-        .map((item) => item.reference.ref)
-        .filter((ref) => ref.startsWith("linear:decision:")),
-    ).toEqual([
-      "linear:decision:subject:architecture_intent:billing",
-      "linear:decision:subject:architecture_intent:notification",
-    ]);
-    expect(resolved.unresolvedConflict).toBeNull();
-  });
-
-  // One subject raises a conflict in two authority domains. SDD section 22 keeps the two ladders
-  // apart, so each domain needs its own human answer.
-  const twoDomains = {
-    "docs/ADR-031.md": "Status: accepted\n\nThe notification is owned here.\n",
-    "docs/ADR-042.md": "Status: accepted\n\nThe notification is owned elsewhere.\n",
-    "api/openapi.yaml": "openapi: 3.1.0\n\ninfo: the notification payload\n",
-    "api/events.proto": "message Notification { string notification = 1; }\n",
-  };
-
-  it("raises one unresolved conflict for each authority domain of one subject", async () => {
-    const resolved = await build({ primary: twoDomains }).resolve(input());
-    expect(
-      resolved.contract.conflicts
-        .filter((conflict) => conflict.resolution === "unresolved")
-        .map((conflict) => conflict.authorityDomain)
-        .sort(),
-    ).toEqual(["architecture_intent", "interface_contract"]);
-  });
-
-  it("lets an answer about one domain leave the conflict of the other domain open", async () => {
-    const resolved = await build({ primary: twoDomains }).resolve(
+    // each answer a conflict named `CTX-1`. The recorded reference comes from the pair, so the two
+    // answers never collide, and the contract validator accepts both.
+    const resolved = await build({ primary: fourFiles }).resolve(
       input({
-        decisions: [
-          {
-            questionId: "CTX-1",
-            question: "Which ADR governs notification?",
-            answer: "ADR-031 governs it.",
-            subject: "notification",
-            domain: "architecture_intent",
-          },
-        ],
+        decisions: [answerFor("docs/ADR-031.md", "docs/ADR-042.md"), answerFor("api/events.proto", "api/openapi.yaml", "interface_contract")],
+        conflictReports: [adrReport, contractReport],
       }),
     );
-    const architecture = resolved.contract.conflicts.find(
-      (conflict) => conflict.authorityDomain === "architecture_intent",
-    );
-    expect(architecture?.resolution).toBe("resolved");
-    expect(architecture?.reason).toBe("a recorded human decision settles this subject");
-    // The human never saw the interface question, so the answer must not settle it.
-    const contract = resolved.contract.conflicts.find(
-      (conflict) => conflict.authorityDomain === "interface_contract",
-    );
-    expect(contract?.resolution).toBe("unresolved");
-    expect(resolved.unresolvedConflict?.authorityDomain).toBe("interface_contract");
-  });
-
-  it("freezes nothing until both domains of one subject carry an answer", async () => {
-    const resolved = await build({ primary: twoDomains }).resolve(
-      input({
-        decisions: [
-          {
-            questionId: "CTX-1",
-            question: "Which ADR governs notification?",
-            answer: "ADR-031 governs it.",
-            subject: "notification",
-            domain: "architecture_intent",
-          },
-          {
-            questionId: "CTX-2",
-            question: "Which contract governs notification?",
-            answer: "The OpenAPI document governs it.",
-            subject: "notification",
-            domain: "interface_contract",
-          },
-        ],
-      }),
-    );
+    expect(resolved.contract.items.map((item) => item.reference.ref).filter((ref) => ref.startsWith("linear:decision:"))).toHaveLength(2);
     expect(resolved.unresolvedConflict).toBeNull();
-  });
-
-  it("settles no conflict for an answer to a refinement question", async () => {
-    const resolved = await build({ primary: twoSubjects }).resolve(
-      twoSubjectInput([{ questionId: "Q-1", question: "Retry a 4xx?", answer: "No." }]),
-    );
-    expect(
-      resolved.contract.conflicts.every((conflict) => conflict.resolution === "unresolved"),
-    ).toBe(true);
-    // The answer stays a required context item, although it settles nothing.
-    expect(resolved.contract.items.map((item) => item.reference.ref)).toContain(
-      "linear:decision:Q-1",
-    );
   });
 
   it("returns a deterministic contract for the same input", async () => {

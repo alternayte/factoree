@@ -89,6 +89,12 @@ describe("parseFactoreeConfig", () => {
     expect(config.secrets).toEqual({ require: [] });
   });
 
+  it("reads context.authority and refuses a glob that starts with ./ (issue 60)", () => {
+    expect(parseFactoreeConfig(minimum).context.authority).toEqual([]);
+    expect(parseFactoreeConfig(`${minimum}context:\n  authority: ["docs/design/**"]\n`).context.authority).toEqual(["docs/design/**"]);
+    expect(() => parseFactoreeConfig(`${minimum}context:\n  authority: ["./docs/*.md"]\n`)).toThrow(/\.\//);
+  });
+
   it("rejects an unknown top-level key", () => {
     expect(() => parseFactoreeConfig(`${minimum}plugins: []\n`)).toThrow(RunConfigurationError);
   });

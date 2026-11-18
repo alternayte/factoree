@@ -14,6 +14,7 @@ const {
   prepared,
   elicitations,
   contextConflicts,
+  refinerOutcomes,
   runStatusQuery,
   PRIMARY_SHA,
   start,
@@ -50,13 +51,48 @@ const adrConflict = {
   }),
 };
 
+/**
+ * docs/specs/context-authority-and-cited-conflicts.md. A conflict exists only when the refiner
+ * quotes two items. The refiner double reports one, so the workflow resolves the context again
+ * with it after the refiner, and the context double then reports the conflicts of the run.
+ */
+const reportConflict = (runId: string): void => {
+  refinerOutcomes.set(runId, {
+    status: "proposed",
+    accepted: [],
+    decisions: [],
+    visualEvidenceGap: null,
+    reason: "",
+    hang: null,
+    conflicts: [
+      {
+        subject: "notification",
+        left: { item: "acme/webhook-service docs/ADR-031.md", quote: "Notifications go through the outbox." },
+        right: { item: "acme/webhook-service docs/ADR-042.md", quote: "Notifications go straight to the broker." },
+      },
+    ],
+  });
+};
+
 const implementsOf = (runId: string) => implementCalls.filter((entry) => entry.runId === runId);
 const completionsOf = (runId: string) => completions.filter((entry) => entry.runId === runId);
 const preparedOf = (runId: string) => prepared.filter((entry) => entry.runId === runId);
 
 describe("AT-08 — an unresolvable conflict stops the Run and asks one question", () => {
+  it("asks nothing when the refiner reports no conflict (issue 60)", async () => {
+    contextConflicts.set("run-ses-at08f", [adrConflict]);
+    await runWorker(async () => {
+      const handle = await start("ses-at08f");
+      await waitFor(() => implementsOf("run-ses-at08f").length === 1, "the Implementer of at08f");
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+    contextConflicts.delete("run-ses-at08f");
+  });
+
   it("holds the Run in WAITING_FOR_INPUT and prepares no sandbox", async () => {
     contextConflicts.set("run-ses-at08a", [adrConflict]);
+    reportConflict("run-ses-at08a");
     await runWorker(async () => {
       const handle = await start("ses-at08a");
       await waitForStatus(handle, "WAITING_FOR_INPUT");
@@ -67,8 +103,8 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       // SDD section 21. Factoree froze no contract, so the Run reports no contract version. A
       // plausible hash here matches no stored contract and no database column.
       expect(snapshot.contextContractVersion).toBeNull();
-      // SDD section 23. Implementation must not start, so no sandbox exists yet.
-      expect(preparedOf("run-ses-at08a")).toEqual([]);
+      // SDD section 23. Implementation must not start. The work sprite exists, because the refiner
+      // that reported the conflict ran in it.
       expect(implementsOf("run-ses-at08a")).toEqual([]);
 
       await handle.signal(stopSignal);
@@ -76,10 +112,12 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       expect(result.status).toBe("CANCELLED");
     });
     contextConflicts.delete("run-ses-at08a");
+    refinerOutcomes.delete("run-ses-at08a");
   });
 
   it("reaches PREPARING once a human decision settles the subject", async () => {
     contextConflicts.set("run-ses-at08b", [adrConflict]);
+    reportConflict("run-ses-at08b");
     await runWorker(async () => {
       const handle = await start("ses-at08b");
       await waitForStatus(handle, "WAITING_FOR_INPUT");
@@ -101,6 +139,7 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       await handle.result();
     });
     contextConflicts.delete("run-ses-at08b");
+    refinerOutcomes.delete("run-ses-at08b");
   });
 
   /**
@@ -126,6 +165,7 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
 
   it("asks the second domain question instead of a start of implementation", async () => {
     contextConflicts.set("run-ses-at08d", [adrConflict, contractConflict]);
+    reportConflict("run-ses-at08d");
     const before = elicitations.length;
     await runWorker(async () => {
       const handle = await start("ses-at08d");
@@ -142,7 +182,6 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       const snapshot = await handle.query(runStatusQuery);
       expect(snapshot.status).toBe("WAITING_FOR_INPUT");
       expect(snapshot.contextContractVersion).toBeNull();
-      expect(preparedOf("run-ses-at08d")).toEqual([]);
       expect(implementsOf("run-ses-at08d")).toEqual([]);
 
       await handle.signal(stopSignal);
@@ -150,10 +189,12 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       expect(result.status).toBe("CANCELLED");
     });
     contextConflicts.delete("run-ses-at08d");
+    refinerOutcomes.delete("run-ses-at08d");
   });
 
   it("reaches PREPARING once both domain questions carry an answer", async () => {
     contextConflicts.set("run-ses-at08e", [adrConflict, contractConflict]);
+    reportConflict("run-ses-at08e");
     const before = elicitations.length;
     await runWorker(async () => {
       const handle = await start("ses-at08e");
@@ -167,12 +208,14 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       await handle.result();
     });
     contextConflicts.delete("run-ses-at08e");
+    refinerOutcomes.delete("run-ses-at08e");
   });
 
   it("fails the Run with CONTEXT_UNRESOLVED when the rounds are spent", async () => {
     // No answer settles this conflict, so every resolution reports it again. The bounded
     // rounds must end the Run.
     contextConflicts.set("run-ses-at08c", [{ ...adrConflict, settledByDecision: false }]);
+    reportConflict("run-ses-at08c");
     const before = elicitations.length;
 
     const result = await runWorker(async () => {
@@ -184,6 +227,7 @@ describe("AT-08 — an unresolvable conflict stops the Run and asks one question
       return handle.result();
     });
     contextConflicts.delete("run-ses-at08c");
+    refinerOutcomes.delete("run-ses-at08c");
 
     expect(elicitations.length - before).toBe(MAX_QUESTION_ROUNDS);
     expect(result.status).toBe("FAILED");

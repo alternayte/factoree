@@ -16,6 +16,7 @@ describe("authority", () => {
       "approved_architecture_specification",
       "architecture_documentation",
       "repository_readme",
+      "documentation",
       "machine_readable_contract",
       "contract_tests",
       "api_documentation",

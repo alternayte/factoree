@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A context conflict needs a cited disagreement (`docs/specs/context-authority-and-cited-conflicts.md`, GitHub issue 60). The refiner reports two context items that disagree, each with a quoted passage, and Factoree checks both quotes in the pinned content. The ladder resolves a pair of two classes. A pair of one class asks a human, with both quotes, and "neither" settles it. Two documents that only share a word never stop a run.
+- `context.authority` in `.factoree/config.yaml` lists the Markdown files that carry architecture authority, at any path. Every other file under `docs/` is documentation: the agents read it, and it never enters a conflict. A repository with no list has no architecture documentation under `docs/`. `setup@12` proposes the list.
+- An ADR counts as accepted only when its status says so. A superseded, deprecated or rejected ADR is not selected. A proposed ADR, or one with no status, is documentation.
+
+### Fixed
+
+- `func bundles download` of Azure Functions Core Tools runs in a Kiln or E2B sandbox. The base environment sets `FUNCTIONS_CORE_TOOLS_OFFLINE=false`, so the CLI skips its 2-second network probe (GitHub issue 65).
+- An E2B sandbox confirms its new egress rules with one HTTPS request before the next command runs (GitHub issue 59).
+
 ## [0.13.0] - 2026-11-18
 
 ### Added

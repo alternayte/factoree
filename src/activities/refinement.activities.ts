@@ -50,6 +50,7 @@ import type { RunStageStore } from "~/domain/runs/run-stage.js";
 import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
 import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type { TargetEdge } from "~/domain/runs/merge-order.js";
+import type { ConflictReport } from "~/domain/context/conflicts.js";
 
 export interface RefineActivityInput {
   runId: string;
@@ -204,6 +205,12 @@ export interface ProposeRefinementActivityOutput {
   addedTargets?: AddedTarget[];
   /** DI-21.139. The edges the gate accepted, between targets of the set after the additions. */
   edges?: TargetEdge[];
+  /**
+   * docs/specs/context-authority-and-cited-conflicts.md. The conflicts the refiner reported, as it
+   * wrote them. The context resolver checks each one. Absent when it reported none, and in an older
+   * history.
+   */
+  conflicts?: ConflictReport[];
 }
 
 const REFINER_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -634,6 +641,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         for_your_eye: gated.forYourEye.length,
         targets_added: targetGate?.added.length ?? 0,
         edges: targetGate?.edges.length ?? 0,
+        conflicts: parsed.conflicts.length,
       });
       return {
         status: "proposed",
@@ -645,6 +653,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         hang: null,
         missingHosts: hosts.missing,
         ...(targetGate === null ? {} : { addedTargets: targetGate.added, edges: targetGate.edges }),
+        ...(parsed.conflicts.length === 0 ? {} : { conflicts: parsed.conflicts }),
       };
     } finally {
       clearInterval(heartbeat);
