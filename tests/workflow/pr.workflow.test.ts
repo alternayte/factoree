@@ -1,12 +1,26 @@
 /* eslint-disable @typescript-eslint/require-await -- test activity doubles intentionally return immediately */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { defaultPayloadConverter } from "@temporalio/common";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { pullRequestEventSignal, pullRequestStateQuery, pullRequestWorkflow } from "~/workflows/pr.workflow.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 import { waitFor } from "./support/harness.js";
+
+/**
+ * The result of a child run that already completed, read from its history. `result()` would release
+ * the time-skipping clock, and the PR workflow, which waits on a condition with no timer, would then
+ * jump to its default timeout before the test signals it again.
+ */
+const completedResult = async (workflowId: string): Promise<unknown> => {
+  const child = environment.client.workflow.getHandle(workflowId);
+  await waitFor(async () => (await child.describe()).status.name === "COMPLETED", `the run ${workflowId}`);
+  const completed = (await child.fetchHistory()).events?.find((event) => event.workflowExecutionCompletedEventAttributes);
+  const payload = completed?.workflowExecutionCompletedEventAttributes?.result?.payloads?.[0];
+  return payload === undefined ? undefined : defaultPayloadConverter.fromPayload(payload);
+};
 
 let environment: TestWorkflowEnvironment;
 
@@ -266,7 +280,7 @@ describe("pullRequestWorkflow", () => {
         signalArgs: [synchronize],
       });
       await waitFor(async () => followUps.length === 1 && (await handle.query(pullRequestStateQuery)).followUp === null, "the base follow-up run");
-      expect(await environment.client.workflow.getHandle(followUpId).result()).toMatchObject({ status: "READY_FOR_HUMAN" });
+      expect(await completedResult(followUpId)).toMatchObject({ status: "READY_FOR_HUMAN" });
       await handle.signal(pullRequestEventSignal, { ...merge, merged: false, mergeCommitSha: null, deliveryId: "github:close-3" });
       return handle.result();
     });
