@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-18
+
+### Added
+
+- Change sets: one run changes two or more repositories of one product, with one work sprite, one validation contract, one review and one proof pack (`docs/specs/change-sets.md`, GitHub PR 58). The starting set is every repository the issue names, or every repository the Linear project maps to.
+- The refiner reads the other product repositories read-only and adds a target when it cites the file and line that need the change. It records the provider and consumer edges, and the merge order follows them.
+- A warm snapshot can hold a set. Build-ahead keeps a set snapshot current once a run used the set.
+- A fake in `.factoree/compose.yaml` can name the product repository that serves it with the label `factoree.fake.repository`. A wired pair runs together in the check sprite, and each consumer is checked at its base against the provider patches.
+- All-or-nothing publication: Factoree checks every target before any push, opens one linked pull request per target with the merge order, and closes the opened ones if a later target fails.
+- The commit status `factoree/change-set` on each consumer pull request shows whether its providers have merged. It informs; at L4, Factoree auto-merges a consumer only after every provider has merged.
+- A PR follow-up run on any pull request of a set runs as a set and pushes only to the targets that changed. The limit of 3 PR reviewer follow-ups counts per set.
+
+### Changed
+
+- The runs API returns a list of targets per run, and the runs list and the run page show each target with its base, its pull request and its state. `Run.pullRequestUrl` and the other single-target fields are gone.
+- The GitHub App manifest asks for Commit statuses write. An existing install changes the permission in the App settings and accepts it on the installation.
+- The upgrade migrates the run facts to the run targets and is not backward compatible: drain the worker before the upgrade.
+
 ## [0.12.0] - 2026-11-17
 
 ### Added
