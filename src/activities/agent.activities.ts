@@ -21,7 +21,7 @@ import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
 import { recordSessionActivations, type SkillRegistryFactory } from "./skill-registry.activities.js";
 import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
-import { parseImplementerResult } from "~/domain/runs/implementer-result.js";
+import { parseImplementerRepositories, parseImplementerResult, type MissingRepository } from "~/domain/runs/implementer-result.js";
 
 export interface AgentActivityDependencies {
   runners: AgentRunnerRegistry;
@@ -49,6 +49,11 @@ export interface ImplementActivityInput {
   adapter: string;
   workspacePath: string;
   primaryPath: string;
+  /**
+   * docs/specs/change-sets.md. Every target of a change set in the work sprite. The session then works
+   * from `<workspace>/targets`. Absent for a run with one target.
+   */
+  targets?: Array<{ repository: string; path: string }>;
   referencePaths: string[];
   goal: string;
   /** SDD section 21. The rendered Context Contract of this Run. */
@@ -132,6 +137,12 @@ export interface ImplementActivityOutput {
    * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
    */
   missingHosts?: MissingHost[];
+  /**
+   * docs/specs/change-sets.md, DI-21.142. The repositories outside the set that the implementer
+   * named. The set froze with the validation contract, so each is a new criterion. Absent in an
+   * older history.
+   */
+  missingRepositories?: MissingRepository[];
 }
 
 /**
@@ -207,6 +218,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     if (resultPath !== null) {
       await dependencies.sandbox.exec(sandboxRef, { file: "mkdir", args: ["-p", `${input.workspacePath}/implementer`], cwd: "/" });
     }
+    const setTargets = input.targets !== undefined && input.targets.length > 1 ? input.targets : null;
     const implementerInput = buildImplementerInput({
       goal: input.goal,
       humanDecisions: input.humanDecisions,
@@ -216,6 +228,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       contextFiles: input.contextFiles ?? [],
       imageFiles: input.imageFiles ?? [],
       primaryRepositoryPath: input.primaryPath,
+      ...(setTargets === null ? {} : { targetRepositories: setTargets }),
       referenceRepositoryPaths: input.referencePaths,
       repositoryInstructions: input.repositoryInstructions,
       skills: input.skills,
@@ -312,7 +325,8 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         role: "implementer",
         sandbox: dependencies.sandbox,
         ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
-        workingDirectory: input.primaryPath,
+        // docs/specs/change-sets.md. A change set works from the folder that holds every target.
+        workingDirectory: setTargets === null ? input.primaryPath : `${input.workspacePath}/targets`,
         repositoryPath: input.primaryPath,
         prompt: implementerInput.prompt,
         promptVersion: implementerInput.promptVersion,
@@ -452,9 +466,14 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     // file Factoree cannot read names none and leaves a warning, because a named host can only
     // stop a Run.
     let missingHosts: MissingHost[] = [];
+    let missingRepositories: MissingRepository[] = [];
     if (resultPath !== null) {
       const read = await dependencies.sandbox.exec(sandboxRef, { file: "cat", args: [resultPath], cwd: "/" });
       if (read.exitCode === 0 && read.stdout.trim() !== "") {
+        missingRepositories = (parseImplementerRepositories(read.stdout) ?? []).map((entry) => ({
+          repository: entry.repository.trim(),
+          reason: dependencies.redactor.redactText(entry.reason),
+        }));
         const named = parseImplementerResult(read.stdout);
         if (named === null) {
           dependencies.logger.warn("the implementer result file is not valid, so Factoree reads no missing host from it", {
@@ -502,6 +521,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       cancelledSession,
       hang: hangOf([result]),
       missingHosts,
+      ...(missingRepositories.length === 0 ? {} : { missingRepositories }),
     };
   },
 

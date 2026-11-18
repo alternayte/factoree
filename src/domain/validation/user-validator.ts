@@ -9,6 +9,7 @@ import {
 import {
   checkSelectorCorrection,
   parseValidationPlan,
+  type PlanTargetRules,
   ValidationPlanInvalidError,
   planKindForMethod,
   type BrowserPlanEntry,
@@ -101,6 +102,21 @@ export interface UserValidationInput {
    * selectors. Absent: a selector-only failure stays a failure.
    */
   selectorRecheck?: SelectorRecheck;
+  /**
+   * docs/specs/change-sets.md, DI-21.147. The targets an entry of a change set may name. Absent for
+   * a run with one target.
+   */
+  planRules?: PlanTargetRules;
+  /**
+   * docs/specs/change-sets.md, DI-21.146. A preview the caller started and stops itself: the
+   * preview of a provider that stays up while its wired group runs. The pass never stops it.
+   */
+  sharedPreview?: PreviewHandle;
+  /**
+   * DI-21.146. Why no preview can serve this pass, when the caller already knows: a provider of
+   * the wired group did not start. Each entry that needs a preview is BLOCKED with this reason.
+   */
+  previewUnavailable?: { reason: string; log: string };
 }
 
 /** docs/specs/by-eye-criteria-and-selector-recheck.md. One browser entry that failed only on its selector, twice. */
@@ -492,6 +508,7 @@ const validate = async (
         input.planText,
         contract,
         (input.accounts ?? []).map((account) => account.name),
+        input.planRules,
       );
     } catch (error) {
       if (error instanceof ValidationPlanInvalidError) {
@@ -579,8 +596,11 @@ const validate = async (
       // the readiness wait took, because it is the slowest part of a validation of a web app.
       const previewStarted = Date.now();
       try {
+        if (input.previewUnavailable !== undefined) {
+          throw new PreviewStartError(input.previewUnavailable.reason, "not_ready", input.previewUnavailable.log);
+        }
         if (early !== null) early.adoption.adopted = true;
-        handle = await (early?.preview ??
+        handle = input.sharedPreview ?? await (early?.preview ??
           startPreview({
             sandbox: dependencies.sandbox,
             ref: input.ref,
@@ -767,8 +787,8 @@ const validate = async (
       captures.push(capture);
     }
   } finally {
-    // Rule 11. Stop the preview in a finally, whatever happened.
-    if (handle !== null) {
+    // Rule 11. Stop the preview in a finally, whatever happened. A shared preview belongs to the caller.
+    if (handle !== null && handle !== input.sharedPreview) {
       await stopPreview(dependencies.sandbox, input.ref, handle);
     }
   }

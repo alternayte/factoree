@@ -82,10 +82,11 @@ export const runVerification = async (options: RunVerificationOptions): Promise<
       const result = await options.sandbox.exec(options.ref, {
         file: "sh",
         args: ["-c", command.run],
-        cwd: options.workingDirectory,
+        // docs/specs/change-sets.md. A command of a change set runs in its own target.
+        cwd: command.workingDirectory ?? options.workingDirectory,
         // SDD section 30. Only a Project test secret the operator marked for injection may
         // appear here. Nothing of the Implementer environment survives into this shell.
-        env: { ...CLEAN_SHELL_ENV, ...options.environment },
+        env: { ...CLEAN_SHELL_ENV, ...(command.env ?? {}), ...options.environment },
         isolated: true,
         timeoutMs: options.timeoutMs,
       });

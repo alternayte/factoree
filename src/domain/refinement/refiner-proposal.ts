@@ -4,6 +4,7 @@ import { VALIDATION_METHODS, type ValidationMethod } from "~/domain/validation/v
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { MissingHost } from "~/domain/runs/egress.js";
 import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
+import type { TargetEdge } from "~/domain/runs/merge-order.js";
 import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 
 /**
@@ -19,6 +20,9 @@ export const REFINER_CRITERIA_LIMIT_MIN = 1;
 export const REFINER_CRITERIA_LIMIT_MAX = 50;
 /** The questions cap. No setting changes it. */
 export const REFINER_QUESTIONS_LIMIT = 5;
+/** docs/specs/change-sets.md, DI-21.139. The caps of the proposed targets and edges. */
+export const REFINER_TARGETS_LIMIT = 10;
+export const REFINER_EDGES_LIMIT = 20;
 
 /**
  * docs/specs/refiner-agent.md. The refiner writes one proposal file. It is data, never code, and
@@ -57,6 +61,24 @@ const proposalSchemaOf = (criteriaLimit: number) =>
       // docs/specs/egress-honesty-and-issue-status.md. The hosts the work needs and the sandbox does
       // not reach. An older proposal without the field names none.
       missingHosts: z.array(missingHostSchema).max(20).default([]),
+      // docs/specs/change-sets.md, DI-21.139. Each other repository of the product the change needs,
+      // with the file and line in it that needs the change. An older proposal names none.
+      targets: z
+        .array(
+          z
+            .object({ repository: z.string().min(1), file: z.string().min(1), line: z.number().int().min(1), reason: z.string().min(1) })
+            .strict(),
+        )
+        .max(REFINER_TARGETS_LIMIT)
+        .default([]),
+      // Each provider-to-consumer edge between two targets, with the file and line in the consumer
+      // that calls the provider.
+      edges: z
+        .array(
+          z.object({ provider: z.string().min(1), consumer: z.string().min(1), file: z.string().min(1), line: z.number().int().min(1) }).strict(),
+        )
+        .max(REFINER_EDGES_LIMIT)
+        .default([]),
     })
     .strict();
 
@@ -146,7 +168,9 @@ export const REFINER_PROPOSAL_SCHEMA = [
   '  "criteria": [{ "statement": string, "origin": "stated" | "implied" | "new", "quote": string | null, "method": "command" | "test" | "http" | "browser" | "code_review" | "manual", "target": string | null, "visible": boolean }],',
   '  "questions": [{ "question": string, "proposal": string, "reason": string }],',
   '  "patterns": [string],',
-  '  "missingHosts": [{ "host": string, "reason": string }]',
+  '  "missingHosts": [{ "host": string, "reason": string }],',
+  '  "targets": [{ "repository": string, "file": string, "line": number, "reason": string }],',
+  '  "edges": [{ "provider": string, "consumer": string, "file": string, "line": number }]',
   "}",
 ].join("\n");
 
@@ -325,3 +349,121 @@ export const refinementDecisions = (gated: GatedRefinement): FactoreeDecision[] 
       ]),
 ];
 
+
+/** docs/specs/change-sets.md. One repository the refiner read through `clone_sibling`. */
+export interface SiblingRead {
+  repository: string;
+  /** The default-branch head SHA the clone read, which the `sibling_read` evidence records. */
+  commitSha: string;
+}
+
+/** docs/specs/change-sets.md, DI-21.139. A target the gate accepts, at the SHA the refiner read. */
+export interface AddedTarget {
+  repository: string;
+  file: string;
+  line: number;
+  reason: string;
+  commitSha: string;
+  /** The determined proposal Factoree records once the target joins the run. */
+  decision: FactoreeDecision;
+}
+
+export interface GatedTargets {
+  added: AddedTarget[];
+  edges: TargetEdge[];
+  /** Each proposed target or edge the gate refused, with its reason. */
+  refused: FactoreeDecision[];
+}
+
+/**
+ * The cited line of a file of one repository, or null when the repository is not checked out, the
+ * file is not in it, or the file holds no such line.
+ */
+export type CitedLine = (repository: string, file: string, line: number) => string | null;
+
+/** The citation key the activity reads before the gate runs. */
+export const citationKey = (repository: string, file: string, line: number): string => `${repository.toLowerCase()}\n${file}\n${String(line)}`;
+
+const quoteOf = (text: string): string => {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
+};
+
+/**
+ * docs/specs/change-sets.md, DI-21.139. The deterministic gate of the proposed targets and edges.
+ * A target joins only when it is a repository of the product that the refiner read, and its cited
+ * line exists in that clone: a determined proposal, so nobody is asked. An edge joins only when
+ * both ends are targets after the additions, and its cited line exists in the consumer. Every
+ * other proposal is refused with its reason. Names match without case and keep the product name.
+ */
+export const gateTargetProposals = (
+  proposal: Pick<RefinerProposal, "targets" | "edges">,
+  context: { targets: readonly string[]; siblings: readonly SiblingRead[]; cited: CitedLine },
+): GatedTargets => {
+  const canonical = (name: string, among: readonly string[]): string | undefined =>
+    among.find((candidate) => candidate.toLowerCase() === name.trim().toLowerCase());
+  const added: AddedTarget[] = [];
+  const refused: FactoreeDecision[] = [];
+  const siblingNames = context.siblings.map((sibling) => sibling.repository);
+  for (const target of proposal.targets) {
+    const name = target.repository.trim();
+    if (canonical(name, [...context.targets, ...added.map((entry) => entry.repository)]) !== undefined) continue;
+    const repository = canonical(name, siblingNames);
+    const sibling = context.siblings.find((entry) => entry.repository === repository);
+    if (repository === undefined || sibling === undefined) {
+      refused.push({
+        kind: "target",
+        statement: `did not add ${name} as a target`,
+        reason: "it is no repository of the product that the refiner read, and a run changes only repositories of its product",
+      });
+      continue;
+    }
+    const line = context.cited(repository, target.file, target.line);
+    if (line === null) {
+      refused.push({
+        kind: "target",
+        statement: `did not add ${repository} as a target`,
+        reason: `the refiner cited ${target.file} line ${String(target.line)}, and ${repository} at ${sibling.commitSha.slice(0, 7)} holds no such line`,
+      });
+      continue;
+    }
+    added.push({
+      repository,
+      file: target.file,
+      line: target.line,
+      reason: bare(target.reason),
+      commitSha: sibling.commitSha,
+      decision: {
+        kind: "target",
+        statement: `added ${repository} as a target at ${sibling.commitSha.slice(0, 7)}`,
+        reason: `${target.file} line ${String(target.line)} ("${quoteOf(line)}") needs the change: ${bare(target.reason)}`,
+      },
+    });
+  }
+  const set = [...context.targets, ...added.map((entry) => entry.repository)];
+  const edges: TargetEdge[] = [];
+  for (const edge of proposal.edges) {
+    const provider = canonical(edge.provider, set);
+    const consumer = canonical(edge.consumer, set);
+    const named = `${edge.provider.trim()} to ${edge.consumer.trim()}`;
+    if (provider === undefined || consumer === undefined || provider === consumer) {
+      refused.push({
+        kind: "merge_order",
+        statement: `did not record the edge from ${named}`,
+        reason: "an edge joins two different targets of the run",
+      });
+      continue;
+    }
+    if (edges.some((known) => known.provider === provider && known.consumer === consumer)) continue;
+    if (context.cited(consumer, edge.file, edge.line) === null) {
+      refused.push({
+        kind: "merge_order",
+        statement: `did not record the edge from ${provider} to ${consumer}`,
+        reason: `the refiner cited ${edge.file} line ${String(edge.line)} in ${consumer}, and it holds no such line`,
+      });
+      continue;
+    }
+    edges.push({ provider, consumer, file: edge.file, line: edge.line });
+  }
+  return { added, edges, refused };
+};

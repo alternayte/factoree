@@ -5,7 +5,8 @@ import { signGitHubAppJwt, type GitHubAppCredentials } from "./app-token-provide
  * events are the ones docs/quickstart.md granted by hand before 0.1.0, plus Workflows
  * (DI-21.33), Issues read (DI-21.41) and Pull request (DI-21.51).
  * docs/specs/pr-review-merge-and-deploy.md (D4) adds Checks read, Commit statuses read and the
- * events pull_request_review, check_run and status. GitHub delivers `installation` and
+ * events pull_request_review, check_run and status. docs/specs/change-sets.md changes Commit
+ * statuses to write: Factoree sets `factoree/change-set` on each consumer head. GitHub delivers `installation` and
  * `installation_repositories` to every App, so the manifest does not name them.
  */
 export const GITHUB_APP_PERMISSIONS = {
@@ -20,7 +21,9 @@ export const GITHUB_APP_PERMISSIONS = {
   // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer verdict is a check run or a commit
   // status on the pull request head.
   checks: "read",
-  statuses: "read",
+  // docs/specs/change-sets.md, DI-21.155. Factoree sets the factoree/change-set status on each
+  // consumer head of a change set.
+  statuses: "write",
 } as const;
 
 // docs/specs/egress-honesty-and-issue-status.md. A close without a merge makes no push, so the

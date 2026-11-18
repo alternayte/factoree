@@ -25,6 +25,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { repositorySlugOfUrl } from "~/domain/products/repository-url.js";
 import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 
 export interface ResolveContextActivityInput {
@@ -35,6 +36,16 @@ export interface ResolveContextActivityInput {
   acceptanceCriteria: string[];
   primaryRepository: RepositoryRef;
   referenceRepositories: RepositoryRef[];
+  /**
+   * docs/specs/change-sets.md. The other targets of a change set, each with the installation that
+   * grants it. Absent for a run with one target.
+   */
+  targetRepositories?: Array<RepositoryRef & { githubInstallationId: string }>;
+  /**
+   * docs/specs/change-sets.md, DI-21.143. The hash of the frozen contract this resolution replaces,
+   * after the refiner added a target. Absent for the first resolution of a Run.
+   */
+  supersedes?: string;
   workItemReferences: string[];
   decisions: RecordedDecision[];
   /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
@@ -64,6 +75,8 @@ export interface ResolveContextActivityOutput {
   deliveryRefs?: string[];
   primary: { slug: string; sha: string };
   references: Array<{ slug: string; sha: string }>;
+  /** docs/specs/change-sets.md. The pinned SHA of each other target. Absent for one target. */
+  targets?: Array<{ slug: string; sha: string }>;
   /** SDD section 23. A non-null value means implementation must not start. */
   unresolvedConflict: {
     id: string;
@@ -133,10 +146,12 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     // private repository needs the read-only credential here as well as in the checkout. The
     // installation id names the source of the credential, and a Project can move a repository
     // between two installations between two Runs, so this activity reads the id fresh every time.
+    const targetRepositories = input.targetRepositories ?? [];
     const credential = readCredential(
       input.primaryRepository.url,
       input.githubInstallationId,
       dependencies,
+      Object.fromEntries(targetRepositories.map((repository) => [repository.slug.toLowerCase(), repository.githubInstallationId])),
     );
 
     // SDD section 15 and DI-5.2. The `context` block governs discovery, and
@@ -167,6 +182,9 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
             acceptanceCriteria: input.acceptanceCriteria,
             primaryRepository: input.primaryRepository,
             referenceRepositories: input.referenceRepositories,
+            ...(targetRepositories.length === 0
+              ? {}
+              : { targetRepositories: targetRepositories.map((repository) => ({ slug: repository.slug, url: repository.url, ref: repository.ref })) }),
             workItemReferences: input.workItemReferences,
             decisions: input.decisions,
             sources,
@@ -200,19 +218,30 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
         ? await dependencies.contracts.findByRun(input.tenantId, input.runId)
         : null;
 
+    // DI-21.143. A resolution that supersedes the frozen contract adds a new revision. The store
+    // keeps it idempotent: a retry finds the revision the first attempt wrote.
     const stored =
       resolved.unresolvedConflict === null
-        ? (existing ??
-          (await dependencies.contracts.save({
-            tenantId: input.tenantId,
-            runId: input.runId,
-            contract: resolved.contract,
-            sha256: resolved.sha256,
-            document: resolved.document,
-          })))
+        ? input.supersedes === undefined
+          ? (existing ??
+            (await dependencies.contracts.save({
+              tenantId: input.tenantId,
+              runId: input.runId,
+              contract: resolved.contract,
+              sha256: resolved.sha256,
+              document: resolved.document,
+            })))
+          : await dependencies.contracts.save({
+              tenantId: input.tenantId,
+              runId: input.runId,
+              contract: resolved.contract,
+              sha256: resolved.sha256,
+              document: resolved.document,
+              supersedes: input.supersedes,
+            })
         : null;
 
-    const froze = stored !== null && existing === null;
+    const froze = stored !== null && (existing === null || existing.sha256 !== stored.sha256);
 
     if (stored !== null) {
       await dependencies.runs.setContextContractVersion(input.tenantId, input.runId, stored.sha256);
@@ -240,6 +269,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
 
     const repositories = [
       resolved.pinned.primary.slug,
+      ...resolved.pinned.targets.map((repository) => repository.slug),
       ...resolved.pinned.references.map((repository) => repository.slug),
     ].join(", ");
 
@@ -270,6 +300,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       deliveryRefs: deliverableItems(resolved.contract.items).map((item) => item.reference.ref),
       primary: resolved.pinned.primary,
       references: resolved.pinned.references,
+      ...(resolved.pinned.targets.length === 0 ? {} : { targets: resolved.pinned.targets }),
       unresolvedConflict:
         resolved.unresolvedConflict === null
           ? null
@@ -312,7 +343,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
     }
 
     const configSha = createHash("sha256").update(text, "utf8").digest("hex");
-    await dependencies.runs.setConfigSha(input.tenantId, input.runId, configSha);
+    await dependencies.runs.setConfigSha(input.tenantId, input.runId, repositorySlugOfUrl(input.repositoryUrl), configSha);
 
     let declaredProduct: string | null;
     try {

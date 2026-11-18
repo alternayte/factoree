@@ -1,6 +1,9 @@
 import type { AccountConfig, ServicesConfig } from "~/domain/runs/project-runtime-config.js";
 import type { EgressFacts } from "~/domain/runs/egress.js";
 import { listFakes, type FakeService } from "~/domain/runs/services.js";
+import { planTargetRulesOf, previewPortOf, type SetCheckFacts } from "~/domain/runs/set-check.js";
+import { runSetUserValidation } from "~/domain/validation/set-validation.js";
+import type { PlanTargetRules } from "~/domain/validation/validation-plan.js";
 import { Context } from "@temporalio/activity";
 import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
@@ -161,11 +164,23 @@ export interface UserValidateActivityInput {
    * replays the stored passing plan of the run, and no validator session writes one.
    */
   replay?: boolean;
+  /**
+   * docs/specs/change-sets.md, DI-21.146. The set check facts of the check sprite of a change set.
+   * Each plan entry then names its target, and each group runs in turn. Absent for one target.
+   */
+  setCheck?: SetCheckFacts;
+  /** DI-21.149. The cited provider-to-consumer edges of the run. Absent for one target. */
+  edges?: Array<{ provider: string; consumer: string }>;
+  /** DI-21.149. The targets whose patch changes a file. Absent for one target. */
+  changedTargets?: string[];
 }
 
 export interface UserValidateActivityOutput {
   passed: boolean;
-  results: Array<{ assertionId: string; result: AssertionResult; reason: string }>;
+  /** docs/specs/change-sets.md, DI-21.154. A change set names the target of each result. */
+  results: Array<{ assertionId: string; result: AssertionResult; reason: string; target?: string }>;
+  /** DI-21.154. The consumers of a change set that failed the in-between check. */
+  inBetweenFailedConsumers?: string[];
   /** True when at least one assertion is FAIL. Only then can a repair help. */
   hasFailure: boolean;
   /** True when at least one assertion is MANUAL_REQUIRED. */
@@ -192,8 +207,13 @@ export interface UserValidateActivityOutput {
    * for the silence limit. The pass then ran no check and recorded no result.
    */
   hang: AgentHang;
-  /** docs/specs/repository-setup-and-services.md. The fakes of the stack the pass ran against. */
-  fakes?: FakeService[];
+  /**
+   * docs/specs/repository-setup-and-services.md. The fakes of the stack the pass ran against.
+   * docs/specs/change-sets.md: each names its target, and a fake a wired provider replaced is absent.
+   */
+  fakes?: Array<FakeService & { target?: string }>;
+  /** docs/specs/change-sets.md, DI-21.148. One "Needs your attention" line per pair that ran alone. */
+  setCheckNotes?: string[];
 }
 
 /** The interval between two heartbeats. See `agent.activities.ts` for the same rule. */
@@ -257,9 +277,14 @@ const writeBinaryFile = async (sandbox: Sandbox, ref: SandboxRef, path: string, 
 };
 
 /** The reasons the plan rules reject one plan text for, or null when the plan is valid. */
-const planRejectionOf = (planText: string, contract: ValidationContract, accounts: readonly string[]): string[] | null => {
+const planRejectionOf = (
+  planText: string,
+  contract: ValidationContract,
+  accounts: readonly string[],
+  rules?: PlanTargetRules,
+): string[] | null => {
   try {
-    parseValidationPlan(planText, contract, accounts);
+    parseValidationPlan(planText, contract, accounts, rules);
     return null;
   } catch (error) {
     if (error instanceof ValidationPlanInvalidError) return error.reasons;
@@ -490,8 +515,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const needsPreview =
         forYourEye.length > 0 ||
         storedContract.assertions.some((assertion) => assertion.method === "browser" || assertion.method === "http");
+      // docs/specs/change-sets.md, DI-21.147. A change set names each target's own preview instead.
+      const setCheck = input.setCheck;
+      const planRules = setCheck === undefined ? undefined : planTargetRulesOf(setCheck);
       let previewBaseUrl: string | null = null;
-      if (needsPreview && input.preview !== null && input.preview.enabled) {
+      if (setCheck === undefined && needsPreview && input.preview !== null && input.preview.enabled) {
         const port = Number(new URL(input.preview.readyUrl).port);
         if (Number.isFinite(port) && port !== 0 && !Number.isNaN(port)) {
           try {
@@ -521,7 +549,39 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // fakes, and the proof pack names the fakes.
       const accountNames = (input.accounts ?? []).map((account) => account.name);
       const services = input.services ?? null;
-      const fakes = services === null ? [] : await listFakes(uv.sandbox, ref, input.primaryPath, services);
+      const fakes = setCheck !== undefined || services === null ? [] : await listFakes(uv.sandbox, ref, input.primaryPath, services);
+      // DI-21.147. Each target of a change set, with its preview, its accounts, its fakes and its providers.
+      const targetLines =
+        setCheck === undefined
+          ? undefined
+          : await Promise.all(
+              setCheck.targets.map(async (target) => {
+                const port = previewPortOf(target.preview);
+                let url: string | null = null;
+                if (port !== null) {
+                  try {
+                    url = (await uv.sandbox.exposeService(ref, port)).url;
+                  } catch {
+                    url = null;
+                  }
+                }
+                const wired = setCheck.pairs.filter((pair) => pair.consumer === target.repository);
+                return {
+                  repository: target.repository,
+                  path: target.path,
+                  previewBaseUrl: url,
+                  accounts: target.accounts.map((account) => account.name),
+                  fakes: target.fakes
+                    .filter((fake) => !wired.some((pair) => pair.fake === fake.service))
+                    .map((fake) => `${fake.name}, answered by the compose service "${fake.service}"`),
+                  providers: wired.map((pair) => {
+                    const fake = target.fakes.find((candidate) => candidate.service === pair.fake);
+                    return `${fake?.name ?? pair.fake} is answered by the patched ${pair.provider}, in place of the fake "${pair.fake}"`;
+                  }),
+                };
+              }),
+            );
+      const promptPath = setCheck === undefined ? input.primaryPath : `${input.workspacePath}/targets`;
 
       const afterHang = input.afterHang === true;
       // A hung session can leave a partial plan, and the fresh session must never read it.
@@ -529,7 +589,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const validatorInput = buildUserValidatorInput({
         goal: input.goal,
         validationContract: storedContract.document,
-        primaryRepositoryPath: input.primaryPath,
+        primaryRepositoryPath: promptPath,
         planPath,
         previewBaseUrl,
         actionPolicy,
@@ -538,6 +598,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         fakes,
         imageFiles: input.imageFiles ?? [],
         egress: input.egress ?? null,
+        ...(targetLines === undefined ? {} : { targets: targetLines, setServer: planRules?.setServer ?? null }),
       });
 
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the
@@ -618,7 +679,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // DI-14.41. The contract already says whether a preview is needed, so its build starts now
       // and runs while the validator writes its plan. The rejection is observed at once, so a
       // failed build is never an unhandled rejection, and the pass reads the same promise later.
-      if (needsPreview && input.preview !== null && input.preview.enabled) {
+      if (setCheck === undefined && needsPreview && input.preview !== null && input.preview.enabled) {
         const building = startPreview({
           sandbox: uv.sandbox,
           ref,
@@ -790,7 +851,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           const freshInput = buildUserValidatorInput({
             goal: input.goal,
             validationContract: storedContract.document,
-            primaryRepositoryPath: input.primaryPath,
+            primaryRepositoryPath: promptPath,
             planPath: round.freshPlanPath,
             previewBaseUrl,
             actionPolicy,
@@ -799,6 +860,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             fakes,
             imageFiles: input.imageFiles ?? [],
             egress: input.egress ?? null,
+            ...(targetLines === undefined ? {} : { targets: targetLines, setServer: planRules?.setServer ?? null }),
           });
           const promptVersion = `${freshInput.promptVersion}+${round.message.promptVersion}`;
           const fresh = await runner.run({
@@ -858,7 +920,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // change may be correct (FAC-63). Factoree asks the validator once for a corrected plan, with
       // the exact reasons, inside this pass. The frozen contract and the plan rules stay as they
       // are, and the repair budget is not touched. A stop gets no correction round.
-      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames);
+      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules);
       const stopped = context.cancellationSignal.aborted || invocations.some((result) => result.cancelled);
       // A replayed plan passed once, so it gets no correction round: a rejection blocks the pass.
       if (firstRejection !== null && !stopped && !replay) {
@@ -932,7 +994,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         }
 
         planText = correctedResult.exitCode === 0 ? correctedResult.stdout : null;
-        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames);
+        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules);
         liveSession = correctionInvocations.at(-1)?.session ?? liveSession;
         if (planText === null || secondRejection !== null) {
           dependencies.logger.warn("the corrected validation plan was rejected", {
@@ -1029,7 +1091,42 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // From here the pass owns the early preview, and it stops the preview on every path.
       const handedOver = earlyPreview;
       earlyPreview = undefined;
-      const outcome = await timeStage(
+      const userValidationDependencies = {
+        sandbox: uv.sandbox,
+        browser: uv.browser,
+        fetchImpl: uv.fetchImpl,
+        probe: uv.probe,
+        redactor: uv.redactor,
+        logger: dependencies.logger,
+      };
+      // docs/specs/change-sets.md, slice 6. A change set runs each group in turn, then the in-between check.
+      const setOutcome =
+        setCheck === undefined
+          ? null
+          : await timeStage(
+              uv.stages,
+              dependencies.logger,
+              { tenantId: input.tenantId, runId: input.runId, stage: "browser_assertions", attempt: input.attempt, sandboxId: input.spriteId },
+              () =>
+                runSetUserValidation(userValidationDependencies, {
+                  runId: input.runId,
+                  tenantId: input.tenantId,
+                  ref,
+                  targetsPath: promptPath,
+                  contract: frozenContract,
+                  planText,
+                  ...(rejectedPlanReason === undefined ? {} : { rejectedPlanReason }),
+                  environment: projectTestSecrets,
+                  timeoutMs: input.timeoutMs,
+                  signal: context.cancellationSignal,
+                  forYourEye,
+                  selectorRecheck,
+                  facts: setCheck,
+                  edges: input.edges ?? [],
+                  changed: input.changedTargets ?? setCheck.targets.map((target) => target.repository),
+                }),
+            );
+      const outcome = setOutcome ?? await timeStage(
         uv.stages,
         dependencies.logger,
         { tenantId: input.tenantId, runId: input.runId, stage: "browser_assertions", attempt: input.attempt, sandboxId: input.spriteId },
@@ -1122,8 +1219,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           assertionId: assertionOutcome.assertionId,
           result: assertionOutcome.result,
           reason: assertionOutcome.reason,
+          ...(setOutcome?.servedBy[assertionOutcome.assertionId] === undefined ? {} : { target: setOutcome.servedBy[assertionOutcome.assertionId] }),
         })),
-        hasFailure: outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "FAIL"),
+        ...(setOutcome === null || setOutcome.inBetweenFailedConsumers.length === 0 ? {} : { inBetweenFailedConsumers: setOutcome.inBetweenFailedConsumers }),
+        // DI-21.149. A failed in-between check is a failure a repair can fix.
+        hasFailure:
+          outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "FAIL") || (setOutcome?.inBetweenFailures.length ?? 0) > 0,
         hasManual: outcome.outcomes.some(
           (assertionOutcome) => assertionOutcome.result === "MANUAL_REQUIRED",
         ),
@@ -1134,7 +1235,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         sessionId: passSessionId,
         previewUrl: previewBaseUrl,
         hang: null,
-        fakes,
+        fakes: setOutcome?.fakes ?? fakes,
+        ...(setOutcome === null || setOutcome.notes.length === 0 ? {} : { setCheckNotes: setOutcome.notes }),
       };
     } finally {
       clearInterval(heartbeat);

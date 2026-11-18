@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { proposeTarget } from "~/domain/routing/select-targets.js";
+import { matchReplyToCandidates, proposeTarget, proposeTargets, selectTargets } from "~/domain/routing/select-targets.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 
 const repository = (fullName: string, linearProjects: string[] = []): RepositoryRecord => ({
@@ -58,5 +58,47 @@ describe("proposeTarget (docs/specs/own-proposals-and-parallel-runs.md)", () => 
   it("decides nothing when no rule matches, so the human chooses", () => {
     expect(proposeTarget([DASH, FIXTURE], "Show the version.", "Billing")).toBeNull();
     expect(proposeTarget([DASH, FIXTURE], "Show the version.", null)).toBeNull();
+  });
+});
+
+describe("proposeTargets (docs/specs/change-sets.md, DI-21.130)", () => {
+  const ANTHOLOGY = repository("alternayte/anthology", ["Dashboard"]);
+
+  it("takes every repository the issue names, in set order", () => {
+    expect(proposeTargets([FIXTURE, DASH, ANTHOLOGY], "Add the endpoint to anthology and call it from c-dash.", null)).toEqual({
+      fullNames: ["alternayte/anthology", "alternayte/c-dash"],
+      reason: "the issue names anthology and c-dash",
+    });
+  });
+
+  it("lets a named repository win over the Linear project, so the refiner adds the rest", () => {
+    expect(proposeTargets([DASH, ANTHOLOGY], "Change the anthology API.", "Dashboard")?.fullNames).toEqual(["alternayte/anthology"]);
+  });
+
+  it("takes every repository that declares the Linear project when the issue names none", () => {
+    expect(proposeTargets([DASH, ANTHOLOGY, FIXTURE], "Show the version.", "dashboard")).toEqual({
+      fullNames: ["alternayte/anthology", "alternayte/c-dash"],
+      reason: 'the issue is in the Linear project "dashboard", which alternayte/anthology and alternayte/c-dash declare',
+    });
+  });
+
+  it("decides nothing when no rule matches", () => {
+    expect(proposeTargets([DASH, FIXTURE], "Show the version.", "Billing")).toBeNull();
+  });
+
+  it("selects the sole member, and else the proposal with a notice", () => {
+    expect(selectTargets([DASH], null)).toEqual({ kind: "selected", repositories: [DASH], reason: "sole member", notify: false });
+    expect(selectTargets([DASH, FIXTURE], null)).toEqual({ kind: "ambiguous", candidates: [DASH, FIXTURE] });
+    expect(selectTargets([FIXTURE, DASH, ANTHOLOGY], { fullNames: ["alternayte/c-dash", "alternayte/anthology"], reason: "r" })).toEqual({
+      kind: "selected",
+      repositories: [ANTHOLOGY, DASH],
+      reason: "r",
+      notify: true,
+    });
+  });
+
+  it("reads every candidate a human reply names", () => {
+    expect(matchReplyToCandidates("c-dash, and alternayte/anthology.", [DASH, ANTHOLOGY, FIXTURE])).toEqual([ANTHOLOGY, DASH]);
+    expect(matchReplyToCandidates("c-dash", [DASH, repository("someone/c-dash")])).toEqual([]);
   });
 });

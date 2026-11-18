@@ -7004,11 +7004,61 @@
                               "null"
                             ]
                           },
-                          "pullRequestUrl": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
+                          "targets": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "repositoryFullName": {
+                                  "type": "string"
+                                },
+                                "baseSha": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "patchSha256": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "commitSha": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "pullRequestUrl": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "pullRequestState": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "mergeOrder": {
+                                  "type": [
+                                    "number",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "repositoryFullName",
+                                "baseSha",
+                                "patchSha256",
+                                "commitSha",
+                                "pullRequestUrl",
+                                "pullRequestState",
+                                "mergeOrder"
+                              ]
+                            }
                           },
                           "repairCount": {
                             "type": "number"
@@ -7068,18 +7118,18 @@
                                     "state": {
                                       "type": "string"
                                     },
-                                    "pullRequestUrl": {
-                                      "type": [
-                                        "string",
-                                        "null"
-                                      ]
+                                    "pullRequestUrls": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
                                     }
                                   },
                                   "required": [
                                     "identifier",
                                     "url",
                                     "state",
-                                    "pullRequestUrl"
+                                    "pullRequestUrls"
                                   ]
                                 }
                               },
@@ -7099,7 +7149,7 @@
                           "failureMessage",
                           "workItemTitle",
                           "workItemUrl",
-                          "pullRequestUrl",
+                          "targets",
                           "repairCount",
                           "repairLimit",
                           "costUsd",
@@ -7242,11 +7292,61 @@
                         "null"
                       ]
                     },
-                    "pullRequestUrl": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repositoryFullName": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "patchSha256": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "commitSha": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "pullRequestUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "pullRequestState": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "mergeOrder": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "repositoryFullName",
+                          "baseSha",
+                          "patchSha256",
+                          "commitSha",
+                          "pullRequestUrl",
+                          "pullRequestState",
+                          "mergeOrder"
+                        ]
+                      }
                     },
                     "repairCount": {
                       "type": "number"
@@ -7306,18 +7406,18 @@
                               "state": {
                                 "type": "string"
                               },
-                              "pullRequestUrl": {
-                                "type": [
-                                  "string",
-                                  "null"
-                                ]
+                              "pullRequestUrls": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
                               }
                             },
                             "required": [
                               "identifier",
                               "url",
                               "state",
-                              "pullRequestUrl"
+                              "pullRequestUrls"
                             ]
                           }
                         },
@@ -7378,24 +7478,6 @@
                       "type": "string"
                     },
                     "followUpOfRunId": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "baseSha": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "commitSha": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "patchSha256": {
                       "type": [
                         "string",
                         "null"
@@ -7713,7 +7795,7 @@
                     "failureMessage",
                     "workItemTitle",
                     "workItemUrl",
-                    "pullRequestUrl",
+                    "targets",
                     "repairCount",
                     "repairLimit",
                     "costUsd",
@@ -7735,9 +7817,6 @@
                     "sandboxRetentionHours",
                     "autonomyLevel",
                     "followUpOfRunId",
-                    "baseSha",
-                    "commitSha",
-                    "patchSha256",
                     "skillRegistrySet",
                     "skillResolutionId",
                     "proofPackPostedAt",

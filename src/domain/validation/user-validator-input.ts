@@ -9,6 +9,7 @@ import {
   renderSelectorRecheckPrompt,
   renderUserValidatorPrompt,
   type SelectorRecheckPromptFields,
+  type ValidatorTargetLines,
 } from "~/prompts/user-validator.js";
 import type { ValidationAssertion } from "~/domain/validation/validation-contract.js";
 import { planKindForMethod } from "~/domain/validation/validation-plan.js";
@@ -30,6 +31,10 @@ export interface BuildUserValidatorInput {
   imageFiles?: string[];
   /** docs/specs/egress-honesty-and-issue-status.md. The allow list facts of the check sprite. */
   egress?: EgressFacts | null;
+  /** docs/specs/change-sets.md, DI-21.147. The targets of a change set. Absent for one target. */
+  targets?: ValidatorTargetLines[];
+  /** DI-21.147. The target a `set` entry runs against, or null. */
+  setServer?: string | null;
 }
 
 export interface UserValidatorInput {
@@ -81,6 +86,11 @@ const PLAN_SCHEMA = [
   })}`,
 ].join("\n");
 
+/** docs/specs/change-sets.md, DI-21.147. The rule a change set adds to the plan schema. */
+const SET_PLAN_SCHEMA_RULE =
+  'In this change set every entry also holds "target": the owner/repo name of the target it checks, or "set" where the Targets section allows it. ' +
+  'For example: { "assertionId": "VAL-UI-001", "kind": "browser", "target": "acme/web", "steps": [...] }.';
+
 /**
  * SDD section 34 mirrors this builder for the User Validator. It assembles the fresh-context
  * prompt and rejects forbidden material through the one shared guard.
@@ -96,11 +106,12 @@ export const buildUserValidatorInput = (input: BuildUserValidatorInput): UserVal
       planPath: input.planPath,
       previewBaseUrl: input.previewBaseUrl,
       actionPolicy: input.actionPolicy.describe(),
-      planSchema: PLAN_SCHEMA,
+      planSchema: input.targets === undefined ? PLAN_SCHEMA : `${PLAN_SCHEMA}\n\n${SET_PLAN_SCHEMA_RULE}`,
       accounts: input.accounts ?? [],
       fakes: (input.fakes ?? []).map((fake) => `${fake.name}, answered by the compose service "${fake.service}"`),
       imageFiles: input.imageFiles ?? [],
       egress: input.egress ?? null,
+      ...(input.targets === undefined ? {} : { targets: input.targets, setServer: input.setServer ?? null }),
     }),
     promptVersion: USER_VALIDATOR_PROMPT_VERSION,
     environment: { ...input.projectTestSecrets },

@@ -27,6 +27,8 @@ export const readCredential = (
   repositoryUrl: string,
   githubInstallationId: string,
   dependencies: { tokens: GitHubTokenProvider; redactor: Redactor },
+  /** docs/specs/change-sets.md. The installation of each other target, by lower-case `owner/repo`. */
+  installations?: Readonly<Record<string, string>>,
 ): RepositoryCredential | null => {
   if (githubInstallationId === "") return null;
   let origin: string;
@@ -40,6 +42,7 @@ export const readCredential = (
     origin,
     tokens: redactingTokens(dependencies.tokens, dependencies.redactor),
     githubInstallationId,
+    ...(installations === undefined || Object.keys(installations).length === 0 ? {} : { installations }),
   };
 };
 

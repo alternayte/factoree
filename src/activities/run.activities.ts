@@ -9,6 +9,7 @@ import type { RunSlotClaim, RunSlots } from "~/domain/runs/run-slots.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 import { failureCategoryOf } from "~/domain/runs/failure-category.js";
+import { mergeOrderOf, type MergeOrder, type TargetEdge } from "~/domain/runs/merge-order.js";
 
 export interface RunActivityDependencies {
   runs: RunRepository;
@@ -198,6 +199,44 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
   }): Promise<void> {
     const { tenantId, runId, repositoryId, ...patch } = input;
     await dependencies.runs.updateRunTarget(tenantId, runId, repositoryId, patch);
+  },
+
+  /**
+   * docs/specs/change-sets.md, DI-21.141. Records the edges the refiner cited between the targets
+   * of the run, and the merge order they give: providers before consumers, no place for a target
+   * no edge names, and no place at all for a cycle. Answers the order for the decision.
+   */
+  async recordRunTargetEdges(input: { tenantId: string; runId: string; edges: TargetEdge[] }): Promise<MergeOrder> {
+    const targets = await dependencies.runs.listRunTargets(input.tenantId, input.runId);
+    const idOf = (repository: string): string | undefined =>
+      targets.find((target) => target.repositoryFullName.toLowerCase() === repository.toLowerCase())?.repositoryId;
+    const edges = input.edges.flatMap((edge) => {
+      const providerRepositoryId = idOf(edge.provider);
+      const consumerRepositoryId = idOf(edge.consumer);
+      return providerRepositoryId === undefined || consumerRepositoryId === undefined
+        ? []
+        : [{ providerRepositoryId, consumerRepositoryId, file: edge.file, line: edge.line }];
+    });
+    const order = mergeOrderOf(
+      targets.map((target) => target.repositoryFullName),
+      input.edges.filter((edge) => idOf(edge.provider) !== undefined && idOf(edge.consumer) !== undefined),
+    );
+    const places =
+      order.kind === "ordered"
+        ? order.places.flatMap((entry) => {
+            const repositoryId = idOf(entry.repository);
+            return repositoryId === undefined ? [] : [{ repositoryId, place: entry.place }];
+          })
+        : [];
+    await dependencies.runs.recordTargetEdges(input.tenantId, input.runId, edges, places);
+    dependencies.logger.info("run target edges recorded", {
+      tenant_id: input.tenantId,
+      run_id: input.runId,
+      step: "target_edges",
+      edges: edges.length,
+      order: order.kind,
+    });
+    return order;
   },
 
   /**

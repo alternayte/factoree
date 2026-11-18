@@ -84,12 +84,6 @@ model Run {
   // docs/specs/run-recovery.md. A follow-up run shares the agent session of the run it follows.
   linearAgentSessionId     String
   followUpOfRunId          String?   @map("follow_up_of_run_id")
-  // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured, so a
-  // follow-up run can read what the failed run tried.
-  lastPatchBase64          String?   @map("last_patch_base64")
-  // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
-  // patch, so a draft names the review of that same patch. Null on a run from before it.
-  lastPatchAttempt         Int?      @map("last_patch_attempt")
   temporalWorkflowId       String    @unique
   status                   String
   failureReason            String?
@@ -109,7 +103,6 @@ model Run {
   // docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to. It stays
   // after the reaper clears spriteAdapter, so the run page and the proof pack can name it.
   sandboxProviderId        String?   @map("sandbox_provider_id")
-  baseSha                  String?
   organizationSkillsSha    String?
   // docs/specs/skill-registry.md. The registry set the run used, null for every released skill,
   // and the resolution id that pins each version. Both stay null without a registry.
@@ -118,12 +111,6 @@ model Run {
   // docs/specs/external-context-delivery.md. One entry per context file of the work sprite: ref,
   // path, SHA-256, verified and the skip reason. It holds no content (SDD section 55).
   deliveredContext         Json?     @map("delivered_context")
-  // Specification section 8. The SHA-256 of .factoree/config.yaml, read from the target
-  // repository at the Run's base commit. Null until context resolution pins that commit.
-  configSha                 String?
-  patchSha256              String?
-  commitSha                String?
-  pullRequestUrl           String?
   contextContractVersion   String?
   validationContractVersion String?
   proofPackSha256          String?
@@ -133,6 +120,12 @@ model Run {
   // docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input of the last proof pack,
   // so an amendment after publication renders the whole proof pack again.
   proofPackInput           Json?     @map("proof_pack_input")
+  // docs/specs/change-sets.md, slice 9, DI-21.158. On the run that opened a change set: the PR
+  // workflow that runs the one set run of the set, the workflow id of that run, and the time it took
+  // the set. Null while no set run runs.
+  changeSetLockHolder      String?   @map("change_set_lock_holder")
+  changeSetLockRun         String?   @map("change_set_lock_run")
+  changeSetLockAt          DateTime? @map("change_set_lock_at")
   // docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking.
   decisions                Json      @default("[]")
   repairCount              Int       @default(0)
@@ -172,11 +165,12 @@ model Run {
   skills                   RunSkill[]
   skillProposals           RunSkillProposal[]
   evidence                 Evidence[]
-  contextContract          ContextContract?
+  contextContracts         ContextContract[]
   validationContract       ValidationContract?
   validationResults        ValidationAssertionResult[]
   reviewFindings           ReviewFinding[]
   targets                  RunTarget[]
+  targetEdges              RunTargetEdge[]
   originOfPullRequests     PullRequest[]
 
   @@index([tenantId])
@@ -332,8 +326,11 @@ model Evidence {
 model ContextContract {
   id          String   @id @default(uuid())
   tenantId    String
-  runId       String   @unique
+  runId       String
   run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // docs/specs/change-sets.md, DI-21.143. A target the refiner adds freezes a new contract of the
+  // Run. Each one keeps its row, and the highest revision is the contract of the Run.
+  revision    Int      @default(1)
   // SDD section 21 fixes the document schema version. `Run.contextContractVersion` holds the
   // SHA-256 below, because that value identifies the exact contract. See DI-4.11.
   version     Int
@@ -345,6 +342,7 @@ model ContextContract {
   items       ContextItem[]
   conflicts   ContextConflict[]
 
+  @@unique([runId, revision])
   @@index([tenantId])
 }
 
@@ -493,14 +491,19 @@ model ProcessedWebhook {
   @@index([tenantId])
 }
 
-/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, sandbox provider and repository.
+/// docs/specs/kiln-sandbox-provider.md. One warm snapshot per tenant, sandbox provider and repository,
+/// or per tenant, sandbox provider and set (docs/specs/change-sets.md).
 /// docs/specs/sandbox-provider-spillover.md. `adapter` holds the sandbox provider id.
 model WarmSnapshot {
   id            String   @id @default(uuid())
   tenantId      String
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   adapter       String
+  // docs/specs/change-sets.md, DI-21.135. The repository URL, or the subject of a set snapshot: its
+  // sorted repository URLs joined by a space.
   repositoryUrl String
+  // DI-21.135. The sorted repository URLs of a set snapshot. Empty for a snapshot of one repository.
+  repositoryUrls String[] @default([]) @map("repository_urls")
   // docs/specs/kiln-sandbox-size.md. The Kiln template: the image digest and the size.
   template      String
   // docs/specs/run-speed.md. The SHA-256 of the bootstrap command, the warm command and the
@@ -508,6 +511,9 @@ model WarmSnapshot {
   bootstrapKey  String
   // The exit code of a failed warm command, or null when it passed or none ran.
   warmCommandExitCode Int?
+  // docs/specs/change-sets.md, DI-21.148. The wired pairs of a set that its build-ahead could not
+  // start within the sandbox size, each with its reason. A run of the set tests them alone.
+  unwiredPairs  Json?    @map("unwired_pairs")
   snapshotId    String
   createdAt     DateTime @default(now())
 
@@ -783,13 +789,48 @@ model RunTarget {
   // merged or closed from the GitHub pull_request event.
   pullRequestNumber Int?     @map("pull_request_number")
   pullRequestState  String?  @map("pull_request_state")
+  // docs/specs/change-sets.md, DI-21.127. The SHA-256 of .factoree/config.yaml of this target at its
+  // base commit. Null until context resolution pins that commit, or when the target holds no file.
+  configSha         String?  @map("config_sha")
+  // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured of this target,
+  // so a follow-up run can read what the failed run tried.
+  lastPatchBase64   String?  @map("last_patch_base64")
+  // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
+  // patch, so a draft names the review of that same patch.
+  lastPatchAttempt  Int?     @map("last_patch_attempt")
+  // docs/specs/change-sets.md. The place of this target in the merge order, from 1, or null when
+  // no edge orders it.
+  mergeOrder        Int?     @map("merge_order")
   createdAt       DateTime   @default(now())
+  providerOf      RunTargetEdge[] @relation("provider")
+  consumerOf      RunTargetEdge[] @relation("consumer")
 
   @@unique([runId, repositoryId])
   @@index([runId])
   @@index([tenantId])
   @@index([tenantId, commitSha])
   @@index([tenantId, pullRequestNumber])
+}
+
+// docs/specs/change-sets.md. One provider-to-consumer edge of a change set, with the file and line
+// the refiner cited for it. The edges decide the merge order of the targets.
+model RunTargetEdge {
+  id               String    @id @default(uuid())
+  tenantId         String    @map("tenant_id")
+  runId            String    @map("run_id")
+  run              Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  providerTargetId String    @map("provider_target_id")
+  provider         RunTarget @relation("provider", fields: [providerTargetId], references: [id], onDelete: Cascade)
+  consumerTargetId String    @map("consumer_target_id")
+  consumer         RunTarget @relation("consumer", fields: [consumerTargetId], references: [id], onDelete: Cascade)
+  citationFile     String    @map("citation_file")
+  citationLine     Int       @map("citation_line")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@unique([providerTargetId, consumerTargetId])
+  @@index([runId])
+  @@index([tenantId])
+  @@map("run_target_edge")
 }
 
 // docs/specs/autonomy-levels.md. One row for each change of a Product policy field, so raising
@@ -1081,6 +1122,9 @@ model PullRequest {
   // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
   // starts no other one on that head until the base branch moves.
   bringCurrentHeadSha String?  @map("bring_current_head_sha")
+  // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
+  // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
+  changeSetStatusKey String?   @map("change_set_status_key")
   workflowId        String     @map("workflow_id")
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")

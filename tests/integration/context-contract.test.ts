@@ -204,6 +204,23 @@ describe("PrismaContextContractStore", () => {
       data: { classification: "required" },
     });
   });
+
+  it("adds one revision for a save that supersedes the contract, and keeps the first (DI-21.143)", async () => {
+    const superseding = {
+      tenantId,
+      runId,
+      contract: { ...contract(), goal: "The set goal." },
+      sha256: "c".repeat(64),
+      document: "# Set\n",
+      supersedes: FIRST_SHA256,
+    };
+    const next = await store.save(superseding);
+    expect(next.sha256).toBe("c".repeat(64));
+    // A retry finds the revision it wrote.
+    expect((await store.save(superseding)).id).toBe(next.id);
+    expect((await store.findByRun(tenantId, runId))?.id).toBe(next.id);
+    expect(await prisma.contextContract.count({ where: { runId } })).toBe(2);
+  });
 });
 
 describe("PrismaRunRepository.setContextContractVersion", () => {

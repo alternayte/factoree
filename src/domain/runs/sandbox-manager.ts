@@ -1,10 +1,14 @@
-import type { CheckoutResult, RepositorySpec } from "./checkout.js";
+import type { CheckedOutRepository, CheckoutResult, RepositorySpec } from "./checkout.js";
 import {
   checkoutOrganizationSkills,
   checkoutPrimary,
+  checkoutTarget,
   overlayPullRequestHead,
   checkoutReferences,
+  movePrimaryToTarget,
   refreshPrimary,
+  refreshTarget,
+  removeIgnoredFiles,
   removeReferences,
   withoutUrlCredentials,
 } from "./checkout.js";
@@ -24,11 +28,37 @@ import {
   bootstrapKeyOf,
   keyFilePatternsOf,
   selectKeyFiles,
+  setBootstrapKeyOf,
+  snapshotSubjectOf,
+  type SetMemberKey,
   type WarmSnapshot,
   type WarmSnapshotStore,
 } from "./warm-snapshot.js";
 import { bootstrapAllowListOf } from "./project-runtime-config.js";
-import { ensureDocker, listRepositoryFiles, seedServices, startServices } from "./services.js";
+import {
+  composeProjectOf,
+  ensureDocker,
+  listStack,
+  listRepositoryFiles,
+  pauseServices,
+  seedServices,
+  startServices,
+  stopServices,
+  targetEnvironmentOf,
+} from "./services.js";
+import {
+  checkGroupsOf,
+  pairsIn,
+  hostAddressOf,
+  startGroup,
+  stopGroup,
+  wireTargets,
+  type SetCheckFacts,
+  type SetCheckTarget,
+  type UnwiredPair,
+} from "./set-check.js";
+import type { ReadinessProbe } from "./preview.js";
+import type { Redactor } from "~/telemetry/redaction.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { credentialKeyOf, NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
@@ -48,6 +78,18 @@ export interface PrepareSandboxInput {
   primary: RepositorySpec;
   references: RepositorySpec[];
   defaults: ProjectDefaults;
+  /**
+   * docs/specs/change-sets.md. Every target of a change set, in set order, each with its own
+   * read-only credential. Two or more check out at `<workspace>/targets/<owner>/<repo>`, and
+   * `primary` then names the first of them. Absent, or one entry, for a run with one target.
+   */
+  targets?: TargetSpec[];
+  /**
+   * docs/specs/change-sets.md, DI-21.138. The other repositories of the product that the refiner
+   * reads. `read` clones them while the checkout hosts are still allowed, through `clone_sibling`.
+   * Only the work sprite of a run that can add a target gets it.
+   */
+  siblings?: SiblingReader;
   /** Project test secrets only. SDD section 30 forbids every other credential here. */
   environment?: Record<string, string>;
   /** SDD section 16. The organization-wide skills repository of the Project, when it has one. */
@@ -98,6 +140,94 @@ export interface PrepareSandboxInput {
   pullRequestMerge?: boolean;
 }
 
+/** docs/specs/change-sets.md. One target of a change set to check out. */
+export interface TargetSpec extends RepositorySpec {
+  /** The `owner/repo` name of the target. */
+  repository: string;
+  /** The read-only clone credential of the installation that grants the target. */
+  credential?: string;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.159. The pull request head of this target in a set run:
+   * the diff from the base to this head lands in its worktree after the configuration read, as
+   * `pullRequestHead` does for one target. Absent for a target that takes no pull request change.
+   */
+  pullRequestHead?: string;
+  /** DI-21.119 per target. True when the base is a new base that the head does not hold. */
+  pullRequestMerge?: boolean;
+}
+
+/** docs/specs/change-sets.md, DI-21.138. One read-only sibling clone, at the commit it read. */
+export interface SiblingCheckout {
+  repository: string;
+  path: string;
+  commitSha: string;
+}
+
+/** DI-21.138. Clones the sibling repositories. A sibling that does not clone is left out. */
+export interface SiblingReader {
+  /** The clone URLs, so the checkout policy and the credential binding hold their hosts. */
+  urls: string[];
+  read(sandbox: Sandbox, ref: SandboxRef): Promise<SiblingCheckout[]>;
+}
+
+/** docs/specs/change-sets.md. One checked-out target, with the configuration its own file gives. */
+export interface PreparedTarget {
+  repository: string;
+  checkout: CheckedOutRepository;
+  runtime: ProjectRuntimeConfig;
+  verifyCommands: VerificationCommand[];
+  preview: PreviewConfig | null;
+  /** The environment of a command Factoree runs in the target. Empty for a run with one target. */
+  environment: Record<string, string>;
+}
+
+/** The `owner/repo` name of a clone URL, or the URL itself when it names none, as a local path in a test. */
+const repositoryOfUrl = (url: string): string => {
+  const parts = url.replace(/\/+$/, "").replace(/\.git$/, "").split("/").slice(-2);
+  return parts.length === 2 ? parts.join("/") : url;
+};
+
+/**
+ * docs/specs/change-sets.md, DI-21.132. The sandbox configuration of a change set from the file of
+ * each target. The base runtime and the `primary` checkout come from the first target with an
+ * enabled preview, else the first target: the work sprite's self-check and the refiner read it.
+ * User validation runs each target with its own preview and accounts (DI-21.147). The allow lists
+ * are the union of the targets' lists, each already capped by the product ceiling. The repair
+ * budget is the smallest of the targets. Each verify command runs in its own target, named after it.
+ */
+export const combineTargets = (
+  targets: PreparedTarget[],
+): { validation: PreparedTarget; runtime: ProjectRuntimeConfig; verifyCommands: VerificationCommand[]; preview: PreviewConfig | null } => {
+  const first = targets[0];
+  if (first === undefined) throw new Error("a sandbox needs at least one target");
+  if (targets.length === 1) return { validation: first, runtime: first.runtime, verifyCommands: first.verifyCommands, preview: first.preview };
+  const validation = targets.find((target) => target.preview !== null && target.preview.enabled) ?? first;
+  const union = (pick: (runtime: ProjectRuntimeConfig) => string[]): string[] => [...new Set(targets.flatMap((target) => pick(target.runtime)))];
+  const strictest = targets.reduce((least, target) => (target.runtime.repairMaxAttempts < least.runtime.repairMaxAttempts ? target : least), first);
+  return {
+    validation,
+    runtime: {
+      ...validation.runtime,
+      allowedDomains: union((runtime) => runtime.allowedDomains),
+      bootstrapAllowedDomains: union((runtime) => runtime.bootstrapAllowedDomains ?? []),
+      sandboxAllowListDeclared: targets.some((target) => target.runtime.sandboxAllowListDeclared === true),
+      docker: targets.some((target) => target.runtime.docker === true),
+      agentsBlockIgnored: targets.some((target) => target.runtime.agentsBlockIgnored === true),
+      repairMaxAttempts: strictest.runtime.repairMaxAttempts,
+      ...(strictest.runtime.repairBudgetSource === undefined ? {} : { repairBudgetSource: strictest.runtime.repairBudgetSource }),
+    },
+    verifyCommands: targets.flatMap((target) =>
+      target.verifyCommands.map((command) => ({
+        name: `${target.repository}: ${command.name}`,
+        run: command.run,
+        workingDirectory: target.checkout.path,
+        env: target.environment,
+      })),
+    ),
+    preview: validation.preview,
+  };
+};
+
 /** docs/specs/run-speed.md. What one build-ahead did. */
 export type BuildAheadOutcome =
   | { kind: "built"; snapshotId: string; bootstrapKey: string }
@@ -105,7 +235,20 @@ export type BuildAheadOutcome =
 
 export interface PreparedSandbox {
   ref: SandboxRef;
+  /**
+   * The primary checkout. For a change set it is one of `targets` (DI-21.132): the target of the
+   * work sprite's self-check. A check sprite validates each target in its own folder (DI-21.147).
+   */
   checkout: CheckoutResult;
+  /** docs/specs/change-sets.md. Every target, in set order. One entry, the primary, for one target. */
+  targets: PreparedTarget[];
+  /** DI-21.138. The read-only sibling clones of the refiner. Empty for every other sandbox. */
+  siblings: SiblingCheckout[];
+  /**
+   * docs/specs/change-sets.md, DI-21.146. What a check sprite of a change set knows for its set
+   * check: each target, the wired pairs and the pairs that run alone. Null for every other sandbox.
+   */
+  setCheck: SetCheckFacts | null;
   baselineCheckpoint: CheckpointRef | null;
   /** Built from `.factoree/config.yaml` and the Project defaults. SDD sections 15 and 57. */
   runtime: ProjectRuntimeConfig;
@@ -138,6 +281,12 @@ export interface PreparedSandbox {
    */
   allowedHosts: string[];
 }
+
+/**
+ * docs/specs/check-isolation.md. The step after the configuration read and before the bootstrap. A
+ * check sprite applies the captured patch there, to each target of a change set.
+ */
+export type BeforeBootstrap = (ref: SandboxRef, primaryPath: string, targets: Array<{ repository: string; path: string }>) => Promise<void>;
 
 /** docs/specs/skill-registry.md. One skill that reached a sandbox. SDD section 55 records it. */
 export interface DeliveredSkill {
@@ -206,7 +355,25 @@ export interface SandboxManagerOptions {
   hostCredentials?: (tenantId: string, productId: string, checkoutRepositories: readonly string[]) => Promise<HostCredentialAccess>;
   /** docs/specs/host-credentials.md. Where a sandbox with a `github` binding is recorded for its refresh. */
   credentialBindings?: CredentialBindingStore;
+  /**
+   * docs/specs/change-sets.md, DI-21.136. Asks for the build-ahead of a set whose work sprite found
+   * no set snapshot. Absent means no set snapshot is ever built.
+   */
+  requestSetBuildAhead?: (request: { tenantId: string; productId: string; repositoryFullNames: string[] }) => Promise<void>;
+  /**
+   * docs/specs/change-sets.md, DI-21.148. The readiness probe and the redactor the build-ahead of a
+   * set starts each wired group with, to learn whether it fits the sandbox size. Absent means the
+   * build-ahead records no pair as unwired.
+   */
+  previewProbe?: ReadinessProbe;
+  redactor?: Redactor;
 }
+
+/**
+ * docs/specs/change-sets.md, DI-21.136. What a warm snapshot restores for a change set: every
+ * target from a set snapshot, or the first target alone from the snapshot of its repository.
+ */
+type WarmScope = "all" | "first";
 
 /**
  * The hosts a checkout needs. SDD section 32 applies the network policy before the first
@@ -227,7 +394,7 @@ export interface SandboxManagerOptions {
  * exits with status 2, so `|| true` never runs. The option is therefore tried in a subshell
  * first, and set only where it exists. Such a shell keeps the old behaviour.
  */
-const bootstrapScript = (command: string): string =>
+export const bootstrapScript = (command: string): string =>
   `if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi\n${command}`;
 
 /** The output of a failed bootstrap. An installer reports its reason on either stream. */
@@ -235,6 +402,10 @@ const bootstrapFailureDetail = (stdout: string, stderr: string): string => {
   const parts = [stderr.trim(), stdout.trim()].filter((part) => part.length > 0);
   return parts.length === 0 ? "the command wrote no output" : parts.join(" | ");
 };
+
+/** docs/specs/change-sets.md. True when the sandbox checks out two or more targets. */
+const isChangeSet = (input: PrepareSandboxInput): input is PrepareSandboxInput & { targets: TargetSpec[] } =>
+  input.targets !== undefined && input.targets.length > 1;
 
 const checkoutHosts = (specs: RepositorySpec[]): string[] => {
   const hosts = new Set<string>();
@@ -292,7 +463,7 @@ export class SandboxManager {
    */
   async prepare(
     input: PrepareSandboxInput,
-    beforeBootstrap?: (ref: SandboxRef, primaryPath: string) => Promise<void>,
+    beforeBootstrap?: BeforeBootstrap,
   ): Promise<PreparedSandbox> {
     // docs/specs/release-0-1-0.md. The install settings choose the provider of each new sandbox.
     await this.options.sandbox.refresh?.();
@@ -315,9 +486,53 @@ export class SandboxManager {
       });
     }
 
-    const warm = await this.warmSnapshotFor(input);
+    if (isChangeSet(input)) return this.prepareSet(input, beforeBootstrap);
+    const warm = await this.warmSnapshotFor(input, input.primary.url);
     if (warm !== null) {
       const prepared = await this.prepareIn(input, beforeBootstrap, warm);
+      if (prepared !== null) return prepared;
+    }
+    const prepared = await this.prepareIn(input, beforeBootstrap, null);
+    if (prepared === null) throw new Error("a cold sandbox preparation returned no sandbox");
+    return prepared;
+  }
+
+  /**
+   * docs/specs/change-sets.md, DI-21.136. A change set starts from its set snapshot. With none, or
+   * one that cannot serve the set, it restores the snapshot of its first target, clones the others
+   * cold, and its work sprite asks for a build-ahead of the set. With neither, every target is cold.
+   */
+  private async prepareSet(
+    input: PrepareSandboxInput & { targets: TargetSpec[] },
+    beforeBootstrap: BeforeBootstrap | undefined,
+  ): Promise<PreparedSandbox> {
+    const subject = snapshotSubjectOf(input.targets.map((target) => target.url));
+    const setWarm = await this.warmSnapshotFor(input, subject);
+    if (setWarm !== null) {
+      const prepared = await this.prepareIn(input, beforeBootstrap, setWarm, undefined, "all");
+      if (prepared !== null) return prepared;
+    }
+    // A check sprite follows the work sprite of its run, which asked already. A build-ahead builds the set.
+    if (beforeBootstrap === undefined && input.buildAhead !== true && this.options.requestSetBuildAhead !== undefined) {
+      try {
+        await this.options.requestSetBuildAhead({
+          tenantId: input.tenantId,
+          productId: input.productId,
+          repositoryFullNames: input.targets.map((target) => target.repository),
+        });
+        this.options.logger?.info("the change set has no set snapshot, so a build-ahead of the set is requested", {
+          run_id: input.runId,
+          repositories: input.targets.map((target) => target.repository).join(", "),
+        });
+      } catch (error) {
+        // A build-ahead only saves time, so a failed request costs the next run its warm start.
+        this.options.logger?.warn("the build-ahead request of the set failed", { run_id: input.runId, error: String(error) });
+      }
+    }
+    const first = input.targets[0];
+    const firstWarm = first === undefined || input.buildAhead === true ? null : await this.warmSnapshotFor(input, first.url);
+    if (firstWarm !== null) {
+      const prepared = await this.prepareIn(input, beforeBootstrap, firstWarm, undefined, "first");
       if (prepared !== null) return prepared;
     }
     const prepared = await this.prepareIn(input, beforeBootstrap, null);
@@ -331,6 +546,7 @@ export class SandboxManager {
    */
   async hasCurrentWarmSnapshot(input: {
     tenantId: string;
+    /** The repository URL, or the subject of a set (`snapshotSubjectOf`). */
     repositoryUrl: string;
     bootstrapKey: string;
     provider?: string;
@@ -365,12 +581,12 @@ export class SandboxManager {
     return { kind: "built", ...result };
   }
 
-  /** The warm snapshot this Run can start from, or null when it starts cold. */
-  private async warmSnapshotFor(input: PrepareSandboxInput): Promise<WarmSnapshot | null> {
+  /** The warm snapshot of a repository or a set this Run can start from, or null when it starts cold. */
+  private async warmSnapshotFor(input: PrepareSandboxInput, subject: string): Promise<WarmSnapshot | null> {
     const sandbox = await this.sandboxOf(input.provider);
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
-    const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.primary.url });
+    const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: subject });
     // A snapshot of another template holds an old toolchain or size. The cold run replaces it.
     return warm !== null && warm.template === sandbox.warmSnapshots.template ? warm : null;
   }
@@ -382,17 +598,21 @@ export class SandboxManager {
    */
   private async prepareIn(
     input: PrepareSandboxInput,
-    beforeBootstrap: ((ref: SandboxRef, primaryPath: string) => Promise<void>) | undefined,
+    beforeBootstrap: BeforeBootstrap | undefined,
     warm: WarmSnapshot | null,
     onSaved?: (snapshot: { snapshotId: string; bootstrapKey: string }) => void,
+    /** docs/specs/change-sets.md, DI-21.136. What `warm` restores of a change set. */
+    scope: WarmScope = "all",
   ): Promise<PreparedSandbox | null> {
     const sandbox = await this.sandboxOf(input.provider);
     // docs/specs/host-credentials.md. The credentials are read before the create, so a provider
     // that cannot bind them fails the preparation before it costs a sandbox.
+    const setTargets = isChangeSet(input) ? input.targets : null;
     const checkoutRepositories = githubRepositoriesOf([
-      input.primary.url,
+      ...(setTargets === null ? [input.primary.url] : setTargets.map((target) => target.url)),
       ...input.references.map((reference) => reference.url),
       ...(input.organizationSkills === undefined ? [] : [input.organizationSkills.url]),
+      ...(input.siblings?.urls ?? []),
     ]);
     const access = await this.credentialAccessOf(input, checkoutRepositories);
     assertBindable(sandbox, access);
@@ -441,8 +661,9 @@ export class SandboxManager {
     try {
       // The organization skills repository is checked out under the first policy, so its host
       // must be allowed there.
-      const specs = [input.primary, ...input.references];
+      const specs = [...(setTargets ?? [input.primary]), ...input.references];
       if (input.organizationSkills !== undefined) specs.push(input.organizationSkills);
+      for (const url of input.siblings?.urls ?? []) specs.push({ url, ref: "HEAD" });
       const repositoryHosts = checkoutHosts(specs);
 
       // Policy one. Only the repository hosts. The file that names the real allow list does not
@@ -464,14 +685,95 @@ export class SandboxManager {
 
       await probeCredentialHosts(sandbox, ref, access);
 
-      const primary =
-        warm === null
-          ? await checkoutPrimary(sandbox, ref, input.primary, input.repositoryCredential)
-          : await refreshPrimary(sandbox, ref, input.primary, input.repositoryCredential);
+      let primary: CheckedOutRepository;
+      let targets: PreparedTarget[];
+      let bootstrapKey: string | null = null;
+      if (setTargets === null) {
+        primary =
+          warm === null
+            ? await checkoutPrimary(sandbox, ref, input.primary, input.repositoryCredential)
+            : await refreshPrimary(sandbox, ref, input.primary, input.repositoryCredential);
 
-      // SDD section 15. The primary repository owns the configuration of the Run.
-      const file = await readRepositoryConfig(sandbox, ref, primary.path);
-      const { runtime, verifyCommands, preview } = toProjectRuntimeConfig(file, input.defaults);
+        // SDD section 15. The primary repository owns the configuration of the Run.
+        const file = await readRepositoryConfig(sandbox, ref, primary.path);
+        const resolved = toProjectRuntimeConfig(file, input.defaults);
+        targets = [{ repository: repositoryOfUrl(primary.url), checkout: primary, ...resolved, environment: {} }];
+
+        // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
+        // allow list. A change of any of them means the snapshot no longer fits, and the cold run
+        // takes a new one. A change to any other field keeps the snapshot.
+        // docs/specs/repository-setup-and-services.md. The compose stack and the key files join the key.
+        bootstrapKey = await this.bootstrapKeyIn(sandbox, ref, primary.path, resolved.runtime, access);
+        if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
+          this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
+            run_id: input.runId,
+            snapshot_id: warm.snapshotId,
+          });
+          await sandbox.destroy(ref).catch(() => undefined);
+          return null;
+        }
+      } else {
+        // docs/specs/change-sets.md. Each target checks out in its own folder and owns its own
+        // configuration: its bootstrap, its compose project, its MISE_CONFIG_FILE and its verify commands.
+        // DI-21.136. A set snapshot holds every target, and the snapshot of one repository the first.
+        targets = [];
+        const members: SetMemberKey[] = [];
+        for (const [index, target] of setTargets.entries()) {
+          const credential = target.credential ?? input.repositoryCredential;
+          let checkout: CheckedOutRepository;
+          if (warm === null || (scope === "first" && index > 0)) {
+            checkout = await checkoutTarget(sandbox, ref, target, credential);
+          } else if (scope === "all") {
+            checkout = await refreshTarget(sandbox, ref, target, credential);
+          } else {
+            const moved = await this.moveSnapshotPrimary(sandbox, ref, input, target.repository);
+            if (!moved) {
+              await sandbox.destroy(ref).catch(() => undefined);
+              return null;
+            }
+            checkout = await refreshTarget(sandbox, ref, target, credential);
+            // DI-21.144. The dependency folders of the snapshot name `primary`, so the bootstrap of
+            // this target builds them again in its new folder.
+            await removeIgnoredFiles(sandbox, ref, checkout.path);
+          }
+          const resolved = toProjectRuntimeConfig(await readRepositoryConfig(sandbox, ref, checkout.path), input.defaults);
+          // The key reads the configuration before the compose project name of the set, so it equals
+          // the key of the repository alone and the key the build-ahead computes.
+          const memberKey = await this.bootstrapKeyIn(sandbox, ref, checkout.path, resolved.runtime, access);
+          members.push({ repositoryUrl: target.url, bootstrapKey: memberKey });
+          // The first target decides before any other target is cloned into a sandbox that goes.
+          if (warm !== null && scope === "first" && index === 0 && memberKey !== warm.bootstrapKey) {
+            this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts without it", {
+              run_id: input.runId,
+              snapshot_id: warm.snapshotId,
+            });
+            await sandbox.destroy(ref).catch(() => undefined);
+            return null;
+          }
+          const services = resolved.runtime.services ?? null;
+          targets.push({
+            repository: target.repository,
+            checkout,
+            ...resolved,
+            runtime: { ...resolved.runtime, services: services === null ? null : { ...services, project: composeProjectOf(target.repository) } },
+            environment: targetEnvironmentOf(checkout.path),
+          });
+        }
+        if (warm !== null && scope === "all") {
+          if (setBootstrapKeyOf(members) !== warm.bootstrapKey) {
+            this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts without it", {
+              run_id: input.runId,
+              snapshot_id: warm.snapshotId,
+            });
+            await sandbox.destroy(ref).catch(() => undefined);
+            return null;
+          }
+        }
+        // DI-21.136. Only a build-ahead saves a set snapshot, so a run never waits for one.
+        if (input.buildAhead === true) bootstrapKey = setBootstrapKeyOf(members);
+        primary = combineTargets(targets).validation.checkout;
+      }
+      const { runtime, verifyCommands, preview } = combineTargets(targets);
       // docs/specs/claude-code-runner.md. The Product selects the runners, and the run log says so.
       if (runtime.agentsBlockIgnored === true) {
         this.options.logger?.warn("Factoree ignores the agents block of .factoree/config.yaml: the Product selects the runner of each role", {
@@ -480,32 +782,24 @@ export class SandboxManager {
         });
       }
 
-      // docs/specs/run-speed.md. A warm snapshot ran one bootstrap command, one warm command and one
-      // allow list. A change of any of them means the snapshot no longer fits, and the cold run
-      // takes a new one. A change to any other field keeps the snapshot.
-      // docs/specs/repository-setup-and-services.md. The compose stack and the key files join the key.
-      const bootstrapKey = bootstrapKeyOf({
-        bootstrapCommand: runtime.bootstrapCommand,
-        warmCommand: runtime.warmCommand ?? null,
-        allowedDomains: bootstrapAllowListOf(runtime),
-        services: runtime.services ?? null,
-        docker: runtime.docker === true,
-        files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, primary.path), keyFilePatternsOf(runtime)),
-        credentials: credentialKeyOf(access.credentials),
-      });
-      if (warm !== null && bootstrapKey !== warm.bootstrapKey) {
-        this.options.logger?.info("the bootstrap key changed since the warm snapshot, so the sandbox starts cold", {
-          run_id: input.runId,
-          snapshot_id: warm.snapshotId,
-        });
-        await sandbox.destroy(ref).catch(() => undefined);
-        return null;
-      }
-
       if (input.pullRequestHead !== undefined) {
         await overlayPullRequestHead(sandbox, ref, primary, input.pullRequestHead, input.repositoryCredential, input.pullRequestMerge === true);
       }
-      if (beforeBootstrap !== undefined) await beforeBootstrap(ref, primary.path);
+      // docs/specs/change-sets.md, slice 9, DI-21.159. Each target of a set run takes the change of its
+      // own pull request.
+      for (const target of setTargets ?? []) {
+        if (target.pullRequestHead === undefined) continue;
+        const checkout = targets.find((candidate) => candidate.repository === target.repository)?.checkout;
+        if (checkout === undefined) throw new Error(`the sandbox holds no checkout of ${target.repository}`);
+        await overlayPullRequestHead(sandbox, ref, checkout, target.pullRequestHead, target.credential ?? input.repositoryCredential, target.pullRequestMerge === true);
+      }
+      if (beforeBootstrap !== undefined) {
+        await beforeBootstrap(
+          ref,
+          primary.path,
+          targets.map((target) => ({ repository: target.repository, path: target.checkout.path })),
+        );
+      }
 
       // docs/specs/proof-pack-and-visual-evidence.md. A work sprite with a preview gets the browser
       // tools for the implementer's self-check. The install runs beside the bootstrap, under
@@ -520,7 +814,7 @@ export class SandboxManager {
       await applyEgress(
         sandbox,
         ref,
-        [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime), ...(browserTools ? BROWSER_TOOL_HOSTS : [])])],
+        [...new Set([...repositoryHosts, ...targets.flatMap((target) => bootstrapAllowListOf(target.runtime)), ...(browserTools ? BROWSER_TOOL_HOSTS : [])])],
         egress,
       );
       const install = browserTools
@@ -534,11 +828,22 @@ export class SandboxManager {
       // docs/specs/repository-setup-and-services.md. Rootless Docker and the compose stack start
       // under policy two, before the bootstrap, so a bootstrap can migrate the database. A warm
       // sandbox already holds them, and both calls change nothing on a healthy stack.
-      const services = runtime.services ?? null;
+      // The seed fills the stack once. A warm sandbox holds the seeded data of its snapshot.
+      // DI-21.136. A change set that restored only its first target seeds every stack: the first
+      // stack starts again under the compose project of the set.
+      const seeds = warm === null || (setTargets !== null && scope === "first");
+      // docs/specs/change-sets.md, DI-21.146. A check sprite of a change set runs one stack at a
+      // time: each target starts its stack, runs its bootstrap and its seed, and pauses the stack.
+      const oneStackAtATime = setTargets !== null && beforeBootstrap !== undefined;
       if (runtime.docker === true) {
         const servicesStarted = Date.now();
         await ensureDocker(sandbox, ref);
-        if (services !== null) await startServices(sandbox, ref, primary.path, services);
+        if (!oneStackAtATime) {
+          for (const target of targets) {
+            const services = target.runtime.services ?? null;
+            if (services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+          }
+        }
         this.options.logger?.info("the services are ready", {
           run_id: input.runId,
           step: "prepare_services",
@@ -547,24 +852,27 @@ export class SandboxManager {
         });
       }
 
-      if (runtime.bootstrapCommand !== null) {
-        const result = await sandbox.exec(ref, {
-          file: "sh",
-          args: ["-c", bootstrapScript(runtime.bootstrapCommand)],
-          cwd: primary.path,
-        });
-        if (result.exitCode !== 0) {
-          // The bootstrap command comes from the repository configuration, so a failure of it is
-          // a configuration fault. A retry runs the same command and fails again.
-          throw new RunConfigurationError(
-            `the bootstrap command failed with exit code ${result.exitCode}: ` +
-              withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
-          );
+      // docs/specs/change-sets.md. Each target runs its own bootstrap in its own folder, in set order.
+      for (const target of targets) {
+        const services = runtime.docker === true ? (target.runtime.services ?? null) : null;
+        if (oneStackAtATime && services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+        await this.runBootstrap(sandbox, ref, target, targets.length);
+        if (oneStackAtATime && services !== null) {
+          if (seeds) await this.seed(sandbox, ref, target);
+          await pauseServices(sandbox, ref, target.checkout.path, services);
         }
       }
+      if (seeds && !oneStackAtATime) {
+        for (const target of targets) await this.seed(sandbox, ref, target);
+      }
 
-      // The seed fills the stack once. A warm sandbox holds the seeded data of its snapshot.
-      if (services !== null && warm === null) await seedServices(sandbox, ref, primary.path, services);
+      // docs/specs/change-sets.md, DI-21.145, DI-21.146. A check sprite of a change set, and the
+      // build-ahead of a set, learn each target's fakes and wire each pair a fake names. The pairs a
+      // set snapshot could not start run alone (DI-21.148).
+      const setCheck =
+        setTargets !== null && (oneStackAtATime || input.buildAhead === true)
+          ? await this.setCheckOf(sandbox, ref, targets, warm !== null && scope === "all" ? (warm.unwiredPairs ?? []) : [])
+          : null;
 
       const selfCheckReady = sandbox.capabilities.supportsCustomImage
         ? wantsBrowserTools
@@ -575,8 +883,19 @@ export class SandboxManager {
       // docs/specs/kiln-sandbox-provider.md. A cold work sprite saves itself here, after the clone
       // and the bootstrap and before any agent runs. A check sprite holds the patch, so it never
       // saves itself.
-      if (warm === null && beforeBootstrap === undefined) {
-        const saved = await this.saveWarmSnapshot(input, ref, primary.path, runtime.warmCommand ?? null, bootstrapKey);
+      // docs/specs/change-sets.md, DI-21.135. A set snapshot runs the warm command of each target in
+      // its own folder, and its row names the set.
+      if (warm === null && beforeBootstrap === undefined && bootstrapKey !== null) {
+        const warmCommands = targets.flatMap((target) =>
+          target.runtime.warmCommand === undefined || target.runtime.warmCommand === null
+            ? []
+            : [{ path: target.checkout.path, command: target.runtime.warmCommand, environment: target.environment }],
+        );
+        const repositoryUrls = setTargets === null ? [input.primary.url] : setTargets.map((target) => target.url);
+        // DI-21.148. The build-ahead of a set starts each wired group once, and records the pairs
+        // that do not fit, so each run of the set tests them alone.
+        const unwired = input.buildAhead === true && setCheck !== null ? await this.tryWiredGroups(sandbox, ref, input, setCheck) : [];
+        const saved = await this.saveWarmSnapshot(input, ref, repositoryUrls, warmCommands, bootstrapKey, unwired);
         if (saved !== null) onSaved?.({ snapshotId: saved, bootstrapKey });
       }
 
@@ -587,7 +906,17 @@ export class SandboxManager {
         return null;
       }
 
-      const repositoryInstructions = await readRepositoryInstructions(sandbox, ref, primary.path);
+      // docs/specs/change-sets.md. The instructions of each target, under its name and its folder.
+      let repositoryInstructions: string;
+      if (setTargets === null) {
+        repositoryInstructions = await readRepositoryInstructions(sandbox, ref, primary.path);
+      } else {
+        const sections: string[] = [];
+        for (const target of targets) {
+          sections.push(`### ${target.repository} at ${target.checkout.path}\n\n${await readRepositoryInstructions(sandbox, ref, target.checkout.path)}`);
+        }
+        repositoryInstructions = sections.join("\n\n");
+      }
 
       // SDD section 16. The organization skills repository is read-only, and it lives outside
       // the `reference/` tree. It is checked out while the checkout hosts are still allowed.
@@ -600,6 +929,10 @@ export class SandboxManager {
               input.organizationSkills,
               input.repositoryCredential,
             );
+
+      // docs/specs/change-sets.md, DI-21.138. The siblings clone while the checkout hosts are allowed,
+      // after the warm snapshot, so no snapshot holds them.
+      const siblings = input.siblings === undefined ? [] : await input.siblings.read(sandbox, ref);
 
       // Policy three. The configured allow list alone. Every later step, the Implementer and the
       // verification commands included, runs under exactly what the repository declared.
@@ -616,7 +949,7 @@ export class SandboxManager {
       // reaches `git status` or the verified patch.
       const registryRoot =
         input.registrySkills === undefined ? null : await this.deliverRegistrySkills(sandbox, ref, input.registrySkills);
-      const roots: SkillRoot[] = [{ scope: "repository", path: primary.path }];
+      const roots: SkillRoot[] = targets.map((target) => ({ scope: "repository", path: target.checkout.path }));
       if (registryRoot !== null) roots.push({ scope: "registry", path: registryRoot });
       if (organizationSkills !== null) roots.push({ scope: "organization", path: organizationSkills.path });
       const skillSet = await discoverSkills(sandbox, ref, roots, this.options.logger);
@@ -629,6 +962,9 @@ export class SandboxManager {
       return {
         ref,
         checkout,
+        targets,
+        siblings,
+        setCheck,
         baselineCheckpoint,
         runtime,
         verifyCommands,
@@ -715,11 +1051,18 @@ export class SandboxManager {
    * base commit that does not build must not stop every run, and a partial build cache is still
    * valid input to an incremental build. Answers the exit code of a failed command, or null.
    */
-  private async runWarmCommand(input: PrepareSandboxInput, ref: SandboxRef, primaryPath: string, command: string): Promise<number | null> {
+  private async runWarmCommand(
+    input: PrepareSandboxInput,
+    ref: SandboxRef,
+    primaryPath: string,
+    command: string,
+    environment: Record<string, string>,
+  ): Promise<number | null> {
     const result = await this.options.sandbox.exec(ref, {
       file: "sh",
       args: ["-c", bootstrapScript(command)],
       cwd: primaryPath,
+      ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
     });
     this.options.logger?.info("the warm command ran before the warm snapshot", {
       run_id: input.runId,
@@ -742,9 +1085,10 @@ export class SandboxManager {
   private async saveWarmSnapshot(
     input: PrepareSandboxInput,
     ref: SandboxRef,
-    primaryPath: string,
-    warmCommand: string | null,
+    repositoryUrls: string[],
+    warmCommands: Array<{ path: string; command: string; environment: Record<string, string> }>,
     bootstrapKey: string,
+    unwiredPairs: UnwiredPair[] = [],
   ): Promise<string | null> {
     // The ref names the provider that created the sandbox, and its snapshot belongs to that provider.
     const sandbox = await this.sandboxOf(input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter));
@@ -752,16 +1096,23 @@ export class SandboxManager {
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const startedAt = new Date();
     try {
-      const warmCommandExitCode = warmCommand === null ? null : await this.runWarmCommand(input, ref, primaryPath, warmCommand);
+      // The exit code of the first warm command that failed, or null.
+      let warmCommandExitCode: number | null = null;
+      for (const warm of warmCommands) {
+        const exitCode = await this.runWarmCommand(input, ref, warm.path, warm.command, warm.environment);
+        warmCommandExitCode ??= exitCode;
+      }
       const snapshotId = await sandbox.warmSnapshots.take(ref);
       const replaced = await store.save({
         tenantId: input.tenantId,
         adapter: sandbox.name,
-        repositoryUrl: input.primary.url,
+        repositoryUrl: snapshotSubjectOf(repositoryUrls),
+        ...(repositoryUrls.length > 1 ? { repositoryUrls: [...new Set(repositoryUrls)].sort() } : {}),
         template: sandbox.warmSnapshots.template,
         bootstrapKey,
         warmCommandExitCode,
         snapshotId,
+        ...(unwiredPairs.length === 0 ? {} : { unwiredPairs }),
       });
       if (replaced !== null) {
         // The record comes first, so a remove that throws or that the provider refuses because a
@@ -794,6 +1145,154 @@ export class SandboxManager {
           endedAt: new Date(),
         });
       }
+    }
+  }
+
+  /** Runs the bootstrap of one target in its own folder. A failure is a configuration fault. */
+  private async runBootstrap(sandbox: Sandbox, ref: SandboxRef, target: PreparedTarget, count: number): Promise<void> {
+    const command = target.runtime.bootstrapCommand;
+    if (command === null) return;
+    const result = await sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", bootstrapScript(command)],
+      cwd: target.checkout.path,
+      ...(Object.keys(target.environment).length === 0 ? {} : { env: target.environment }),
+    });
+    if (result.exitCode !== 0) {
+      // The bootstrap command comes from the repository configuration, so a failure of it is
+      // a configuration fault. A retry runs the same command and fails again.
+      throw new RunConfigurationError(
+        `${count > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command"} failed with exit code ${result.exitCode}: ` +
+          withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
+      );
+    }
+  }
+
+  /** Runs the seed of one target's stack. A target with no stack seeds nothing. */
+  private async seed(sandbox: Sandbox, ref: SandboxRef, target: PreparedTarget): Promise<void> {
+    const services = target.runtime.services ?? null;
+    if (services === null) return;
+    await seedServices(
+      sandbox,
+      ref,
+      target.checkout.path,
+      services,
+      ...(Object.keys(target.environment).length === 0 ? [] : [target.environment]),
+    );
+  }
+
+  /** docs/specs/change-sets.md, DI-21.146. The set check facts of the targets of a sandbox. */
+  private async setCheckOf(sandbox: Sandbox, ref: SandboxRef, targets: PreparedTarget[], unwired: readonly UnwiredPair[]): Promise<SetCheckFacts> {
+    const { verifyCommands } = combineTargets(targets);
+    const checkTargets: SetCheckTarget[] = [];
+    for (const target of targets) {
+      const services = target.runtime.docker === true ? (target.runtime.services ?? null) : null;
+      checkTargets.push({
+        repository: target.repository,
+        path: target.checkout.path,
+        baseSha: target.checkout.baseSha,
+        services,
+        preview: target.preview,
+        accounts: target.runtime.accounts ?? [],
+        ...(target.runtime.browserLimits === undefined ? {} : { browserLimits: target.runtime.browserLimits }),
+        environment: target.environment,
+        ...(services === null ? { fakes: [] } : await listStack(sandbox, ref, target.checkout.path, services)),
+        bootstrapCommand: target.runtime.bootstrapCommand,
+        verifyCommands: verifyCommands.filter((command) => command.workingDirectory === target.checkout.path),
+      });
+    }
+    // DI-21.150. The sandbox address serves the path by the fake's service name.
+    const labelled = checkTargets.some((target) => target.fakes.some((fake) => fake.repository !== undefined));
+    const hostAddress = labelled ? await hostAddressOf(sandbox, ref) : null;
+    return { targets: checkTargets, ...wireTargets(checkTargets, unwired, hostAddress) };
+  }
+
+  /**
+   * docs/specs/change-sets.md, DI-21.148. Starts each wired group of a set build-ahead with every
+   * preview of the group, and answers the pairs of each group that did not start, with the reason.
+   * Each stack then runs again as the work sprite holds it, so the snapshot holds the fakes too.
+   */
+  private async tryWiredGroups(sandbox: Sandbox, ref: SandboxRef, input: PrepareSandboxInput, facts: SetCheckFacts): Promise<UnwiredPair[]> {
+    const probe = this.options.previewProbe;
+    const redactor = this.options.redactor;
+    if (probe === undefined || redactor === undefined) return [];
+    const unwired: UnwiredPair[] = [];
+    for (const group of checkGroupsOf(facts.targets, facts.pairs).filter((candidate) => candidate.length > 1)) {
+      let problem: string | null = null;
+      try {
+        const running = await startGroup({ sandbox, probe, redactor }, ref, facts, group, { previews: "all", environment: {} });
+        if (running.problem !== null) problem = `the preview of ${running.problem.repository} did not start: ${running.problem.reason}`;
+        await stopGroup(sandbox, ref, facts, running);
+      } catch (error) {
+        problem = withoutUrlCredentials(redactor.redactText(error instanceof Error ? error.message : String(error))).slice(0, 500);
+      }
+      for (const target of facts.targets.filter((candidate) => group.includes(candidate.repository))) {
+        if (target.services !== null) await startServices(sandbox, ref, target.path, target.services);
+      }
+      if (problem === null) continue;
+      this.options.logger?.warn("a wired group of the set did not start within the sandbox size, so its runs test the targets alone", {
+        run_id: input.runId,
+        repositories: group.join(", "),
+        detail: problem.slice(0, 500),
+      });
+      for (const pair of pairsIn(group, facts.pairs)) {
+        unwired.push({
+          provider: pair.provider,
+          consumer: pair.consumer,
+          fake: pair.fake,
+          reason: `the build-ahead of the set could not start them together within the sandbox size: ${problem.replace(/[.\s]+$/, "")}`,
+        });
+      }
+    }
+    return unwired;
+  }
+
+  /**
+   * docs/specs/run-speed.md. The bootstrap key of one checkout: its bootstrap and warm commands, its
+   * bootstrap allow list, its compose stack, its key files and the host credentials of the product.
+   */
+  private async bootstrapKeyIn(
+    sandbox: Sandbox,
+    ref: SandboxRef,
+    path: string,
+    runtime: ProjectRuntimeConfig,
+    access: HostCredentialAccess,
+  ): Promise<string> {
+    return bootstrapKeyOf({
+      bootstrapCommand: runtime.bootstrapCommand,
+      warmCommand: runtime.warmCommand ?? null,
+      allowedDomains: bootstrapAllowListOf(runtime),
+      services: runtime.services ?? null,
+      docker: runtime.docker === true,
+      files: selectKeyFiles(await listRepositoryFiles(sandbox, ref, path), keyFilePatternsOf(runtime)),
+      credentials: credentialKeyOf(access.credentials),
+    });
+  }
+
+  /**
+   * docs/specs/change-sets.md, DI-21.136. Moves the checkout of a snapshot of one repository from
+   * `primary` to the folder of its target. Its compose stack runs under the project name of the
+   * folder `primary`, so it stops first: the set starts it again under the project of the target.
+   * False when the stack does not stop, and the snapshot then cannot serve the set.
+   */
+  private async moveSnapshotPrimary(sandbox: Sandbox, ref: SandboxRef, input: PrepareSandboxInput, repository: string): Promise<boolean> {
+    const primaryPath = `${ref.workspacePath}/primary`;
+    try {
+      const { runtime } = toProjectRuntimeConfig(await readRepositoryConfig(sandbox, ref, primaryPath), input.defaults);
+      const services = runtime.services ?? null;
+      if (runtime.docker === true && services !== null) {
+        await ensureDocker(sandbox, ref);
+        await stopServices(sandbox, ref, primaryPath, services);
+      }
+      await movePrimaryToTarget(sandbox, ref, repository);
+      return true;
+    } catch (error) {
+      this.options.logger?.warn("the snapshot of the first target cannot serve the change set, so the set starts cold", {
+        run_id: input.runId,
+        repository,
+        detail: withoutUrlCredentials(String(error)).slice(0, 500),
+      });
+      return false;
     }
   }
 

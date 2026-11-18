@@ -82,6 +82,10 @@ const memoryPullRequests = (existing: PullRequestRecord | null = null): MemoryPu
         headSha: COMMIT,
       });
     },
+    updateBody: () => Promise.reject(new Error("a single target writes its body once")),
+    comment: () => Promise.reject(new Error("a single target never comments")),
+    close: () => Promise.reject(new Error("a single target never closes")),
+    deleteBranch: () => Promise.reject(new Error("a single target never deletes a branch")),
   };
 };
 
@@ -95,7 +99,7 @@ const stubRuns = (): RunRepository & { publications: PublicationRow[] } => {
   const publications: PublicationRow[] = [];
   return {
     publications,
-    setPublication(_tenantId: string, _runId: string, publication: PublicationRow): Promise<void> {
+    setPublication(_tenantId: string, _runId: string, _repositorySlug: string, publication: PublicationRow): Promise<void> {
       publications.push(publication);
       return Promise.resolve();
     },

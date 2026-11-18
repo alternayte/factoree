@@ -70,6 +70,12 @@ export interface RepositoryCredential {
   origin: string;
   tokens: GitHubTokenProvider;
   githubInstallationId: string;
+  /**
+   * docs/specs/change-sets.md. The installation of each other repository a read may name, by its
+   * `owner/repo` name in lower case. A repository it does not name mints against
+   * `githubInstallationId`.
+   */
+  installations?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -165,8 +171,9 @@ export class GitRepositoryReader implements RepositoryReader {
     const repository = repositoryNameOf(parsed);
     // Read-only, and for this one repository. SDD section 30 forbids a write credential here, and
     // a token that reads every repository of the installation reads more than this command needs.
+    const installation = (repository === null ? undefined : source.installations?.[repository.toLowerCase()]) ?? source.githubInstallationId;
     const token = await source.tokens.tokenForInstallation(
-      source.githubInstallationId,
+      installation,
       { contents: "read" },
       repository === null ? undefined : [repository],
     );

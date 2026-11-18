@@ -29,6 +29,8 @@ export interface ResolveContextInput {
   acceptanceCriteria: string[];
   primaryRepository: RepositoryRef;
   referenceRepositories: RepositoryRef[];
+  /** docs/specs/change-sets.md. The other targets of a change set. Absent for one target. */
+  targetRepositories?: RepositoryRef[];
   workItemReferences: string[];
   decisions: RecordedDecision[];
   /** The sources of this Run. SDD section 53 makes the list per Project. */
@@ -47,6 +49,8 @@ export interface ResolvedContext {
   pinned: {
     primary: { slug: string; sha: string };
     references: Array<{ slug: string; sha: string }>;
+    /** docs/specs/change-sets.md. The other targets of a change set, in input order. */
+    targets: Array<{ slug: string; sha: string }>;
   };
   /** SDD section 23. A non-null value means implementation must not start. */
   unresolvedConflict: ContextConflictRecord | null;
@@ -96,6 +100,7 @@ export class ContextResolver {
       topics,
       primaryRepository: input.primaryRepository,
       referenceRepositories: input.referenceRepositories,
+      ...(input.targetRepositories === undefined || input.targetRepositories.length === 0 ? {} : { targetRepositories: input.targetRepositories }),
       workItemReferences: input.workItemReferences,
       decisions: input.decisions,
       contextConfiguration: input.contextConfiguration,
@@ -126,6 +131,7 @@ export class ContextResolver {
     const primaryHost = hostOf(input.primaryRepository.url);
     const known = new Set([
       input.primaryRepository.slug,
+      ...(input.targetRepositories ?? []).map((repository) => repository.slug),
       ...input.referenceRepositories.map((repository) => repository.slug),
     ]);
     const nominated: RepositoryRef[] = [];
@@ -283,6 +289,16 @@ export class ContextResolver {
         repo: input.primaryRepository.slug,
         sha: shaBySlug.get(input.primaryRepository.slug) ?? "",
       },
+      // docs/specs/change-sets.md. Only a change set holds the field, so the contract of one target
+      // and its hash stay as they were.
+      ...((input.targetRepositories ?? []).length === 0
+        ? {}
+        : {
+            targetRepositories: (input.targetRepositories ?? []).map((repository) => ({
+              repo: repository.slug,
+              sha: shaBySlug.get(repository.slug) ?? "",
+            })),
+          }),
       referenceRepositories: [
         ...input.referenceRepositories.map((repository) => ({
           repo: repository.slug,
@@ -320,6 +336,7 @@ export class ContextResolver {
           slug: repository.repo,
           sha: repository.sha,
         })),
+        targets: (contract.targetRepositories ?? []).map((repository) => ({ slug: repository.repo, sha: repository.sha })),
       },
       unresolvedConflict: firstUnresolved(conflicts),
     };

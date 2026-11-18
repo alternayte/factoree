@@ -1852,7 +1852,15 @@ export type ListRunsResponses = {
       failureMessage: string | null;
       workItemTitle: string | null;
       workItemUrl: string | null;
-      pullRequestUrl: string | null;
+      targets: Array<{
+        repositoryFullName: string;
+        baseSha: string | null;
+        patchSha256: string | null;
+        commitSha: string | null;
+        pullRequestUrl: string | null;
+        pullRequestState: string | null;
+        mergeOrder: number | null;
+      }>;
       repairCount: number;
       repairLimit: number | null;
       costUsd: number | null;
@@ -1865,7 +1873,7 @@ export type ListRunsResponses = {
         identifier: string;
         url: string | null;
         state: string;
-        pullRequestUrl: string | null;
+        pullRequestUrls: Array<string>;
       }> | null;
     }>;
     nextCursor: string | null;
@@ -1916,7 +1924,15 @@ export type GetRunResponses = {
     failureMessage: string | null;
     workItemTitle: string | null;
     workItemUrl: string | null;
-    pullRequestUrl: string | null;
+    targets: Array<{
+      repositoryFullName: string;
+      baseSha: string | null;
+      patchSha256: string | null;
+      commitSha: string | null;
+      pullRequestUrl: string | null;
+      pullRequestState: string | null;
+      mergeOrder: number | null;
+    }>;
     repairCount: number;
     repairLimit: number | null;
     costUsd: number | null;
@@ -1929,7 +1945,7 @@ export type GetRunResponses = {
       identifier: string;
       url: string | null;
       state: string;
-      pullRequestUrl: string | null;
+      pullRequestUrls: Array<string>;
     }> | null;
     temporalWorkflowId: string;
     terminal: boolean;
@@ -1943,9 +1959,6 @@ export type GetRunResponses = {
     sandboxRetentionHours: number;
     autonomyLevel: string;
     followUpOfRunId: string | null;
-    baseSha: string | null;
-    commitSha: string | null;
-    patchSha256: string | null;
     skillRegistrySet: string | null;
     skillResolutionId: string | null;
     proofPackPostedAt: string | null;

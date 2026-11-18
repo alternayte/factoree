@@ -14,6 +14,8 @@ export interface BuildImplementerInput {
   /** docs/specs/work-item-images-and-links.md. One line per image file of the work sprite. */
   imageFiles?: string[];
   primaryRepositoryPath: string;
+  /** docs/specs/change-sets.md. Every target of a change set. Absent for a run with one target. */
+  targetRepositories?: Array<{ repository: string; path: string }>;
   referenceRepositoryPaths: string[];
   repositoryInstructions: string;
   skills: string[];
@@ -191,6 +193,7 @@ export const buildImplementerInput = (input: BuildImplementerInput): Implementer
       contextFiles: input.contextFiles ?? [],
       imageFiles: input.imageFiles ?? [],
       primaryRepositoryPath: input.primaryRepositoryPath,
+      ...(input.targetRepositories === undefined ? {} : { targetRepositories: input.targetRepositories }),
       referenceRepositoryPaths: input.referenceRepositoryPaths,
       repositoryInstructions: input.repositoryInstructions,
       skills: input.skills,

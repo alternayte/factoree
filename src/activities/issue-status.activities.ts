@@ -65,6 +65,8 @@ export const createIssueStatusActivities = (dependencies: IssueStatusActivityDep
     issueId: string | null;
     pullRequestUrl: string;
     repositorySlug: string;
+    /** docs/specs/change-sets.md, DI-21.154. The session link label, which names the target of a change set. */
+    label?: string;
   }): Promise<void> {
     // The attachment goes first. Linear keeps one attachment per URL, so a retry repeats it safely.
     if (input.issueId !== null) {
@@ -76,6 +78,6 @@ export const createIssueStatusActivities = (dependencies: IssueStatusActivityDep
         subtitle: input.repositorySlug,
       });
     }
-    await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
+    await dependencies.agentSession.addLink(input.sessionId, input.label ?? "Pull request", input.pullRequestUrl);
   },
 });

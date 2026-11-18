@@ -3,13 +3,21 @@ import { createPullRequestActivities } from "~/activities/pull-request.activitie
 import type { AutoMergeGate, AutoMergePort, MergeMethod, PullRequestOnGitHub } from "~/domain/pull-requests/auto-merge.js";
 import type { AutoMergeUpdate, PublishedPullRequest, PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import type { ProductRecord } from "~/domain/products/product-registry.js";
+import type { ChangeSet } from "~/domain/pull-requests/change-set-status.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import { createLogger } from "~/telemetry/logger.js";
 
 const reject = () => Promise.reject(new Error("not used"));
 
 const build = (
-  options: { gate?: AutoMergeGate; github?: Partial<PullRequestOnGitHub>; autoMerge?: PublishedPullRequest["autoMerge"]; behindBy?: number } = {},
+  options: {
+    gate?: AutoMergeGate;
+    github?: Partial<PullRequestOnGitHub>;
+    autoMerge?: PublishedPullRequest["autoMerge"];
+    behindBy?: number;
+    /** docs/specs/change-sets.md. The state of the provider pull request of a set where this one is the consumer. */
+    provider?: PublishedPullRequest["state"];
+  } = {},
 ) => {
   const record: PublishedPullRequest = {
     id: "pr-1",
@@ -115,6 +123,28 @@ const build = (
       return Promise.resolve({ kind: "merged" });
     },
   };
+  // docs/specs/change-sets.md, DI-21.157. With `provider`, this pull request consumes one provider pull request.
+  const changeSet: ChangeSet | null =
+    options.provider === undefined
+      ? null
+      : {
+          originRunId: "run-1",
+          targets: ["acme/api", "acme/core"],
+          members: [
+            { repositoryId: "repo-1", repositoryFullName: "acme/api", githubInstallationId: "1", number: 12, url: record.url, workflowId: record.workflowId, record, statusKey: null },
+            {
+              repositoryId: "repo-2",
+              repositoryFullName: "acme/core",
+              githubInstallationId: "1",
+              number: 3,
+              url: "https://github.com/acme/core/pull/3",
+              workflowId: "pr:tenant-1:acme/core#3",
+              record: { ...record, id: "pr-2", repositoryId: "repo-2", repositoryFullName: "acme/core", number: 3, state: options.provider },
+              statusKey: null,
+            },
+          ],
+          edges: [{ provider: "acme/core", consumer: "acme/api" }],
+        };
   const activities = createPullRequestActivities({
     pullRequests: store,
     close: { closeOfRecord: reject, afterFailedDeploy: reject },
@@ -132,6 +162,17 @@ const build = (
     repositories: { listByProduct: reject },
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
+    // docs/specs/change-sets.md. The pull request belongs to no change set.
+    changeSets: {
+      changeSetOfPullRequest: () => Promise.resolve(changeSet),
+      changeSetOfRun: () => Promise.resolve(null),
+      markChangeSetStatus: reject,
+      changeSetLock: reject,
+      acquireChangeSetLock: reject,
+      releaseChangeSetLock: reject,
+      recordCheckedHead: reject,
+    },
+    commitStatuses: { setStatus: reject },
   });
   const steer = (trigger: "start" | "new_head" | "auto_merge_disabled" | "event" | "base_moved", eventHeadSha: string | null = null) =>
     activities.steerAutoMerge({ tenantId: "tenant-1", pullRequestId: "pr-1", trigger, eventHeadSha });
@@ -179,6 +220,16 @@ describe("steerAutoMerge", () => {
     expect(await steer("auto_merge_disabled", "head-1")).toEqual({ state: "stopped" });
     expect(await steer("event")).toEqual({ state: "stopped" });
     expect(calls).toEqual(["enable head-1 squash"]);
+  });
+
+  // docs/specs/pr-review-merge-and-deploy.md, D7, DI-21.157.
+  it("holds a consumer of a change set until every provider pull request merged", async () => {
+    const waiting = build({ provider: "open" });
+    expect(await waiting.steer("start")).toEqual({ state: "off" });
+    expect(waiting.calls).toEqual([]);
+    const merged = build({ provider: "merged" });
+    expect(await merged.steer("start")).toEqual({ state: "enabled" });
+    expect(merged.calls).toEqual(["enable head-1 squash"]);
   });
 
   it("merges at once, pinned to the head, when GitHub can merge it now", async () => {

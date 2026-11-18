@@ -150,7 +150,9 @@ const build = (
     productPageUrl: (productId: string) => `https://factoree.example/products/${productId}`,
     sessionRuns: {
       findByAgentSession: () => Promise.resolve(overrides.latest ?? null),
-      lastPatch: () => Promise.resolve(Buffer.from("diff --git a/x b/x\n").toString("base64")),
+      listRunTargets: () => Promise.resolve([{ repositoryId: "repository-1", pullRequestUrl: overrides.latest?.pullRequestUrl ?? null }]),
+      lastPatches: () =>
+        Promise.resolve([{ repositoryFullName: "acme/web", patchBase64: Buffer.from("diff --git a/x b/x\n").toString("base64") }]),
     },
     runViews: {
       list: () => Promise.reject(new Error("unused")),
@@ -167,7 +169,7 @@ const build = (
           status: overrides.latest?.status ?? "FAILED",
           failureReason: "VALIDATION_FAILED",
           failureMessage: "VAL-UI-001 failed.",
-          pullRequestUrl: overrides.latest?.pullRequestUrl ?? null,
+          pullRequestUrls: overrides.latest?.pullRequestUrl == null ? [] : [overrides.latest.pullRequestUrl],
           hasPatch: true,
           patchAttempt: 1,
           targetCount: 1,

@@ -1,6 +1,6 @@
 import { SKILL_PROPOSALS_DIRECTORY } from "~/domain/runs/skill-registry.js";
 import { createHash } from "node:crypto";
-import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import type { CommandResult, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
 /**
@@ -44,6 +44,13 @@ const TRUSTED_GIT_OPTIONS = [
   "-c", "core.hooksPath=/dev/null",
   "-c", "core.sshCommand=false",
 ];
+
+/**
+ * docs/specs/change-sets.md, DI-21.149. One git command under the trusted binary, options and
+ * environment, outside the environment of the sandbox. A caller reads the exit code itself.
+ */
+export const trustedGit = (sandbox: Sandbox, ref: SandboxRef, args: string[]): Promise<CommandResult> =>
+  sandbox.exec(ref, { file: TRUSTED_GIT, args: [...TRUSTED_GIT_OPTIONS, ...args], env: TRUSTED_ENVIRONMENT, isolated: true });
 
 /** SDD section 44. The diff of the staged tree against the base SHA, in an applicable form. */
 export const PATCH_DIFF_ARGS = [
@@ -317,3 +324,13 @@ export const assertSameChangedFiles = (reviewed: string[], published: string[]):
       `Files only in the review: ${removed.join(", ") || "none"}.`,
   );
 };
+
+/**
+ * docs/specs/change-sets.md, DI-21.133. The identity of the patches of a change set: the SHA-256 of
+ * one line `<owner/repo> <patch_sha256>` per target, in set order. Two check sprites of one attempt
+ * hold the same set when this value matches. Each target keeps its own patch hash for publication.
+ */
+export const setPatchSha256 = (targets: ReadonlyArray<{ repository: string; patchSha256: string }>): string =>
+  createHash("sha256")
+    .update(targets.map((target) => `${target.repository} ${target.patchSha256}\n`).join(""))
+    .digest("hex");

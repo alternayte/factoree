@@ -318,6 +318,19 @@ describe("publishToBranch", () => {
       .catch((thrown: unknown) => thrown);
     expect(unchanged).toBeInstanceOf(TrustedCheckoutError);
     expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
+
+    // docs/specs/change-sets.md, DI-21.162. A target of a set PR follow-up run that changed nothing
+    // answers unchanged with its head, and pushes nothing.
+    const skipped = await publishToBranch({
+      ...common,
+      patchBase64: followPatch,
+      verifiedPatchSha256: sha256OfBase64(followPatch),
+      parentSha: pushed.commitSha,
+      allowUnchanged: true,
+    });
+    expect(skipped.unchanged).toBe(true);
+    expect(skipped.commitSha).toBe(pushed.commitSha);
+    expect(git(bare, "rev-parse", "factoree/run-follow-up").trim()).toBe(pushed.commitSha);
   });
 });
 

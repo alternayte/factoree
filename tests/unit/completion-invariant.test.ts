@@ -17,8 +17,7 @@ const satisfied = (overrides: Partial<CompletionInvariantInput> = {}): Completio
   blockingFindingCount: 0,
   repairCount: 1,
   repairLimit: 2,
-  patchSha256: "c".repeat(64),
-  pullRequestUrl: "https://github.com/acme/fixture/pull/1",
+  targets: [{ repositoryFullName: "acme/fixture", patchSha256: "c".repeat(64), pullRequestUrl: "https://github.com/acme/fixture/pull/1" }],
   proofPackSha256: "d".repeat(64),
   ...overrides,
 });
@@ -42,8 +41,9 @@ describe("the SDD section 68 completion invariant", () => {
     ["deterministic verification failed", { verificationPassed: false }, "verification"],
     ["a blocking finding remains", { blockingFindingCount: 1 }, "blocking"],
     ["the repair budget is exceeded", { repairCount: 3 }, "repair"],
-    ["no patch hash exists", { patchSha256: "" }, "patch hash"],
-    ["no pull request exists", { pullRequestUrl: null }, "pull request"],
+    ["no patch hash exists", { targets: [{ repositoryFullName: "acme/fixture", patchSha256: "", pullRequestUrl: "https://github.com/acme/fixture/pull/1" }] }, "patch hash"],
+    ["no pull request exists", { targets: [{ repositoryFullName: "acme/fixture", patchSha256: "c".repeat(64), pullRequestUrl: null }] }, "pull request"],
+    ["no run target exists", { targets: [] }, "run target"],
     ["no Proof Pack exists", { proofPackSha256: null }, "Proof Pack"],
   ];
 
@@ -80,7 +80,7 @@ describe("the SDD section 68 completion invariant", () => {
   });
 
   it("refuses a patch hash that is not a SHA-256", () => {
-    expect(completionInvariantFailures(satisfied({ patchSha256: "not-a-hash" }))).not.toEqual([]);
+    expect(completionInvariantFailures(satisfied({ targets: [{ repositoryFullName: "acme/fixture", patchSha256: "not-a-hash", pullRequestUrl: "https://github.com/acme/fixture/pull/1" }] }))).not.toEqual([]);
   });
 
   it("refuses a Proof Pack hash that is not a SHA-256", () => {
@@ -88,7 +88,20 @@ describe("the SDD section 68 completion invariant", () => {
   });
 
   it("refuses a blank pull request URL, not only a null one", () => {
-    expect(completionInvariantFailures(satisfied({ pullRequestUrl: "   " }))).not.toEqual([]);
+    expect(completionInvariantFailures(satisfied({ targets: [{ repositoryFullName: "acme/fixture", patchSha256: "c".repeat(64), pullRequestUrl: "   " }] }))).not.toEqual([]);
+  });
+
+  it("needs one pull request per target of a change set (docs/specs/change-sets.md)", () => {
+    expect(
+      completionInvariantFailures(
+        satisfied({
+          targets: [
+            { repositoryFullName: "acme/api", patchSha256: "c".repeat(64), pullRequestUrl: "https://github.com/acme/api/pull/3" },
+            { repositoryFullName: "acme/web", patchSha256: "e".repeat(64), pullRequestUrl: null },
+          ],
+        }),
+      ),
+    ).toEqual(["No pull request exists for acme/web."]);
   });
 
   it("accepts a repair count that equals the limit", () => {
@@ -97,7 +110,10 @@ describe("the SDD section 68 completion invariant", () => {
 
   it("reports every broken clause, not only the first one", () => {
     const failures = completionInvariantFailures(
-      satisfied({ pullRequestUrl: null, proofPackSha256: null }),
+      satisfied({
+        targets: [{ repositoryFullName: "acme/fixture", patchSha256: "c".repeat(64), pullRequestUrl: null }],
+        proofPackSha256: null,
+      }),
     );
     expect(failures.length).toBe(2);
   });

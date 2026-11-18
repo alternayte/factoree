@@ -92,6 +92,8 @@ export interface TrustedPublication {
    * base, and the files the patch conflicts in there, or null when the branch did not move.
    */
   baseMove: BaseMove | null;
+  /** DI-21.162. True when the verified tree equals the tree of the pull request head, so nothing was pushed. */
+  unchanged?: boolean;
 }
 
 export interface BaseMove {
@@ -149,6 +151,12 @@ export interface TrustedCheckoutInput {
    * `parentSha`.
    */
   mergeParentSha?: string;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.162. With `parentSha`: a verified tree equal to the tree
+   * of the pull request head is no failure. The publication then pushes nothing, and answers
+   * `unchanged` with the head as its commit, once the branch still names that head.
+   */
+  allowUnchanged?: boolean;
   /**
    * docs/specs/pr-review-merge-and-deploy.md, DI-21.125. With `parentSha`: mints the credential of
    * the push from the files the new commit changes against the pull request head, the remote branch
@@ -371,6 +379,18 @@ const commitOnPullRequestBranch = async (
   const parentTree = (await git(checkout, ["rev-parse", `${input.parentSha}^{tree}`])).trim();
   // The run verified the change of the pull request and added nothing to it. A commit with the
   // tree of its parent would change nothing on the pull request.
+  if (parentTree === treeSha && input.allowUnchanged === true) {
+    // DI-21.162. The head is checked as it is. A branch that moved since the run read it holds a head
+    // that no check saw.
+    const branchHead = (await git(checkout, ["rev-parse", `refs/remotes/origin/${input.branch}`])).trim();
+    if (branchHead !== input.parentSha) {
+      throw new TrustedCheckoutError(
+        `the branch ${input.branch} moved to ${branchHead.slice(0, 12)} since the run read ${input.parentSha.slice(0, 12)}, so Factoree pushed nothing.`,
+        { deterministic: true },
+      );
+    }
+    return { commitSha: input.parentSha, publishedPatchSha256: facts.publishedPatchSha256, treeSha, branch: input.branch, gitVersion: facts.gitVersion, baseMove: null, unchanged: true };
+  }
   if (parentTree === treeSha) {
     throw new TrustedCheckoutError(
       "the verified tree equals the tree of the pull request head, so this run changed nothing on the pull request. Factoree pushed nothing.",

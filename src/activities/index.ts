@@ -65,6 +65,7 @@ import { createIssueStatusActivities } from "./issue-status.activities.js";
 import type { IssueStatusPort } from "~/domain/runs/issue-status.js";
 import { createPullRequestActivities } from "./pull-request.activities.js";
 import type { DeployPort } from "~/domain/pull-requests/deploys.js";
+import type { ChangeSetStore, CommitStatusPort } from "~/domain/pull-requests/change-set-status.js";
 import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestReviewPort } from "~/domain/pull-requests/pr-follow-up.js";
 import type { AutoMergePort } from "~/domain/pull-requests/auto-merge.js";
@@ -195,6 +196,10 @@ export interface ActivityDependencies {
   pullRequestReviews?: PullRequestReviewPort | undefined;
   /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The deploy reads. A worker without them reports no deploy. */
   deploys?: DeployPort | undefined;
+  /** docs/specs/change-sets.md, slices 8 and 9. The pull requests of a change set. A worker without them knows no set. */
+  changeSets?: ChangeSetStore | undefined;
+  /** docs/specs/change-sets.md, slice 8. The `factoree/change-set` commit status. A worker without it sets none. */
+  commitStatuses?: CommitStatusPort | undefined;
   /** The product page of the Factoree UI, which a missing-host post names. */
   productPageUrl?: ((productId: string) => string) | undefined;
 }
@@ -280,6 +285,24 @@ const NO_DEPLOYS: DeployPort = {
   previousSuccess: () => Promise.reject(new Error(NO_DEPLOYS_REASON)),
 };
 
+const NO_CHANGE_SETS_REASON = "this worker holds no change set store";
+
+/** A worker built without the change set store refuses every set read. */
+const NO_CHANGE_SETS: ChangeSetStore = {
+  changeSetOfPullRequest: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  changeSetOfRun: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  markChangeSetStatus: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  changeSetLock: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  acquireChangeSetLock: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  releaseChangeSetLock: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+  recordCheckedHead: () => Promise.reject(new Error(NO_CHANGE_SETS_REASON)),
+};
+
+/** A worker built without the commit status port sets no `factoree/change-set` status. */
+const NO_COMMIT_STATUSES: CommitStatusPort = {
+  setStatus: () => Promise.reject(new Error("this worker holds no GitHub commit status port")),
+};
+
 /** A worker built without the file reader refuses a setup, and runs every other activity. */
 const NO_FILE_READER: RepositoryFileReader = {
   readFile: () => Promise.reject(new Error("this worker holds no repository file reader")),
@@ -326,6 +349,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     contextContracts: dependencies.contextContracts,
     contextDelivery: dependencies.contextDelivery,
     workItemContent: dependencies.workItemContent,
+    evidence: dependencies.evidence,
   }),
   ...createWorkItemActivities({
     content: dependencies.workItemContent ?? NO_WORK_ITEM_CONTENT,
@@ -505,6 +529,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     hostCredentials: dependencies.hostCredentials?.access,
     credentialBindings: dependencies.hostCredentials?.bindings,
     credentialHosts: dependencies.hostCredentials?.hosts,
+    repositories: dependencies.repositories,
   }),
   ...createAppChangeActivities({
     setups: dependencies.setups ?? NO_SETUP_STORE,
@@ -553,6 +578,8 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     repositoryBaseUrl: dependencies.repositoryBaseUrl,
     productPageUrl: dependencies.productPageUrl,
     deploys: dependencies.deploys ?? NO_DEPLOYS,
+    changeSets: dependencies.changeSets ?? NO_CHANGE_SETS,
+    commitStatuses: dependencies.commitStatuses ?? NO_COMMIT_STATUSES,
   }),
 });
 

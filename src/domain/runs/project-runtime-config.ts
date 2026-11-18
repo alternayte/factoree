@@ -77,6 +77,11 @@ export interface ServicesConfig {
   /** The command that fills the stack once, after the bootstrap, or null. */
   seed: string | null;
   waitTimeoutSeconds: number;
+  /**
+   * docs/specs/change-sets.md. The compose project name of a target of a change set, so the stacks of
+   * two targets never collide. Absent for a run with one target, which keeps the default name.
+   */
+  project?: string;
 }
 
 /** docs/specs/repository-setup-and-services.md. One account a browser assertion can sign in as. */
@@ -118,6 +123,13 @@ export interface VerificationCommand {
   name: string;
   /** The exact shell command. It runs through `sh -c` from a clean environment. */
   run: string;
+  /**
+   * docs/specs/change-sets.md. The checkout of the target the command belongs to, in a change set.
+   * Absent for a run with one target, whose commands run in the primary worktree.
+   */
+  workingDirectory?: string;
+  /** docs/specs/change-sets.md. The environment of that target, its MISE_CONFIG_FILE. Absent for one target. */
+  env?: Record<string, string>;
 }
 
 /**

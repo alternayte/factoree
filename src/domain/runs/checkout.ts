@@ -141,17 +141,90 @@ export const checkoutPrimary = async (
 };
 
 /**
+ * docs/specs/change-sets.md. The checkout of one target of a change set:
+ * `<workspace>/targets/<owner>/<repo>`. A run with one target keeps `<workspace>/primary`, so its
+ * warm snapshots stay valid. Each segment must be one safe path segment, so no name escapes the
+ * `targets/` directory.
+ */
+export const targetPathOf = (workspacePath: string, repository: string): string => {
+  const parts = repository.split("/");
+  const safe = (segment: string | undefined): segment is string =>
+    segment !== undefined && segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment);
+  const [owner, name] = parts;
+  if (parts.length !== 2 || !safe(owner) || !safe(name)) {
+    throw new RunConfigurationError(`the target repository name "${repository}" is not one owner and one repository name`);
+  }
+  return `${workspacePath}/targets/${owner}/${name}`;
+};
+
+/** docs/specs/change-sets.md. Checks out one target of a change set. The worktree is writable. */
+export const checkoutTarget = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec & { repository: string },
+  credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> => {
+  const path = targetPathOf(ref.workspacePath, spec.repository);
+  // `git clone` makes the leading directories of its target.
+  const baseSha = await cloneRepository(sandbox, ref, spec, path, credential);
+  return { url: spec.url, path, baseSha, readOnly: false };
+};
+
+/**
  * docs/specs/kiln-sandbox-provider.md. Moves the primary checkout of a sandbox restored from a warm
  * snapshot to the ref of this Run. `git clean` keeps ignored files, so the dependencies the
  * bootstrap installed stay, and the bootstrap that follows only updates them.
  */
-export const refreshPrimary = async (
+export const refreshPrimary = (
   sandbox: Sandbox,
   ref: SandboxRef,
   spec: RepositorySpec,
   credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> => refreshCheckout(sandbox, ref, spec, `${ref.workspacePath}/primary`, credential);
+
+/**
+ * docs/specs/change-sets.md, DI-21.136. Moves one target checkout of a sandbox restored from a set
+ * snapshot to the ref of this Run, as `refreshPrimary` does for the primary checkout.
+ */
+export const refreshTarget = (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec & { repository: string },
+  credential?: RepositoryCredential,
+): Promise<CheckedOutRepository> =>
+  refreshCheckout(sandbox, ref, spec, targetPathOf(ref.workspacePath, spec.repository), credential);
+
+/**
+ * docs/specs/change-sets.md, DI-21.136. Moves the primary checkout of a snapshot of one repository
+ * to the target folder of that repository, so a change set starts its first target from it.
+ */
+export const movePrimaryToTarget = async (sandbox: Sandbox, ref: SandboxRef, repository: string): Promise<string> => {
+  const path = targetPathOf(ref.workspacePath, repository);
+  await run(sandbox, ref, {
+    file: "sh",
+    args: ["-c", 'mkdir -p -- "$(dirname -- "$1")" && mv -- "$0" "$1"', `${ref.workspacePath}/primary`, path],
+  });
+  return path;
+};
+
+/**
+ * docs/specs/change-sets.md, DI-21.144. Removes every ignored file of a checkout that moved from
+ * `primary` to its target folder. The dependency folders the bootstrap built there, such as a
+ * Python `.venv` or a `node_modules/.bin` link, can hold the absolute path of `primary`, so the
+ * bootstrap that follows builds them again in the new folder. The caches outside the checkout and
+ * the images stay, so the rebuild downloads little.
+ */
+export const removeIgnoredFiles = async (sandbox: Sandbox, ref: SandboxRef, path: string): Promise<void> => {
+  await run(sandbox, ref, { file: "git", args: ["-C", path, "clean", "-ffdqX"] });
+};
+
+const refreshCheckout = async (
+  sandbox: Sandbox,
+  ref: SandboxRef,
+  spec: RepositorySpec,
+  path: string,
+  credential?: RepositoryCredential,
 ): Promise<CheckedOutRepository> => {
-  const path = `${ref.workspacePath}/primary`;
   const credentialEnv = credentialEnvironment(spec.url, credential);
   await run(sandbox, ref, {
     file: "git",

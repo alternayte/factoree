@@ -3,7 +3,7 @@ import { imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@10";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@11";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -27,7 +27,50 @@ export interface UserValidatorPromptFields {
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
   egress?: EgressFacts | null;
+  /**
+   * docs/specs/change-sets.md, DI-21.147. The targets of a change set, in set order. Absent for a
+   * run with one target, whose prompt names one repository and one preview.
+   */
+  targets?: ValidatorTargetLines[];
+  /** DI-21.147. The target a `set` entry runs against, or null when no entry may name the set. */
+  setServer?: string | null;
 }
+
+/** docs/specs/change-sets.md. What the validator learns of one target of a change set. */
+export interface ValidatorTargetLines {
+  repository: string;
+  path: string;
+  previewBaseUrl: string | null;
+  accounts: string[];
+  /** One line per fake that answers in the check of this target. */
+  fakes: string[];
+  /** One line per provider target that answers in place of a fake of this target. */
+  providers: string[];
+}
+
+/** DI-21.147. The section that lists each target of a change set and what an entry names. */
+const targetsBody = (targets: ValidatorTargetLines[], setServer: string | null): string =>
+  [
+    "This run changes several repositories. Factoree checks each target with its own stack and its own preview, one after the other.",
+    'Every entry sets "target" to the owner/repo name of the target it checks. Its path, its account and its command run against that target.',
+    'A browser entry with "as" starts signed in as an account of its target. Factoree signs the account in before the entry runs. Never write sign-in steps yourself.',
+    setServer === null
+      ? 'No entry may set "target" to "set".'
+      : `An entry that checks the wired pair together sets "target" to "set". It runs against the preview of ${setServer}, with its providers running.`,
+    "",
+    ...targets.map((target) =>
+      [
+        `### ${target.repository}`,
+        "",
+        `- Path: ${target.path}. A command entry runs from it.`,
+        `- Preview: ${target.previewBaseUrl === null ? "none configured" : target.previewBaseUrl}`,
+        `- Accounts: ${target.accounts.length === 0 ? "none, so a browser entry of this target starts signed out" : target.accounts.join(", ")}`,
+        ...target.providers.map((line) => `- Real provider: ${line}`),
+        ...target.fakes.map((line) => `- Fake: ${line}, so its data is not real`),
+        "",
+      ].join("\n"),
+    ),
+  ].join("\n");
 
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
 
@@ -50,21 +93,41 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
     section("Goal", fields.goal),
     section("Validation Contract", fields.validationContract),
     section("Images of the Work Item", imageFilesBody(fields.imageFiles ?? [])),
-    section(
-      "Primary repository",
-      `The repository is at ${fields.primaryRepositoryPath}. You must not change a production ` +
-        "source file in it. You must not write, edit, or change a production source file for " +
-        "any reason.",
-    ),
-    section(
-      "Preview",
-      fields.previewBaseUrl === null
-        ? "The repository configures no preview. State plainly that you cannot check an " +
-            "assertion that needs one."
-        : `The exposed preview base URL is ${fields.previewBaseUrl}. Every browser step and ` +
-            "every HTTP request resolves against this URL. The preview may still be building " +
-            "while you write the plan, and it may not answer yet.",
-    ),
+    ...(fields.targets === undefined
+      ? [
+          section(
+            "Primary repository",
+            `The repository is at ${fields.primaryRepositoryPath}. You must not change a production ` +
+              "source file in it. You must not write, edit, or change a production source file for " +
+              "any reason.",
+          ),
+          section(
+            "Preview",
+            fields.previewBaseUrl === null
+              ? "The repository configures no preview. State plainly that you cannot check an " +
+                  "assertion that needs one."
+              : `The exposed preview base URL is ${fields.previewBaseUrl}. Every browser step and ` +
+                  "every HTTP request resolves against this URL. The preview may still be building " +
+                  "while you write the plan, and it may not answer yet.",
+          ),
+        ]
+      : [
+          section(
+            "Repositories",
+            `The targets are under ${fields.primaryRepositoryPath}. You must not change a production source file in ` +
+              "any of them. You must not write, edit, or change a production source file for any reason.",
+          ),
+          section(
+            "Preview",
+            "Each target has its own preview, listed below. Every browser step and every HTTP request of an entry " +
+              "resolves against the preview of its target. Factoree starts each preview when it checks that target, " +
+              "so a preview may not answer while you write the plan.",
+          ),
+          section("Targets", targetsBody(fields.targets, fields.setServer ?? null)),
+        ]),
+    ...(fields.targets !== undefined
+      ? []
+      : [
     section(
       "Accounts and fakes",
       [
@@ -78,6 +141,7 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
           : `These external APIs are fakes in the sandbox, so their data is not real:\n${(fields.fakes ?? []).map((line) => `- ${line}`).join("\n")}`,
       ].join("\n\n"),
     ),
+        ]),
     ...(fields.egress === undefined || fields.egress === null
       ? []
       : [

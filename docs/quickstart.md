@@ -105,18 +105,52 @@ and the run then lists the link under "Links not read".
 | Issues | Read |
 | Deployments | Read |
 | Metadata | Read |
+| Checks | Read |
+| Commit statuses | Read and write |
 
-The App subscribes to the `Push`, `Deployment status` and `Pull request`
-events. A `deployment_status` event carries the pull request preview URL that
-CI publishes, and Factoree adds it to the Linear session. A `pull_request`
-event tells Factoree that a pull request of a run merged or closed. Factoree
-then moves the Linear issue to its completed state, or back to its previous
-state. An App created with release 0.7.4 or earlier lacks the `Pull request` event. Open the App
-settings, then Permissions & events, and select `Pull request` under Subscribe
-to events. Without it, the issue stays in its started state after a merge.
-GitHub delivers the
+The App subscribes to the `Push`, `Deployment status`, `Pull request`,
+`Pull request review`, `Check run` and `Status` events. A `deployment_status`
+event carries the pull request preview URL that CI publishes, and Factoree adds
+it to the Linear session. A `pull_request` event tells Factoree that a pull
+request of a run merged or closed. Factoree then moves the Linear issue to its
+completed state, or back to its previous state. The review, check run and
+status events reach the PR workflow of each pull request (release 0.12.0). The
+webhook URL is `<FACTOREE_PUBLIC_URL>/webhooks/github`. GitHub delivers the
 `installation` and the `installation_repositories` events to every App
-automatically. The webhook URL is `<FACTOREE_PUBLIC_URL>/webhooks/github`.
+automatically.
+
+An App created by an earlier release lacks some of these permissions and
+events. The product page lists each permission and each event that an
+installation does not hold. To add them:
+
+1. Open the App settings, then Permissions & events.
+2. Set each permission to the level in the table.
+3. Select each event under Subscribe to events.
+4. Save. GitHub then asks the owner of each installation to accept the new
+   permissions. Accept the request on each installation.
+
+Until an installation accepts, Factoree cannot do the work that needs the
+permission. Without the `Pull request` event, the issue stays in its started
+state after a merge. Without Commit statuses write, a change set gets no
+`factoree/change-set` status.
+
+#### The change-set status
+
+A change set is one run that opens a pull request in two or more repositories.
+Factoree sets the commit status `factoree/change-set` on the head of each
+consumer pull request: the pull request that calls an interface that a
+provider pull request of the same set changes. The status is `pending` while a
+provider pull request is open, `success` when every provider pull request has
+merged, and `failure` when a provider pull request closes without a merge or
+gets a head that Factoree did not check with the set. The description of the
+status gives the reason.
+
+The status informs. Do not make it a required check: GitHub applies a required
+check to every pull request into the branch, and only a consumer pull request of
+a change set gets this status, so every other pull request would wait for it.
+At L4, Factoree enforces the order itself: it turns on auto-merge for a consumer
+pull request only after every provider pull request has merged. At L2 and L3, a
+person can merge a consumer early, and the status warns them.
 
 GitHub then returns to `/setup/github/created`. Factoree stores the App id, the
 private key, the webhook secret and the client credentials, encrypted.

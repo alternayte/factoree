@@ -11,6 +11,7 @@ import type {
   RecordPublishedPullRequestInput,
 } from "~/domain/pull-requests/pull-request-store.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
+import type { ChangeSet, ChangeSetLock, ChangeSetMember, ChangeSetStore } from "~/domain/pull-requests/change-set-status.js";
 import { deployKeyOf, type DeployIssueMoveState, type OpenDeployFailure, type PullRequestDeployRecord, type RecordDeployInput } from "~/domain/pull-requests/deploys.js";
 
 const include = { repository: { select: { fullName: true } } } as const;
@@ -92,8 +93,114 @@ const toDeploy = (row: DeployRow): PullRequestDeployRecord => ({
 const DEPLOY_ISSUE_MOVES: readonly string[] = ["moving", "moved", "human_moved", "not_moved"] satisfies DeployIssueMoveState[];
 const isDeployIssueMove = (value: string | null): value is DeployIssueMoveState => value !== null && DEPLOY_ISSUE_MOVES.includes(value);
 
-export class PrismaPullRequestStore implements PullRequestStore {
+export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
+
+  /**
+   * docs/specs/change-sets.md, DI-21.155. The set of the run that opened the pull request: every run
+   * target of that run with a pull request, joined to its record. A run with one pull request is no
+   * set. The members come from the run targets, so a member whose record is not written yet is known.
+   */
+  async changeSetOfPullRequest(tenantId: string, pullRequestId: string): Promise<ChangeSet | null> {
+    const row = await this.prisma.pullRequest.findFirst({ where: { id: pullRequestId, tenantId }, select: { originRunId: true } });
+    return row === null ? null : await this.changeSetOfRun(tenantId, row.originRunId);
+  }
+
+  async changeSetOfRun(tenantId: string, originRunId: string): Promise<ChangeSet | null> {
+    const targets = await this.prisma.runTarget.findMany({
+      where: { tenantId, runId: originRunId },
+      select: {
+        repositoryId: true,
+        pullRequestUrl: true,
+        pullRequestNumber: true,
+        repository: { select: { fullName: true, githubInstallationId: true } },
+      },
+    });
+    const ordered = [...targets].sort((left, right) => left.repository.fullName.toLowerCase().localeCompare(right.repository.fullName.toLowerCase()));
+    const opened = ordered.filter((target) => target.pullRequestUrl !== null && target.pullRequestNumber !== null);
+    if (opened.length < 2) return null;
+    const rows = await this.prisma.pullRequest.findMany({ where: { tenantId, originRunId }, include });
+    const edges = await this.prisma.runTargetEdge.findMany({
+      where: { tenantId, runId: originRunId },
+      select: {
+        provider: { select: { repository: { select: { fullName: true } } } },
+        consumer: { select: { repository: { select: { fullName: true } } } },
+      },
+    });
+    const members: ChangeSetMember[] = opened.map((target) => {
+      const number = target.pullRequestNumber ?? 0;
+      const record = rows.find((candidate) => candidate.repositoryId === target.repositoryId && candidate.number === number) ?? null;
+      return {
+        repositoryId: target.repositoryId,
+        repositoryFullName: target.repository.fullName,
+        githubInstallationId: target.repository.githubInstallationId,
+        number,
+        url: target.pullRequestUrl ?? "",
+        workflowId: record?.workflowId ?? pullRequestWorkflowId(tenantId, target.repository.fullName, number),
+        record: record === null ? null : toRecord(record),
+        statusKey: record?.changeSetStatusKey ?? null,
+      };
+    });
+    return {
+      originRunId,
+      targets: ordered.map((target) => target.repository.fullName),
+      members,
+      edges: edges.map((edge) => ({ provider: edge.provider.repository.fullName, consumer: edge.consumer.repository.fullName })),
+    };
+  }
+
+  async markChangeSetStatus(tenantId: string, pullRequestId: string, key: string): Promise<void> {
+    await this.prisma.pullRequest.updateMany({ where: { id: pullRequestId, tenantId }, data: { changeSetStatusKey: key } });
+  }
+
+  async changeSetLock(tenantId: string, originRunId: string): Promise<ChangeSetLock> {
+    const row = await this.prisma.run.findFirst({
+      where: { id: originRunId, tenantId },
+      select: { changeSetLockHolder: true, changeSetLockRun: true, changeSetLockAt: true },
+    });
+    if (row === null) throw new Error(`no run "${originRunId}" of tenant "${tenantId}"`);
+    return { holder: row.changeSetLockHolder, runWorkflowId: row.changeSetLockRun, at: row.changeSetLockAt };
+  }
+
+  async acquireChangeSetLock(
+    tenantId: string,
+    originRunId: string,
+    lock: { holder: string; runWorkflowId: string | null; at: Date; replaces: string | null },
+  ): Promise<boolean> {
+    // DI-21.158. One conditional write, so two PR workflows of the set never both take it.
+    const updated = await this.prisma.run.updateMany({
+      where: {
+        id: originRunId,
+        tenantId,
+        OR: [
+          { changeSetLockHolder: null },
+          { changeSetLockHolder: lock.holder },
+          ...(lock.replaces === null ? [] : [{ changeSetLockHolder: lock.replaces }]),
+        ],
+      },
+      data: { changeSetLockHolder: lock.holder, changeSetLockRun: lock.runWorkflowId, changeSetLockAt: lock.at },
+    });
+    return updated.count > 0;
+  }
+
+  async recordCheckedHead(
+    tenantId: string,
+    pullRequestId: string,
+    head: { headSha: string; baseSha: string; runId: string; autonomyLevel: string },
+  ): Promise<boolean> {
+    const updated = await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId, headSha: head.headSha, state: "open" },
+      data: { verifiedHeadSha: head.headSha, verifiedBaseSha: head.baseSha, verifiedRunId: head.runId, autonomyLevel: head.autonomyLevel },
+    });
+    return updated.count > 0;
+  }
+
+  async releaseChangeSetLock(tenantId: string, originRunId: string, holder: string): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: originRunId, tenantId, changeSetLockHolder: holder },
+      data: { changeSetLockHolder: null, changeSetLockRun: null, changeSetLockAt: null },
+    });
+  }
 
   async recordPublished(input: RecordPublishedPullRequestInput): Promise<PublishedPullRequest> {
     // The tenant filter is part of the query. SDD section 52 forbids a read across the boundary.

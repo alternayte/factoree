@@ -31,7 +31,10 @@ export const blockersFromJson = (value: Prisma.JsonValue | null): Blocker[] | nu
     identifier: typeof entry["identifier"] === "string" ? entry["identifier"] : "",
     url: typeof entry["url"] === "string" ? entry["url"] : null,
     state: typeof entry["state"] === "string" ? entry["state"] : "unknown",
-    pullRequestUrl: typeof entry["pullRequestUrl"] === "string" ? entry["pullRequestUrl"] : null,
+    // docs/specs/change-sets.md. Migration 20261201100000_run_target_record rewrote older rows.
+    pullRequestUrls: Array.isArray(entry["pullRequestUrls"])
+      ? entry["pullRequestUrls"].filter((url): url is string => typeof url === "string")
+      : [],
   }));
 };
 
@@ -135,17 +138,28 @@ export class PrismaWaitingRunStore implements WaitingRunStore {
     return count === 1 ? toWaiting(row) : null;
   }
 
-  async pullRequestsOf(tenantId: string, issueIds: readonly string[]): Promise<Map<string, string>> {
+  async pullRequestsOf(tenantId: string, issueIds: readonly string[]): Promise<Map<string, string[]>> {
     if (issueIds.length === 0) return new Map();
+    // docs/specs/change-sets.md. The pull requests of the newest run of each issue that opened any.
     const rows = await this.prisma.run.findMany({
-      where: { tenantId, linearIssueId: { in: [...issueIds] }, pullRequestUrl: { not: null } },
+      where: { tenantId, linearIssueId: { in: [...issueIds] }, targets: { some: { pullRequestUrl: { not: null } } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: { linearIssueId: true, pullRequestUrl: true },
+      select: {
+        linearIssueId: true,
+        targets: {
+          where: { pullRequestUrl: { not: null } },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: { pullRequestUrl: true },
+        },
+      },
     });
-    const urls = new Map<string, string>();
+    const urls = new Map<string, string[]>();
     for (const row of rows) {
-      if (row.linearIssueId !== null && row.pullRequestUrl !== null && !urls.has(row.linearIssueId)) {
-        urls.set(row.linearIssueId, row.pullRequestUrl);
+      if (row.linearIssueId !== null && !urls.has(row.linearIssueId)) {
+        urls.set(
+          row.linearIssueId,
+          row.targets.flatMap((target) => (target.pullRequestUrl === null ? [] : [target.pullRequestUrl])),
+        );
       }
     }
     return urls;

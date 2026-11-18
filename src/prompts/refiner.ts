@@ -1,9 +1,10 @@
 import type { EgressFacts } from "~/domain/runs/egress.js";
 import { contextFilesBody, imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
+import { targetRepositoriesBody, type TargetRepositoryLine } from "./implementer.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@9";
+export const REFINER_PROMPT_VERSION = "refiner@11";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -15,6 +16,13 @@ export interface RefinerPromptFields {
   /** docs/specs/work-item-images-and-links.md. One line per image file of the work sprite. */
   imageFiles?: string[];
   primaryRepositoryPath: string;
+  /** docs/specs/change-sets.md. Every target of a change set. Absent for a run with one target. */
+  targetRepositories?: TargetRepositoryLine[];
+  /**
+   * docs/specs/change-sets.md, DI-21.138. The other repositories of the product, cloned read-only at
+   * their default-branch head. Absent or empty when the run cannot add a target.
+   */
+  siblingRepositories?: SiblingRepositoryLine[];
   proposalPath: string;
   proposalSchema: string;
   /** Issue #39, DI-21.66. The most criteria the proposal may hold, a Product setting. */
@@ -29,7 +37,28 @@ export interface RefinerPromptFields {
   egress?: EgressFacts | null;
 }
 
+/** docs/specs/change-sets.md. One repository the refiner reads read-only, at the commit it reads. */
+export interface SiblingRepositoryLine extends TargetRepositoryLine {
+  commitSha: string;
+}
+
 const section = (title: string, body: string): string => `## ${title}\n\n${body}\n`;
+
+/** DI-21.139. The rules of the targets and the edges of a proposal. */
+const targetRules = (siblings: SiblingRepositoryLine[], targets: number): string[] => [
+  ...(siblings.length === 0
+    ? []
+    : [
+        "When the change also needs a repository under \"Other repositories of the product\", add it under `targets` with its `owner/repo` name, the `file` in it (relative to its root) and the `line` that needs the change, and the `reason`. " +
+          "Factoree adds the repository only when that line exists in the clone. Add no repository the change does not need, and leave `targets` empty when the targets are enough.",
+      ]),
+  ...(siblings.length === 0 && targets < 2
+    ? []
+    : [
+        "When one target calls an interface of another target, add one entry under `edges`: `provider` is the repository whose interface the consumer calls, `consumer` is the repository that calls it, and `file` and `line` cite the call in the consumer. " +
+          "Factoree merges each provider before its consumers. Add no edge you cannot cite.",
+      ]),
+];
 
 const list = (items: string[], empty: string): string =>
   items.length === 0 ? empty : items.map((item) => `- ${item}`).join("\n");
@@ -53,10 +82,23 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
     section("Context Contract", fields.contextContract),
     section("Images of the Work Item", imageFilesBody(fields.imageFiles ?? [])),
     section("Context files", contextFilesBody(fields.contextFiles)),
-    section(
-      "Primary repository",
-      `The repository is at ${fields.primaryRepositoryPath}. Read it. You must not change any file in it.`,
-    ),
+    fields.targetRepositories !== undefined && fields.targetRepositories.length > 1
+      ? section("Target repositories", targetRepositoriesBody(fields.targetRepositories, "Read each one. You must not change any file in them."))
+      : section(
+          "Primary repository",
+          `The repository is at ${fields.primaryRepositoryPath}. Read it. You must not change any file in it.`,
+        ),
+    ...((fields.siblingRepositories ?? []).length === 0
+      ? []
+      : [
+          section(
+            "Other repositories of the product",
+            [
+              "Each one is a read-only clone at the head of its default branch. Read one only when the change can need it. You must not change any file in them.",
+              ...(fields.siblingRepositories ?? []).map((sibling) => `- ${sibling.repository}: ${sibling.path} at ${sibling.commitSha}`),
+            ].join("\n"),
+          ),
+        ]),
     section("Skills", list(fields.skills, "None.")),
     ...(fields.egress === undefined || fields.egress === null
       ? []
@@ -93,6 +135,8 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "Ask a question only for a decision the Work Item and the code leave open. Give your proposed answer and its reason. Factoree takes your answer without asking a human, and the reviewer reads the reason, so give a reason the code or the Work Item supports.",
         "You must not invent product behaviour the Work Item and the code do not imply.",
         "You must not propose a check that needs a host this sandbox does not reach. Name the host under `missingHosts` instead.",
+        ...targetRules(fields.siblingRepositories ?? [], fields.targetRepositories?.length ?? 1),
+        "Leave `targets` and `edges` empty when no rule above asks for them.",
       ].join("\n"),
     ),
   ].join("\n");

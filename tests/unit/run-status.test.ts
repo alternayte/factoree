@@ -31,7 +31,6 @@ describe("run status", () => {
       "CANCELLED",
       "BLOCKED_ROUTING",
       "BLOCKED_TARGET",
-      "BLOCKED_STALE_SET",
       "DRAFT_PUBLISHED",
       "WAITING_FOR_BLOCKERS",
     ]);
@@ -48,7 +47,6 @@ describe("run status", () => {
         "REPORTED",
         "STALE_BASE",
         "BLOCKED_ROUTING",
-        "BLOCKED_STALE_SET",
         "DRAFT_PUBLISHED",
       ].sort(),
     );

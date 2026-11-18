@@ -170,6 +170,10 @@ beforeAll(async () => {
       pullRequests: () => ({
         findByHead: () => Promise.reject(new Error("this test never publishes")),
         create: () => Promise.reject(new Error("this test never publishes")),
+        updateBody: () => Promise.reject(new Error("this test never publishes")),
+        comment: () => Promise.reject(new Error("this test never publishes")),
+        close: () => Promise.reject(new Error("this test never publishes")),
+        deleteBranch: () => Promise.reject(new Error("this test never publishes")),
       }),
       gitAuthor: () => Promise.resolve({ name: "Factoree", email: "factoree@users.noreply.github.com" }),
       logger,

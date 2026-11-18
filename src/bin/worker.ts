@@ -80,7 +80,7 @@ import { PrismaValidationContractStore } from "~/persistence/prisma/validation-c
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
 import { createBuildAheadRequester, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
-import { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
+import { BuildAheadTrigger, setBuildAheadRequest } from "~/domain/runs/build-ahead.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
@@ -89,6 +89,7 @@ import { createBlockerWait } from "./blocker-wait-wiring.js";
 import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaPullRequestStore } from "~/persistence/prisma/pull-request-store.prisma.js";
+import { GitHubCommitStatuses } from "~/adapters/github/github-commit-statuses.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
@@ -193,6 +194,13 @@ const sandboxManager = new SandboxManager({
   installBrowserTools: (sandboxName) =>
     (sandbox.providerSettings().find((provider) => provider.id === sandboxName)?.type ?? sandboxName) === "fly-sprites",
   ...(localSandboxAllowed ? { allowUnenforcedNetwork: true } : {}),
+  // docs/specs/change-sets.md, DI-21.136. A change set with no set snapshot asks for its build-ahead.
+  // The client exists before the first run prepares a sandbox.
+  requestSetBuildAhead: (request) => createBuildAheadRequester(blockerClient, env.FACTOREE_TEMPORAL_TASK_QUEUE)(setBuildAheadRequest(request)),
+  // docs/specs/change-sets.md, DI-21.148. The build-ahead of a set starts each wired group once.
+  // The probe is defined below, and the manager reads it only when a sandbox is prepared.
+  previewProbe: (url) => previewProbe(url),
+  redactor,
 });
 
 // docs/specs/claude-code-runner.md. The Product of the Run holds the runner, the model and the
@@ -484,6 +492,9 @@ const pullRequestClose = new PullRequestCloseHandler({
 });
 
 const validationContracts = new PrismaValidationContractStore(prisma, logger);
+// docs/specs/pr-review-merge-and-deploy.md and docs/specs/change-sets.md. One store holds the pull
+// request records and the change sets they form.
+const pullRequestRecords = new PrismaPullRequestStore(prisma);
 const worker = await Worker.create({
   connection: await createWorkerConnection(env),
   namespace: env.FACTOREE_TEMPORAL_NAMESPACE,
@@ -526,7 +537,7 @@ const worker = await Worker.create({
     contextConfigurations,
     vision,
     issueStatus: issueStatusFor,
-    publishedPullRequests: new PrismaPullRequestStore(prisma),
+    publishedPullRequests: pullRequestRecords,
     pullRequestClose,
     // docs/specs/pr-review-merge-and-deploy.md. The L4 merge mints a token per call for one repository.
     autoMerge: new GitHubAutoMerge({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
@@ -534,6 +545,9 @@ const worker = await Worker.create({
     pullRequestReviews: new GitHubPullRequestReviews({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     // Slice 5. The deploy report reads compares and deployments, and writes nothing on GitHub.
     deploys: new GitHubDeployments({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+    // docs/specs/change-sets.md, slices 8 and 9. The pull requests of a set, and the factoree/change-set status.
+    changeSets: pullRequestRecords,
+    commitStatuses: new GitHubCommitStatuses({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
     validationContracts,
     // docs/specs/pr-review-merge-and-deploy.md, D1. The same store holds the passing plans.
@@ -674,6 +688,7 @@ try {
       products,
       repositories,
       snapshotKeys: (tenantId, repositoryUrl) => warmSnapshots.keysFor(tenantId, repositoryUrl),
+      setSnapshots: () => warmSnapshots.listSets(),
       readConfig: (fullName, ref, installationId) => discoveryClient.readConfig(fullName, ref, installationId),
       listFiles: (fullName, ref, installationId) => discoveryClient.listFiles(fullName, ref, installationId),
       repositoryBaseUrl: githubBaseUrl(settings),

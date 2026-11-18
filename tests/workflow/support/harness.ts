@@ -63,6 +63,7 @@ import type { RunSlotClaim } from "~/domain/runs/run-slots.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { RecordPublishedPullRequestInput } from "~/domain/pull-requests/pull-request-store.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
+import { mergeOrderOf, type TargetEdge } from "~/domain/runs/merge-order.js";
 
 /** One conflict the context double reports. It carries the domain, the way a real record does. */
 export interface HarnessConflict {
@@ -328,6 +329,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     repositoryId: string;
     selectionReason: string;
   }> = [];
+  /** docs/specs/change-sets.md. Every recorded `recordRunTargetEdges` call, in order. */
+  const recordRunTargetEdgesCalls: Array<{ tenantId: string; runId: string; edges: TargetEdge[] }> = [];
   /** Every recorded `recordRunTargetFacts` call, in order. F2. */
   const recordRunTargetFactsCalls: Array<{
     tenantId: string;
@@ -500,6 +503,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
           slug: repository.slug,
           sha: `${index}`.repeat(40),
         })),
+        ...(input.targetRepositories === undefined
+          ? {}
+          : { targets: input.targetRepositories.map((repository, index) => ({ slug: repository.slug, sha: `${"abcdef"[index % 6] ?? "a"}`.repeat(40) })) }),
         unresolvedConflict,
         conflictCount: all.length,
         summary:
@@ -974,6 +980,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       recordRunTargetCalls.push(input);
       return `target-${input.runId}-${input.repositoryId}`;
     },
+    // docs/specs/change-sets.md, DI-21.141. The edges the refiner cited, and the order they give.
+    recordRunTargetEdges: async (input: { tenantId: string; runId: string; edges: TargetEdge[] }) => {
+      activityOrder.push("recordRunTargetEdges");
+      recordRunTargetEdgesCalls.push(input);
+      return mergeOrderOf([...new Set(input.edges.flatMap((edge) => [edge.provider, edge.consumer]))], input.edges);
+    },
     recordRunTargetFacts: async (input: {
       tenantId: string;
       runId: string;
@@ -1114,6 +1126,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldProofPacks,
     recordRunTargetCalls,
     recordRunTargetFactsCalls,
+    recordRunTargetEdgesCalls,
     recordPullRequestCalls,
     pullRequestWorkflowRuns,
     decisionCalls,

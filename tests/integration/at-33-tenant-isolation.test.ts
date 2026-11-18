@@ -119,6 +119,8 @@ describe("AT-33 tenant isolation", () => {
         "ReviewFinding",
         "Run",
         "RunTarget",
+        // docs/specs/change-sets.md, DI-21.127. One provider-to-consumer edge of one tenant's change set.
+        "run_target_edge",
         // docs/specs/skill-registry.md. One row per skill and per skill proposal of a run.
         "run_skill",
         "run_skill_proposal",

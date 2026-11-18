@@ -54,7 +54,8 @@ export interface DraftFacts {
   status: string;
   failureReason: string | null;
   failureMessage: string | null;
-  pullRequestUrl: string | null;
+  /** docs/specs/change-sets.md. The pull request of each run target that has one, in target order. */
+  pullRequestUrls: string[];
   /** docs/specs/pr-review-merge-and-deploy.md. True for a PR follow-up run, whose pull request is open already. */
   pullRequestFollowUp?: boolean;
   hasPatch: boolean;
@@ -90,8 +91,10 @@ export const blockerFindings = (facts: Pick<DraftFacts, "findings">): DraftFindi
  * request, so a second request is idempotent. An unproven patch qualifies; a known defect does not.
  */
 export const decideDraft = (facts: DraftFacts): DraftDecision => {
-  if (facts.status === "DRAFT_PUBLISHED" && facts.pullRequestUrl !== null) {
-    return { kind: "published", pullRequestUrl: facts.pullRequestUrl };
+  // A draft is of one target only, so a published draft has one pull request.
+  const published = facts.pullRequestUrls[0];
+  if (facts.status === "DRAFT_PUBLISHED" && published !== undefined) {
+    return { kind: "published", pullRequestUrl: published };
   }
   if (!takesFollowUp(facts.status)) {
     return {
@@ -106,8 +109,9 @@ export const decideDraft = (facts: DraftFacts): DraftDecision => {
     };
   }
   // DI-21.78. A run that failed after it opened a pull request already has one.
-  if (facts.pullRequestUrl !== null) {
-    return { kind: "refused", reason: `This run already opened a pull request: ${facts.pullRequestUrl}.` };
+  if (facts.pullRequestUrls.length > 0) {
+    const opened = facts.pullRequestUrls.length === 1 ? "a pull request" : "its pull requests";
+    return { kind: "refused", reason: `This run already opened ${opened}: ${facts.pullRequestUrls.join(", ")}.` };
   }
   if (!facts.hasPatch) {
     return {
@@ -194,7 +198,14 @@ export interface DraftSubject {
   /** DI-21.81. The repair budget of the product, as the run records no effective limit. */
   repairLimit: number;
   /** The one RunTarget of the run and its repository, or null when the run has none. */
-  target: { repositoryId: string; fullName: string; defaultBranch: string; githubInstallationId: string } | null;
+  target: {
+    repositoryId: string;
+    fullName: string;
+    defaultBranch: string;
+    githubInstallationId: string;
+    /** docs/specs/change-sets.md. The base SHA the target recorded, or null before context resolution. */
+    baseSha: string | null;
+  } | null;
 }
 
 /** Records who asked for a draft and from where, and the facts that decide it. */

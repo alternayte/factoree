@@ -26,8 +26,9 @@ const build = (
     tokenForInstallation: () => Promise.reject(new Error("no installation configured in this fixture")),
   },
   redactor = new Redactor(),
+  more: Record<string, { sha: string; files: Record<string, string> }> = {},
 ) => {
-  const reader = new FakeRepositoryReader({ [PRIMARY_URL]: { sha: SHA_A, files } });
+  const reader = new FakeRepositoryReader({ [PRIMARY_URL]: { sha: SHA_A, files }, ...more });
   const contracts = new FakeContextContractStore();
   const versions: Array<{ tenantId: string; runId: string; version: string }> = [];
   const runs = {
@@ -380,5 +381,29 @@ describe("resolveContext, a rejected mint of the discovery-read credential", () 
 
     expect(error).toBeInstanceOf(RunConfigurationError);
     expect(String(error)).toContain("install-1");
+  });
+
+  it("freezes a new revision that lists an added target, once, when it supersedes the frozen contract (DI-21.143)", async () => {
+    const TARGET_URL = "https://git/acme/web";
+    const SHA_B = "b".repeat(40);
+    const { activities, contracts, versions } = build(files, undefined, undefined, undefined, {
+      [TARGET_URL]: { sha: SHA_B, files: { "src/client.ts": "export const notify = () => undefined;\n" } },
+    });
+    const first = await activities.resolveContext(input());
+    const target = { slug: "acme/web", url: TARGET_URL, ref: SHA_B, githubInstallationId: "" };
+    const pinned = { slug: "acme/webhook-service", url: PRIMARY_URL, ref: SHA_A };
+    const second = await activities.resolveContext(input({ primaryRepository: pinned, targetRepositories: [target], supersedes: first.sha256 }));
+
+    expect(second.sha256).not.toBe(first.sha256);
+    expect(second.targets).toEqual([{ slug: "acme/web", sha: SHA_B }]);
+    expect(second.document).toContain(`acme/web at ${SHA_B}`);
+    expect(versions.map((entry) => entry.version)).toEqual([first.sha256, second.sha256]);
+    const stored = await contracts.findByRun("tenant-1", "run-1");
+    expect(stored?.sha256).toBe(second.sha256);
+
+    // A retry of the second resolution supersedes nothing again.
+    const retry = await activities.resolveContext(input({ primaryRepository: pinned, targetRepositories: [target], supersedes: first.sha256 }));
+    expect(retry.sha256).toBe(second.sha256);
+    expect((await contracts.findByRun("tenant-1", "run-1"))?.id).toBe(stored?.id);
   });
 });

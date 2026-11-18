@@ -68,8 +68,18 @@ import { renderRisks } from "../domain/refinement/risk.js";
 import { completionInvariantFailures, prePublicationFailures } from "../domain/runs/completion-invariant.js";
 // The workflow bundler resolves a relative path only, so this value import does not use the
 // `~/` alias either.
-import { proposeTarget, selectTarget } from "../domain/routing/select-targets.js";
+import {
+  inSetOrder,
+  matchReplyToCandidates,
+  proposeTarget,
+  proposeTargets,
+  selectTarget,
+  selectTargets,
+  type TargetSetOutcome,
+} from "../domain/routing/select-targets.js";
 import { describeDecision, type FactoreeDecision } from "../domain/runs/factoree-decision.js";
+import { mergeOrderDecision } from "../domain/runs/merge-order.js";
+import { targetResultsSentence } from "../domain/publishing/change-set.js";
 // The workflow bundler resolves a relative path only. Both modules import nothing at run time but
 // `sandbox.js`, which imports nothing.
 import { renderMissingHostsFailure, type EgressFacts, type MissingHost } from "../domain/runs/egress.js";
@@ -82,6 +92,7 @@ import {
   findingPlace,
   keptFindingLines,
   renderPrFollowUpDescription,
+  type PrSetMember,
   type PrFollowUpInput,
   type TriagedFinding,
 } from "../domain/pull-requests/pr-follow-up.js";
@@ -166,6 +177,12 @@ export interface AgentRunWorkflowInput {
    * freezes none, its proof pack says the reply replaced them and no visual evidence exists.
    */
   followUpBrowserAssertions?: string[];
+  /**
+   * docs/specs/change-sets.md, DI-21.131. The repository ids of the targets of the run this run
+   * follows. The follow-up run changes the same set. Absent for a first run, for a run that follows
+   * a run with no target, and in an older history.
+   */
+  followUpTargets?: string[];
   /**
    * docs/specs/work-item-images-and-links.md. The moment of the delegation, ISO 8601. A comment
    * created later is not read. Absent in an older history.
@@ -291,6 +308,46 @@ const DRAFT_OFFER_PATCH = "draft-offer";
  * workflow. An older history starts none, and its close takes the webhook path of DI-21.51.
  */
 const PR_WORKFLOW_PATCH = "pr-workflow";
+/**
+ * docs/specs/change-sets.md. The run selects a set of target repositories, and a follow-up run takes
+ * the set of the run it follows. An older history selects one target.
+ */
+const CHANGE_SET_PATCH = "change-sets";
+
+/**
+ * docs/specs/change-sets.md, slice 5. The refiner can add a target and cite edges, the work sprite
+ * prepares again for an added target, and an implementer that names another repository gets a
+ * not-built decision. An older history adds nothing after the refiner.
+ */
+const CHANGE_SET_REFINER_PATCH = "change-set-refiner-targets";
+/**
+ * docs/specs/change-sets.md, DI-21.143. A target the refiner adds resolves the context again for the
+ * whole set, and freezes a new Context Contract revision that lists every target.
+ */
+const CHANGE_SET_CONTEXT_PATCH = "change-set-context-refreeze";
+/**
+ * docs/specs/change-sets.md, slice 7, DI-21.151. A change set that passes publishes all or nothing:
+ * preflight every target, push and open each pull request, write each body with the sibling links,
+ * and undo the opened part on a permanent failure. An older history ends PUBLICATION_FAILED before
+ * publication, as DI-21.134 did.
+ */
+const CHANGE_SET_PUBLICATION_PATCH = "change-set-publication";
+
+/**
+ * docs/specs/change-sets.md, slice 8. A set publication sets the `factoree/change-set` status of each
+ * consumer pull request. An older history sets none.
+ */
+const CHANGE_SET_STATUS_PATCH = "change-set-status";
+
+/** docs/specs/change-sets.md, slice 7. One target whose pull request opened. */
+interface PublishedTarget {
+  repositoryId: string;
+  slug: string;
+  installationId: string;
+  baseBranch: string;
+  baseSha: string;
+  publication: PublishActivityOutput;
+}
 
 /**
  * DI-21.46. The egress facts of one sandbox for an agent prompt, or null for a sandbox prepared
@@ -304,6 +361,13 @@ const egressOf = (prepared: PrepareSandboxActivityOutput): EgressFacts | null =>
     bootstrapOnly: (prepared.runtime.bootstrapAllowedDomains ?? []).filter((host) => !allowListCovers(allowed, host)).sort(),
   };
 };
+
+/**
+ * docs/specs/change-sets.md. The targets of a change set for an activity input, or nothing for a
+ * sandbox of one target, so an activity of one target gets the input it got before.
+ */
+const setTargetsInput = (prepared: { targets?: Array<{ repository: string; path: string; baseSha: string }> }) =>
+  prepared.targets !== undefined && prepared.targets.length > 1 ? { targets: prepared.targets } : {};
 
 /** docs/specs/run-speed.md. How the reviewer that runs beside user validation ended. */
 /** docs/specs/early-review-sprite.md. The build of the reviewer's check sprite of one attempt. */
@@ -680,6 +744,9 @@ export async function agentRunWorkflow(
   // docs/specs/check-isolation.md. The check sprite of the current attempt. Verification, user
   // validation, review and publication run there, never in the sprite the Implementer used.
   let checkSandbox: PrepareCheckSandboxActivityOutput | null = null;
+  // docs/specs/change-sets.md, DI-21.141, DI-21.149. The cited provider-to-consumer edges of the run,
+  // which the in-between check reads.
+  let runEdges: Array<{ provider: string; consumer: string }> = [];
   // docs/specs/run-speed.md. The check sprite of the reviewer of the current attempt, and the
   // reviewer that runs beside user validation.
   let reviewSandbox: PrepareCheckSandboxActivityOutput | null = null;
@@ -728,6 +795,14 @@ export async function agentRunWorkflow(
   if (input.deployFailure !== undefined) initialRepairFindings = [...initialRepairFindings, ...deployFailureFindingLines(input.deployFailure)];
   // docs/specs/pr-review-merge-and-deploy.md, slice 4. The pull request a bring-current run updates.
   const bringCurrent = input.bringCurrent ?? null;
+  // docs/specs/change-sets.md, slice 9. The change set that a set PR follow-up run or a set
+  // bring-current run holds. Only such an input carries one, so an older history never reaches it.
+  const prChangeSet = prFollowUp?.changeSet ?? bringCurrent?.changeSet ?? null;
+  const setMemberOf = (slug: string): PrSetMember | null =>
+    prChangeSet?.members.find((member) => member.repositoryFullName.toLowerCase() === slug.toLowerCase()) ?? null;
+  // DI-21.159. The set check and the in-between check of a set run take the edges of the run that
+  // opened the set.
+  if (prChangeSet !== null) runEdges = prChangeSet.edges.map((edge) => ({ provider: edge.provider, consumer: edge.consumer }));
   let triagedFindings: TriagedFinding[] = [];
   // DI-19.04. A human review is a decision, as a Linear reply is, so the implementer follows it.
   if (prFollowUp !== null && prFollowUp.trigger === "human") {
@@ -750,6 +825,9 @@ export async function agentRunWorkflow(
   // The GitHub App installation that grants the target repository. The clone, the discovery
   // read, and the publish all mint against this id, never against a Project secret.
   let primaryRepositoryInstallationId = targetRepositories[0]?.githubInstallationId ?? "";
+  // docs/specs/change-sets.md. Every target of the Run, in set order. The first is the primary
+  // repository above. Target selection fills it.
+  let runTargets: Array<{ id: string; fullName: string; githubInstallationId: string }> = [];
   // Specification section 12. A repository in the Product that is not the target is absent at
   // start. It must reach an agent only through clone_sibling, which the Action Policy gates and
   // which writes an evidence record. This list must therefore never take a value from Product
@@ -759,6 +837,12 @@ export async function agentRunWorkflow(
   const referenceRepositorySlugs: string[] = [];
   const defaultBranchForSlug = (slug: string) =>
     targetRepositories.find((repository) => repository.fullName === slug)?.defaultBranch ?? "main";
+  // docs/specs/change-sets.md, DI-21.154. A change set that fails its checks names the result of each
+  // target. One target adds nothing to its message.
+  const setResultsOf = (results: Parameters<typeof targetResultsSentence>[1]): string => {
+    const sentence = targetResultsSentence(runTargets.map((target) => target.fullName), results);
+    return sentence === "" ? "" : `${sentence} `;
+  };
 
   setHandler(stopSignal, (request?: StopRequest) => {
     if (!stopRequested) stopRequest = readStopRequest(request);
@@ -853,7 +937,7 @@ export async function agentRunWorkflow(
       await activities.completeRun({ ...args, waitedMs });
       // DI-21.50. A run that ends with no pull request moves its issue back, while the issue is
       // still in the state the run set. The start already took the patch, so no new marker lands here.
-      if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrl === null) {
+      if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrls.length === 0) {
         await notify(() => activities.restoreIssueStatus({ tenantId: input.tenantId, runId: id }));
       }
       if (sources !== null && patched(SKILL_REGISTRY_PATCH)) {
@@ -1063,12 +1147,13 @@ export async function agentRunWorkflow(
   const timeoutMessage = "Factoree stopped the Run because it reached the maximum Run duration.";
 
   /**
-   * The pull request URL of a successful publication, or null while nothing is published. A stop
-   * message and a timeout message must not claim that nothing was published once it exists. The
+   * docs/specs/change-sets.md. The pull request URL of each published target, empty while nothing
+   * is published. A stop message and a timeout message must not claim that nothing was published
+   * once it exists. The
    * Run status does not change, because SDD section 68 forbids a success terminal state before
    * Phase 10 builds the Proof Pack.
    */
-  let publishedPullRequestUrl: string | null = null;
+  const publishedPullRequestUrls: string[] = [];
 
   /**
    * SDD section 23 requires one focused question. The workflow asks that question. It waits for
@@ -1214,6 +1299,8 @@ export async function agentRunWorkflow(
         adapter: attemptInput.prepared.adapter,
         workspacePath: attemptInput.prepared.workspacePath,
         primaryPath: attemptInput.prepared.primaryPath,
+        // docs/specs/change-sets.md. An activity input adds no workflow command.
+        ...setTargetsInput(attemptInput.prepared),
         referencePaths: attemptInput.prepared.referencePaths,
         goal: attemptInput.goal,
         contextContract: attemptInput.contextContract,
@@ -1301,6 +1388,17 @@ export async function agentRunWorkflow(
         ...(attemptInput.afterHang === true ? { afterHang: true } : {}),
         ...(forYourEye.length === 0 ? {} : { forYourEye }),
         ...(attemptInput.replay === true ? { replay: true } : {}),
+        // docs/specs/change-sets.md, slice 6. The set check of a change set: its groups, its edges and
+        // the targets whose patch changes a file. An activity input adds no workflow command.
+        ...(attemptInput.prepared.setCheck === undefined
+          ? {}
+          : {
+              setCheck: attemptInput.prepared.setCheck,
+              edges: runEdges,
+              changedTargets: ((attemptInput.prepared as Partial<PrepareCheckSandboxActivityOutput>).checkedTargets ?? [])
+                .filter((target) => target.changedFiles.length > 0)
+                .map((target) => target.repository),
+            }),
       }),
     );
   };
@@ -1334,6 +1432,7 @@ export async function agentRunWorkflow(
         workspacePath: attemptInput.prepared.workspacePath,
         primaryPath: attemptInput.prepared.primaryPath,
         baseSha: attemptInput.prepared.baseSha,
+        ...setTargetsInput(attemptInput.prepared),
         goal: attemptInput.goal,
         contextContract: attemptInput.contextContract,
         constraints: attemptInput.constraints,
@@ -1384,7 +1483,7 @@ export async function agentRunWorkflow(
     await notify(() =>
       activities.postFinalResponse({
         sessionId: input.agentSessionId,
-        body: stopResponse(stopRequest, publishedPullRequestUrl),
+        body: stopResponse(stopRequest, publishedPullRequestUrls),
       }),
     );
     return { runId: id, status };
@@ -1515,6 +1614,32 @@ export async function agentRunWorkflow(
         );
       }
       await activities.recordRunTarget({ tenantId: input.tenantId, runId: id, repositoryId: repository.id, selectionReason: `the repository of ${update.url}` });
+      // docs/specs/change-sets.md, slice 9, DI-21.161. A merge that brings one pull request of a set
+      // current gets the set check: every other member joins the check sprite, so the run records each.
+      const setMembers = update.changeSet?.members ?? null;
+      const setRepositories: AgentRunProductRepositoryInput[] = [];
+      if (setMembers !== null) {
+        for (const member of setMembers) {
+          const memberRepository = targetRepositories.find((candidate) => candidate.id === member.repositoryId);
+          if (memberRepository === undefined || memberRepository.absentSince !== null) {
+            return endedWithoutOutcome(
+              failRun(
+                "TARGET_UNRESOLVED",
+                `The repository ${member.repositoryFullName} of ${member.url} is no longer part of this product, so Factoree cannot check the change set of ${update.url}.`,
+              ),
+            );
+          }
+          setRepositories.push(memberRepository);
+          if (memberRepository.id !== repository.id) {
+            await activities.recordRunTarget({
+              tenantId: input.tenantId,
+              runId: id,
+              repositoryId: memberRepository.id,
+              selectionReason: `the change set of ${update.url}`,
+            });
+          }
+        }
+      }
       const mergeInput = {
         runId: id,
         tenantId: input.tenantId,
@@ -1618,6 +1743,28 @@ export async function agentRunWorkflow(
         skillRegistry: null,
         patchSha256: merged.patchSha256,
       };
+      // DI-21.161. The check sprite of a set: the merged target at the new base with the merge patch,
+      // each other open member at its verified base with the diff to its head, each merged one at its
+      // merge commit. The first target in set order is the primary checkout.
+      const setTargets =
+        setMembers === null
+          ? null
+          : inSetOrder(setRepositories).map((memberRepository) => {
+              const member = setMembers.find((candidate) => candidate.repositoryId === memberRepository.id);
+              const merging = memberRepository.id === repository.id;
+              return {
+                repository: memberRepository.fullName,
+                url: buildRepositoryUrl(input.product.repositoryBaseUrl, memberRepository.fullName),
+                ref: merging ? merged.baseSha : (member?.baseSha ?? ""),
+                githubInstallationId: memberRepository.githubInstallationId,
+                ...(!merging && member?.state === "open" ? { pullRequestHead: member.headSha } : {}),
+              };
+            });
+      const firstSetTarget = setTargets?.[0];
+      const checkSpriteInput =
+        setTargets === null || firstSetTarget === undefined
+          ? checkInput
+          : { ...checkInput, primary: { url: firstSetTarget.url, ref: firstSetTarget.ref }, targets: setTargets, mergeRepository: repository.fullName };
       let checked: PrepareCheckSandboxActivityOutput | null;
       try {
         checked = await withSandboxSlot(async (budgetMs) => {
@@ -1625,9 +1772,10 @@ export async function agentRunWorkflow(
             runId: id,
             tenantId: input.tenantId,
             productId: input.productId,
-            repositoryUrl: checkInput.primary.url,
+            repositoryUrl: checkSpriteInput.primary.url,
+            ...(setTargets === null ? {} : { targetRepositoryUrls: setTargets.slice(1).map((target) => target.url) }),
           });
-          return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareBringCurrentSandbox(checkInput);
+          return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareBringCurrentSandbox(checkSpriteInput);
         });
       } catch (error) {
         if (isConfigurationFault(error)) {
@@ -1661,6 +1809,10 @@ export async function agentRunWorkflow(
           commands: sprite.verifyCommands,
           timeoutMs: remainingMs(),
           attempt: 1,
+          // DI-21.161. Each target of a set verifies with its own stack.
+          ...(sprite.setCheck === undefined
+            ? {}
+            : { stacks: sprite.setCheck.targets.map((target) => ({ repository: target.repository, path: target.path, services: target.services })) }),
         });
       } catch (error) {
         if (remainingMs() > 0) throw error;
@@ -1707,7 +1859,13 @@ export async function agentRunWorkflow(
       if (stopRequested) return ended(await cancelRun(), { kind: "ended" });
       let pushed: PushBringCurrentMergeActivityOutput;
       try {
-        pushed = await bringCurrentActivities.pushBringCurrentMerge({ ...mergeInput, baseSha: merged.baseSha, verifiedPatchSha256: sprite.patchSha256 });
+        // DI-21.161. The check sprite of a set proved the merge patch of its target, and names the set by
+        // the set patch hash.
+        pushed = await bringCurrentActivities.pushBringCurrentMerge({
+          ...mergeInput,
+          baseSha: merged.baseSha,
+          verifiedPatchSha256: setTargets === null ? sprite.patchSha256 : merged.patchSha256,
+        });
       } catch (error) {
         if (isCancellation(error)) throw error;
         if (isConfigurationFault(error)) {
@@ -1721,7 +1879,7 @@ export async function agentRunWorkflow(
           { kind: "moved" },
         );
       }
-      publishedPullRequestUrl = update.url;
+      publishedPullRequestUrls.push(update.url);
       await activities.recordRunTargetFacts({
         tenantId: input.tenantId,
         runId: id,
@@ -1746,6 +1904,13 @@ export async function agentRunWorkflow(
         baseSha: merged.baseSha,
         contractRevision: update.contractRevision,
       });
+      // docs/specs/change-sets.md, slice 9. The merge commit is a head Factoree pushed after a set check,
+      // so each consumer status of the set is set again from it.
+      if (setMembers !== null) {
+        await notify(async () => {
+          await activities.setChangeSetStatuses({ tenantId: input.tenantId, pullRequestId: update.pullRequestId });
+        });
+      }
       return ended(
         await endReported(
           [
@@ -2108,6 +2273,28 @@ export async function agentRunWorkflow(
         if (notice) await takeDecision({ kind: "target", statement: `chose ${repository.fullName}`, reason });
       };
 
+      /**
+       * docs/specs/change-sets.md. Applies a confirmed set: one RunTarget row per target, in set
+       * order. The first target is the primary repository. One notice names the whole set.
+       */
+      const applyTargets = async (repositories: RepositoryRecord[], reason: string, notice: boolean): Promise<void> => {
+        const first = repositories[0];
+        if (first === undefined) return;
+        primaryRepositorySlug = first.fullName;
+        primaryRepositoryId = first.id;
+        primaryRepositoryInstallationId = first.githubInstallationId;
+        refined.primaryRepository = first.fullName;
+        runTargets = repositories;
+        for (const repository of repositories) {
+          await activities.recordRunTarget({ tenantId: input.tenantId, runId: id, repositoryId: repository.id, selectionReason: reason });
+        }
+        if (notice) {
+          const names = repositories.map((repository) => repository.fullName);
+          const statement = names.length === 1 ? `chose ${names[0] ?? ""}` : `chose ${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
+          await takeDecision({ kind: "target", statement, reason });
+        }
+      };
+
       // docs/specs/own-proposals-and-parallel-runs.md. The issue text or the Linear project decides
       // the target when exactly one repository matches. A pick among equals is a guess, so only
       // then does a human choose.
@@ -2121,40 +2308,116 @@ export async function agentRunWorkflow(
           `The repository ${prFollowUp.repositoryFullName} of ${prFollowUp.url} is no longer part of this product, so Factoree cannot change it.`,
         );
       }
-      let targetOutcome: ReturnType<typeof selectTarget> =
-        pullRequestRepository !== null
-          ? { kind: "selected", repository: pullRequestRepository, reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
-          : selectTarget(
-              presentRepositories,
-              proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+      // docs/specs/change-sets.md. A run changes a set of repositories. The patch keeps the one-target
+      // selection of a history that passed this point before sets existed.
+      if (!patched(CHANGE_SET_PATCH)) {
+        let targetOutcome: ReturnType<typeof selectTarget> =
+          pullRequestRepository !== null
+            ? { kind: "selected", repository: pullRequestRepository, reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
+            : selectTarget(
+                presentRepositories,
+                proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+              );
+        while (targetOutcome.kind === "ambiguous") {
+          const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
+          const proceeded = await askAndWait(
+            "target-selection",
+            "Factoree found several repositories in this Product, and no confident target. " +
+              `Candidates: ${candidateNames}. Reply with the exact repository name to use.`,
+            undefined,
+            undefined,
+            "BLOCKED_TARGET",
+          );
+          if (stopRequested) return await cancelRun();
+          if (!proceeded) {
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            return await failRun(
+              "TARGET_UNRESOLVED",
+              "Factoree could not confirm the target repository of this Product, so it published " +
+                "nothing.",
             );
-      while (targetOutcome.kind === "ambiguous") {
-        const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
-        const proceeded = await askAndWait(
-          "target-selection",
-          "Factoree found several repositories in this Product, and no confident target. " +
-            `Candidates: ${candidateNames}. Reply with the exact repository name to use.`,
-          undefined,
-          undefined,
-          "BLOCKED_TARGET",
-        );
-        if (stopRequested) return await cancelRun();
-        if (!proceeded) {
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          }
+          const reply = decisions[decisions.length - 1]?.answer ?? "";
+          const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
+          targetOutcome =
+            chosen === null
+              ? { kind: "ambiguous", candidates: targetOutcome.candidates }
+              : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
+        }
+        await applyTarget(targetOutcome.repository, targetOutcome.reason, targetOutcome.notify);
+        runTargets = [targetOutcome.repository];
+      } else {
+        // DI-21.131. A follow-up run changes the set of the run it follows. A repository that left
+        // the product since then cannot be changed, and a guess would re-route the work.
+        const followUpTargets = prFollowUp === null ? (input.followUpTargets ?? []) : [];
+        const followUpSet = followUpTargets.map((repositoryId) => presentRepositories.find((repository) => repository.id === repositoryId) ?? null);
+        const goneTarget = followUpSet.findIndex((repository) => repository === null || repository.absentSince !== null);
+        if (goneTarget >= 0) {
+          const gone = followUpSet[goneTarget];
           return await failRun(
             "TARGET_UNRESOLVED",
-            "Factoree could not confirm the target repository of this Product, so it published " +
-              "nothing.",
+            `The repository ${gone?.fullName ?? followUpTargets[goneTarget] ?? ""} of the run this run follows is no longer part of this product, so Factoree cannot change it.`,
           );
         }
-        const reply = decisions[decisions.length - 1]?.answer ?? "";
-        const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
-        targetOutcome =
-          chosen === null
-            ? { kind: "ambiguous", candidates: targetOutcome.candidates }
-            : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
+        // docs/specs/change-sets.md, slice 9, DI-21.159. A set PR follow-up run changes every pull request
+        // of the set that is open, and holds each merged one fixed at its merge.
+        const setRepositories = prChangeSet === null ? null : prChangeSet.members.map((member) => presentRepositories.find((repository) => repository.id === member.repositoryId) ?? null);
+        const goneMember = setRepositories === null ? -1 : setRepositories.findIndex((repository) => repository === null || repository.absentSince !== null);
+        if (goneMember >= 0) {
+          const member = prChangeSet?.members[goneMember];
+          return await failRun(
+            "TARGET_UNRESOLVED",
+            `The repository ${member?.repositoryFullName ?? ""} of ${member?.url ?? "the change set"} is no longer part of this product, so Factoree cannot change the change set.`,
+          );
+        }
+        let setOutcome: TargetSetOutcome =
+          setRepositories !== null
+            ? {
+                kind: "selected",
+                repositories: inSetOrder(setRepositories.filter((repository): repository is RepositoryRecord => repository !== null)),
+                reason: `the pull requests of the change set of ${prFollowUp?.url ?? "the pull request"}`,
+                notify: false,
+              }
+            : pullRequestRepository !== null
+            ? { kind: "selected", repositories: [pullRequestRepository], reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
+            : followUpSet.length > 0
+              ? {
+                  kind: "selected",
+                  repositories: inSetOrder(followUpSet.filter((repository): repository is RepositoryRecord => repository !== null)),
+                  reason: "the targets of the run this run follows",
+                  notify: false,
+                }
+              : selectTargets(
+                  presentRepositories,
+                  proposeTargets(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+                );
+        while (setOutcome.kind === "ambiguous") {
+          const candidateNames = setOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
+          const proceeded = await askAndWait(
+            "target-selection",
+            "Factoree found several repositories in this Product, and no rule decides which ones this issue changes. " +
+              `Candidates: ${candidateNames}. Reply with the exact name of each repository to change.`,
+            undefined,
+            undefined,
+            "BLOCKED_TARGET",
+          );
+          if (stopRequested) return await cancelRun();
+          if (!proceeded) {
+            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+            return await failRun(
+              "TARGET_UNRESOLVED",
+              "Factoree could not confirm the target repositories of this Product, so it published " +
+                "nothing.",
+            );
+          }
+          const chosen = matchReplyToCandidates(decisions[decisions.length - 1]?.answer ?? "", setOutcome.candidates);
+          setOutcome =
+            chosen.length === 0
+              ? { kind: "ambiguous", candidates: setOutcome.candidates }
+              : { kind: "selected", repositories: chosen, reason: "human reply", notify: false };
+        }
+        await applyTargets(setOutcome.repositories, setOutcome.reason, setOutcome.notify);
       }
-      await applyTarget(targetOutcome.repository, targetOutcome.reason, targetOutcome.notify);
 
       // SDD section 20. Discovery pins one SHA for each repository. The ref below is the ref
       // discovery starts from. The checkout later uses the pinned SHA.
@@ -2166,90 +2429,123 @@ export async function agentRunWorkflow(
 
       // SDD section 23. A conflict without an authority winner blocks the Run. The bounded
       // rounds end this loop, and the Run budget ends it as well.
-      let resolvedContext: ResolveContextActivityOutput;
-      for (;;) {
-        if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+      // docs/specs/change-sets.md, DI-21.143. A target the refiner adds resolves the context again
+      // for the whole set, with `supersedes`, so the run's contract lists every target.
+      type ContextScope = {
+        primaryRepository: { slug: string; url: string; ref: string };
+        referenceRepositories: Array<{ slug: string; url: string; ref: string }>;
+        targetRepositories: Array<{ slug: string; url: string; ref: string; githubInstallationId: string }>;
+        supersedes?: string;
+      };
+      const resolveContextLoop = async (
+        scope: ContextScope,
+      ): Promise<{ resolved: ResolveContextActivityOutput } | { ended: AgentRunWorkflowResult }> => {
+        for (;;) {
+          if (remainingMs() === 0) return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
 
-        status = "RESOLVING_CONTEXT";
-        await activities.setRunStatus({ runId: id, status });
+          status = "RESOLVING_CONTEXT";
+          await activities.setRunStatus({ runId: id, status });
 
-        try {
-          resolvedContext = await buildContextActivities(remainingMs()).resolveContext({
-            runId: id,
-            tenantId: input.tenantId,
-            productId: input.productId,
-            goal: refined.goal,
-            acceptanceCriteria: refined.acceptanceCriteria,
-            // D2. A PR follow-up run reads its context at the verified base of the pull request.
-            primaryRepository:
-              prFollowUp === null
-                ? repositoryRef(refined.primaryRepository)
-                : { ...repositoryRef(refined.primaryRepository), ref: prFollowUp.baseSha },
-            referenceRepositories: refined.referenceRepositories.map(repositoryRef),
-            workItemReferences: refined.workItemReferences,
-            decisions,
-            githubInstallationId: primaryRepositoryInstallationId,
-            // docs/specs/work-item-images-and-links.md. An activity input adds no workflow command.
-            ...(workItemContent === null
-              ? {}
-              : {
-                  workItemContent: {
-                    comments: workItemContent.comments,
-                    images: workItemContent.images,
-                    links: workItemContent.links,
-                    skippedImages: workItemContent.skippedImages,
-                    linksNotRead: workItemContent.linksNotRead,
-                  },
-                }),
-          });
-        } catch (error) {
-          // SDD section 49. A repository reference that resolves to nothing is a semantic
-          // failure, so it drives a workflow decision. The retry policy already denied a second
-          // attempt. A transport fault is not this type, so it still retries.
-          if (isConfigurationFault(error)) {
-            return await failRun(
-              "CONFIGURATION_INVALID",
-              withCause(
-                "Factoree could not resolve the context, because the Run configuration is invalid. " +
-                  "Repair the repository reference, the reference repositories, or the default branch.",
-                error,
-              ),
-            );
+          let resolution: ResolveContextActivityOutput;
+          try {
+            resolution = await buildContextActivities(remainingMs()).resolveContext({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              goal: refined.goal,
+              acceptanceCriteria: refined.acceptanceCriteria,
+              primaryRepository: scope.primaryRepository,
+              referenceRepositories: scope.referenceRepositories,
+              // docs/specs/change-sets.md. The other targets of a change set, each at its default branch.
+              ...(scope.targetRepositories.length > 0 ? { targetRepositories: scope.targetRepositories } : {}),
+              ...(scope.supersedes === undefined ? {} : { supersedes: scope.supersedes }),
+              workItemReferences: refined.workItemReferences,
+              decisions,
+              githubInstallationId: primaryRepositoryInstallationId,
+              // docs/specs/work-item-images-and-links.md. An activity input adds no workflow command.
+              ...(workItemContent === null
+                ? {}
+                : {
+                    workItemContent: {
+                      comments: workItemContent.comments,
+                      images: workItemContent.images,
+                      links: workItemContent.links,
+                      skippedImages: workItemContent.skippedImages,
+                      linksNotRead: workItemContent.linksNotRead,
+                    },
+                  }),
+            });
+          } catch (error) {
+            // SDD section 49. A repository reference that resolves to nothing is a semantic
+            // failure, so it drives a workflow decision. The retry policy already denied a second
+            // attempt. A transport fault is not this type, so it still retries.
+            if (isConfigurationFault(error)) {
+              return {
+                ended: await failRun(
+                  "CONFIGURATION_INVALID",
+                  withCause(
+                    "Factoree could not resolve the context, because the Run configuration is invalid. " +
+                      "Repair the repository reference, the reference repositories, or the default branch.",
+                    error,
+                  ),
+                ),
+              };
+            }
+            throw error;
           }
-          throw error;
-        }
-        // SDD section 21. Only a frozen Context Contract has a version. A resolution that still
-        // holds an unresolved conflict stored nothing, so the snapshot reports no version.
-        contextContractVersion =
-          resolvedContext.unresolvedConflict === null ? resolvedContext.sha256 : null;
+          // SDD section 21. Only a frozen Context Contract has a version. A resolution that still
+          // holds an unresolved conflict stored nothing, so the snapshot reports no version.
+          contextContractVersion =
+            resolution.unresolvedConflict === null ? resolution.sha256 : null;
 
-        await notify(() =>
-          activities.postProgress({
-            sessionId: input.agentSessionId,
-            message: resolvedContext.summary,
-          }),
-        );
-
-        const conflict = resolvedContext.unresolvedConflict;
-        if (conflict === null) break;
-
-        // SDD section 23. No safe resolution exists, so implementation must not start.
-        const proceeded = await askAndWait(
-          conflict.id,
-          conflict.question,
-          conflict.subject,
-          conflict.domain,
-        );
-        if (stopRequested) return await cancelRun();
-        if (!proceeded) {
-          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-          return await failRun(
-            "CONTEXT_UNRESOLVED",
-            "Factoree could not start, because two equally authoritative sources disagree: " +
-              `${conflict.question} Factoree published nothing.`,
+          await notify(() =>
+            activities.postProgress({
+              sessionId: input.agentSessionId,
+              message: resolution.summary,
+            }),
           );
+
+          const conflict = resolution.unresolvedConflict;
+          if (conflict === null) return { resolved: resolution };
+
+          // SDD section 23. No safe resolution exists, so implementation must not start.
+          const proceeded = await askAndWait(
+            conflict.id,
+            conflict.question,
+            conflict.subject,
+            conflict.domain,
+          );
+          if (stopRequested) return { ended: await cancelRun() };
+          if (!proceeded) {
+            if (remainingMs() === 0) return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
+            return {
+              ended: await failRun(
+                "CONTEXT_UNRESOLVED",
+                "Factoree could not start, because two equally authoritative sources disagree: " +
+                  `${conflict.question} Factoree published nothing.`,
+              ),
+            };
+          }
         }
-      }
+      };
+      const firstContext = await resolveContextLoop({
+        // D2. A PR follow-up run reads its context at the verified base of the pull request.
+        // DI-21.159. Each member of a set PR follow-up run reads its context at its own base.
+        primaryRepository:
+          prFollowUp === null
+            ? repositoryRef(refined.primaryRepository)
+            : { ...repositoryRef(refined.primaryRepository), ref: setMemberOf(refined.primaryRepository)?.baseSha ?? prFollowUp.baseSha },
+        referenceRepositories: refined.referenceRepositories.map(repositoryRef),
+        targetRepositories:
+          runTargets.length > 1
+            ? runTargets.slice(1).map((target) => {
+                const member = setMemberOf(target.fullName);
+                return { ...repositoryRef(target.fullName), ...(member === null ? {} : { ref: member.baseSha }), githubInstallationId: target.githubInstallationId };
+              })
+            : [],
+      });
+      if ("ended" in firstContext) return firstContext.ended;
+      let resolvedContext: ResolveContextActivityOutput = firstContext.resolved;
 
       // A stop that arrived during the context work must prevent preparation.
       if (stopRequested) return await cancelRun();
@@ -2258,31 +2554,44 @@ export async function agentRunWorkflow(
       // Specification section 8. The routing table used a cached repository row. The base
       // commit is the ground truth. Factoree reads the identity block there. It checks that
       // block against the Product routing used.
-      const identity = await activities.verifyTargetIdentity({
-        runId: id,
-        tenantId: input.tenantId,
-        productId: input.productId,
-        productSlug: input.product.productSlug,
-        repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, resolvedContext.primary.slug),
-        baseSha: resolvedContext.primary.sha,
-        githubInstallationId: primaryRepositoryInstallationId,
-      });
-      if (stopRequested) return await cancelRun();
-      if (!identity.matched) {
-        return await endRoutingMismatch(
-          input.product.productSlug,
-          identity.declaredProduct ?? "an unknown Product",
-        );
+      // docs/specs/change-sets.md. Each target of a change set is checked at its own base, in set order.
+      // A run with one target makes the one call it made before.
+      const targetBases = (runTargets.length === 0 ? [{ id: primaryRepositoryId, fullName: resolvedContext.primary.slug, githubInstallationId: primaryRepositoryInstallationId }] : runTargets).map(
+        (target, index) => ({
+          ...target,
+          slug: index === 0 ? resolvedContext.primary.slug : target.fullName,
+          sha: index === 0 ? resolvedContext.primary.sha : (resolvedContext.targets?.find((pinned) => pinned.slug === target.fullName)?.sha ?? ""),
+        }),
+      );
+      for (const target of targetBases) {
+        const identity = await activities.verifyTargetIdentity({
+          runId: id,
+          tenantId: input.tenantId,
+          productId: input.productId,
+          productSlug: input.product.productSlug,
+          repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug),
+          baseSha: target.sha,
+          githubInstallationId: target.githubInstallationId,
+        });
+        if (stopRequested) return await cancelRun();
+        if (!identity.matched) {
+          return await endRoutingMismatch(
+            input.product.productSlug,
+            identity.declaredProduct ?? "an unknown Product",
+          );
+        }
       }
 
-      // Specification section 14. The base SHA of the target's RunTarget row is known now, at
+      // Specification section 14. The base SHA of each target's RunTarget row is known now, at
       // context resolution.
-      await activities.recordRunTargetFacts({
-        tenantId: input.tenantId,
-        runId: id,
-        repositoryId: primaryRepositoryId,
-        baseSha: resolvedContext.primary.sha,
-      });
+      for (const target of targetBases) {
+        await activities.recordRunTargetFacts({
+          tenantId: input.tenantId,
+          runId: id,
+          repositoryId: target.id,
+          baseSha: target.sha,
+        });
+      }
 
       // docs/specs/autonomy-levels.md. L0 reads and reports. The Context Contract is the report,
       // and no sandbox starts.
@@ -2349,11 +2658,23 @@ export async function agentRunWorkflow(
       await activities.setRunStatus({ runId: id, status });
 
       // The work sprite and every check sprite are prepared from the same input.
-      const prepareInput = {
+      // docs/specs/change-sets.md, DI-21.140. A target the refiner adds joins it.
+      let prepareInput = {
         runId: id,
         tenantId: input.tenantId,
         productId: input.productId,
         primary: sandbox.primary,
+        // docs/specs/change-sets.md. Each target of a change set at its base, with its installation.
+        ...(targetBases.length > 1
+          ? {
+              targets: targetBases.map((target) => ({
+                repository: target.slug,
+                url: buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug),
+                ref: target.sha,
+                githubInstallationId: target.githubInstallationId,
+              })),
+            }
+          : {}),
         references: sandbox.references,
         defaults: sandbox.defaults,
         environment: {},
@@ -2377,61 +2698,100 @@ export async function agentRunWorkflow(
       // D2. The work sprite of a PR follow-up run holds the full change of the pull request: the
       // verified base, with the diff to the head the run read. A check sprite takes the captured patch.
       // Slice 4, DI-21.119. A base update merges the head into the new base, conflict markers and all.
+      // docs/specs/change-sets.md, slice 9, DI-21.159. A set PR follow-up run applies each open pull
+      // request of the set to its own target, and leaves each merged one at its merge commit.
+      const setWorkTargets =
+        prChangeSet === null || prFollowUp === null || prepareInput.targets === undefined
+          ? null
+          : prepareInput.targets.map((target) => {
+              const member = setMemberOf(target.repository);
+              if (member === null || member.state !== "open") return target;
+              const merges = prFollowUp.baseUpdate !== undefined && member.pullRequestId === prFollowUp.pullRequestId;
+              return { ...target, pullRequestHead: member.headSha, ...(merges ? { pullRequestMerge: true } : {}) };
+            });
       const workInput =
         prFollowUp === null
           ? prepareInput
-          : { ...prepareInput, pullRequestHead: prFollowUp.headSha, ...(prFollowUp.baseUpdate === undefined ? {} : { pullRequestMerge: true }) };
+          : setWorkTargets !== null
+            ? { ...prepareInput, targets: setWorkTargets }
+            : { ...prepareInput, pullRequestHead: prFollowUp.headSha, ...(prFollowUp.baseUpdate === undefined ? {} : { pullRequestMerge: true }) };
+
+      // docs/specs/change-sets.md, DI-21.138. The refiner of a run that can add a target reads the
+      // other present repositories of the product. A PR follow-up run and a bring-current run keep
+      // their target, so they read none.
+      const refinerTargetsOpen = prFollowUp === null && bringCurrent === null;
+      const siblingRepositories = refinerTargetsOpen
+        ? targetRepositories.filter(
+            (repository) =>
+              repository.absentSince === null &&
+              !targetBases.some((target) => target.slug.toLowerCase() === repository.fullName.toLowerCase()),
+          )
+        : [];
+      const firstWorkInput =
+        siblingRepositories.length === 0
+          ? workInput
+          : { ...workInput, siblings: { repositoryBaseUrl: input.product.repositoryBaseUrl, repositories: siblingRepositories } };
 
       // SDD section 32. The sandbox stays after the Run ends. `SpriteReaper` deletes it once the
       // retention window of SDD section 51 has passed.
-      // A const holds the prepared sandbox, because narrowing of a let does not survive into a
-      // closure.
-      let preparedSandbox: PrepareSandboxActivityOutput;
-      try {
-        const work = await withSandboxSlot(async (budgetMs) => {
-          if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(workInput);
-          // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
-          // there, then prepares the work sprite on it. A provider that fails the create is marked
-          // down, the run gives its slots back, and it selects again. With no provider that has
-          // room, the selection throws the slot error, and `withSandboxSlot` waits.
-          for (;;) {
-            const budget = Math.max(1, Math.min(budgetMs, remainingMs()));
-            await buildSandboxActivities(budget).selectSandboxProvider({
-              runId: id,
-              tenantId: input.tenantId,
-              productId: input.productId,
-              repositoryUrl: sandbox.primary.url,
-            });
-            try {
-              return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(workInput);
-            } catch (error) {
-              if (!isSandboxProviderDown(error)) throw error;
+      // docs/specs/change-sets.md, DI-21.140. A target the refiner adds prepares the work sprite again.
+      const prepareWorkSprite = async (
+        workSpriteInput: typeof firstWorkInput,
+      ): Promise<{ prepared: PrepareSandboxActivityOutput } | { ended: AgentRunWorkflowResult }> => {
+        try {
+          const work = await withSandboxSlot(async (budgetMs) => {
+            if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(workSpriteInput);
+            // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
+            // there, then prepares the work sprite on it. A provider that fails the create is marked
+            // down, the run gives its slots back, and it selects again. With no provider that has
+            // room, the selection throws the slot error, and `withSandboxSlot` waits.
+            for (;;) {
+              const budget = Math.max(1, Math.min(budgetMs, remainingMs()));
+              await buildSandboxActivities(budget).selectSandboxProvider({
+                runId: id,
+                tenantId: input.tenantId,
+                productId: input.productId,
+                repositoryUrl: sandbox.primary.url,
+                ...(targetBases.length > 1
+                  ? { targetRepositoryUrls: targetBases.slice(1).map((target) => buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug)) }
+                  : {}),
+              });
+              try {
+                return await buildSandboxActivities(Math.max(1, Math.min(budgetMs, remainingMs()))).prepareSandbox(workSpriteInput);
+              } catch (error) {
+                if (!isSandboxProviderDown(error)) throw error;
+              }
             }
+          });
+          if (work === null) {
+            if (stopRequested) return { ended: await cancelRun() };
+            return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
           }
-        });
-        if (work === null) {
-          if (stopRequested) return await cancelRun();
-          return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return { prepared: work };
+        } catch (error) {
+          // A configuration fault is not an infrastructure fault. The Run ends in
+          // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
+          if (isConfigurationFault(error)) {
+            return {
+              ended: await failRun(
+                "CONFIGURATION_INVALID",
+                withCause(
+                  "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
+                    "Repair the repository reference, the reference repositories, or the bootstrap command.",
+                  error,
+                ),
+              ),
+            };
+          }
+          // Preparation is bounded by the remaining budget. A budget that ran out during
+          // preparation is a Run timeout, not an internal fault.
+          if (remainingMs() > 0) throw error;
+          return { ended: await failRun("RUN_TIMEOUT", timeoutMessage) };
         }
-        preparedSandbox = work;
-      } catch (error) {
-        // A configuration fault is not an infrastructure fault. The Run ends in
-        // `FAILED_CONFIGURATION`, and the retry policy already denied a second attempt.
-        if (isConfigurationFault(error)) {
-          return await failRun(
-            "CONFIGURATION_INVALID",
-            withCause(
-              "Factoree could not prepare the sandbox, because the Run configuration is invalid. " +
-                "Repair the repository reference, the reference repositories, or the bootstrap command.",
-              error,
-            ),
-          );
-        }
-        // Preparation is bounded by the remaining budget. A budget that ran out during
-        // preparation is a Run timeout, not an internal fault.
-        if (remainingMs() > 0) throw error;
-        return await failRun("RUN_TIMEOUT", timeoutMessage);
-      }
+      };
+      const firstWork = await prepareWorkSprite(firstWorkInput);
+      if ("ended" in firstWork) return firstWork.ended;
+      let preparedSandbox: PrepareSandboxActivityOutput = firstWork.prepared;
       sprite = preparedSandbox;
       // docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The Run ends FAILED_CONFIGURATION
       // and the post names each host, its reason and where to add it. A reply starts a follow-up run
@@ -2485,6 +2845,11 @@ export async function agentRunWorkflow(
             adapter: preparedSandbox.adapter,
             workspacePath: preparedSandbox.workspacePath,
             primaryPath: preparedSandbox.primaryPath,
+            ...setTargetsInput(preparedSandbox),
+            // docs/specs/change-sets.md, DI-21.139. The refiner may add a target and cite edges.
+            primaryRepository: resolvedContext.primary.slug,
+            ...(preparedSandbox.siblings === undefined ? {} : { siblings: preparedSandbox.siblings }),
+            ...(refinerTargetsOpen ? { targetsOpen: true } : {}),
             // DI-21.54. The kept human comments are Work Item text too, so the refiner reads them
             // and the gate finds a criterion quoted from a comment.
             workItemText:
@@ -2557,6 +2922,100 @@ export async function agentRunWorkflow(
       // docs/specs/own-proposals-and-parallel-runs.md. Every proposal of the gate is determined, so
       // Factoree takes it and asks nobody. The proof pack lists each one for the reviewer.
       for (const decision of proposal.decisions) await takeDecision(decision);
+
+      // docs/specs/change-sets.md, DI-21.140. Each target the gate accepted joins the run at the SHA
+      // the refiner read, after the identity check of its base. Its decision is a determined
+      // proposal, so nobody is asked. The edges give the merge order (DI-21.141). The work sprite then
+      // prepares again with the whole set, from a set snapshot when one exists. The set freezes here,
+      // with the Validation Contract that follows.
+      if (refinerTargetsOpen && patched(CHANGE_SET_REFINER_PATCH)) {
+        let joined = 0;
+        for (const added of proposal.addedTargets ?? []) {
+          const repository = targetRepositories.find((candidate) => candidate.fullName.toLowerCase() === added.repository.toLowerCase());
+          if (repository === undefined) continue;
+          await activities.recordRunTarget({
+            tenantId: input.tenantId,
+            runId: id,
+            repositoryId: repository.id,
+            selectionReason: `the refiner cited ${added.file} line ${String(added.line)}: ${added.reason}`,
+          });
+          const identity = await activities.verifyTargetIdentity({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            productSlug: input.product.productSlug,
+            repositoryUrl: buildRepositoryUrl(input.product.repositoryBaseUrl, repository.fullName),
+            baseSha: added.commitSha,
+            githubInstallationId: repository.githubInstallationId,
+          });
+          if (stopRequested) return await cancelRun();
+          if (!identity.matched) {
+            return await endRoutingMismatch(input.product.productSlug, identity.declaredProduct ?? "an unknown Product");
+          }
+          await activities.recordRunTargetFacts({ tenantId: input.tenantId, runId: id, repositoryId: repository.id, baseSha: added.commitSha });
+          if (runTargets.length === 0) {
+            runTargets = [{ id: primaryRepositoryId, fullName: resolvedContext.primary.slug, githubInstallationId: primaryRepositoryInstallationId }];
+          }
+          runTargets.push({ id: repository.id, fullName: repository.fullName, githubInstallationId: repository.githubInstallationId });
+          targetBases.push({
+            id: repository.id,
+            fullName: repository.fullName,
+            githubInstallationId: repository.githubInstallationId,
+            slug: repository.fullName,
+            sha: added.commitSha,
+          });
+          await takeDecision(added.decision);
+          joined += 1;
+        }
+        const edges = proposal.edges ?? [];
+        if (runTargets.length > 1 && edges.length > 0) {
+          runEdges = edges.map((edge) => ({ provider: edge.provider, consumer: edge.consumer }));
+          const order = await activities.recordRunTargetEdges({ tenantId: input.tenantId, runId: id, edges });
+          const decision = mergeOrderDecision(order, edges);
+          if (decision !== null) await takeDecision(decision);
+        }
+        if (joined > 0) {
+          if (stopRequested) return await cancelRun();
+          // DI-21.143. The Context Contract of the run lists every target, so the context resolves
+          // again for the set before the Validation Contract freezes. Each repository stays at the
+          // SHA the run already pinned, and an added target at the SHA the refiner read.
+          if (patched(CHANGE_SET_CONTEXT_PATCH)) {
+            const pinnedOf = (slug: string, sha: string) => ({ ...repositoryRef(slug), ref: sha });
+            const setContext = await resolveContextLoop({
+              primaryRepository: pinnedOf(resolvedContext.primary.slug, resolvedContext.primary.sha),
+              referenceRepositories: resolvedContext.references.map((reference) => pinnedOf(reference.slug, reference.sha)),
+              targetRepositories: targetBases
+                .slice(1)
+                .map((target) => ({ ...pinnedOf(target.slug, target.sha), githubInstallationId: target.githubInstallationId })),
+              supersedes: resolvedContext.sha256,
+            });
+            if ("ended" in setContext) return setContext.ended;
+            resolvedContext = setContext.resolved;
+            if (stopRequested) return await cancelRun();
+            prepareInput = {
+              ...prepareInput,
+              ...(resolvedContext.deliveryRefs === undefined ? {} : { contextRefs: resolvedContext.deliveryRefs }),
+            };
+          }
+          prepareInput = {
+            ...prepareInput,
+            targets: targetBases.map((target) => ({
+              repository: target.slug,
+              url: buildRepositoryUrl(input.product.repositoryBaseUrl, target.slug),
+              ref: target.sha,
+              githubInstallationId: target.githubInstallationId,
+            })),
+          };
+          status = "PREPARING";
+          await activities.setRunStatus({ runId: id, status });
+          const again = await prepareWorkSprite(prepareInput);
+          if ("ended" in again) return again.ended;
+          preparedSandbox = again.prepared;
+          sprite = preparedSandbox;
+          if (stopRequested) return await cancelRun();
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+        }
+      }
 
       // docs/specs/refiner-agent.md. The Validation Contract freezes after the refiner and before
       // the Implementer. SDD section 24 requires the contract to freeze before implementation
@@ -2648,6 +3107,10 @@ export async function agentRunWorkflow(
       // docs/specs/pr-review-merge-and-deploy.md. The first attempt of a PR reviewer follow-up repairs
       // the findings the triage kept.
       let repairFindings: string[] = initialRepairFindings;
+      // docs/specs/change-sets.md, DI-21.142. The repositories outside the frozen set an implementer
+      // named, and the finding each later attempt reads.
+      const frozenSetRepositories = new Set<string>();
+      const frozenSetFindings: string[] = [];
       let repairCount = 0;
       const maxRepairs = preparedSandbox.runtime.repairMaxAttempts;
       // Issue #43, DI-21.67. A spent budget names its size and where it comes from. Only the
@@ -2687,7 +3150,9 @@ export async function agentRunWorkflow(
       // reaching a review. The Proof Pack reports this count to a human, so it must be exact.
       let reviewPasses = 0;
       let publishedPreviewUrl: string | null = null;
-      let publishedFakes: Array<{ service: string; name: string }> = [];
+      let publishedFakes: Array<{ service: string; name: string; target?: string }> = [];
+      // docs/specs/change-sets.md, DI-21.148. The pairs the last set check tested alone, with the reason.
+      let publishedSetCheckNotes: string[] = [];
       let publishedChangeDescription = "";
       // docs/specs/proof-pack-and-visual-evidence.md. The gap the human accepted at refinement.
       // docs/specs/run-recovery.md. A follow-up whose reply replaced the browser checks of the
@@ -2728,6 +3193,27 @@ export async function agentRunWorkflow(
         // the allow list does not hold ends the Run, whatever else the session reported.
         const implementerMissingHosts = implementation?.missingHosts ?? [];
         if (implementerMissingHosts.length > 0) return await failMissingHosts("implementer", implementerMissingHosts);
+
+        // docs/specs/change-sets.md, DI-21.142. The set froze with the Validation Contract. A
+        // repository the implementer names outside it is a new criterion: Factoree lists it as not
+        // built, and each later attempt reads the finding.
+        if (patched(CHANGE_SET_REFINER_PATCH)) {
+          for (const missing of implementation?.missingRepositories ?? []) {
+            const name = missing.repository.trim();
+            const key = name.toLowerCase();
+            if (name === "" || frozenSetRepositories.has(key) || targetBases.some((target) => target.slug.toLowerCase() === key)) continue;
+            frozenSetRepositories.add(key);
+            const reason = missing.reason.trim().replace(/[.\s]+$/, "");
+            await takeDecision({
+              kind: "not_built",
+              statement: `did not build the change to ${name}`,
+              reason: `the targets froze with the Validation Contract, and a change to another repository is a new criterion${reason === "" ? "" : `: ${reason}`}`,
+            });
+            frozenSetFindings.push(
+              `${name} is not a target of this Run, and the targets froze with the Validation Contract. Make the change work in the targets alone. Factoree lists ${name} as not built.`,
+            );
+          }
+        }
 
         // docs/specs/agent-session-usage-and-hangs.md. The first hang resumes the session once
         // with "continue", and that attempt uses the repair budget. A second hang in the same
@@ -2790,6 +3276,7 @@ export async function agentRunWorkflow(
               workspacePath: preparedSandbox.workspacePath,
               primaryPath: preparedSandbox.primaryPath,
               baseSha: preparedSandbox.baseSha,
+              ...setTargetsInput(preparedSandbox),
             },
             previous:
               previousCheck === null
@@ -2843,6 +3330,7 @@ export async function agentRunWorkflow(
                 workspacePath: preparedSandbox.workspacePath,
                 primaryPath: preparedSandbox.primaryPath,
                 baseSha: preparedSandbox.baseSha,
+                ...setTargetsInput(preparedSandbox),
               },
               previous:
                 previousReview === null
@@ -2895,6 +3383,10 @@ export async function agentRunWorkflow(
             commands: checked.verifyCommands,
             timeoutMs: remainingMs(),
             attempt,
+            // docs/specs/change-sets.md, DI-21.146. Each target of a change set verifies with its own stack.
+            ...(checked.setCheck === undefined
+              ? {}
+              : { stacks: checked.setCheck.targets.map((target) => ({ repository: target.repository, path: target.path, services: target.services })) }),
           });
         } catch (error) {
           // Verification is bounded by the remaining budget, the same way preparation is. A
@@ -2943,7 +3435,7 @@ export async function agentRunWorkflow(
             return await failRun(
               "VERIFICATION_FAILED",
               `Deterministic verification did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
-                `${verification.summary} Factoree published nothing.`,
+                `${verification.summary} ${setResultsOf({ verification: verification.checks })}Factoree published nothing.`,
             );
           }
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -2951,7 +3443,7 @@ export async function agentRunWorkflow(
           repairCount += 1;
           signalRepairs = repairCount;
           attempt += 1;
-          repairFindings = verification.failures;
+          repairFindings = [...frozenSetFindings, ...verification.failures];
           status = "REPAIRING";
           await activities.setRunStatus({
             runId: id,
@@ -3115,7 +3607,7 @@ export async function agentRunWorkflow(
               return await failRun(
                 "VALIDATION_FAILED",
                 `User validation did not pass, and ${spentBudget.clause}. ${spentBudget.hint} ` +
-                  `${userValidation.summary} Factoree published nothing.`,
+                  `${userValidation.summary} ${setResultsOf({ validation: userValidation.results, ...(userValidation.inBetweenFailedConsumers === undefined ? {} : { inBetweenFailed: userValidation.inBetweenFailedConsumers }) })}Factoree published nothing.`,
               );
             }
             if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
@@ -3123,7 +3615,7 @@ export async function agentRunWorkflow(
             repairCount += 1;
             signalRepairs = repairCount;
             attempt += 1;
-            repairFindings = [...userValidation.failures, ...reviewFindings];
+            repairFindings = [...frozenSetFindings, ...userValidation.failures, ...reviewFindings];
             status = "REPAIRING";
             await activities.setRunStatus({
               runId: id,
@@ -3284,6 +3776,7 @@ export async function agentRunWorkflow(
           publishedReviewAttempt = attempt;
           publishedPreviewUrl = userValidation.previewUrl;
           publishedFakes = userValidation.fakes ?? [];
+          publishedSetCheckNotes = userValidation.setCheckNotes ?? [];
           publishedChangeDescription = review.changeDescription;
           break;
         }
@@ -3301,7 +3794,7 @@ export async function agentRunWorkflow(
         repairCount += 1;
         signalRepairs = repairCount;
         attempt += 1;
-        repairFindings = review.failures;
+        repairFindings = [...frozenSetFindings, ...review.failures];
         status = "REPAIRING";
         await activities.setRunStatus({ runId: id, status, repairCount, repairReason: "REVIEW" });
         await announceRepair(repairCount, maxRepairs, "the independent review found blocking findings", repairFindings.length);
@@ -3373,6 +3866,21 @@ export async function agentRunWorkflow(
         );
       }
 
+      // docs/specs/change-sets.md, slice 7, DI-21.151. A change set publishes all or nothing. A PR
+      // follow-up run keeps the one repository of its pull request until slice 9. An older history
+      // ends here as DI-21.134 did: no half change reaches GitHub.
+      const changeSetPublication = runTargets.length > 1 && prFollowUp === null && patched(CHANGE_SET_PUBLICATION_PATCH);
+      // docs/specs/change-sets.md, slice 9, DI-21.162. A set PR follow-up run pushes a new verified
+      // commit to each open pull request of the set that changed, and to no other.
+      const setFollowUp = runTargets.length > 1 && prFollowUp !== null && prChangeSet !== null ? prFollowUp : null;
+      if (runTargets.length > 1 && !changeSetPublication && setFollowUp === null) {
+        return await failRun(
+          "PUBLICATION_FAILED",
+          `Every check of the change set ${runTargets.map((target) => target.fullName).join(", ")} passed, and this Factoree ` +
+            "release cannot publish a change set as one step, so it opened no pull request. The last patch of each target is kept for a follow-up run.",
+        );
+      }
+
       status = "PUBLISHING";
       await activities.setRunStatus({ runId: id, status });
 
@@ -3415,7 +3923,370 @@ export async function agentRunWorkflow(
       // The publication commits on the verified base and reports how far the branch moved.
       if (stopRequested) return await cancelRun();
 
+      /**
+       * docs/specs/change-sets.md, slice 7. The publication of a change set: the preflight of every
+       * target before any push (DI-21.151), then each push and pull request in set order, then each
+       * body with the sibling links (DI-21.152). A permanent failure after the preflight undoes every
+       * pull request that opened (DI-21.153). A moved base never stops a target: each one publishes
+       * on its verified base, and its three-way apply check reports the move.
+       */
+      const publishChangeSet = async (
+        checked: PrepareCheckSandboxActivityOutput,
+      ): Promise<{ ended: AgentRunWorkflowResult } | { published: PublishedTarget[]; unchanged: Array<{ slug: string; baseSha: string }> }> => {
+        const facts = checked.checkedTargets ?? [];
+        const entries = facts.map((fact) => {
+          const target = runTargets.find((candidate) => candidate.fullName.toLowerCase() === fact.repository.toLowerCase());
+          return {
+            fact,
+            repositoryId: target?.id ?? "",
+            slug: target?.fullName ?? fact.repository,
+            installationId: target?.githubInstallationId ?? "",
+            baseBranch: defaultBranchForSlug(target?.fullName ?? fact.repository),
+          };
+        });
+        const missing = runTargets.filter((target) => !entries.some((entry) => entry.repositoryId === target.id));
+        if (missing.length > 0 || entries.some((entry) => entry.repositoryId === "")) {
+          return {
+            ended: await failRun(
+              "COMPLETION_INVARIANT_UNMET",
+              `The check sandbox holds no verified patch of ${missing.map((target) => target.fullName).join(", ") || "every target"}, so Factoree published nothing.`,
+            ),
+          };
+        }
+        let preflight: Awaited<ReturnType<typeof publishingActivities.preflightChangeSet>>;
+        try {
+          preflight = await publishingActivities.preflightChangeSet({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            spriteId: checked.spriteId,
+            adapter: checked.adapter,
+            workspacePath: checked.workspacePath,
+            repositoryBaseUrl: input.product.repositoryBaseUrl,
+            targets: entries.map((entry) => ({
+              repositorySlug: entry.slug,
+              githubInstallationId: entry.installationId,
+              primaryPath: entry.fact.path,
+              baseBranch: entry.baseBranch,
+              baseSha: entry.fact.baseSha,
+              verifiedPatchSha256: entry.fact.patchSha256,
+              reviewedChangedFiles: entry.fact.changedFiles,
+              reviewedWorktreeSha: entry.fact.treeSha,
+            })),
+            verifiedSetPatchSha256: checked.patchSha256,
+            reviewedSetTreeSha: publishedWorktreeSha,
+          });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          if (stopRequested) return { ended: await cancelRun() };
+          if (isConfigurationFault(error)) {
+            return {
+              ended: await failRun(
+                "CONFIGURATION_INVALID",
+                withCause(
+                  "Factoree checked every repository of the change set before any push, and the GitHub App installation cannot " +
+                    "mint the write credential one of them needs, so it opened no pull request. Repair the installation or its " +
+                    "permissions as the cause says.",
+                  error,
+                ),
+              ),
+            };
+          }
+          return {
+            ended: await failRun(
+              publicationFailureReasonOf(error),
+              withCause("Factoree checked every repository of the change set before any push, and one check failed, so it opened no pull request.", error),
+            ),
+          };
+        }
+        const changed = entries.filter((entry) => preflight.targets.some((target) => target.repositorySlug === entry.slug && target.changed));
+        const unchanged = entries.filter((entry) => !changed.includes(entry)).map((entry) => ({ slug: entry.slug, baseSha: entry.fact.baseSha }));
+        if (changed.length === 0) {
+          return { ended: await failRun("EMPTY_PATCH", "Every check passed and no repository of the change set holds a change, so Factoree had nothing to publish.") };
+        }
+        const names = changed.map((entry) => entry.slug);
+        // DI-21.153. The rollback looks up the run's own branch in each target, so it also finds a pull
+        // request that a failed attempt opened before it could answer.
+        const undo = async (failed: string, error: unknown): Promise<AgentRunWorkflowResult> => {
+          const cause = causeOf(error);
+          let undone: string;
+          try {
+            const rolled = await publishingActivities.rollbackChangeSet({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              targets: changed.map((entry) => ({ repositorySlug: entry.slug, githubInstallationId: entry.installationId })),
+              failedRepository: failed,
+              cause: cause === "" ? "an unknown error" : cause,
+            });
+            undone =
+              rolled.closed.length === 0
+                ? "No pull request had opened."
+                : `Factoree closed ${rolled.closed.map((entry) => entry.url).join(", ")} with a comment that names ${failed}, and deleted the branches.`;
+          } catch (rollbackError) {
+            if (isCancellation(rollbackError)) throw rollbackError;
+            undone = withCause("Factoree could not close every pull request it had opened. Close them by hand.", rollbackError);
+          }
+          return await failRun(
+            "PUBLICATION_FAILED",
+            withCauseText(`The publication of ${failed} failed, so Factoree published no part of the change set ${names.join(", ")}. ${undone}`, cause),
+          );
+        };
+        const opened: PublishedTarget[] = [];
+        for (const entry of changed) {
+          try {
+            const publication = await publishingActivities.publish({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              spriteId: checked.spriteId,
+              adapter: checked.adapter,
+              workspacePath: checked.workspacePath,
+              primaryPath: entry.fact.path,
+              verifiedPatchSha256: entry.fact.patchSha256,
+              draft: publishDraft,
+              repositorySlug: entry.slug,
+              repositoryBaseUrl: input.product.repositoryBaseUrl,
+              baseBranch: entry.baseBranch,
+              baseSha: entry.fact.baseSha,
+              reviewedChangedFiles: entry.fact.changedFiles,
+              reviewedWorktreeSha: entry.fact.treeSha,
+              workItemTitle: input.workItem.title,
+              workItemUrl: input.workItem.url,
+              verificationSummary: publishedVerificationSummary,
+              repairCount,
+              githubInstallationId: entry.installationId,
+              changeSetRepositories: names,
+            });
+            opened.push({
+              repositoryId: entry.repositoryId,
+              slug: entry.slug,
+              installationId: entry.installationId,
+              baseBranch: entry.baseBranch,
+              baseSha: entry.fact.baseSha,
+              publication,
+            });
+          } catch (error) {
+            if (isCancellation(error)) throw error;
+            return { ended: await undo(entry.slug, error) };
+          }
+        }
+        const pullRequests = opened.map((target) => ({ repository: target.slug, url: target.publication.pullRequestUrl }));
+        for (const target of opened) {
+          try {
+            await publishingActivities.writeChangeSetBody({
+              runId: id,
+              tenantId: input.tenantId,
+              productId: input.productId,
+              repositorySlug: target.slug,
+              githubInstallationId: target.installationId,
+              pullRequestNumber: target.publication.pullRequestNumber,
+              baseSha: target.baseSha,
+              patchSha256: target.publication.patchSha256,
+              changedFileCount: preflight.targets.find((entry) => entry.repositorySlug === target.slug)?.changedFiles.length ?? 0,
+              workItemTitle: input.workItem.title,
+              workItemUrl: input.workItem.url,
+              verificationSummary: publishedVerificationSummary,
+              repairCount,
+              pullRequests,
+              edges: runEdges,
+            });
+          } catch (error) {
+            if (isCancellation(error)) throw error;
+            return { ended: await undo(target.slug, error) };
+          }
+        }
+        return { published: opened, unchanged };
+      };
+
+      /**
+       * docs/specs/change-sets.md, slice 9, DI-21.162. The publication of a set PR follow-up run. The
+       * preflight of every target runs before any push. Then each open pull request of the set takes
+       * one new verified commit on its branch, with the head the run read as its parent, and a target
+       * whose verified tree equals its head pushes nothing. A merged target takes no commit, so a
+       * change to it fails the run. A run that changes no target fails PUBLICATION_FAILED. A push
+       * cannot be undone without a force, so a later failure names the pull requests that took a
+       * commit, and none of them becomes a verified head.
+       */
+      const publishSetFollowUp = async (
+        checked: PrepareCheckSandboxActivityOutput,
+        followUp: PrFollowUpInput,
+      ): Promise<
+        | { ended: AgentRunWorkflowResult }
+        | { published: PublishedTarget[]; unchanged: Array<{ slug: string; baseSha: string }>; checkedHeads: Array<{ member: PrSetMember; baseSha: string }> }
+      > => {
+        const facts = checked.checkedTargets ?? [];
+        const entries = facts.map((fact) => {
+          const target = runTargets.find((candidate) => candidate.fullName.toLowerCase() === fact.repository.toLowerCase());
+          return {
+            fact,
+            member: setMemberOf(fact.repository),
+            repositoryId: target?.id ?? "",
+            slug: target?.fullName ?? fact.repository,
+            installationId: target?.githubInstallationId ?? "",
+          };
+        });
+        const missing = runTargets.filter((target) => !entries.some((entry) => entry.repositoryId === target.id));
+        if (missing.length > 0 || entries.some((entry) => entry.repositoryId === "" || entry.member === null)) {
+          return {
+            ended: await failRun(
+              "COMPLETION_INVARIANT_UNMET",
+              `The check sandbox holds no verified patch of ${missing.map((target) => target.fullName).join(", ") || "every pull request of the change set"}, so Factoree pushed nothing.`,
+            ),
+          };
+        }
+        let preflight: Awaited<ReturnType<typeof publishingActivities.preflightChangeSet>>;
+        try {
+          preflight = await publishingActivities.preflightChangeSet({
+            runId: id,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            spriteId: checked.spriteId,
+            adapter: checked.adapter,
+            workspacePath: checked.workspacePath,
+            repositoryBaseUrl: input.product.repositoryBaseUrl,
+            targets: entries.map((entry) => ({
+              repositorySlug: entry.slug,
+              githubInstallationId: entry.installationId,
+              primaryPath: entry.fact.path,
+              baseBranch: entry.member?.baseBranch ?? defaultBranchForSlug(entry.slug),
+              baseSha: entry.fact.baseSha,
+              verifiedPatchSha256: entry.fact.patchSha256,
+              reviewedChangedFiles: entry.fact.changedFiles,
+              reviewedWorktreeSha: entry.fact.treeSha,
+            })),
+            verifiedSetPatchSha256: checked.patchSha256,
+            reviewedSetTreeSha: publishedWorktreeSha,
+          });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          if (stopRequested) return { ended: await cancelRun() };
+          if (isConfigurationFault(error)) {
+            return {
+              ended: await failRun(
+                "CONFIGURATION_INVALID",
+                withCause(
+                  "Factoree checked every pull request of the change set before any push, and the GitHub App installation cannot " +
+                    "mint the write credential one of them needs, so it pushed nothing. Repair the installation or its permissions as the cause says.",
+                  error,
+                ),
+              ),
+            };
+          }
+          return {
+            ended: await failRun(
+              publicationFailureReasonOf(error),
+              withCause("Factoree checked every pull request of the change set before any push, and one check failed, so it pushed nothing.", error),
+            ),
+          };
+        }
+        const changedMerged = entries.filter(
+          (entry) => entry.member?.state === "merged" && preflight.targets.some((target) => target.repositorySlug === entry.slug && target.changed),
+        );
+        if (changedMerged.length > 0) {
+          return {
+            ended: await failRun(
+              "PUBLICATION_FAILED",
+              `The change touches ${changedMerged.map((entry) => `${entry.slug} (${entry.member?.url ?? ""})`).join(", ")}, whose pull request merged already. ` +
+                "A merged pull request takes no new commit, so Factoree pushed nothing. A change to it needs a new issue.",
+            ),
+          };
+        }
+        const published: PublishedTarget[] = [];
+        const unchanged: Array<{ slug: string; baseSha: string }> = [];
+        const checkedHeads: Array<{ member: PrSetMember; baseSha: string }> = [];
+        for (const entry of entries) {
+          const member = entry.member;
+          if (member === null) continue;
+          if (member.state === "merged") {
+            unchanged.push({ slug: entry.slug, baseSha: entry.fact.baseSha });
+            continue;
+          }
+          const merges = followUp.baseUpdate !== undefined && member.pullRequestId === followUp.pullRequestId;
+          try {
+            const pushed = await publishingActivities.publishFollowUp({
+              ...publishInput,
+              spriteId: checked.spriteId,
+              adapter: checked.adapter,
+              workspacePath: checked.workspacePath,
+              primaryPath: entry.fact.path,
+              verifiedPatchSha256: entry.fact.patchSha256,
+              repositorySlug: entry.slug,
+              baseBranch: member.baseBranch,
+              baseSha: entry.fact.baseSha,
+              reviewedChangedFiles: entry.fact.changedFiles,
+              reviewedWorktreeSha: entry.fact.treeSha,
+              githubInstallationId: entry.installationId,
+              branch: member.headBranch,
+              parentSha: member.headSha,
+              // Slice 4, DI-21.119. The commit merges the new base into the branch it brings current.
+              ...(merges ? { mergeParentSha: member.baseSha } : {}),
+              pullRequestUrl: member.url,
+              pullRequestNumber: member.number,
+              contractRevision: member.contractRevision + 1,
+              allowUnchanged: true,
+            });
+            if (pushed.unchanged === true) {
+              unchanged.push({ slug: entry.slug, baseSha: entry.fact.baseSha });
+              checkedHeads.push({ member, baseSha: entry.fact.baseSha });
+              continue;
+            }
+            published.push({
+              repositoryId: entry.repositoryId,
+              slug: entry.slug,
+              installationId: entry.installationId,
+              baseBranch: member.baseBranch,
+              baseSha: entry.fact.baseSha,
+              publication: { ...pushed, pullRequestUrl: member.url, pullRequestNumber: member.number, branch: member.headBranch, created: false },
+            });
+          } catch (error) {
+            if (isCancellation(error)) throw error;
+            const pushedLine =
+              published.length === 0
+                ? "No pull request of the set took a commit."
+                : `${published.map((target) => target.publication.pullRequestUrl).join(", ")} took a new commit that no verified head records, so its merge-order status turns to failure until a new set run.`;
+            return {
+              ended: await failRun(
+                isConfigurationFault(error) ? "CONFIGURATION_INVALID" : publicationFailureReasonOf(error),
+                withCause(`The push to ${member.url} failed. ${pushedLine}`, error),
+              ),
+            };
+          }
+        }
+        if (published.length === 0) {
+          return {
+            ended: await failRun(
+              "PUBLICATION_FAILED",
+              `Every check passed and the run changed no pull request of the change set ${prChangeSet?.members.map((member) => member.url).join(", ") ?? ""}, so Factoree pushed nothing.`,
+            ),
+          };
+        }
+        return { published, unchanged, checkedHeads };
+      };
+
       let publication: PublishActivityOutput;
+      let publishedTargets: PublishedTarget[];
+      let unchangedTargets: Array<{ slug: string; baseSha: string }> = [];
+      // DI-21.162. The open pull requests of a set PR follow-up run that it checked and changed nothing on.
+      let checkedSetHeads: Array<{ member: PrSetMember; baseSha: string }> = [];
+      if (changeSetPublication) {
+        const set = await publishChangeSet(published);
+        if ("ended" in set) return set.ended;
+        publishedTargets = set.published;
+        unchangedTargets = set.unchanged;
+        const first = publishedTargets[0];
+        if (first === undefined) throw ApplicationFailure.nonRetryable("the change set publication opened no pull request");
+        publication = first.publication;
+      } else if (setFollowUp !== null) {
+        const set = await publishSetFollowUp(published, setFollowUp);
+        if ("ended" in set) return set.ended;
+        publishedTargets = set.published;
+        unchangedTargets = set.unchanged;
+        checkedSetHeads = set.checkedHeads;
+        const first = publishedTargets[0];
+        if (first === undefined) throw ApplicationFailure.nonRetryable("the set PR follow-up run pushed to no pull request");
+        publication = first.publication;
+      } else {
       try {
         if (prFollowUp === null) {
           publication = await publishingActivities.publish(publishInput);
@@ -3472,12 +4343,31 @@ export async function agentRunWorkflow(
                 ),
         );
       }
+      publishedTargets = [
+        {
+          repositoryId: primaryRepositoryId,
+          slug: resolvedContext.primary.slug,
+          installationId: primaryRepositoryInstallationId,
+          baseBranch: publishInput.baseBranch,
+          baseSha: publishInput.baseSha,
+          publication,
+        },
+      ];
+      }
+      const publishedUrls = publishedTargets.map((target) => target.publication.pullRequestUrl);
 
       await notify(() =>
         activities.postProgress({
           sessionId: input.agentSessionId,
           message:
-            prFollowUp === null
+            changeSetPublication
+              ? `Factoree opened the pull requests of the change set: ${publishedTargets.map((target) => `${target.slug} ${target.publication.pullRequestUrl}`).join(", ")}.`
+              : setFollowUp !== null
+              ? `Factoree pushed a verified commit to ${publishedTargets
+                  .map((target) => `${target.publication.pullRequestUrl} (${target.publication.commitSha.slice(0, 12)})`)
+                  .join(", ")} (contract revision ${String(setFollowUp.contractRevision)}).` +
+                (unchangedTargets.length === 0 ? "" : ` It changed nothing on ${unchangedTargets.map((target) => target.slug).join(", ")}.`)
+              : prFollowUp === null
               ? `Factoree opened the pull request: ${publication.pullRequestUrl}.`
               : `Factoree pushed the verified commit ${publication.commitSha.slice(0, 12)} to the pull request ${publication.pullRequestUrl} ` +
                 `(contract revision ${String(prFollowUp.contractRevision)}).`,
@@ -3486,57 +4376,104 @@ export async function agentRunWorkflow(
 
       // The publication succeeded. A later stop message and a later timeout message read this
       // value, so neither one claims that Factoree published nothing.
-      publishedPullRequestUrl = publication.pullRequestUrl;
+      publishedPullRequestUrls.push(...publishedUrls);
 
       // DI-21.52. The issue shows its pull request as an attachment, and the session as a link.
       // A PR follow-up run shares the agent session of the run that linked the pull request.
+      // docs/specs/change-sets.md: one attachment and one session link per pull request of a set.
       let pullRequestLinked = prFollowUp !== null;
       if (prFollowUp === null && patched(PULL_REQUEST_LINK_PATCH)) {
-        const linkedUrl = publication.pullRequestUrl;
-        await notify(async () => {
-          await activities.linkPullRequest({
-            tenantId: input.tenantId,
-            sessionId: input.agentSessionId,
-            issueId: input.workItem.issueId,
-            pullRequestUrl: linkedUrl,
-            repositorySlug: resolvedContext.primary.slug,
+        let linked = 0;
+        for (const target of publishedTargets) {
+          const linkedUrl = target.publication.pullRequestUrl;
+          await notify(async () => {
+            await activities.linkPullRequest({
+              tenantId: input.tenantId,
+              sessionId: input.agentSessionId,
+              issueId: input.workItem.issueId,
+              pullRequestUrl: linkedUrl,
+              repositorySlug: target.slug,
+              ...(changeSetPublication ? { label: `Pull request ${target.slug}` } : {}),
+            });
+            linked += 1;
           });
-          pullRequestLinked = true;
-        });
+        }
+        pullRequestLinked = linked === publishedTargets.length;
       }
 
       // Specification section 14. The patch hash and commit SHA are known after publication, and
       // the pull request URL is known once the pull request exists. All three describe the same
       // moment here.
-      await activities.recordRunTargetFacts({
-        tenantId: input.tenantId,
-        runId: id,
-        repositoryId: primaryRepositoryId,
-        patchSha256: publication.patchSha256,
-        commitSha: publication.commitSha,
-        pullRequestUrl: publication.pullRequestUrl,
-      });
+      for (const target of publishedTargets) {
+        await activities.recordRunTargetFacts({
+          tenantId: input.tenantId,
+          runId: id,
+          repositoryId: target.repositoryId,
+          patchSha256: target.publication.patchSha256,
+          commitSha: target.publication.commitSha,
+          pullRequestUrl: target.publication.pullRequestUrl,
+        });
+      }
 
       // docs/specs/pr-review-merge-and-deploy.md, D3. The pull request record names this run as its
       // origin, and the PR workflow takes the events after the run ends. ABANDON keeps that workflow
       // open after this run closes. A failure here costs only the PR workflow: the close then takes
       // the webhook path of DI-21.51.
+      // docs/specs/change-sets.md: one record and one PR workflow per pull request of a set.
+      // docs/specs/change-sets.md, slice 9, DI-21.162. Each pull request of a set PR follow-up run that took
+      // a commit records it as its verified head, with its own base and contract revision. Each open one it
+      // checked and changed nothing on records its head as checked. The PR workflows already run.
+      if (setFollowUp !== null) {
+        const level = publishDraft ? "L2" : refined.autonomyLevel;
+        for (const target of publishedTargets) {
+          const member = setMemberOf(target.slug);
+          if (member === null) continue;
+          await notify(async () => {
+            await activities.recordPullRequest({
+              tenantId: input.tenantId,
+              runId: id,
+              repositoryId: target.repositoryId,
+              number: member.number,
+              url: member.url,
+              headBranch: member.headBranch,
+              headSha: target.publication.commitSha,
+              baseBranch: member.baseBranch,
+              autonomyLevel: level,
+              baseSha: target.baseSha,
+              contractRevision: member.contractRevision + 1,
+            });
+          });
+        }
+        for (const checkedHead of checkedSetHeads) {
+          await notify(async () => {
+            await activities.recordCheckedHead({
+              tenantId: input.tenantId,
+              pullRequestId: checkedHead.member.pullRequestId,
+              headSha: checkedHead.member.headSha,
+              baseSha: checkedHead.baseSha,
+              runId: id,
+              autonomyLevel: level,
+            });
+          });
+        }
+      }
+      for (const target of setFollowUp === null ? publishedTargets : []) {
       if (patched(PR_WORKFLOW_PATCH)) {
         const recordInput = {
           tenantId: input.tenantId,
           runId: id,
-          repositoryId: primaryRepositoryId,
-          number: publication.pullRequestNumber,
-          url: publication.pullRequestUrl,
-          headBranch: publication.branch,
-          headSha: publication.commitSha,
-          baseBranch: publishInput.baseBranch,
+          repositoryId: target.repositoryId,
+          number: target.publication.pullRequestNumber,
+          url: target.publication.pullRequestUrl,
+          headBranch: target.publication.branch,
+          headSha: target.publication.commitSha,
+          baseBranch: target.baseBranch,
           // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run. DI-21.112: a
           // PR follow-up commit that a first run would publish as a draft lands on the open pull
           // request, so its head records L2, and auto-merge stays off for it.
           autonomyLevel: prFollowUp !== null && publishDraft ? "L2" : refined.autonomyLevel,
           // D2. The next PR follow-up run starts from this base.
-          baseSha: publishInput.baseSha,
+          baseSha: target.baseSha,
           ...(prFollowUp === null ? {} : { contractRevision: prFollowUp.contractRevision }),
         };
         await notify(async () => {
@@ -3553,6 +4490,23 @@ export async function agentRunWorkflow(
             // A webhook event already started it with signal-with-start.
             if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
           }
+        });
+      }
+      }
+
+      // docs/specs/change-sets.md, slice 8, DI-21.155. Each consumer pull request of the set gets its
+      // `factoree/change-set` status: pending while a provider pull request is open. A set with no
+      // safe order gets none. A failure costs only the status, and the next event of the set sets it.
+      if (changeSetPublication && patched(CHANGE_SET_STATUS_PATCH)) {
+        await notify(async () => {
+          await activities.setChangeSetStatuses({ tenantId: input.tenantId, originRunId: id });
+        });
+      }
+      // docs/specs/change-sets.md, slice 9. A set PR follow-up run sets each consumer status again from
+      // the new heads.
+      if (setFollowUp !== null) {
+        await notify(async () => {
+          await activities.setChangeSetStatuses({ tenantId: input.tenantId, pullRequestId: setFollowUp.pullRequestId });
         });
       }
 
@@ -3581,12 +4535,14 @@ export async function agentRunWorkflow(
           pullRequestUrl: publication.pullRequestUrl,
           pullRequestLinked,
           commitSha: publication.commitSha,
-          patchSha256: publication.patchSha256,
-          baseSha: publishInput.baseSha,
+          // DI-21.154. A change set names its set patch hash and the base of its first target.
+          patchSha256: changeSetPublication || setFollowUp !== null ? published.patchSha256 : publication.patchSha256,
+          baseSha: changeSetPublication || setFollowUp !== null ? (publishedTargets[0]?.baseSha ?? publishInput.baseSha) : publishInput.baseSha,
           changedFiles: publishedChangedFiles,
-          patchByteLength: publication.patchByteLength,
+          patchByteLength: publishedTargets.reduce((total, target) => total + target.publication.patchByteLength, 0),
           previewUrl: publishedPreviewUrl,
           fakes: publishedFakes,
+          ...(publishedSetCheckNotes.length === 0 ? {} : { setCheckNotes: publishedSetCheckNotes }),
           repairCount,
           repairLimit: maxRepairs,
           reviewVerdict: publishedReviewVerdict,
@@ -3597,9 +4553,26 @@ export async function agentRunWorkflow(
           ...(forYourEye.length === 0 ? {} : { forYourEye }),
           decisions: factoreeDecisions,
           baseMove:
-            publication.baseMove === null
+            changeSetPublication || setFollowUp !== null || publication.baseMove === null
               ? null
               : { baseBranch: publishInput.baseBranch, ...publication.baseMove },
+          ...(changeSetPublication || setFollowUp !== null
+            ? {
+                targetResults: (published.checkedTargets ?? []).map((fact) => {
+                  const target = publishedTargets.find((candidate) => candidate.slug.toLowerCase() === fact.repository.toLowerCase());
+                  const unchanged = unchangedTargets.find((candidate) => candidate.slug.toLowerCase() === fact.repository.toLowerCase());
+                  return target === undefined
+                    ? { repository: unchanged?.slug ?? fact.repository, baseSha: fact.baseSha, result: "unchanged" as const, pullRequestUrl: null, baseMove: null }
+                    : {
+                        repository: target.slug,
+                        baseSha: target.baseSha,
+                        result: "published" as const,
+                        pullRequestUrl: target.publication.pullRequestUrl,
+                        baseMove: target.publication.baseMove === null ? null : { baseBranch: target.baseBranch, ...target.publication.baseMove },
+                      };
+                }),
+              }
+            : {}),
           autonomyLevel: refined.autonomyLevel,
           autonomyReasons: refined.autonomyReasons,
           checkDefiningFiles: published.checkDefiningFiles,
@@ -3635,7 +4608,7 @@ export async function agentRunWorkflow(
         return await failRun(
           "COMPLETION_INVARIANT_UNMET",
           "Factoree published the verified change and could not post the Proof Pack. Review the " +
-            `pull request by hand. Pull request: ${publication.pullRequestUrl}.`,
+            `pull request by hand. ${publishedUrls.length === 1 ? "Pull request" : "Pull requests"}: ${publishedUrls.join(", ")}.`,
         );
       }
 
@@ -3657,8 +4630,13 @@ export async function agentRunWorkflow(
         blockingFindingCount: publishedBlockingCount,
         repairCount,
         repairLimit: maxRepairs,
-        patchSha256: publication.patchSha256,
-        pullRequestUrl: publication.pullRequestUrl,
+        // docs/specs/change-sets.md. One verified patch and one pull request per target of the run.
+        // docs/specs/change-sets.md, DI-21.154. A target whose patch changes no file opens no pull request.
+        targets: publishedTargets.map((target) => ({
+          repositoryFullName: changeSetPublication || setFollowUp !== null ? target.slug : primaryRepositorySlug,
+          patchSha256: target.publication.patchSha256,
+          pullRequestUrl: target.publication.pullRequestUrl,
+        })),
         proofPackSha256: proofPack.sha256,
       });
 
@@ -3666,7 +4644,7 @@ export async function agentRunWorkflow(
         return await failRun(
           "COMPLETION_INVARIANT_UNMET",
           "Factoree published the verified change and cannot report it complete. " +
-            `${unmet.join(" ")} Pull request: ${publication.pullRequestUrl}.`,
+            `${unmet.join(" ")} ${publishedUrls.length === 1 ? "Pull request" : "Pull requests"}: ${publishedUrls.join(", ")}.`,
         );
       }
 

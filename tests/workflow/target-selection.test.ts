@@ -9,6 +9,9 @@ const harness = createWorkflowHarness(() => environment);
 const {
   implementCalls,
   recordRunTargetCalls,
+  recordRunTargetEdgesCalls,
+  refinerOutcomes,
+  prepared,
   decisionCalls,
   productInput,
   workItemInput,
@@ -107,6 +110,82 @@ describe("target selection and the RunTarget row", () => {
       expect(noticesOf("run-ses-target-confident")).toEqual([
         { kind: "target", statement: "chose acme/web", reason: "the issue names web" },
       ]);
+
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+  });
+
+  it("takes every repository the issue names as one change set", async () => {
+    // docs/specs/change-sets.md, DI-21.130. One RunTarget row per target, one notice for the set,
+    // the other target resolved with its own SHA, and each identity checked at its own base.
+    await runWorker(async () => {
+      const handle = await start("ses-target-set", {
+        product: { ...productInput, repositories: twoRepositories },
+        workItem: { ...workItemInput, description: "## Goal\n\nAdd the endpoint to api and call it from web.\n" },
+      });
+      await waitFor(() => implementsOf("run-ses-target-set").length === 1, "the Implementer of target-set");
+
+      expect(targetsOf("run-ses-target-set")).toEqual([
+        expect.objectContaining({ repositoryId: "repository-api", selectionReason: "the issue names api and web" }),
+        expect.objectContaining({ repositoryId: "repository-web", selectionReason: "the issue names api and web" }),
+      ]);
+      expect(noticesOf("run-ses-target-set")).toEqual([
+        { kind: "target", statement: "chose acme/api and acme/web", reason: "the issue names api and web" },
+      ]);
+      const calls = contextCallsOf("run-ses-target-set");
+      expect(calls[0]?.primaryRepository.slug).toBe("acme/api");
+      expect(calls[0]?.targetRepositories).toEqual([expect.objectContaining({ slug: "acme/web", githubInstallationId: "install-1" })]);
+      expect(identityCallsOf("run-ses-target-set").map((call) => call.baseSha)).toEqual([expect.any(String), "a".repeat(40)]);
+
+      await handle.signal(stopSignal);
+      await handle.result();
+    });
+  });
+
+  it("adds the target the refiner cites, records the edge, and prepares the work sprite again with the set", async () => {
+    // docs/specs/change-sets.md, DI-21.138 to DI-21.141. The issue names only the provider. The
+    // refiner reads the consumer as a sibling and cites the line that calls the provider.
+    const sha = "e".repeat(40);
+    const decision = { kind: "target" as const, statement: `added acme/web as a target at ${sha.slice(0, 7)}`, reason: "src/api.ts line 12 needs the change: it calls the endpoint" };
+    const edges = [{ provider: "acme/api", consumer: "acme/web", file: "src/api.ts", line: 12 }];
+    refinerOutcomes.set("run-ses-target-refiner-adds", {
+      status: "proposed",
+      accepted: [],
+      decisions: [],
+      visualEvidenceGap: null,
+      reason: "",
+      hang: null,
+      addedTargets: [{ repository: "acme/web", file: "src/api.ts", line: 12, reason: "it calls the endpoint", commitSha: sha, decision }],
+      edges,
+    });
+    await runWorker(async () => {
+      const handle = await start("ses-target-refiner-adds", {
+        product: { ...productInput, repositories: twoRepositories },
+        workItem: { ...workItemInput, description: "## Goal\n\nRename the endpoint of api.\n" },
+      });
+      await waitFor(() => implementsOf("run-ses-target-refiner-adds").length === 1, "the Implementer of target-refiner-adds");
+
+      const works = prepared.filter((entry) => entry.runId === "run-ses-target-refiner-adds");
+      expect(works[0]?.siblings?.repositories.map((repository) => repository.fullName)).toEqual(["acme/web"]);
+      expect(works).toHaveLength(2);
+      expect(works[1]?.targets?.map((target) => [target.repository, target.ref])).toEqual([
+        ["acme/api", expect.any(String)],
+        ["acme/web", sha],
+      ]);
+      expect(works[1]?.siblings).toBeUndefined();
+      expect(targetsOf("run-ses-target-refiner-adds").map((target) => target.repositoryId)).toEqual(["repository-api", "repository-web"]);
+      expect(identityCallsOf("run-ses-target-refiner-adds").map((call) => call.baseSha).at(-1)).toBe(sha);
+      expect(recordRunTargetEdgesCalls.filter((call) => call.runId === "run-ses-target-refiner-adds").map((call) => call.edges)).toEqual([edges]);
+      // DI-21.143. The context resolves again for the set, and the new contract supersedes the first.
+      const resolutions = contextCallsOf("run-ses-target-refiner-adds");
+      expect(resolutions).toHaveLength(2);
+      expect(resolutions[0]?.supersedes).toBeUndefined();
+      expect(resolutions[1]?.supersedes).toEqual(expect.any(String));
+      expect(resolutions[1]?.targetRepositories?.map((repository) => [repository.slug, repository.ref])).toEqual([["acme/web", sha]]);
+      const notices = noticesOf("run-ses-target-refiner-adds");
+      expect(notices).toContainEqual(decision);
+      expect(notices.some((notice) => notice.kind === "merge_order" && notice.statement === "set the merge order acme/api, then acme/web")).toBe(true);
 
       await handle.signal(stopSignal);
       await handle.result();

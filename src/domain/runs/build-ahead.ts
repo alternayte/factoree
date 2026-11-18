@@ -2,10 +2,17 @@ import type { RepositoryConfigFile } from "~/adapters/github/repository-discover
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
-import { buildRepositoryUrl } from "~/domain/products/repository-url.js";
+import { buildRepositoryUrl, repositorySlugOfUrl } from "~/domain/products/repository-url.js";
 import type { Logger } from "~/telemetry/logger.js";
 import { bootstrapAllowListOf, DEFAULT_PROJECT_DEFAULTS, toProjectRuntimeConfig, type ProjectDefaults } from "./project-runtime-config.js";
-import { bootstrapKeyOf, keyFilePatternsOf, selectKeyFiles, type RepositoryFileEntry } from "./warm-snapshot.js";
+import {
+  bootstrapKeyOf,
+  keyFilePatternsOf,
+  selectKeyFiles,
+  setBootstrapKeyOf,
+  type RepositoryFileEntry,
+  type SetMemberKey,
+} from "./warm-snapshot.js";
 
 /**
  * docs/specs/run-speed.md. A build-ahead builds the warm snapshot of one repository when its
@@ -15,19 +22,38 @@ import { bootstrapKeyOf, keyFilePatternsOf, selectKeyFiles, type RepositoryFileE
 export interface BuildAheadRequest {
   tenantId: string;
   productId: string;
+  /** The repository, or for a set the first repository of `repositoryFullNames`. */
   repositoryFullName: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.137. The repositories of a set, two or more, sorted. The
+   * build-ahead then builds the set snapshot. Absent for the snapshot of one repository.
+   */
+  repositoryFullNames?: string[];
 }
+
+/** docs/specs/change-sets.md. The request of the build-ahead of a set, with its repositories sorted. */
+export const setBuildAheadRequest = (input: { tenantId: string; productId: string; repositoryFullNames: readonly string[] }): BuildAheadRequest => {
+  const names = [...new Set(input.repositoryFullNames)].sort();
+  return { tenantId: input.tenantId, productId: input.productId, repositoryFullName: names[0] ?? "", repositoryFullNames: names };
+};
+
+/** The repositories one build-ahead builds: the set, or the one repository. */
+export const buildAheadRepositoriesOf = (request: BuildAheadRequest): string[] =>
+  request.repositoryFullNames !== undefined && request.repositoryFullNames.length > 1 ? request.repositoryFullNames : [request.repositoryFullName];
 
 /** Asks for one build-ahead. A request during a build queues one more build, not one per request. */
 export type RequestBuildAhead = (request: BuildAheadRequest) => Promise<void>;
 
-/** One build-ahead workflow per repository, so a second request joins it. */
-export const buildAheadWorkflowId = (tenantId: string, repositoryFullName: string): string =>
-  `build-ahead:${tenantId}:${repositoryFullName}`;
+/**
+ * One build-ahead workflow per repository, so a second request joins it. docs/specs/change-sets.md,
+ * DI-21.137: one per set, named by its sorted repositories joined by `+`.
+ */
+export const buildAheadWorkflowId = (tenantId: string, repositoryFullName: string | readonly string[]): string =>
+  `build-ahead:${tenantId}:${typeof repositoryFullName === "string" ? repositoryFullName : [...repositoryFullName].join("+")}`;
 
 /** The id a build-ahead sandbox carries where a run sandbox carries its run id. */
 export const buildAheadSandboxRunId = (request: BuildAheadRequest): string =>
-  `build-ahead:${request.repositoryFullName}`;
+  `build-ahead:${buildAheadRepositoriesOf(request).join("+")}`;
 
 /** The Product values a repository must not own, exactly as a run passes them to its sandbox. */
 export const projectDefaultsOf = (product: Pick<ProductRecord, "allowedDomains" | "sandboxRetentionHours">): ProjectDefaults => ({
@@ -76,7 +102,19 @@ export interface BuildAheadTriggerDependencies {
   repositoryBaseUrl: () => Promise<string>;
   /** docs/specs/host-credentials.md. The credential part of the bootstrap key of a product. */
   credentialKey?: (tenantId: string, productId: string) => Promise<string[]>;
+  /**
+   * docs/specs/change-sets.md, DI-21.137. Every stored set snapshot: its tenant, its repository URLs
+   * and its keys on every adapter. Absent means no set is kept current.
+   */
+  setSnapshots?: () => Promise<StoredSetSnapshot[]>;
   logger: Logger;
+}
+
+/** docs/specs/change-sets.md. One set that holds a warm snapshot on at least one adapter. */
+export interface StoredSetSnapshot {
+  tenantId: string;
+  repositoryUrls: string[];
+  bootstrapKeys: string[];
 }
 
 /**
@@ -112,9 +150,17 @@ export class BuildAheadTrigger {
           repository: repository.fullName,
           step: "build_ahead",
         });
-        return;
+      } else {
+        await this.requestAll([repository]);
       }
-      await this.requestAll([repository]);
+      // docs/specs/change-sets.md, DI-21.137. A set that holds the repository builds again when the
+      // key of the set changed.
+      const sets = await this.storedSets((set) => set.tenantId === tenantId && set.repositoryUrls.includes(url));
+      for (const set of sets) {
+        const setKey = await this.setKeyOf(tenantId, set.repositoryUrls);
+        if (setKey !== null && set.bootstrapKeys.includes(setKey)) continue;
+        await this.requestSet(tenantId, set.repositoryUrls);
+      }
     });
   }
 
@@ -124,8 +170,13 @@ export class BuildAheadTrigger {
    */
   async afterAllowListChange(tenantId: string, productId: string): Promise<void> {
     await this.guarded("allow_list", async () => {
-      const repositories = await this.dependencies.repositories.listByProduct(productId);
-      await this.requestAll(repositories.filter((repository) => repository.tenantId === tenantId));
+      const repositories = (await this.dependencies.repositories.listByProduct(productId)).filter((repository) => repository.tenantId === tenantId);
+      await this.requestAll(repositories);
+      const base = await this.dependencies.repositoryBaseUrl();
+      const urls = new Set(repositories.map((repository) => buildRepositoryUrl(base, repository.fullName)));
+      for (const set of await this.storedSets((candidate) => candidate.tenantId === tenantId && candidate.repositoryUrls.some((url) => urls.has(url)))) {
+        await this.requestSet(tenantId, set.repositoryUrls);
+      }
     });
   }
 
@@ -133,7 +184,57 @@ export class BuildAheadTrigger {
   async afterTemplateChange(): Promise<void> {
     await this.guarded("template", async () => {
       await this.requestAll(await this.dependencies.repositories.listPresent());
+      for (const set of await this.storedSets(() => true)) await this.requestSet(set.tenantId, set.repositoryUrls);
     });
+  }
+
+  private async storedSets(keep: (set: StoredSetSnapshot) => boolean): Promise<StoredSetSnapshot[]> {
+    return ((await this.dependencies.setSnapshots?.()) ?? []).filter(keep);
+  }
+
+  /**
+   * docs/specs/change-sets.md, DI-21.135. The key of a set at the default-branch head of each
+   * repository, or null when one key is unknown: a repository is gone, holds no config, or GitHub
+   * truncated its tree. The build-ahead then decides in its own checkout.
+   */
+  private async setKeyOf(tenantId: string, repositoryUrls: readonly string[]): Promise<string | null> {
+    const members: SetMemberKey[] = [];
+    for (const url of repositoryUrls) {
+      const repository = await this.dependencies.repositories.findByFullName(tenantId, repositorySlugOfUrl(url));
+      if (repository === null || repository.absentSince !== null) return null;
+      const product = await this.dependencies.products.findById(tenantId, repository.productId);
+      if (product === null) return null;
+      const file = await this.dependencies.readConfig(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
+      if (file === null) return null;
+      const files = await this.dependencies.listFiles(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
+      const credentials = (await this.dependencies.credentialKey?.(tenantId, product.id)) ?? [];
+      const key = bootstrapKeyOfConfig(file, projectDefaultsOf(product), files, credentials);
+      if (key === null) return null;
+      members.push({ repositoryUrl: url, bootstrapKey: key });
+    }
+    return setBootstrapKeyOf(members);
+  }
+
+  /** Requests the build-ahead of one stored set. The product is the product of its first repository. */
+  private async requestSet(tenantId: string, repositoryUrls: readonly string[]): Promise<void> {
+    const names = repositoryUrls.map((url) => repositorySlugOfUrl(url));
+    try {
+      const first = await this.dependencies.repositories.findByFullName(tenantId, names[0] ?? "");
+      if (first === null || first.absentSince !== null) return;
+      await this.dependencies.request(setBuildAheadRequest({ tenantId, productId: first.productId, repositoryFullNames: names }));
+      this.dependencies.logger.info("a build-ahead of a set is requested", {
+        tenant_id: tenantId,
+        repository: names.join(", "),
+        step: "build_ahead",
+      });
+    } catch (error) {
+      this.dependencies.logger.warn("the build-ahead request of a set failed", {
+        tenant_id: tenantId,
+        repository: names.join(", "),
+        step: "build_ahead",
+        error: String(error),
+      });
+    }
   }
 
   private async requestAll(repositories: RepositoryRecord[]): Promise<void> {

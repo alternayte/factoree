@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
@@ -6,12 +7,16 @@ import { guardAgainstForbiddenMaterial } from "~/domain/runs/implementer-input.j
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import type { EvidenceStore } from "~/domain/evidence/evidence.js";
 import { canonicalEvidenceHash } from "~/domain/evidence/evidence.js";
-import type { VerificationCommand } from "~/domain/runs/project-runtime-config.js";
+import type { ServicesConfig, VerificationCommand } from "~/domain/runs/project-runtime-config.js";
+import { pauseServices, startServices } from "~/domain/runs/services.js";
 import type { VerificationCheckResult } from "~/domain/runs/verification.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
+
+/** The SHA-256 of an empty output, for a check that ran no command. */
+const EMPTY_SHA256 = createHash("sha256").update("", "utf8").digest("hex");
 
 export interface VerificationActivityDependencies {
   sandbox: Sandbox;
@@ -35,6 +40,12 @@ export interface VerifyActivityInput {
   timeoutMs: number;
   /** The ordinal of this verification pass. The first pass is 1, and a repair raises it. */
   attempt: number;
+  /**
+   * docs/specs/change-sets.md, DI-21.146. The stack of each target of a change set. The commands
+   * of each target run with only its stack started, one target after the other. Absent for a run
+   * with one target, whose stack runs through the whole check sprite.
+   */
+  stacks?: Array<{ repository: string; path: string; services: ServicesConfig | null }>;
 }
 
 export interface VerifyActivityOutput {
@@ -105,20 +116,62 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
     guardAgainstForbiddenMaterial(environment);
 
     const startedAt = Date.now();
+    const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+    const verifyIn = (commands: VerificationCommand[], timeoutMs: number) =>
+      runVerification({
+        sandbox: dependencies.sandbox,
+        ref,
+        workingDirectory: input.primaryPath,
+        commands,
+        environment,
+        timeoutMs,
+        redactor: dependencies.redactor,
+      });
     const outcome = await timeStage(
       dependencies.stages,
       dependencies.logger,
       { tenantId: input.tenantId, runId: input.runId, stage: "verify", attempt: input.attempt, sandboxId: input.spriteId },
-      () =>
-        runVerification({
-          sandbox: dependencies.sandbox,
-          ref: { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath },
-          workingDirectory: input.primaryPath,
-          commands: input.commands,
-          environment,
-          timeoutMs: input.timeoutMs,
-          redactor: dependencies.redactor,
-        }),
+      async () => {
+        const stacks = input.stacks;
+        if (stacks === undefined) return verifyIn(input.commands, input.timeoutMs);
+        // DI-21.146. One target at a time, each with its own stack, in the order of the commands.
+        const deadline = Date.now() + input.timeoutMs;
+        const checks: VerificationCheckResult[] = [];
+        const paths = [...new Set(input.commands.map((command) => command.workingDirectory ?? input.primaryPath))];
+        for (const path of paths) {
+          const commands = input.commands.filter((command) => (command.workingDirectory ?? input.primaryPath) === path);
+          const stack = stacks.find((candidate) => candidate.path === path);
+          const services = stack?.services ?? null;
+          if (services !== null) {
+            try {
+              await startServices(dependencies.sandbox, ref, path, services);
+            } catch (error) {
+              // A stack that does not start fails the checks of its target, not the activity.
+              const now = new Date().toISOString();
+              checks.push({
+                name: `${stack?.repository ?? path}: services`,
+                command: "docker compose up --wait",
+                startedAt: now,
+                endedAt: now,
+                exitCode: 1,
+                stdoutSha256: EMPTY_SHA256,
+                stderrSha256: EMPTY_SHA256,
+                log: dependencies.redactor.redactText(error instanceof Error ? error.message : String(error)),
+                timedOut: false,
+                durationMs: 0,
+                passed: false,
+              });
+              continue;
+            }
+          }
+          try {
+            checks.push(...(await verifyIn(commands, Math.max(1, deadline - Date.now()))).checks);
+          } finally {
+            if (services !== null) await pauseServices(dependencies.sandbox, ref, path, services);
+          }
+        }
+        return { passed: checks.length > 0 && checks.every((check) => check.passed), checks };
+      },
     );
 
     // SDD section 39. One immutable row per check. The idempotency key carries the attempt, so

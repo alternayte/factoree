@@ -10,6 +10,7 @@ import {
   changedFilesOfPatch,
   EmptyPatchError,
   PatchError,
+  setPatchSha256,
   sha256OfBase64,
   type VerifiedPatch,
 } from "~/domain/publishing/patch.js";
@@ -26,6 +27,7 @@ import {
   type BaseMove,
 } from "~/domain/publishing/trusted-checkout.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { changeSetPendingSection, changeSetSection, rollbackComment, type SetPullRequest } from "~/domain/publishing/change-set.js";
 import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
@@ -96,6 +98,11 @@ export interface PublishActivityInput {
   repairCount: number;
   /** The GitHub App installation that grants the target repository. */
   githubInstallationId: string;
+  /**
+   * docs/specs/change-sets.md, DI-21.152. Every repository of the change set this pull request
+   * belongs to. The first body names them, and `writeChangeSetBody` adds the links. Absent for one target.
+   */
+  changeSetRepositories?: string[];
 }
 
 export interface PublishActivityOutput {
@@ -261,6 +268,11 @@ export interface PublishFollowUpActivityInput extends Omit<PublishActivityInput,
   pullRequestNumber: number;
   /** The contract revision of the new head. The commit message names it. */
   contractRevision: number;
+  /**
+   * docs/specs/change-sets.md, slice 9, DI-21.162. A target of a set PR follow-up run whose verified
+   * tree equals its head pushes nothing and answers `unchanged`.
+   */
+  allowUnchanged?: boolean;
 }
 
 export interface PublishFollowUpActivityOutput {
@@ -268,6 +280,8 @@ export interface PublishFollowUpActivityOutput {
   commitSha: string;
   patchByteLength: number;
   baseMove: BaseMove | null;
+  /** DI-21.162. True when the target changed nothing on its pull request, so nothing was pushed. */
+  unchanged?: boolean;
 }
 
 /** docs/specs/pr-review-merge-and-deploy.md, slice 4. The trusted merge of the base into a pull request branch. */
@@ -330,6 +344,102 @@ export interface PublishDraftActivityOutput {
   patchByteLength: number;
   changedFiles: string[];
 }
+
+/** docs/specs/change-sets.md, slice 7. One target of a change set as its check sprite verified it. */
+export interface ChangeSetTargetInput {
+  repositorySlug: string;
+  githubInstallationId: string;
+  /** The checkout of the target in the check sprite. */
+  primaryPath: string;
+  baseBranch: string;
+  baseSha: string;
+  /** DI-21.133. The patch hash of the target that the check sprite received. */
+  verifiedPatchSha256: string;
+  /** The changed files of the target, relative to its checkout. */
+  reviewedChangedFiles: string[];
+  /** The tree of the target in the check sprite before any project code ran. */
+  reviewedWorktreeSha: string;
+}
+
+/** DI-21.151. The preflight of every target of a change set, before any push. */
+export interface PreflightChangeSetActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  spriteId: string;
+  adapter: string;
+  workspacePath: string;
+  repositoryBaseUrl: string;
+  targets: ChangeSetTargetInput[];
+  /** DI-21.133. The set patch hash the check sprite received. */
+  verifiedSetPatchSha256: string;
+  /** DI-21.133. The set tree hash the independent review examined. */
+  reviewedSetTreeSha: string;
+}
+
+export interface PreflightChangeSetActivityOutput {
+  targets: Array<{
+    repositorySlug: string;
+    patchSha256: string;
+    /** False for a target whose patch changes no file: it opens no pull request. */
+    changed: boolean;
+    changedFiles: string[];
+    patchByteLength: number;
+  }>;
+}
+
+/** DI-21.152. Writes the final body of one pull request of a change set, with every sibling link. */
+export interface WriteChangeSetBodyActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  repositorySlug: string;
+  githubInstallationId: string;
+  pullRequestNumber: number;
+  baseSha: string;
+  patchSha256: string;
+  changedFileCount: number;
+  workItemTitle: string;
+  workItemUrl: string | null;
+  verificationSummary: string;
+  repairCount: number;
+  /** Every pull request of the set that opened, in set order. */
+  pullRequests: SetPullRequest[];
+  /** DI-21.141. The cited provider-to-consumer edges of the run. */
+  edges: Array<{ provider: string; consumer: string }>;
+}
+
+/** DI-21.153. Undoes the part of a change set that opened. */
+export interface RollbackChangeSetActivityInput {
+  runId: string;
+  tenantId: string;
+  productId: string;
+  /** Every target the publication may have pushed to. */
+  targets: Array<{ repositorySlug: string; githubInstallationId: string }>;
+  /** The target whose publication failed, and why. */
+  failedRepository: string;
+  cause: string;
+}
+
+export interface RollbackChangeSetActivityOutput {
+  /** Each pull request Factoree closed. */
+  closed: SetPullRequest[];
+}
+
+/** DI-21.151. A failure of one target names it, and keeps its type and its retry rule. */
+const namingTarget = (redactor: Redactor, repository: string, error: unknown): unknown => {
+  const converted = asNonRetryable(redactor, error);
+  if (converted instanceof ApplicationFailure) {
+    return ApplicationFailure.create({
+      message: `${repository}: ${converted.message}`,
+      ...(converted.type === null || converted.type === undefined ? {} : { type: converted.type }),
+      nonRetryable: converted.nonRetryable === true,
+    });
+  }
+  if (converted instanceof RunConfigurationError) return new RunConfigurationError(`${repository}: ${converted.message}`);
+  if (converted instanceof Error) return new Error(`${repository}: ${redactor.redactText(converted.message)}`, { cause: converted });
+  return converted;
+};
 
 /**
  * SDD section 46 steps 1 to 7. Mints the write credential, captures the patch from the check sprite
@@ -445,7 +555,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         // an authenticated URL there exposes the credential to any local process. SDD
         // section 30 forbids that.
         const commitSha = existing.headSha;
-        await dependencies.runs.setPublication(input.tenantId, input.runId, {
+        await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
           patchSha256: patch.patchSha256,
           commitSha,
           pullRequestUrl: existing.url,
@@ -529,13 +639,14 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
             verificationSummary: input.verificationSummary,
             changedFileCount: patch.changedFiles.length,
             repairCount: input.repairCount,
+            ...(input.changeSetRepositories === undefined ? {} : { changeSet: changeSetPendingSection(input.changeSetRepositories) }),
           }),
         },
         input.githubInstallationId,
       );
 
       // Step 11. The publication facts of the Run.
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: patch.patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: created.url,
@@ -616,6 +727,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         authorEmail: author.email,
         parentSha: input.parentSha,
         ...(input.mergeParentSha === undefined ? {} : { mergeParentSha: input.mergeParentSha }),
+        ...(input.allowUnchanged === true ? { allowUnchanged: true } : {}),
         pushToken: async (pushedFiles: string[]) => {
           const pushToken = await mintPublishToken(dependencies, input, pushedFiles);
           dependencies.redactor.addSecret(pushToken);
@@ -631,7 +743,18 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           });
         },
       });
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      if (publication.unchanged === true) {
+        dependencies.logger.info("the target changed nothing on its pull request, so Factoree pushed nothing to it", {
+          tenant_id: input.tenantId,
+          product_id: input.productId,
+          run_id: input.runId,
+          step: "publish",
+          branch: input.branch,
+          pull_request: input.pullRequestNumber,
+        });
+        return { patchSha256: patch.patchSha256, commitSha: publication.commitSha, patchByteLength: patch.byteLength, baseMove: null, unchanged: true };
+      }
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: patch.patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: input.pullRequestUrl,
@@ -705,7 +828,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           if (result.changedFiles.length === 0) {
             throw new EmptyPatchError();
           }
-          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, result.patchBase64, 1);
+          await dependencies.runs.recordLastPatch(input.tenantId, input.runId, input.repositorySlug, result.patchBase64, 1);
           return {
             kind: "merged",
             baseSha: result.baseSha,
@@ -757,7 +880,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       if (result.kind !== "merged" || !result.pushed) {
         throw new PatchError(`the merge of the verified base ${input.baseSha.slice(0, 12)} is no longer clean, so Factoree pushed nothing.`);
       }
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256: result.patchSha256,
         commitSha: result.commitSha,
         pullRequestUrl: input.pullRequestUrl,
@@ -792,7 +915,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       );
       assertInstallation(input.githubInstallationId);
 
-      const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId);
+      const patchBase64 = await dependencies.runs.lastPatch(input.tenantId, input.runId, input.repositorySlug);
       if (patchBase64 === null) throw new PatchError("the run holds no patch, so Factoree published nothing.");
       const patchSha256 = sha256OfBase64(patchBase64);
       const patchBytes = Buffer.from(patchBase64, "base64");
@@ -811,7 +934,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // AT-35. A second request, or a retry, finds the pull request of this branch.
       const existing = await port.findByHead(input.repositorySlug, branch, input.githubInstallationId);
       if (existing !== null) {
-        await dependencies.runs.setPublication(input.tenantId, input.runId, {
+        await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
           patchSha256,
           commitSha: existing.headSha,
           pullRequestUrl: existing.url,
@@ -888,7 +1011,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         },
         input.githubInstallationId,
       );
-      await dependencies.runs.setPublication(input.tenantId, input.runId, {
+      await dependencies.runs.setPublication(input.tenantId, input.runId, input.repositorySlug, {
         patchSha256,
         commitSha: publication.commitSha,
         pullRequestUrl: created.url,
@@ -914,5 +1037,169 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
     } catch (error) {
       throw asNonRetryable(dependencies.redactor, error);
     }
+  },
+  /**
+   * docs/specs/change-sets.md, DI-21.151. The preflight of a change set: for each target the
+   * installation, a write credential minted with the scope that target's patch needs (Workflows only
+   * when it changes a workflow file), the patch captured from the check sprite, the hash and the tree
+   * checks, and no foreign pull request on the branch. It pushes nothing, so a known permanent cause
+   * stops the set before GitHub sees any of it. A failure names its target.
+   */
+  async preflightChangeSet(input: PreflightChangeSetActivityInput): Promise<PreflightChangeSetActivityOutput> {
+    const output: PreflightChangeSetActivityOutput["targets"] = [];
+    const captured: Array<{ repository: string; patchSha256: string; treeSha: string }> = [];
+    const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
+    const branch = publishBranchName(input.runId);
+    for (const target of input.targets) {
+      try {
+        if (target.reviewedChangedFiles.length === 0) {
+          // A target the implementer left unchanged must still be unchanged, with the tree the review saw.
+          assertInstallation(target.githubInstallationId);
+          const patch = await captureVerifiedPatch(
+            { sandbox: dependencies.sandbox, redactor: dependencies.redactor },
+            { ref, primaryPath: target.primaryPath, baseSha: target.baseSha },
+          );
+          assertSameChangedFiles([], patch.changedFiles);
+          if (patch.treeSha !== target.reviewedWorktreeSha || patch.patchSha256 !== target.verifiedPatchSha256) {
+            throw new PatchError(`the worktree changed after the independent review examined it. Factoree published nothing.`);
+          }
+          captured.push({ repository: target.repositorySlug, patchSha256: patch.patchSha256, treeSha: patch.treeSha });
+          output.push({ repositorySlug: target.repositorySlug, patchSha256: patch.patchSha256, changed: false, changedFiles: [], patchByteLength: 0 });
+          continue;
+        }
+        const { token, patch } = await captureForPublication(dependencies, {
+          runId: input.runId,
+          tenantId: input.tenantId,
+          productId: input.productId,
+          spriteId: input.spriteId,
+          adapter: input.adapter,
+          workspacePath: input.workspacePath,
+          primaryPath: target.primaryPath,
+          repositorySlug: target.repositorySlug,
+          repositoryBaseUrl: input.repositoryBaseUrl,
+          baseSha: target.baseSha,
+          reviewedChangedFiles: target.reviewedChangedFiles,
+          reviewedWorktreeSha: target.reviewedWorktreeSha,
+          verifiedPatchSha256: target.verifiedPatchSha256,
+          githubInstallationId: target.githubInstallationId,
+        });
+        // AT-35. An open pull request of this run's branch is the one a retry finds again. A closed
+        // one, a merged one, or one into another base is foreign, and the push would land under it.
+        const existing = await dependencies.pullRequests(token).findByHead(target.repositorySlug, branch, target.githubInstallationId);
+        if (existing !== null && (existing.state !== "open" || (existing.baseBranch !== undefined && existing.baseBranch !== target.baseBranch))) {
+          throw ApplicationFailure.nonRetryable(
+            `the branch ${branch} already holds the pull request ${existing.url}, which is ` +
+              `${existing.state === "open" ? `open into ${existing.baseBranch ?? "another base"}` : (existing.state ?? "not open")} and is not this run's pull request.`,
+            "PUBLICATION_FAILED",
+          );
+        }
+        captured.push({ repository: target.repositorySlug, patchSha256: patch.patchSha256, treeSha: patch.treeSha });
+        output.push({
+          repositorySlug: target.repositorySlug,
+          patchSha256: patch.patchSha256,
+          changed: true,
+          changedFiles: patch.changedFiles,
+          patchByteLength: patch.byteLength,
+        });
+      } catch (error) {
+        throw namingTarget(dependencies.redactor, target.repositorySlug, error);
+      }
+    }
+    // DI-21.133. The set the review examined and the check sprite received is the set that leaves it.
+    const setPatch = setPatchSha256(captured);
+    const setTree = setPatchSha256(captured.map((target) => ({ repository: target.repository, patchSha256: target.treeSha })));
+    if (setPatch !== input.verifiedSetPatchSha256) {
+      throw ApplicationFailure.nonRetryable(
+        `the check sprite now holds the set patch ${setPatch}, and the checks verified the set patch ${input.verifiedSetPatchSha256}.`,
+        "PATCH_HASH_MISMATCH",
+      );
+    }
+    if (setTree !== input.reviewedSetTreeSha) {
+      throw ApplicationFailure.nonRetryable(
+        `the trees of the change set changed after the independent review examined them. Reviewed: ${input.reviewedSetTreeSha || "none"}. Captured: ${setTree}.`,
+        "PUBLICATION_FAILED",
+      );
+    }
+    dependencies.logger.info("the change set passed its preflight", {
+      tenant_id: input.tenantId,
+      product_id: input.productId,
+      run_id: input.runId,
+      step: "publish_preflight",
+      targets: output.length,
+      changed: output.filter((target) => target.changed).length,
+    });
+    return { targets: output };
+  },
+
+  /**
+   * docs/specs/change-sets.md, DI-21.152. Writes the final body of one pull request of a change set:
+   * the body of one target, then the link to every sibling pull request and the merge order. A
+   * retry writes the same body.
+   */
+  async writeChangeSetBody(input: WriteChangeSetBodyActivityInput): Promise<void> {
+    try {
+      assertInstallation(input.githubInstallationId);
+      const token = await dependencies.tokens.tokenForInstallation(input.githubInstallationId, { pull_requests: "write" }, [input.repositorySlug]);
+      dependencies.redactor.addSecret(token);
+      const body = buildPullRequestBody({
+        workItemTitle: input.workItemTitle,
+        workItemUrl: input.workItemUrl,
+        runId: input.runId,
+        baseSha: input.baseSha,
+        patchSha256: input.patchSha256,
+        verificationSummary: input.verificationSummary,
+        changedFileCount: input.changedFileCount,
+        repairCount: input.repairCount,
+        changeSet: changeSetSection(input.repositorySlug, input.pullRequests, input.edges),
+      });
+      await dependencies.pullRequests(token).updateBody(input.repositorySlug, input.pullRequestNumber, body, input.githubInstallationId);
+    } catch (error) {
+      throw namingTarget(dependencies.redactor, input.repositorySlug, error);
+    }
+  },
+
+  /**
+   * docs/specs/change-sets.md, DI-21.153. Undoes a change set whose publication failed: for each
+   * target, the open pull request of this run's branch gets a comment that names the failed target
+   * and closes, its run target loses the pull request, and the branch goes. The lookup is by the
+   * run's own branch, so a retry closes no other pull request and finds one that a failed attempt
+   * opened. A pull request already closed gets no second comment. A failure of one target does not
+   * stop the others, and the activity then fails so that Temporal retries it.
+   */
+  async rollbackChangeSet(input: RollbackChangeSetActivityInput): Promise<RollbackChangeSetActivityOutput> {
+    const branch = publishBranchName(input.runId);
+    const closed: SetPullRequest[] = [];
+    const problems: string[] = [];
+    for (const target of input.targets) {
+      if (target.githubInstallationId === "") continue;
+      try {
+        const token = await dependencies.tokens.tokenForInstallation(target.githubInstallationId, PUBLISH_TOKEN_SCOPE, [target.repositorySlug]);
+        dependencies.redactor.addSecret(token);
+        const port = dependencies.pullRequests(token);
+        const existing = await port.findByHead(target.repositorySlug, branch, target.githubInstallationId);
+        if (existing !== null && existing.headBranch === branch && existing.state !== "merged") {
+          if (existing.state === "open") {
+            await port.comment(target.repositorySlug, existing.number, rollbackComment(input.failedRepository, input.cause), target.githubInstallationId);
+            await port.close(target.repositorySlug, existing.number, target.githubInstallationId);
+          }
+          await dependencies.runs.clearPublication(input.tenantId, input.runId, target.repositorySlug);
+          closed.push({ repository: target.repositorySlug, url: existing.url });
+        }
+        if (existing?.state !== "merged") await port.deleteBranch(target.repositorySlug, branch, target.githubInstallationId);
+      } catch (error) {
+        problems.push(`${target.repositorySlug}: ${dependencies.redactor.redactText(error instanceof Error ? error.message : String(error))}`);
+      }
+    }
+    dependencies.logger.warn("the change set publication was undone", {
+      tenant_id: input.tenantId,
+      product_id: input.productId,
+      run_id: input.runId,
+      step: "publish_rollback",
+      failed: input.failedRepository,
+      closed: closed.length,
+      problems: problems.length,
+    });
+    if (problems.length > 0) throw new Error(`Factoree could not undo every pull request of the change set: ${problems.join("; ")}`);
+    return { closed };
   },
 });

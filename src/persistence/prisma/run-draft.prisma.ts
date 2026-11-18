@@ -24,17 +24,23 @@ export class PrismaRunDraftStore implements RunDraftStore {
         status: true,
         failureReason: true,
         failureMessage: true,
-        pullRequestUrl: true,
-        lastPatchAttempt: true,
         temporalWorkflowId: true,
       },
     });
     if (run === null) return null;
     const where = { tenantId, runId };
-    const [patches, targetCount, assertions, results, findings, reviewers] = await Promise.all([
-      // The patch itself can be large, so only its presence is read here.
-      this.prisma.run.count({ where: { tenantId, id: runId, lastPatchBase64: { not: null } } }),
-      this.prisma.runTarget.count({ where }),
+    const [targets, patched, assertions, results, findings, reviewers] = await Promise.all([
+      this.prisma.runTarget.findMany({
+        where,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { pullRequestUrl: true },
+      }),
+      // docs/specs/change-sets.md. The patch itself can be large, so only its presence is read here.
+      this.prisma.runTarget.findMany({
+        where: { ...where, lastPatchBase64: { not: null } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { lastPatchAttempt: true },
+      }),
       this.prisma.validationAssertion.findMany({
         where: { tenantId, validationContract: { runId } },
         orderBy: { assertionKey: "asc" },
@@ -44,11 +50,11 @@ export class PrismaRunDraftStore implements RunDraftStore {
       this.prisma.reviewFinding.findMany({ where, orderBy: [{ attempt: "asc" }, { findingKey: "asc" }] }),
       this.prisma.agentSession.findMany({ where: { ...where, role: "reviewer" }, select: { attempt: true, outcome: true } }),
     ]);
-    const hasPatch = patches > 0;
+    const hasPatch = patched.length > 0;
     // DI-21.76. A run from before the attempt column names its newest attempt with any record.
     const patchAttempt = !hasPatch
       ? null
-      : (run.lastPatchAttempt ??
+      : (patched[0]?.lastPatchAttempt ??
         Math.max(1, ...results.map((row) => row.attempt), ...findings.map((row) => row.attempt), ...reviewers.map((row) => row.attempt)));
     const ofPatch = findings.filter((finding) => finding.attempt === patchAttempt);
     return {
@@ -56,11 +62,11 @@ export class PrismaRunDraftStore implements RunDraftStore {
       status: run.status,
       failureReason: run.failureReason,
       failureMessage: run.failureMessage,
-      pullRequestUrl: run.pullRequestUrl,
+      pullRequestUrls: targets.flatMap((target) => (target.pullRequestUrl === null ? [] : [target.pullRequestUrl])),
       pullRequestFollowUp: isPrFollowUpWorkflowId(run.temporalWorkflowId),
       hasPatch,
       patchAttempt,
-      targetCount,
+      targetCount: targets.length,
       // DI-21.80. Each frozen assertion with its result for the attempt of the last patch.
       assertions: assertions.map((assertion) => {
         const result = results.find((row) => row.assertionKey === assertion.assertionKey && row.attempt === patchAttempt);
@@ -99,12 +105,16 @@ export class PrismaRunDraftStore implements RunDraftStore {
         targets: {
           orderBy: { createdAt: "asc" },
           take: 1,
-          select: { repository: { select: { id: true, fullName: true, defaultBranch: true, githubInstallationId: true } } },
+          select: {
+            baseSha: true,
+            repository: { select: { id: true, fullName: true, defaultBranch: true, githubInstallationId: true } },
+          },
         },
       },
     });
     if (run === null) return null;
-    const repository = run.targets[0]?.repository ?? null;
+    const target = run.targets[0] ?? null;
+    const repository = target?.repository ?? null;
     return {
       workItemTitle: run.workItemTitle ?? "",
       workItemUrl: run.workItemUrl,
@@ -118,6 +128,7 @@ export class PrismaRunDraftStore implements RunDraftStore {
               fullName: repository.fullName,
               defaultBranch: repository.defaultBranch,
               githubInstallationId: repository.githubInstallationId,
+              baseSha: target?.baseSha ?? null,
             },
     };
   }

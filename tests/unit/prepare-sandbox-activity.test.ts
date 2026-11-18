@@ -105,18 +105,21 @@ const build = (
     setPublication: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the publication facts'),
     ),
+    clearPublication: vi.fn().mockResolvedValue(undefined),
     setProofPack: vi.fn().mockRejectedValue(
       new Error('no Run "run-1" of tenant "tenant-1" received the Proof Pack facts'),
     ),
     createRunTarget: vi.fn().mockResolvedValue({ id: "target-1" }),
     updateRunTarget: vi.fn().mockResolvedValue(undefined),
     listRunTargets: vi.fn().mockResolvedValue([]),
+    recordTargetEdges: vi.fn().mockResolvedValue(undefined),
     setConfigSha: vi.fn().mockResolvedValue(undefined),
     setPullRequestPreview: vi.fn().mockResolvedValue(null),
     appendDecision: vi.fn().mockResolvedValue(undefined),
     countByProduct: vi.fn().mockResolvedValue(0),
     recordLastPatch: vi.fn().mockResolvedValue(undefined),
     lastPatch: vi.fn().mockResolvedValue(null),
+    lastPatches: vi.fn().mockResolvedValue([]),
     setDeliveredContext: vi.fn().mockResolvedValue(undefined),
     setIssueState: vi.fn().mockResolvedValue(undefined),
     closePullRequest: vi.fn().mockResolvedValue(null),
@@ -463,6 +466,50 @@ describe("the prepareCheckSandbox activity", () => {
     });
 
     expect(sandbox.destroyed).toEqual(["check-old"]);
+  });
+
+  it("captures and applies the patch of each target of a change set in its own folder", async () => {
+    // docs/specs/change-sets.md, DI-21.133. Captures 1 and 2 read the work sprite, 3 and 4 the check sprite.
+    const API_PATCH = "diff --git a/api.ts b/api.ts\n+api\n";
+    const WEB_PATCH = "diff --git a/web.ts b/web.ts\n+web\n";
+    const sandbox = sandboxWithConfig(DEFAULT_CONFIG_YAML, captureOverrides((capture) => (capture % 2 === 1 ? API_PATCH : WEB_PATCH)));
+    const { activities, runs } = build({ spriteId: null, adapter: null }, {}, sandbox);
+    const targets = [
+      { repository: "acme/api", url: "https://github.com/acme/api.git", ref: HEAD, githubInstallationId: "" },
+      { repository: "acme/web", url: "https://github.com/acme/web.git", ref: HEAD, githubInstallationId: "" },
+    ];
+
+    const checked = await activities.prepareCheckSandbox({
+      ...input,
+      primary: { url: "https://github.com/acme/api.git", ref: HEAD },
+      targets,
+      work: {
+        ...work,
+        primaryPath: "/workspace/targets/acme/api",
+        targets: [
+          { repository: "acme/api", path: "/workspace/targets/acme/api", baseSha: HEAD },
+          { repository: "acme/web", path: "/workspace/targets/acme/web", baseSha: HEAD },
+        ],
+      },
+      previous: null,
+      attempt: 1,
+    });
+
+    const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+    expect(checked.checkedTargets?.map((target) => [target.repository, target.path, target.patchSha256])).toEqual([
+      ["acme/api", "/workspace/targets/acme/api", sha(API_PATCH)],
+      ["acme/web", "/workspace/targets/acme/web", sha(WEB_PATCH)],
+    ]);
+    expect(checked.patchSha256).toBe(sha(`acme/api ${sha(API_PATCH)}\nacme/web ${sha(WEB_PATCH)}\n`));
+    expect(checked.changedFiles).toEqual([
+      "acme/api/package.json",
+      "acme/api/src/a.ts",
+      "acme/web/package.json",
+      "acme/web/src/a.ts",
+    ]);
+    const applies = sandbox.commands.filter((command) => command.args.includes("apply")).map((command) => command.args[command.args.indexOf("-C") + 1]);
+    expect(applies).toEqual(["/workspace/targets/acme/api", "/workspace/targets/acme/web"]);
+    expect(runs.recordLastPatch.mock.calls.map((call: unknown[]) => String(call[2]))).toEqual(["acme/api", "acme/web"]);
   });
 });
 

@@ -9,7 +9,7 @@ import type { Env } from "~/config/env.js";
 import { agentRunWorkflow, humanInputSignal, stopSignal, type AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/workflows/sync-installation.workflow.js";
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
-import { buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
+import { buildAheadRepositoriesOf, buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
 import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
 import { draftRunWorkflow } from "~/workflows/draft-run.workflow.js";
@@ -130,7 +130,7 @@ export const createBuildAheadRequester =
   async (request) => {
     await client.workflow.signalWithStart(buildAheadWorkflow, {
       taskQueue,
-      workflowId: buildAheadWorkflowId(request.tenantId, request.repositoryFullName),
+      workflowId: buildAheadWorkflowId(request.tenantId, buildAheadRepositoriesOf(request)),
       args: [request],
       signal: buildAheadSignal,
       signalArgs: [],

@@ -163,6 +163,59 @@ export class GitHubPullRequests implements PullRequestPort {
     return this.toRecord(body as GitHubPullRequestBody, input.headBranch);
   }
 
+  /** docs/specs/change-sets.md, DI-21.152. Replaces the body of the pull request. */
+  async updateBody(slug: string, number: number, body: string, githubInstallationId: string): Promise<void> {
+    assertRepositorySlug(slug);
+    await this.call(
+      `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/pulls/${String(number)}`,
+      { method: "PATCH", body: JSON.stringify({ body }) },
+      githubInstallationId,
+      slug,
+    );
+  }
+
+  /** DI-21.153. One comment on the pull request conversation. */
+  async comment(slug: string, number: number, body: string, githubInstallationId: string): Promise<void> {
+    assertRepositorySlug(slug);
+    await this.call(
+      `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/issues/${String(number)}/comments`,
+      { method: "POST", body: JSON.stringify({ body }) },
+      githubInstallationId,
+      slug,
+    );
+  }
+
+  /** DI-21.153. Closes the pull request without a merge. */
+  async close(slug: string, number: number, githubInstallationId: string): Promise<void> {
+    assertRepositorySlug(slug);
+    await this.call(
+      `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/pulls/${String(number)}`,
+      { method: "PATCH", body: JSON.stringify({ state: "closed" }) },
+      githubInstallationId,
+      slug,
+    );
+  }
+
+  /**
+   * DI-21.153. Deletes the branch. GitHub answers 422 for a reference that does not exist and 404
+   * for a repository it cannot see; the first is no error, so a retry deletes nothing twice.
+   */
+  async deleteBranch(slug: string, branch: string, githubInstallationId: string): Promise<void> {
+    assertRepositorySlug(slug);
+    const ref = branch.split("/").map(encodeURIComponent).join("/");
+    try {
+      await this.call(
+        `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/git/refs/heads/${ref}`,
+        { method: "DELETE" },
+        githubInstallationId,
+        slug,
+      );
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 422) return;
+      throw error;
+    }
+  }
+
   private toRecord(body: GitHubPullRequestBody, headBranch: string): PullRequestRecord {
     const number = body.number;
     const url = body.html_url;
@@ -175,7 +228,24 @@ export class GitHubPullRequests implements PullRequestPort {
         "GitHub returned a pull request without a number, without a URL, or without a head SHA",
       );
     }
-    return { number, url, headBranch, headSha };
+    const parsed = body as { state?: unknown; merged_at?: unknown; base?: unknown };
+    const state =
+      typeof parsed.merged_at === "string" && parsed.merged_at !== ""
+        ? ("merged" as const)
+        : parsed.state === "open"
+          ? ("open" as const)
+          : parsed.state === "closed"
+            ? ("closed" as const)
+            : undefined;
+    const base = (parsed.base as { ref?: unknown } | undefined)?.ref;
+    return {
+      number,
+      url,
+      headBranch,
+      headSha,
+      ...(state === undefined ? {} : { state }),
+      ...(typeof base === "string" ? { baseBranch: base } : {}),
+    };
   }
 
   private async call(

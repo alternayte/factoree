@@ -29,6 +29,7 @@ import {
   renderProofPack,
   type ProofPackAssertion,
   type ProofPackBaseMove,
+  type ProofPackTargetResult,
   type ProofPackCheck,
   type ProofPackEvidenceRef,
   type ProofPackAfterPublication,
@@ -272,8 +273,15 @@ export interface PublishProofPackActivityInput {
    * Absent in a history recorded before they existed.
    */
   forYourEye?: ForYourEyeCriterion[];
-  /** docs/specs/repository-setup-and-services.md. The fakes the last validation ran against. */
-  fakes?: Array<{ service: string; name: string }>;
+  /**
+   * docs/specs/repository-setup-and-services.md. The fakes the last validation ran against.
+   * docs/specs/change-sets.md: each names its target, and a fake a wired provider replaced is absent.
+   */
+  fakes?: Array<{ service: string; name: string; target?: string }>;
+  /** docs/specs/change-sets.md, DI-21.148. One line per pair of the set check that ran alone. */
+  setCheckNotes?: string[];
+  /** docs/specs/change-sets.md, DI-21.154. The result of each target of a change set. */
+  targetResults?: ProofPackTargetResult[];
   /** docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking. */
   decisions?: FactoreeDecision[];
   /** docs/specs/own-proposals-and-parallel-runs.md. How far the base branch moved, or null. */
@@ -580,7 +588,9 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       checkDefiningFiles: input.checkDefiningFiles,
       visualEvidenceGap: input.visualEvidenceGap ?? null,
       needsYourEye,
-      fakes: input.fakes ?? [],
+      fakes: (input.fakes ?? []).map((fake) => ({ service: fake.service, name: fake.name, ...(fake.target === undefined ? {} : { target: fake.target }) })),
+      ...(input.setCheckNotes === undefined || input.setCheckNotes.length === 0 ? {} : { setCheckNotes: input.setCheckNotes }),
+      ...(input.targetResults === undefined || input.targetResults.length === 0 ? {} : { targetResults: input.targetResults }),
       decisions: input.decisions ?? [],
       baseMove: input.baseMove ?? null,
       // docs/specs/agent-session-usage-and-hangs.md. Cost is a metric beside the proof, never part of it.
@@ -645,7 +655,13 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
     await dependencies.runs.setProofPack(input.tenantId, input.runId, { sha256, postedAt, document, input: storedInput });
     // Linear documents the session link as the way to name a published pull request.
     if (input.pullRequestLinked !== true) {
-      await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
+      // DI-21.154. The session lists every pull request of a change set.
+      const published = (input.targetResults ?? []).filter((target) => target.pullRequestUrl !== null);
+      if (published.length > 1) {
+        for (const target of published) await dependencies.agentSession.addLink(input.sessionId, `Pull request ${target.repository}`, target.pullRequestUrl ?? "");
+      } else {
+        await dependencies.agentSession.addLink(input.sessionId, "Pull request", input.pullRequestUrl);
+      }
     }
     await dependencies.agentSession.respond(input.sessionId, body);
 

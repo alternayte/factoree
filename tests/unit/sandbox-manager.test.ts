@@ -541,3 +541,122 @@ describe("SandboxManager.prepare, a bootstrap that fails inside a pipeline", () 
     await expect(manager.prepare(input)).rejects.toThrow(/the command wrote no output/);
   });
 });
+
+describe("SandboxManager.prepare, a change set (docs/specs/change-sets.md)", () => {
+  const API_YAML =
+    "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: npm ci\n" +
+    "services:\n  compose: compose.yaml\nverify:\n  commands:\n    - name: test\n      run: npm test\nrepair:\n  maxAttempts: 1\n" +
+    "sandbox:\n  allowedDomains:\n    - registry.npmjs.org\n";
+  const WEB_YAML =
+    "version: 1\nidentity:\n  product: checkout-platform\n  linear:\n    teamKey: PAY\nbootstrap:\n  command: dotnet restore\n" +
+    "verify:\n  commands:\n    - name: test\n      run: dotnet test\npreview:\n  enabled: true\n  command: npm start\n  readyUrl: http://localhost:3000\n  timeoutSeconds: 60\n" +
+    "sandbox:\n  allowedDomains:\n    - api.nuget.org\n";
+
+  it("checks out each target in its own folder with its own configuration", async () => {
+    const sandbox = new FakeSandbox({
+      enforcesNetworkPolicy: true,
+      supportsCheckpoints: true,
+      supportsExposedServices: true,
+      supportsCustomImage: false,
+      supportsDocker: true,
+      bindsCredentials: true,
+    });
+    sandbox.onExec = (command) => {
+      const last = command.args[command.args.length - 1] ?? "";
+      if (command.file === "cat" && last === "/workspace/targets/acme/api/.factoree/config.yaml") return { exitCode: 0, stdout: API_YAML, stderr: "" };
+      if (command.file === "cat" && last === "/workspace/targets/acme/web/.factoree/config.yaml") return { exitCode: 0, stdout: WEB_YAML, stderr: "" };
+      if (command.file === "cat") return { exitCode: 1, stdout: "", stderr: "no such file" };
+      if (command.file === "git" && command.args.includes("rev-parse")) return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const manager = new SandboxManager({ sandbox });
+    const prepared = await manager.prepare({
+      ...input,
+      defaults: { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["registry.npmjs.org", "api.nuget.org"] },
+      primary: { url: "https://github.com/acme/api.git", ref: HEAD },
+      targets: [
+        { repository: "acme/api", url: "https://github.com/acme/api.git", ref: HEAD },
+        { repository: "acme/web", url: "https://github.com/acme/web.git", ref: HEAD },
+      ],
+    });
+
+    expect(prepared.targets.map((target) => target.checkout.path)).toEqual(["/workspace/targets/acme/api", "/workspace/targets/acme/web"]);
+    expect(sandbox.commands.some((command) => command.args.includes("/workspace/primary"))).toBe(false);
+    // User validation runs in the target with the preview.
+    expect(prepared.checkout.primary.path).toBe("/workspace/targets/acme/web");
+    expect(prepared.preview?.readyUrl).toBe("http://localhost:3000");
+    // Each bootstrap runs in its own target, with the mise configuration of that target.
+    const bootstraps = sandbox.commands.filter((command) => command.file === "sh" && /npm ci|dotnet restore/.test(command.args[1] ?? ""));
+    expect(bootstraps.map((command) => [command.cwd, command.env?.MISE_CONFIG_FILE])).toEqual([
+      ["/workspace/targets/acme/api", "/workspace/targets/acme/api/.factoree/mise.toml"],
+      ["/workspace/targets/acme/web", "/workspace/targets/acme/web/.factoree/mise.toml"],
+    ]);
+    // Each stack runs as its own compose project.
+    const compose = sandbox.commands.find((command) => command.file === "docker" && command.args.includes("up"));
+    expect(compose?.args.slice(0, 3)).toEqual(["compose", "-p", "acme-api"]);
+    // The union of the allow lists, and the smallest repair budget.
+    expect(sandbox.policies.at(-1)?.allowedDomains).toEqual(["api.nuget.org", "registry.npmjs.org"]);
+    expect(prepared.runtime.repairMaxAttempts).toBe(1);
+    // Each verify command runs in its own target, named after it.
+    expect(prepared.verifyCommands).toEqual([
+      expect.objectContaining({ name: "acme/api: test", run: "npm test", workingDirectory: "/workspace/targets/acme/api" }),
+      expect.objectContaining({ name: "acme/web: test", run: "dotnet test", workingDirectory: "/workspace/targets/acme/web" }),
+    ]);
+  });
+
+  it("runs one stack at a time in a check sprite, and wires the consumer whose fake names the provider (DI-21.145, DI-21.146)", async () => {
+    const API = API_YAML + "preview:\n  enabled: true\n  command: npm start\n  readyUrl: http://localhost:5000/\n  timeoutSeconds: 60\n";
+    const WEB = WEB_YAML + "services:\n  compose: compose.yaml\n";
+    const sandbox = new FakeSandbox({
+      enforcesNetworkPolicy: true,
+      supportsCheckpoints: true,
+      supportsExposedServices: true,
+      supportsCustomImage: false,
+      supportsDocker: true,
+      bindsCredentials: true,
+    });
+    sandbox.onExec = (command) => {
+      const last = command.args[command.args.length - 1] ?? "";
+      if (command.file === "cat" && last === "/workspace/targets/acme/api/.factoree/config.yaml") return { exitCode: 0, stdout: API, stderr: "" };
+      if (command.file === "cat" && last === "/workspace/targets/acme/web/.factoree/config.yaml") return { exitCode: 0, stdout: WEB, stderr: "" };
+      if (command.file === "cat") return { exitCode: 1, stdout: "", stderr: "no such file" };
+      if (command.file === "git" && command.args.includes("rev-parse")) return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
+      if (command.file === "docker" && command.args.includes("config") && command.cwd === "/workspace/targets/acme/web") {
+        const services = { "api-fake": { labels: { "factoree.fake": "Acme API", "factoree.fake.repository": "acme/api" }, ports: [{ target: 8080, published: "4010" }] } };
+        return { exitCode: 0, stdout: JSON.stringify({ services }), stderr: "" };
+      }
+      if (command.file === "docker" && command.args.includes("config")) return { exitCode: 0, stdout: JSON.stringify({ services: {} }), stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const prepared = await new SandboxManager({ sandbox }).prepare(
+      {
+        ...input,
+        defaults: { ...DEFAULT_PROJECT_DEFAULTS, allowedDomains: ["registry.npmjs.org", "api.nuget.org"] },
+        primary: { url: "https://github.com/acme/api.git", ref: HEAD },
+        targets: [
+          { repository: "acme/api", url: "https://github.com/acme/api.git", ref: HEAD },
+          { repository: "acme/web", url: "https://github.com/acme/web.git", ref: HEAD },
+        ],
+      },
+      () => Promise.resolve(),
+    );
+
+    const steps = sandbox.commands
+      .filter((command) => (command.file === "docker" && (command.args.includes("up") || command.args.includes("stop"))) || (command.file === "sh" && /npm ci|dotnet restore/.test(command.args[1] ?? "")))
+      .map((command) => `${command.cwd ?? ""} ${command.file === "docker" ? (command.args.includes("up") ? "up" : "stop") : "bootstrap"}`);
+    expect(steps).toEqual([
+      "/workspace/targets/acme/api up",
+      "/workspace/targets/acme/api bootstrap",
+      "/workspace/targets/acme/api stop",
+      "/workspace/targets/acme/web up",
+      "/workspace/targets/acme/web bootstrap",
+      "/workspace/targets/acme/web stop",
+    ]);
+    expect(prepared.setCheck?.pairs).toEqual([{ provider: "acme/api", consumer: "acme/web", fake: "api-fake", ports: [4010] }]);
+    expect(prepared.setCheck?.targets.map((target) => [target.repository, target.verifyCommands.map((command) => command.name)])).toEqual([
+      ["acme/api", ["acme/api: test"]],
+      ["acme/web", ["acme/web: test"]],
+    ]);
+  });
+});
+
