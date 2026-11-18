@@ -805,8 +805,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           invocations,
         );
 
-        // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
-        // runs no check and records no result. The `finally` below stops the early preview.
+        // docs/specs/provider-unreachable.md. A session that could not reach the model provider
+        // proves nothing either, so the pass runs no check. The workflow retries it.
         const providerUnreachable = providerUnreachableOf(invocations);
         if (providerUnreachable !== null) {
           return {
@@ -823,6 +823,8 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             providerUnreachable,
           };
         }
+        // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
+        // runs no check and records no result. The `finally` below stops the early preview.
         const hang = hangOf(invocations);
         if (hang !== null) {
           return {

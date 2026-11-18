@@ -752,7 +752,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
     const beforeGitState = await worktreeGitStateFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
 
     const unreachableRetry = input.unreachableRetry ?? 0;
-      const afterHang = input.afterHang === true || unreachableRetry > 0;
+    const afterHang = input.afterHang === true || unreachableRetry > 0;
     const reportPath = `${triageDirectory}/report${afterHang ? "-after-hang" : ""}.json`;
     const prompt = renderTriagePrompt({
       pullRequestUrl: input.pullRequestUrl,
