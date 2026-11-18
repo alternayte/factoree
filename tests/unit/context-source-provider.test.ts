@@ -63,6 +63,7 @@ const scope = (over: Partial<{ backstageEnabled: boolean; automaticReferenceDisc
   contextConfiguration: {
     backstageEnabled: true,
     automaticReferenceDiscovery: false,
+    authoritativePaths: [],
     ...over,
   },
 });

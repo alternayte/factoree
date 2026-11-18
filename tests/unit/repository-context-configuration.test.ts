@@ -34,9 +34,20 @@ describe("readRepositoryContextConfiguration", () => {
       "https://git.test/acme/app.git",
       "main",
     );
-    expect(configuration).toEqual({ backstageEnabled: true, automaticReferenceDiscovery: true });
+    expect(configuration).toEqual({ backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] });
     // The read must use the SHA, never the branch name.
     expect(reader.calls).toContain(`readBlob https://git.test/acme/app.git ${"a".repeat(40)} .factoree/config.yaml`);
+  });
+
+  it("reads the authoritative documentation globs (GitHub issue 60)", async () => {
+    const reader = new FakeRepositoryReader({
+      "https://git.test/acme/app.git": {
+        sha: "a".repeat(40),
+        files: { ".factoree/config.yaml": `${VALID}  authority:\n    - docs/decisions/**\n    - docs/review-output-contract.md\n` },
+      },
+    });
+    const configuration = await readRepositoryContextConfiguration(reader, "https://git.test/acme/app.git", "main");
+    expect(configuration.authoritativePaths).toEqual(["docs/decisions/**", "docs/review-output-contract.md"]);
   });
 
   it("returns the defaults when the file is missing", async () => {

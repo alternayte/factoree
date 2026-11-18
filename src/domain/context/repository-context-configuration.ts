@@ -11,12 +11,19 @@ export interface RepositoryContextConfiguration {
   backstageEnabled: boolean;
   /** SDD section 20. This repository accepts a reference repository Factoree discovers. */
   automaticReferenceDiscovery: boolean;
+  /**
+   * SDD section 22 and GitHub issue 60. The project override of the architecture ladder: the globs
+   * of the primary repository's documentation that carries authority. Empty means every Markdown
+   * file under docs/ and every ADR does, as before the override existed.
+   */
+  authoritativePaths: readonly string[];
 }
 
 /** SDD section 18 disables broad retrieval by default, so both switches start off. */
 export const DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION: RepositoryContextConfiguration = {
   backstageEnabled: false,
   automaticReferenceDiscovery: false,
+  authoritativePaths: [],
 };
 
 /**
@@ -38,6 +45,7 @@ export const readRepositoryContextConfiguration = async (
     return {
       backstageEnabled: config.context.backstage.enabled,
       automaticReferenceDiscovery: config.context.referenceRepositories.automaticDiscovery,
+      authoritativePaths: config.context.authority,
     };
   } catch {
     return DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION;

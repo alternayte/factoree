@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import { RepositoryReadError } from "~/adapters/github/git-repository-reader.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
@@ -126,6 +127,22 @@ export const classifyPath = (path: string): PathClassification | null => {
   return null;
 };
 
+/** The authority classes that a path alone grants, so the project override of SDD section 22 governs them. */
+const DOCUMENTATION_AUTHORITIES = new Set<AuthorityClass>(["accepted_adr", "architecture_documentation"]);
+
+/**
+ * GitHub issue 60. True when the repository declares its authoritative documentation and this
+ * documentation path is not part of it. An empty declaration grants every documentation path.
+ */
+export const isUndeclaredDocumentation = (
+  path: string,
+  authority: AuthorityClass,
+  authoritativePaths: readonly string[],
+): boolean =>
+  authoritativePaths.length > 0 &&
+  DOCUMENTATION_AUTHORITIES.has(authority) &&
+  !authoritativePaths.some((pattern) => posix.matchesGlob(path, pattern));
+
 export interface RepositoryContextSourceOptions {
   reader: RepositoryReader;
 }
@@ -230,7 +247,17 @@ export class RepositoryContextSource implements ContextSource {
       // SDD section 21. Every discovered file starts as a reference item. The resolver promotes
       // it to `required` or demotes it to `discoverable` under the context budget, because only
       // the resolver knows the whole selection.
-      const suggested: ContextClassification = "reference";
+      //
+      // GitHub issue 60. Documentation the primary repository's `context.authority` leaves out
+      // stays reachable by path, and never enters a conflict. The file names only the primary
+      // repository's own paths, so a target or a reference repository keeps the plain rule.
+      const undeclared =
+        role === "primary" &&
+        isUndeclaredDocumentation(entry.path, classification.authority, request.contextConfiguration.authoritativePaths);
+      const suggested: ContextClassification = undeclared ? "discoverable" : "reference";
+      const reason = undeclared
+        ? `${classification.reason}, left out of context.authority, so it is reference only and decides nothing`
+        : classification.reason;
 
       candidates.push({
         reference: {
@@ -242,7 +269,7 @@ export class RepositoryContextSource implements ContextSource {
         },
         sourceVersion: sha,
         authority: classification.authority,
-        reason: classification.reason,
+        reason,
         priority: DISCOVERY_PRIORITY[classification.rule],
         topics,
         sizeBytes: entry.sizeBytes,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RepositoryContextSource, classifyPath } from "~/domain/context/repository-source.js";
+import { RepositoryContextSource, classifyPath, isUndeclaredDocumentation } from "~/domain/context/repository-source.js";
 import type { ContextDiscoveryRequest } from "~/domain/context/context-source.js";
 import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
 import {
@@ -250,5 +250,28 @@ describe("RepositoryContextSource", () => {
       "acme/webhook-service": "a".repeat(40),
       "acme/notification-service": "b".repeat(40),
     });
+  });
+});
+
+describe("context.authority (GitHub issue 60)", () => {
+  it("governs only documentation, and only when the list is not empty", () => {
+    expect(isUndeclaredDocumentation("docs/overview.md", "architecture_documentation", [])).toBe(false);
+    expect(isUndeclaredDocumentation("docs/overview.md", "architecture_documentation", ["docs/decisions/**"])).toBe(true);
+    expect(isUndeclaredDocumentation("docs/decisions/0001-queue.md", "accepted_adr", ["docs/decisions/**"])).toBe(false);
+    expect(isUndeclaredDocumentation("docs/ADR-031.md", "accepted_adr", ["docs/decisions/**"])).toBe(true);
+    expect(isUndeclaredDocumentation("openapi.yaml", "machine_readable_contract", ["docs/decisions/**"])).toBe(false);
+    expect(isUndeclaredDocumentation("README.md", "repository_readme", ["docs/decisions/**"])).toBe(false);
+  });
+
+  it("offers undeclared primary documentation as discoverable, and keeps the declared file a reference", async () => {
+    const source = new RepositoryContextSource({ reader: reader() });
+    const candidates = await source.discover(
+      request({ contextConfiguration: { ...DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION, authoritativePaths: ["docs/ADR-*.md"] } }),
+    );
+    const byPath = (path: string) => candidates.find((candidate) => candidate.reference.ref === `repository:acme/webhook-service:${path}`);
+    expect(byPath("docs/overview.md")?.suggestedClassification).toBe("discoverable");
+    expect(byPath("docs/overview.md")?.reason).toContain("left out of context.authority");
+    expect(byPath("docs/ADR-031.md")?.suggestedClassification).toBe("reference");
+    expect(byPath("README.md")?.suggestedClassification).toBe("reference");
   });
 });

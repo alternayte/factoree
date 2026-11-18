@@ -223,9 +223,12 @@ const schema = z
           .object({ automaticDiscovery: z.boolean().default(false) })
           .strict()
           .default({ automaticDiscovery: false }),
+        // GitHub issue 60. The globs of the documentation that carries architecture authority. An
+        // empty list keeps every Markdown file under docs/ and every ADR as authority.
+        authority: z.array(REPOSITORY_PATH).max(100).default([]),
       })
       .strict()
-      .default({ backstage: { enabled: false }, referenceRepositories: { automaticDiscovery: false } }),
+      .default({ backstage: { enabled: false }, referenceRepositories: { automaticDiscovery: false }, authority: [] }),
     // The repository can only name a secret it needs. The Product owns the value.
     secrets: z
       .object({ require: z.array(z.string().min(1)).default([]) })

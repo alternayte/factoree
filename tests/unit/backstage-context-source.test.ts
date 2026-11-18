@@ -160,7 +160,7 @@ describe("BackstageContextSource", () => {
     expect(off.every((candidate) => candidate.discoveredRepository === undefined)).toBe(true);
 
     const on = await sourceOf([ROOT, IDENTITY_API]).discover(
-      request({ contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true } }),
+      request({ contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] } }),
     );
     const api = on.find((candidate) => candidate.reference.ref === "backstage:api:default/identity-api");
     expect(api?.discoveredRepository).toEqual({

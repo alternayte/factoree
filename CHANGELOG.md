@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `context.authority` in `.factoree/config.yaml` lists the documentation that carries architecture authority (GitHub issue 60). Any other Markdown file under `docs/`, and any other ADR, stays readable by the agents but never raises a context-conflict question. Without the list, behaviour is unchanged.
+
+### Fixed
+
+- An ADR that states a status other than accepted, such as proposed, in review or superseded, is no longer treated as an accepted decision, so it raises no conflict. Factoree reads the status from a `Status:` line, front matter, JSON metadata, a `## Status` heading or a metadata table.
+
 ## [0.13.0] - 2026-11-18
 
 ### Added

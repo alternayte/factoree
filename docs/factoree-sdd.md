@@ -593,6 +593,8 @@ context:
     enabled: true
   referenceRepositories:
     automaticDiscovery: true
+  authority:
+    - docs/decisions/**
 
 policy:
   defaultAutonomy: L3
@@ -826,6 +828,8 @@ Backstage/declarative catalog
 ```
 
 Project configuration MAY explicitly override these rules.
+
+`context.authority` in `.factoree/config.yaml` lists the globs of the primary repository's documentation that carries architecture authority. A Markdown file under `docs/`, or an ADR, that no glob matches stays reachable by path and enters no conflict. An empty list keeps every such file as authority. An ADR whose stated status is not accepted, such as proposed or superseded, is not an accepted ADR.
 
 ---
 

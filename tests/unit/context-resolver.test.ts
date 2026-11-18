@@ -67,6 +67,7 @@ const build = (
   over: {
     primary?: Record<string, string>;
     reference?: Record<string, string>;
+    authoritativePaths?: string[];
   } = {},
 ) => {
   const reader = new FakeRepositoryReader({
@@ -83,7 +84,10 @@ const build = (
       resolver.resolve({
         ...partial,
         sources: registry,
-        contextConfiguration: DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
+        contextConfiguration: {
+          ...DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
+          authoritativePaths: over.authoritativePaths ?? [],
+        },
       }),
   };
 };
@@ -498,6 +502,57 @@ describe("ContextResolver", () => {
   });
 });
 
+describe("ContextResolver documentation authority (GitHub issue 60)", () => {
+  const plans = {
+    "docs/plans/retry-plan.md": "A plan: notification retry lives here.\n",
+    "docs/reports/retry-report.md": "A report: notification retry lives elsewhere.\n",
+    "docs/decisions/0001-retry.md": "# Retry\n\n- **Status:** Accepted\n\nNotification retry lives in this service.\n",
+  };
+  const itemOf = (resolved: Awaited<ReturnType<ReturnType<typeof build>["resolve"]>>, path: string) =>
+    resolved.contract.items.find((item) => item.reference.ref === `repository:acme/webhook-service:${path}`);
+
+  it("asks a human about two plans that share a word when no authority is declared", async () => {
+    const resolved = await build({ primary: plans }).resolve(input());
+    expect(resolved.unresolvedConflict?.reason).toContain("docs/plans/retry-plan.md");
+  });
+
+  it("keeps documentation left out of context.authority reachable, and out of every conflict", async () => {
+    const resolved = await build({ primary: plans, authoritativePaths: ["docs/decisions/**"] }).resolve(input());
+    expect(resolved.unresolvedConflict).toBeNull();
+    for (const path of ["docs/plans/retry-plan.md", "docs/reports/retry-report.md"]) {
+      expect(itemOf(resolved, path)?.classification).toBe("discoverable");
+      expect(itemOf(resolved, path)?.reason).toContain("left out of context.authority");
+    }
+    expect(itemOf(resolved, "docs/decisions/0001-retry.md")?.authority).toBe("accepted_adr");
+    expect(itemOf(resolved, "docs/decisions/0001-retry.md")?.classification).toBe("required");
+  });
+
+  it("takes a proposed ADR out of the accepted rung, so it raises no conflict", async () => {
+    const resolved = await build({
+      primary: {
+        "docs/ADR-031.md": "# ADR 31\n\nStatus: accepted\n\nNotification retry lives here.\n",
+        "docs/ADR-042.md": "# ADR 42\n\n## Status\n\nProposed\n\nNotification retry lives elsewhere.\n",
+      },
+    }).resolve(input());
+    expect(resolved.unresolvedConflict).toBeNull();
+    const proposed = itemOf(resolved, "docs/ADR-042.md");
+    expect(proposed?.authority).toBe("architecture_documentation");
+    expect(proposed?.classification).toBe("discoverable");
+    expect(proposed?.reason).toContain('Its status is "proposed"');
+    expect(itemOf(resolved, "docs/ADR-031.md")?.authority).toBe("accepted_adr");
+  });
+
+  it("keeps an ADR that states no status on the accepted rung", async () => {
+    const resolved = await build({
+      primary: {
+        "docs/ADR-031.md": "Notification retry lives here.\n",
+        "docs/ADR-042.md": "Notification retry lives elsewhere.\n",
+      },
+    }).resolve(input());
+    expect(resolved.unresolvedConflict?.reason).toContain("accepted ADR");
+  });
+});
+
 describe("ContextResolver topic enrichment", () => {
   it("adds a topic that only the fetched content holds", async () => {
     const resolved = await build({
@@ -552,7 +607,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -582,7 +637,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: false },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: false, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -610,7 +665,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -647,7 +702,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -676,7 +731,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -703,7 +758,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -736,7 +791,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -791,7 +846,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -822,7 +877,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),
@@ -876,7 +931,7 @@ describe("automatic reference repository discovery", () => {
       referenceRepositories: [],
       workItemReferences: [],
       decisions: [],
-      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true },
+      contextConfiguration: { backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] },
       sources: new ContextSourceRegistry([
         new LinearContextSource(),
         new RepositoryContextSource({ reader }),

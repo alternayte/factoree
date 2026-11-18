@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
 import type { ContextConflictRecord, SelectedContextItem } from "./conflicts.js";
-import { detectConflicts, firstUnresolved } from "./conflicts.js";
+import { detectConflicts, firstUnresolved, isConflictable } from "./conflicts.js";
+import { readAdrStatus } from "./adr-status.js";
 import type {
   ContextCandidate,
   ContextClassification,
@@ -252,20 +253,39 @@ export class ContextResolver {
     // purpose. SDD section 55 forbids a copy of repository content into the control plane. The
     // Implementer reaches a file by path inside the sandbox checkout, and `requiredContextLines`
     // gives the prompt the path, the authority, and the hash, which is all the prompt needs.
+    //
+    // GitHub issue 60. A path names no ADR status, so the resolver also reads every ADR that can
+    // enter a conflict, preloaded or not. An ADR that states a status other than accepted is no
+    // accepted decision: it stays reachable by path and decides nothing.
     for (const item of items) {
-      if (item.classification !== "required") continue;
       // DI-21.43. The source read this content before resolution and holds only its hash.
-      if (item.contentSha256 !== null) continue;
+      const needsHash = item.classification === "required" && item.contentSha256 === null;
+      const needsAdrStatus = item.authority === "accepted_adr" && isConflictable(item.classification);
+      if (!needsHash && !needsAdrStatus) continue;
       const source = input.sources.get(item.reference.sourceId);
+      let content: string;
       try {
-        const document = await source.fetch(item.reference);
-        item.contentSha256 = createHash("sha256").update(document.content, "utf8").digest("hex");
-        item.topics = mergeTopics(item.topics, topicsIn(document.content, topics));
+        content = (await source.fetch(item.reference)).content;
       } catch (error) {
-        item.classification = "discoverable";
-        item.reason =
-          `${item.reason}. The content could not be read, so it is not preloaded: ` +
-          `${String(error)}`;
+        if (needsHash) {
+          item.classification = "discoverable";
+          item.reason =
+            `${item.reason}. The content could not be read, so it is not preloaded: ` +
+            `${String(error)}`;
+        }
+        continue;
+      }
+      if (needsHash) {
+        item.contentSha256 = createHash("sha256").update(content, "utf8").digest("hex");
+        item.topics = mergeTopics(item.topics, topicsIn(content, topics));
+      }
+      if (needsAdrStatus) {
+        const status = readAdrStatus(content);
+        if (status.kind === "not_accepted") {
+          item.authority = "architecture_documentation";
+          item.classification = "discoverable";
+          item.reason = `${item.reason}. Its status is "${status.status}", so it is not an accepted decision and decides nothing`;
+        }
       }
     }
 

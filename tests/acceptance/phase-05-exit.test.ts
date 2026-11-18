@@ -79,7 +79,7 @@ describe("Phase 5 exit condition — a fixture dependency can be discovered from
 
   it("reads the switch from the repository configuration, not from the test", () => {
     // SDD section 15 and SDD section 19. The fixture writes `backstage.enabled: true`.
-    expect(configuration).toEqual({ backstageEnabled: true, automaticReferenceDiscovery: true });
+    expect(configuration).toEqual({ backstageEnabled: true, automaticReferenceDiscovery: true, authoritativePaths: [] });
   });
 
   it("pins the reference repository the catalog named, at an explicit SHA", () => {

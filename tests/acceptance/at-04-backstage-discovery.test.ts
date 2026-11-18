@@ -57,6 +57,7 @@ beforeAll(async () => {
   expect(topologyConfiguration).toEqual({
     backstageEnabled: true,
     automaticReferenceDiscovery: true,
+    authoritativePaths: [],
   });
   resolved = await resolveFixtureContext({
     fixture,

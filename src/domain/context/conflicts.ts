@@ -62,7 +62,7 @@ const DOMAIN_NAMES: Record<string, string> = {
 const nameOf = (authority: AuthorityClass): string => NAMES[authority] ?? authority;
 
 /** An item can conflict only when Factoree puts it in front of an agent. */
-const conflictable = (classification: ContextClassification): boolean =>
+export const isConflictable = (classification: ContextClassification): boolean =>
   classification === "required" || classification === "reference";
 
 /** The reason text for the human-decision rule below. Task 10 matches on this exact string. */
@@ -135,7 +135,7 @@ export const detectConflicts = (
   options: DetectConflictsOptions = {},
 ): ContextConflictRecord[] => {
   const decisionRefs = new Set(options.decisionRefs ?? []);
-  const conflictables = items.filter((item) => conflictable(item.classification));
+  const conflictables = items.filter((item) => isConflictable(item.classification));
   // The decisions are keyed by their own stable reference. `conflictDecisionRef` builds the same
   // reference from the domain and the subject of a pair, so the lookup is exact.
   const decisions = new Map<string, SelectedContextItem>(
