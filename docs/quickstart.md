@@ -145,24 +145,12 @@ merged, and `failure` when a provider pull request closes without a merge or
 gets a head that Factoree did not check with the set. The description of the
 status gives the reason.
 
-Factoree never creates a ruleset, and it never holds Administration write. To
-stop a merge of a consumer before its providers, add the rule by hand in each
-repository that can be a consumer:
-
-1. Open the repository settings, then Rules, then Rulesets. Select New
-   ruleset, then New branch ruleset.
-2. Set the enforcement status to Active. Target the default branch.
-3. Select Require status checks to pass. Add the check `factoree/change-set`.
-4. Under Bypass list, add the people who merge pull requests that Factoree did
-   not open. Set the bypass mode to pull requests only.
-5. Save the ruleset.
-
-A required status applies to every pull request into the branch. GitHub has no
-condition on the head branch, and only a consumer pull request of a change set
-gets the status. Every other pull request into the branch waits for the status
-until a person on the bypass list merges it. This includes a Factoree pull
-request of one repository, so an L4 auto-merge never completes in a repository
-with this ruleset.
+The status informs. Do not make it a required check: GitHub applies a required
+check to every pull request into the branch, and only a consumer pull request of
+a change set gets this status, so every other pull request would wait for it.
+At L4, Factoree enforces the order itself: it turns on auto-merge for a consumer
+pull request only after every provider pull request has merged. At L2 and L3, a
+person can merge a consumer early, and the status warns them.
 
 GitHub then returns to `/setup/github/created`. Factoree stores the App id, the
 private key, the webhook secret and the client credentials, encrypted.
