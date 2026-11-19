@@ -17,7 +17,7 @@ import {
   hangOf,
   providerUnreachableOf,
   recordAgentSession,
-  recordHangRetry,
+  recordSessionRetries,
   type AgentHang,
   type AgentProviderUnreachable,
 } from "./agent-session-recording.js";
@@ -481,9 +481,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // report, so a partial report of the hung session is never read.
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
-      // docs/specs/run-diagnostics.md. Only a hang writes `retry_started` here, not a retry after an outage.
-      if (input.afterHang === true) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: 0, stage: "REVIEWING" });
-      if (input.afterHang === true) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: input.attempt, stage: "REVIEWING" });
+      await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: input.attempt, stage: "REVIEWING", afterHang: input.afterHang === true, unreachableRetry });
       const reportPath = `${reviewDirectory}/${reviewerReportName(input.attempt, afterHang, unreachableRetry)}`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
@@ -776,6 +774,8 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
     const unreachableRetry = input.unreachableRetry ?? 0;
     const afterHang = input.afterHang === true || unreachableRetry > 0;
     const reportPath = `${triageDirectory}/${triageReportName(afterHang, unreachableRetry)}`;
+    // docs/specs/run-diagnostics.md. Triage has no attempt, so its events use 0.
+    await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: 0, stage: "REVIEWING", afterHang: input.afterHang === true, unreachableRetry });
     const prompt = renderTriagePrompt({
       pullRequestUrl: input.pullRequestUrl,
       reviewerName: input.reviewerName,

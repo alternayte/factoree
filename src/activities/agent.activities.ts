@@ -8,7 +8,7 @@ import {
   hangOf,
   providerUnreachableOf,
   recordAgentSession,
-  recordHangRetry,
+  recordSessionRetries,
   type AgentHang,
   type AgentProviderUnreachable,
 } from "./agent-session-recording.js";
@@ -380,7 +380,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     let result: AgentRunResult;
     try {
       const hung = input.continueSession ?? null;
-      if (hung !== null) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "implementer", attempt: input.attempt, stage: "IMPLEMENTING" });
+      await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "implementer", attempt: input.attempt, stage: "IMPLEMENTING", afterHang: hung !== null, unreachableRetry });
       result = hung === null ? await runFresh() : await resumeAfterHang(hung);
     } finally {
       running = false;

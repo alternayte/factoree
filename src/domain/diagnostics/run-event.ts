@@ -49,6 +49,8 @@ const sessionDetail = z.object({
 export const runEventDetailSchemas = {
   session_failed: sessionDetail,
   session_hung: z.object({ runner: z.string(), silenceLimitMs: z.number() }),
+  /** docs/specs/provider-unreachable.md. The session could not reach the model provider. */
+  provider_unreachable: sessionDetail,
   command_failed: commandDetail,
   plan_rejected: z.object({ problems: z.array(z.string()), round: z.enum(["first", "correction"]) }),
   proposal_rejected: z.object({ problem: z.string() }),
@@ -74,6 +76,7 @@ export type RunEventDetail<K extends RunEventKind> = z.infer<(typeof runEventDet
 export const FAULT_KINDS: readonly RunEventKind[] = [
   "session_failed",
   "session_hung",
+  "provider_unreachable",
   "command_failed",
   "plan_rejected",
   "proposal_rejected",

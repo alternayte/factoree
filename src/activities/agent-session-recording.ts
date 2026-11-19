@@ -184,6 +184,22 @@ export const recordSessionFaults = async (
       });
       continue;
     }
+    if (result.outcome === "unreachable") {
+      // docs/specs/provider-unreachable.md. The fast-fail cancels the session, so this check
+      // comes before the skip of a cancelled one.
+      const facts = await faultEgressFacts(context.egress ?? null, result.failureLog);
+      const summary = result.summary.trim();
+      await recordRunEvent(events, {
+        ...base,
+        kind: "provider_unreachable",
+        message: withDeniedHosts(
+          `The ${context.role} session could not reach the model provider.${summary === "" ? "" : ` It reported: ${summary.slice(0, 500)}`}`,
+          facts,
+        ),
+        detail: { runner: result.session.runner, model: result.model, exitCode: result.exitCode, summary, log: result.failureLog, ...facts },
+      });
+      continue;
+    }
     if (result.completed || result.cancelled) continue;
     const facts = await faultEgressFacts(context.egress ?? null, result.failureLog);
     const summary = result.summary.trim();
@@ -207,19 +223,33 @@ export const recordSessionFaults = async (
 };
 
 
-/** docs/specs/run-diagnostics.md. A session that starts again after a hang writes `retry_started`. */
-export const recordHangRetry = async (
+/**
+ * docs/specs/run-diagnostics.md. A role session that starts again writes `retry_started`: once
+ * after a hang, and once per retry after an unreachable model provider
+ * (docs/specs/provider-unreachable.md).
+ */
+export const recordSessionRetries = async (
   events: RunEventRecorder | undefined,
-  input: { tenantId: string; runId: string; role: AgentSessionRole; attempt: number; stage: string },
-): Promise<void> =>
-  recordRunEvent(events, {
-    tenantId: input.tenantId,
-    subject: { runId: input.runId },
-    stage: input.stage,
-    attempt: input.attempt,
-    role: input.role,
-    kind: "retry_started",
-    message: `The ${input.role} session hung, so Factoree tries it once more.`,
-    detail: { what: `${input.role} session`, reason: "the session hung" },
-    idempotencyKey: `run:${input.runId}:${input.role}:${String(input.attempt)}:hang-retry`,
-  });
+  input: { tenantId: string; runId: string; role: AgentSessionRole; attempt: number; stage: string; afterHang: boolean; unreachableRetry: number },
+): Promise<void> => {
+  const retry = (key: string, message: string, reason: string) =>
+    recordRunEvent(events, {
+      tenantId: input.tenantId,
+      subject: { runId: input.runId },
+      stage: input.stage,
+      attempt: input.attempt,
+      role: input.role,
+      kind: "retry_started",
+      message,
+      detail: { what: `${input.role} session`, reason },
+      idempotencyKey: `run:${input.runId}:${input.role}:${String(input.attempt)}:${key}`,
+    });
+  if (input.afterHang) await retry("hang-retry", `The ${input.role} session hung, so Factoree tries it once more.`, "the session hung");
+  if (input.unreachableRetry > 0) {
+    await retry(
+      `unreachable-retry-${String(input.unreachableRetry)}`,
+      `The ${input.role} session could not reach the model provider, so Factoree tries it again (retry ${String(input.unreachableRetry)}).`,
+      "the model provider was unreachable",
+    );
+  }
+};

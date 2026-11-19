@@ -5,11 +5,12 @@ import { formatDate } from "@/lib/utils";
 export type RunEventItem = ListRunEventsResponse["items"][number];
 export type DiagnosisView = NonNullable<GetRunResponse["diagnosis"]>;
 
-const FAULT_KINDS = new Set(["session_failed", "session_hung", "command_failed", "plan_rejected", "proposal_rejected"]);
+const FAULT_KINDS = new Set(["session_failed", "session_hung", "provider_unreachable", "command_failed", "plan_rejected", "proposal_rejected"]);
 
 const kindLabel: Record<RunEventItem["kind"], string> = {
   session_failed: "session failed",
   session_hung: "session hung",
+  provider_unreachable: "provider unreachable",
   command_failed: "command failed",
   plan_rejected: "plan rejected",
   proposal_rejected: "proposal rejected",
@@ -22,7 +23,7 @@ const kindLabel: Record<RunEventItem["kind"], string> = {
 
 /** The egress facts and the log of a session or command fault, or nothing for any other kind. */
 function FaultFacts({ event }: { event: RunEventItem }) {
-  if (event.kind !== "session_failed" && event.kind !== "command_failed") return null;
+  if (event.kind !== "session_failed" && event.kind !== "provider_unreachable" && event.kind !== "command_failed") return null;
   const detail = event.detail;
   return (
     <div className="mt-2 flex flex-col gap-1.5 text-sm">

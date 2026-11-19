@@ -141,6 +141,16 @@ describe("recordSessionFaults", () => {
     ]);
     expect(store.events.map((event) => event.kind)).toEqual(["session_hung"]);
   });
+
+  it("records a provider fast-fail, although Factoree cancelled that session", async () => {
+    const store = new MemoryRunEventStore();
+    await recordSessionFaults(recorderOf(store), context, [
+      failedResult({ outcome: "unreachable", cancelled: true, summary: "API Error: Unable to connect to API (EAI_AGAIN)" }),
+    ]);
+    const [event] = store.events;
+    expect(event?.kind).toBe("provider_unreachable");
+    expect(event?.message).toBe("The implementer session could not reach the model provider. It reported: API Error: Unable to connect to API (EAI_AGAIN)");
+  });
 });
 
 describe("runDiagnosisOf", () => {

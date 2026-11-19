@@ -34,7 +34,7 @@ import {
   hangOf,
   providerUnreachableOf,
   recordAgentSession,
-  recordHangRetry,
+  recordSessionRetries,
   type AgentHang,
   type AgentProviderUnreachable,
 } from "./agent-session-recording.js";
@@ -605,7 +605,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
       // docs/specs/run-diagnostics.md. Only a hang writes `retry_started` here, not a retry after an outage.
-      if (input.afterHang === true) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "validator", attempt: input.attempt, stage: "USER_VALIDATING" });
+      await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "validator", attempt: input.attempt, stage: "USER_VALIDATING", afterHang: input.afterHang === true, unreachableRetry });
       // A hung session can leave a partial plan, and the fresh session must never read it.
       const planBase = validatorPlanName(afterHang, unreachableRetry);
       const planPath = `${validationDirectory}/${planBase}.json`;

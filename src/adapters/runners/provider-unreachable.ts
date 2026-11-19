@@ -46,7 +46,7 @@ export type ProviderSignal =
   | { kind: "skip" }
   | { kind: "normal" }
   | { kind: "provider-error" }
-  | { kind: "connectivity-retry"; retryDelayMs: number }
+  | { kind: "connectivity-retry" }
   | { kind: "other-retry" };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -58,12 +58,6 @@ const isUnreachableString = (text: string): boolean =>
 
 const PROVIDER_ERROR: ProviderSignal = { kind: "provider-error" };
 const NORMAL: ProviderSignal = { kind: "normal" };
-
-/** The `retry_delay_ms` of a retry event: a finite, non-negative number, else 0. */
-const retryDelayOf = (event: Record<string, unknown>): number => {
-  const delay = event["retry_delay_ms"];
-  return typeof delay === "number" && Number.isFinite(delay) && delay >= 0 ? delay : 0;
-};
 
 /** The message of an opencode `error` event: `error.data.message`, `error.message`, or a string. */
 const opencodeErrorMessage = (error: unknown): string | null => {
@@ -80,9 +74,7 @@ const classifyEvent = (event: Record<string, unknown>): ProviderSignal => {
   switch (event["type"]) {
     case "system":
       if (event["subtype"] !== "api_retry") return NORMAL;
-      return event["error_status"] === null
-        ? { kind: "connectivity-retry", retryDelayMs: retryDelayOf(event) }
-        : { kind: "other-retry" };
+      return event["error_status"] === null ? { kind: "connectivity-retry" } : { kind: "other-retry" };
     case "result": {
       const text = event["result"];
       return event["is_error"] === true && typeof text === "string" && isUnreachableString(text) ? PROVIDER_ERROR : NORMAL;
@@ -187,10 +179,15 @@ export const PROVIDER_UNREACHABLE_MIN_RETRIES = 3;
  * The fast-fail state of one output stream. It reads the complete lines that a poll added, never
  * the whole output again, and keeps the run of consecutive connectivity events and the time the
  * session may be cancelled. Any other complete event ends the run.
+ *
+ * The deadline is anchored at the first event of the run. The CLI writes a retry after each failed
+ * try, sooner than the grace, so a deadline that each retry moved forward would never pass and the
+ * session would burn the whole backoff.
  */
 export class ProviderOutageWatch {
   private consumed = 0;
   private run = 0;
+  private runStartedAt: number | null = null;
   private due: number | null = null;
 
   constructor(private readonly graceMs: number) {}
@@ -203,6 +200,7 @@ export class ProviderOutageWatch {
   /** Forgets the run and the deadline, and keeps the lines already read. */
   clear(): void {
     this.run = 0;
+    this.runStartedAt = null;
     this.due = null;
   }
 
@@ -223,11 +221,13 @@ export class ProviderOutageWatch {
       switch (signal.kind) {
         case "connectivity-retry":
           this.run += 1;
-          this.due = this.run >= PROVIDER_UNREACHABLE_MIN_RETRIES ? now + signal.retryDelayMs + this.graceMs : null;
+          this.runStartedAt ??= now;
+          this.due = this.run >= PROVIDER_UNREACHABLE_MIN_RETRIES ? this.runStartedAt + this.graceMs : null;
           break;
         case "provider-error":
-          this.run = PROVIDER_UNREACHABLE_MIN_RETRIES;
-          this.due = now + this.graceMs;
+          this.run = Math.max(this.run, PROVIDER_UNREACHABLE_MIN_RETRIES);
+          this.runStartedAt ??= now;
+          this.due = this.runStartedAt + this.graceMs;
           break;
         default:
           this.clear();

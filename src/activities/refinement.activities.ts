@@ -13,7 +13,7 @@ import {
   hangOf,
   providerUnreachableOf,
   recordAgentSession,
-  recordHangRetry,
+  recordSessionRetries,
   type AgentHang,
   type AgentProviderUnreachable,
 } from "./agent-session-recording.js";
@@ -365,7 +365,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     const afterHang = input.afterHang === true || unreachableRetry > 0;
     // docs/specs/run-diagnostics.md. Only a hang writes `retry_started` here. A retry after an
     // outage also sets `afterHang` for its keys and files, but the session did not hang.
-    if (input.afterHang === true) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "refiner", attempt: 1, stage: "REFINING" });
+    await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "refiner", attempt: 1, stage: "REFINING", afterHang: input.afterHang === true, unreachableRetry });
     // A hung session can leave a partial proposal, and the fresh session must never read it.
     const proposalBase = refinerProposalName(afterHang, unreachableRetry);
     const proposalPath = `${directory}/${proposalBase}.json`;

@@ -261,13 +261,8 @@ const textBlock = (text: string) => ({ type: "text", text });
 describe("event-aware provider signals", () => {
   const kinds = (output: string) => readProviderSignals(output).map((signal) => signal.kind);
 
-  it("reads a null-status api_retry as a connectivity retry with its declared delay", () => {
-    expect(readProviderSignals(retryLine(null, 1_500))).toEqual([{ kind: "connectivity-retry", retryDelayMs: 1_500 }]);
-  });
-
-  it.each([undefined, -5, Number.NaN])("falls back to a zero delay for retry_delay_ms %s", (delay) => {
-    const line = `${JSON.stringify({ type: "system", subtype: "api_retry", error_status: null, retry_delay_ms: delay })}\n`;
-    expect(readProviderSignals(line)).toEqual([{ kind: "connectivity-retry", retryDelayMs: 0 }]);
+  it("reads a null-status api_retry as a connectivity retry", () => {
+    expect(readProviderSignals(retryLine(null, 1_500))).toEqual([{ kind: "connectivity-retry" }]);
   });
 
   it.each([429, 529, 500])("reads a status %i api_retry as another retry, never as an outage", (status) => {
@@ -373,19 +368,22 @@ describe("ProviderOutageWatch", () => {
     expect(watch.deadline).toBeNull();
   });
 
-  it("becomes eligible after consecutive retries and adds the latest delay plus the grace", () => {
+  it("becomes eligible after consecutive retries, with the deadline at the first retry plus the grace", () => {
     const watch = new ProviderOutageWatch(GRACE);
-    feed(watch, retryLine(null) + retryLine(null) + retryLine(null, 400), 1_000);
-    expect(watch.deadline).toBe(1_000 + 400 + GRACE);
+    feed(watch, retryLine(null), 1_000);
+    feed(watch, retryLine(null).repeat(2), 1_020);
+    expect(watch.deadline).toBeNull();
+    feed(watch, retryLine(null).repeat(3), 1_040);
+    expect(watch.deadline).toBe(1_000 + GRACE);
   });
 
-  it("moves the deadline forward with a later retry", () => {
+  it("keeps the deadline at the first retry while later retries arrive", () => {
     const watch = new ProviderOutageWatch(GRACE);
     const first = retryLine(null).repeat(3);
     feed(watch, first, 0);
     expect(watch.deadline).toBe(GRACE);
     feed(watch, `${first}${retryLine(null)}`, 80);
-    expect(watch.deadline).toBe(80 + GRACE);
+    expect(watch.deadline).toBe(GRACE);
   });
 
   it("arms at once on a string provider error", () => {
@@ -559,29 +557,19 @@ describe("CliAgentRunner provider fast-fail timing", () => {
     expect(result.outcome).toBe("finished");
   });
 
-  it("postpones the cancellation by the declared retry delay", async () => {
+  it("cancels within the grace of the first retry while the CLI keeps retrying", async () => {
+    // docs/specs/provider-unreachable.md. The CLI writes a retry after each failed try, sooner
+    // than the grace, so each retry must not move the deadline.
     const s = await startSession();
-    s.set({ stdout: retryLine(null) + retryLine(null) + retryLine(null, 5_000) });
-    await s.settle();
-    s.advance(GRACE + 10);
-    await s.settle();
+    let stdout = "";
+    for (let i = 0; i < 6; i += 1) {
+      stdout += retryLine(null, GRACE / 4);
+      s.set({ stdout });
+      await s.settle();
+      if (i < 5) s.advance(15);
+    }
     expect(s.cancelled()).toBe(false);
-    s.advance(5_000);
-    expect((await s.started).outcome).toBe("unreachable");
-  });
-
-  it("moves the threshold forward with a later retry", async () => {
-    const s = await startSession();
-    const three = retryLine(null).repeat(3);
-    s.set({ stdout: three });
-    await s.settle();
-    s.advance(80);
-    s.set({ stdout: `${three}${retryLine(null)}` });
-    await s.settle();
-    s.advance(40);
-    await s.settle();
-    expect(s.cancelled()).toBe(false);
-    s.advance(60);
+    s.advance(30);
     expect((await s.started).outcome).toBe("unreachable");
   });
 
