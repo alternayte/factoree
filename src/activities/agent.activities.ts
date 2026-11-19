@@ -4,7 +4,14 @@ import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js"
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import { AgentSessionUnavailableError } from "~/domain/runs/agent-runner.js";
 import { agentSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
-import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
+import {
+  hangOf,
+  providerUnreachableOf,
+  recordAgentSession,
+  recordHangRetry,
+  type AgentHang,
+  type AgentProviderUnreachable,
+} from "./agent-session-recording.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -22,8 +29,11 @@ import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
 import { recordSessionActivations, type SkillRegistryFactory } from "./skill-registry.activities.js";
 import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/runs/egress.js";
 import { parseImplementerRepositories, parseImplementerResult, type MissingRepository } from "~/domain/runs/implementer-result.js";
+import type { RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 
 export interface AgentActivityDependencies {
+  /** docs/specs/run-diagnostics.md. The writer of run events, absent in a test that records none. */
+  events?: RunEventRecorder | undefined;
   runners: AgentRunnerRegistry;
   sandbox: Sandbox;
   executions: AgentExecutionRepository;
@@ -370,6 +380,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     let result: AgentRunResult;
     try {
       const hung = input.continueSession ?? null;
+      if (hung !== null) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "implementer", attempt: input.attempt, stage: "IMPLEMENTING" });
       result = hung === null ? await runFresh() : await resumeAfterHang(hung);
     } finally {
       running = false;
@@ -438,7 +449,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     }
 
     await recordAgentSession(
-      { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages },
+      { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages, events: dependencies.events },
       {
         tenantId: input.tenantId,
         productId: input.productId,
@@ -448,6 +459,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         runner: runner.name,
         idempotencyKey: agentSessionKey(input.runId, "implementer", input.attempt, false, unreachableRetry),
         sandboxId: input.spriteId,
+        egress: { sandbox: dependencies.sandbox, ref: sandboxRef, allowList: input.egress?.allowed ?? null },
       },
       [result],
     );

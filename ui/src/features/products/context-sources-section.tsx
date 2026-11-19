@@ -31,6 +31,7 @@ const AUTHORITIES: { value: Authority; domain: string }[] = [
   { value: "approved_architecture_specification", domain: "architecture intent" },
   { value: "architecture_documentation", domain: "architecture intent" },
   { value: "repository_readme", domain: "architecture intent" },
+  { value: "documentation", domain: "architecture intent, never a conflict" },
   { value: "machine_readable_contract", domain: "interface contract" },
   { value: "contract_tests", domain: "interface contract" },
   { value: "api_documentation", domain: "interface contract" },

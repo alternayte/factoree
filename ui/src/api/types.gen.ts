@@ -1947,6 +1947,157 @@ export type GetRunResponses = {
       state: string;
       pullRequestUrls: Array<string>;
     }> | null;
+    diagnosis: {
+      status: string;
+      reason: string | null;
+      stage: string | null;
+      attempt: number | null;
+      message: string;
+      cause:
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "session_failed";
+            message: string;
+            detail: {
+              runner: string;
+              model: string | null;
+              exitCode: number | null;
+              summary: string;
+              log: string | null;
+              egress: "recorded" | "not_recorded" | "unreadable";
+              deniedHosts: Array<string>;
+              hostHints: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "session_hung";
+            message: string;
+            detail: {
+              runner: string;
+              silenceLimitMs: number;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "command_failed";
+            message: string;
+            detail: {
+              step: string;
+              command: string;
+              exitCode: number | null;
+              durationMs: number | null;
+              log: string | null;
+              egress: "recorded" | "not_recorded" | "unreadable";
+              deniedHosts: Array<string>;
+              hostHints: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "plan_rejected";
+            message: string;
+            detail: {
+              problems: Array<string>;
+              round: "first" | "correction";
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "proposal_rejected";
+            message: string;
+            detail: {
+              problem: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "selector_recheck";
+            message: string;
+            detail: {
+              assertionKeys: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "check_unstable";
+            message: string;
+            detail: {
+              assertionKey: string;
+              reason: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "retry_started";
+            message: string;
+            detail: {
+              what: string;
+              reason: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "repair_started";
+            message: string;
+            detail: {
+              repair: number;
+              reason: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "run_ended";
+            message: string;
+            detail: {
+              status: string;
+              reason: string | null;
+              lastStatus: string | null;
+              causeEventId: string | null;
+            };
+            createdAt: string;
+          }
+        | null;
+    } | null;
     temporalWorkflowId: string;
     terminal: boolean;
     stopRequestedAt: string | null;
@@ -2024,6 +2175,194 @@ export type GetRunResponses = {
 };
 
 export type GetRunResponse = GetRunResponses[keyof GetRunResponses];
+
+export type ListRunEventsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/admin/runs/{id}/events";
+};
+
+export type ListRunEventsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRunEventsError = ListRunEventsErrors[keyof ListRunEventsErrors];
+
+export type ListRunEventsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    /**
+     * One fault or one Factoree decision of a run or a setup run.
+     */
+    items: Array<
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "session_failed";
+          message: string;
+          detail: {
+            runner: string;
+            model: string | null;
+            exitCode: number | null;
+            summary: string;
+            log: string | null;
+            egress: "recorded" | "not_recorded" | "unreadable";
+            deniedHosts: Array<string>;
+            hostHints: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "session_hung";
+          message: string;
+          detail: {
+            runner: string;
+            silenceLimitMs: number;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "command_failed";
+          message: string;
+          detail: {
+            step: string;
+            command: string;
+            exitCode: number | null;
+            durationMs: number | null;
+            log: string | null;
+            egress: "recorded" | "not_recorded" | "unreadable";
+            deniedHosts: Array<string>;
+            hostHints: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "plan_rejected";
+          message: string;
+          detail: {
+            problems: Array<string>;
+            round: "first" | "correction";
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "proposal_rejected";
+          message: string;
+          detail: {
+            problem: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "selector_recheck";
+          message: string;
+          detail: {
+            assertionKeys: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "check_unstable";
+          message: string;
+          detail: {
+            assertionKey: string;
+            reason: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "retry_started";
+          message: string;
+          detail: {
+            what: string;
+            reason: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "repair_started";
+          message: string;
+          detail: {
+            repair: number;
+            reason: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "run_ended";
+          message: string;
+          detail: {
+            status: string;
+            reason: string | null;
+            lastStatus: string | null;
+            causeEventId: string | null;
+          };
+          createdAt: string;
+        }
+    >;
+    nextCursor: string | null;
+  };
+};
+
+export type ListRunEventsResponse = ListRunEventsResponses[keyof ListRunEventsResponses];
 
 export type StopRunData = {
   body: {
@@ -2271,6 +2610,195 @@ export type StartRepositorySetupsResponses = {
 
 export type StartRepositorySetupsResponse = StartRepositorySetupsResponses[keyof StartRepositorySetupsResponses];
 
+export type ListRepositorySetupEventsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/admin/repository-setups/{id}/events";
+};
+
+export type ListRepositorySetupEventsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRepositorySetupEventsError = ListRepositorySetupEventsErrors[keyof ListRepositorySetupEventsErrors];
+
+export type ListRepositorySetupEventsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    /**
+     * One fault or one Factoree decision of a run or a setup run.
+     */
+    items: Array<
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "session_failed";
+          message: string;
+          detail: {
+            runner: string;
+            model: string | null;
+            exitCode: number | null;
+            summary: string;
+            log: string | null;
+            egress: "recorded" | "not_recorded" | "unreadable";
+            deniedHosts: Array<string>;
+            hostHints: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "session_hung";
+          message: string;
+          detail: {
+            runner: string;
+            silenceLimitMs: number;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "command_failed";
+          message: string;
+          detail: {
+            step: string;
+            command: string;
+            exitCode: number | null;
+            durationMs: number | null;
+            log: string | null;
+            egress: "recorded" | "not_recorded" | "unreadable";
+            deniedHosts: Array<string>;
+            hostHints: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "plan_rejected";
+          message: string;
+          detail: {
+            problems: Array<string>;
+            round: "first" | "correction";
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "proposal_rejected";
+          message: string;
+          detail: {
+            problem: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "selector_recheck";
+          message: string;
+          detail: {
+            assertionKeys: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "check_unstable";
+          message: string;
+          detail: {
+            assertionKey: string;
+            reason: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "retry_started";
+          message: string;
+          detail: {
+            what: string;
+            reason: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "repair_started";
+          message: string;
+          detail: {
+            repair: number;
+            reason: string;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "run_ended";
+          message: string;
+          detail: {
+            status: string;
+            reason: string | null;
+            lastStatus: string | null;
+            causeEventId: string | null;
+          };
+          createdAt: string;
+        }
+    >;
+    nextCursor: string | null;
+  };
+};
+
+export type ListRepositorySetupEventsResponse =
+  ListRepositorySetupEventsResponses[keyof ListRepositorySetupEventsResponses];
+
 export type ListRepositorySetupHistoryData = {
   body?: never;
   path: {
@@ -2314,6 +2842,157 @@ export type ListRepositorySetupHistoryResponses = {
     createdAt: string;
     endedAt: string | null;
     skippedFromSetupId: string | null;
+    diagnosis: {
+      status: string;
+      reason: string | null;
+      stage: string | null;
+      attempt: number | null;
+      message: string;
+      cause:
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "session_failed";
+            message: string;
+            detail: {
+              runner: string;
+              model: string | null;
+              exitCode: number | null;
+              summary: string;
+              log: string | null;
+              egress: "recorded" | "not_recorded" | "unreadable";
+              deniedHosts: Array<string>;
+              hostHints: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "session_hung";
+            message: string;
+            detail: {
+              runner: string;
+              silenceLimitMs: number;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "command_failed";
+            message: string;
+            detail: {
+              step: string;
+              command: string;
+              exitCode: number | null;
+              durationMs: number | null;
+              log: string | null;
+              egress: "recorded" | "not_recorded" | "unreadable";
+              deniedHosts: Array<string>;
+              hostHints: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "plan_rejected";
+            message: string;
+            detail: {
+              problems: Array<string>;
+              round: "first" | "correction";
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "proposal_rejected";
+            message: string;
+            detail: {
+              problem: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "selector_recheck";
+            message: string;
+            detail: {
+              assertionKeys: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "check_unstable";
+            message: string;
+            detail: {
+              assertionKey: string;
+              reason: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "retry_started";
+            message: string;
+            detail: {
+              what: string;
+              reason: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "repair_started";
+            message: string;
+            detail: {
+              repair: number;
+              reason: string;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "run_ended";
+            message: string;
+            detail: {
+              status: string;
+              reason: string | null;
+              lastStatus: string | null;
+              causeEventId: string | null;
+            };
+            createdAt: string;
+          }
+        | null;
+    } | null;
     workflowId: string;
     temporalRunId: string | null;
     warm: boolean | null;
@@ -2402,6 +3081,7 @@ export type ListContextSourcesResponses = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2423,6 +3103,7 @@ export type ListContextSourcesResponses = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2470,6 +3151,7 @@ export type PutContextSourceData = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2491,6 +3173,7 @@ export type PutContextSourceData = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2563,6 +3246,7 @@ export type PutContextSourceResponses = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2584,6 +3268,7 @@ export type PutContextSourceResponses = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2629,6 +3314,7 @@ export type TestContextSourceData = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"
@@ -2650,6 +3336,7 @@ export type TestContextSourceData = {
             | "approved_architecture_specification"
             | "architecture_documentation"
             | "repository_readme"
+            | "documentation"
             | "machine_readable_contract"
             | "contract_tests"
             | "api_documentation"

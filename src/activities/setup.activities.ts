@@ -45,8 +45,13 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { PUBLICATION_COMMIT_TIMESTAMP } from "./publishing.activities.js";
 import { NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
 import { applyEgress, assertBindable, probeCredentialHosts, type CredentialBindingStore, type CredentialEgress } from "~/domain/runs/credential-egress.js";
+import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
+import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
+import { recordSessionFaults } from "./agent-session-recording.js";
 
 export interface SetupActivityDependencies {
+  /** docs/specs/run-diagnostics.md. The writer of run events, absent in a test that records none. */
+  events?: RunEventRecorder | undefined;
   setups: RepositorySetupStore;
   products: Pick<ProductRegistry, "findById">;
   sandbox: Sandbox;
@@ -293,8 +298,36 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const egress = await credentialEgressOf(proofSandbox, setup.tenantId, setup.productId, setup.repositoryFullName);
       const ref = await createSandbox(proofSandbox, setup.id, egress, repositoryHosts);
       const parts: SetupPartResult[] = [];
+      // docs/specs/run-diagnostics.md. The allow list of the phase a part ran in, for its host hints.
+      let phaseAllowList: string[] = repositoryHosts;
+      const failedParts: Array<{ part: SetupPartResult; allowList: string[] }> = [];
       const record = (part: SetupPartResult): void => {
-        parts.push({ ...part, ...(part.logTail === undefined ? {} : { logTail: dependencies.redactor.redactText(withoutUrlCredentials(part.logTail)) }) });
+        const kept = { ...part, ...(part.logTail === undefined ? {} : { logTail: dependencies.redactor.redactText(withoutUrlCredentials(part.logTail)) }) };
+        parts.push(kept);
+        if (!kept.passed && kept.kind !== "account") failedParts.push({ part: kept, allowList: phaseAllowList });
+      };
+      const recordProofFaults = async (): Promise<void> => {
+        for (const [index, { part, allowList }] of failedParts.entries()) {
+          const facts = await faultEgressFacts({ sandbox: dependencies.sandbox, ref, allowList }, part.logTail ?? null);
+          await recordRunEvent(dependencies.events, {
+            tenantId: setup.tenantId,
+            subject: { setupId: setup.id },
+            stage: "setup_proof",
+            attempt: 1,
+            role: null,
+            kind: "command_failed",
+            message: withDeniedHosts(`The setup proof of ${part.name} failed: ${part.reason ?? "it did not pass"}.`, facts),
+            detail: {
+              step: `setup_proof:${part.kind}`,
+              command: part.kind === "bootstrap" ? (runtime.bootstrapCommand ?? "") : part.name,
+              exitCode: null,
+              durationMs: null,
+              log: part.logTail ?? null,
+              ...facts,
+            },
+            idempotencyKey: `setup:${setup.id}:proof:${String(index)}`,
+          });
+        }
       };
       let handle: PreviewHandle | null = null;
       let fakes: SetupReport["fakes"] = [];
@@ -314,6 +347,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }
 
         // Policy two: the bootstrap phase, with the repository hosts and the bootstrap allow list.
+        phaseAllowList = [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)]), ...egress.access.hosts];
         await applyEgress(dependencies.sandbox, ref, [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)])], egress);
         const services = runtime.services ?? null;
         let servicesPassed = true;
@@ -352,6 +386,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
 
         if (bootstrapPassed) {
           // Policy three: the agent phase, with the repository allow list alone.
+          phaseAllowList = [...runtime.allowedDomains, ...egress.access.hosts];
           await applyEgress(dependencies.sandbox, ref, runtime.allowedDomains, egress);
           const environment: Record<string, string> = {};
           for (const descriptor of await dependencies.secrets.list(setup.tenantId, setup.productId)) {
@@ -421,6 +456,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }
       } finally {
         if (handle !== null) await stopPreview(dependencies.sandbox, ref, handle).catch(() => undefined);
+        // The egress log goes with the sandbox, so the faults are written before it is destroyed.
+        await recordProofFaults();
         await dependencies.sandbox.destroy(ref).catch(() => undefined);
       }
 
@@ -587,9 +624,10 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         };
       }
       const claudeHost = runnerName === "claude" ? claudeApiHostOf(runnerEnvironment) : null;
-      const { ref, warm, egress } = await startSessionSandbox(setup, product, url, [
+      const sessionHosts = [
         ...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains, ...(claudeHost === null ? [] : [claudeHost])]),
-      ]);
+      ];
+      const { ref, warm, egress } = await startSessionSandbox(setup, product, url, sessionHosts);
       await dependencies.setups.update(setup.id, { warm });
       const started = Date.now();
       try {
@@ -606,7 +644,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }
         const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
         const runner = dependencies.runners.get(runnerName);
-        const result = await runner.run({
+        const startSession = () => runner.run({
           runId: setupSandboxRunId(setup.id),
           tenantId: setup.tenantId,
           role: "setup",
@@ -620,6 +658,25 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           actionPolicy: buildActionPolicy({ role: "setup" }),
           timeoutMs: SETUP_SESSION_TIMEOUT_MS,
         });
+        let result: Awaited<ReturnType<typeof startSession>>;
+        try {
+          result = await startSession();
+        } catch (error) {
+          // docs/specs/run-diagnostics.md. A runner that cannot start the session names why.
+          const message = error instanceof Error ? error.message : String(error);
+          await recordRunEvent(dependencies.events, {
+            tenantId: setup.tenantId,
+            subject: { setupId: setup.id },
+            stage: "setup",
+            attempt: 1,
+            role: "setup",
+            kind: "session_failed",
+            message: `The setup agent session did not start: ${message}`,
+            detail: { runner: runnerName, model: null, exitCode: null, summary: message, log: null, egress: "not_recorded", deniedHosts: [], hostHints: [] },
+            idempotencyKey: `setup:${setup.id}:session:start`,
+          });
+          throw error;
+        }
         const usage: SetupSessionUsage = {
           runner: runnerName,
           model: result.model ?? null,
@@ -637,6 +694,20 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           toolMs: result.usage?.toolMs ?? null,
         };
         await dependencies.setups.update(setup.id, { sessionUsage: usage });
+        await recordSessionFaults(
+          dependencies.events,
+          {
+            tenantId: setup.tenantId,
+            runId: setupSandboxRunId(setup.id),
+            setupId: setup.id,
+            role: "setup",
+            attempt: 1,
+            runner: runnerName,
+            idempotencyKey: `setup:${setup.id}:session`,
+            egress: { sandbox: dependencies.sandbox, ref, allowList: [...sessionHosts, ...egress.access.hosts] },
+          },
+          [result],
+        );
 
         const outside = (await changedPaths(dependencies.sandbox, ref, primary.path)).filter((path) => !path.startsWith(".factoree/"));
         if (outside.length > 0) {

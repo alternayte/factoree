@@ -29,6 +29,7 @@ import { PrismaHostCredentialStore } from "~/persistence/prisma/host-credential.
 import { registerRunRoutes } from "./admin/runs.routes.js";
 import { registerTemporalUi } from "./admin/temporal-ui.routes.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
+import { PrismaRunEventStore } from "~/persistence/prisma/run-event.prisma.js";
 import { registerProductSessionRoutes } from "./admin/product-sessions.routes.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
@@ -223,9 +224,12 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       });
       registerModelCatalogRoutes(admin, { modelCatalog: dependencies.modelCatalog });
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
+      // docs/specs/run-diagnostics.md.
+      const runEvents = new PrismaRunEventStore(dependencies.prisma);
       registerRunRoutes(admin, {
         tenants: dependencies.tenants,
         runViews: new PrismaRunViewReader(dependencies.prisma),
+        events: runEvents,
         // Issue #45. A Factoree UI stop takes the stop path of a Linear stop.
         stopRun: (input) => dependencies.delegation.stopRun(input),
         // docs/specs/draft-of-failed-run.md. A Factoree UI draft takes the path of a Linear reply.
@@ -246,6 +250,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         products: dependencies.products,
         tenants: dependencies.tenants,
         setups: new PrismaRepositorySetupStore(prisma),
+        events: runEvents,
         appChangeIssues: new PrismaAppChangeIssueStore(prisma),
         registeredRepositories: async (tenantId) =>
           (await prisma.repository.findMany({ where: { tenantId } })).map((row) => ({

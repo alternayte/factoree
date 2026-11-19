@@ -70,6 +70,8 @@ import {
   type CredentialBindingStore,
   type CredentialEgress,
 } from "./credential-egress.js";
+import { recordRunEvent, type RunEventRecorder, type RunEventSubject } from "~/domain/diagnostics/run-event.js";
+import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
 
 export interface PrepareSandboxInput {
   runId: string;
@@ -337,6 +339,8 @@ export interface SandboxManagerOptions {
   warmSnapshots?: WarmSnapshotStore;
   /** docs/specs/run-speed.md. The stage rows of each run. The warm snapshot is one stage. */
   stages?: RunStageStore | undefined;
+  /** docs/specs/run-diagnostics.md. A failed bootstrap or stack writes a run event. */
+  events?: RunEventRecorder | undefined;
   /**
    * Permits an adapter that cannot enforce an egress policy. Only the test suite and local
    * development set this value to true. Production must leave it false. SDD section 29 denies
@@ -811,12 +815,25 @@ export class SandboxManager {
 
       // Policy two. The configured allow list joined with the repository hosts, so the reference
       // checkouts and the bootstrap command both work.
-      await applyEgress(
-        sandbox,
-        ref,
-        [...new Set([...repositoryHosts, ...targets.flatMap((target) => bootstrapAllowListOf(target.runtime)), ...(browserTools ? BROWSER_TOOL_HOSTS : [])])],
-        egress,
-      );
+      const bootstrapAllowList = [
+        ...new Set([...repositoryHosts, ...targets.flatMap((target) => bootstrapAllowListOf(target.runtime)), ...(browserTools ? BROWSER_TOOL_HOSTS : [])]),
+      ];
+      await applyEgress(sandbox, ref, bootstrapAllowList, egress);
+      // The credential hosts join every phase, so a host hint never names one.
+      const phaseTwoHosts = [...bootstrapAllowList, ...egress.access.hosts];
+      const stackFailed = async (error: unknown, ordinal: string): Promise<never> => {
+        await this.recordCommandFailure(input, sandbox, ref, {
+          step: "services",
+          command: "docker compose",
+          exitCode: null,
+          durationMs: null,
+          log: error instanceof Error ? error.message : String(error),
+          allowList: phaseTwoHosts,
+          sentence: "The compose stack or its seed did not start.",
+          ordinal,
+        });
+        throw error;
+      };
       const install = browserTools
         ? await sandbox.startProcess(ref, { file: "sh", args: ["-c", BROWSER_TOOLS_INSTALL_SCRIPT], cwd: "/" })
         : null;
@@ -837,12 +854,16 @@ export class SandboxManager {
       const oneStackAtATime = setTargets !== null && beforeBootstrap !== undefined;
       if (runtime.docker === true) {
         const servicesStarted = Date.now();
-        await ensureDocker(sandbox, ref);
-        if (!oneStackAtATime) {
-          for (const target of targets) {
-            const services = target.runtime.services ?? null;
-            if (services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+        try {
+          await ensureDocker(sandbox, ref);
+          if (!oneStackAtATime) {
+            for (const target of targets) {
+              const services = target.runtime.services ?? null;
+              if (services !== null) await startServices(sandbox, ref, target.checkout.path, services);
+            }
           }
+        } catch (error) {
+          await stackFailed(error, "start");
         }
         this.options.logger?.info("the services are ready", {
           run_id: input.runId,
@@ -855,15 +876,17 @@ export class SandboxManager {
       // docs/specs/change-sets.md. Each target runs its own bootstrap in its own folder, in set order.
       for (const target of targets) {
         const services = runtime.docker === true ? (target.runtime.services ?? null) : null;
-        if (oneStackAtATime && services !== null) await startServices(sandbox, ref, target.checkout.path, services);
-        await this.runBootstrap(sandbox, ref, target, targets.length);
         if (oneStackAtATime && services !== null) {
-          if (seeds) await this.seed(sandbox, ref, target);
+          await startServices(sandbox, ref, target.checkout.path, services).catch((error: unknown) => stackFailed(error, `start:${target.repository}`));
+        }
+        await this.runBootstrap(sandbox, ref, target, targets.length, input, phaseTwoHosts);
+        if (oneStackAtATime && services !== null) {
+          if (seeds) await this.seed(sandbox, ref, target).catch((error: unknown) => stackFailed(error, `seed:${target.repository}`));
           await pauseServices(sandbox, ref, target.checkout.path, services);
         }
       }
       if (seeds && !oneStackAtATime) {
-        for (const target of targets) await this.seed(sandbox, ref, target);
+        for (const target of targets) await this.seed(sandbox, ref, target).catch((error: unknown) => stackFailed(error, `seed:${target.repository}`));
       }
 
       // docs/specs/change-sets.md, DI-21.145, DI-21.146. A check sprite of a change set, and the
@@ -1148,10 +1171,51 @@ export class SandboxManager {
     }
   }
 
+  /**
+   * docs/specs/run-diagnostics.md. Writes a `command_failed` event of a preparation step. The
+   * egress log is read here, because a failed preparation destroys its sandbox before the
+   * activity sees the error. A build-ahead sandbox belongs to no run and writes none.
+   */
+  private async recordCommandFailure(
+    input: PrepareSandboxInput,
+    sandbox: Sandbox,
+    ref: SandboxRef,
+    fault: { step: string; command: string; exitCode: number | null; durationMs: number | null; log: string; allowList: readonly string[]; sentence: string; ordinal: string },
+  ): Promise<void> {
+    const subject: RunEventSubject | null = input.runId.startsWith("setup:")
+      ? { setupId: input.runId.slice("setup:".length) }
+      : input.runId.includes(":")
+        ? null
+        : { runId: input.runId };
+    if (subject === null || this.options.events === undefined) return;
+    const log = withoutUrlCredentials(fault.log);
+    const facts = await faultEgressFacts({ sandbox, ref, allowList: fault.allowList }, log);
+    await recordRunEvent(this.options.events, {
+      tenantId: input.tenantId,
+      subject,
+      stage: "PREPARING",
+      // A sandbox names no attempt. The sandbox id in the key keeps each preparation apart.
+      attempt: 0,
+      role: null,
+      kind: "command_failed",
+      message: withDeniedHosts(fault.sentence, facts),
+      detail: { step: fault.step, command: fault.command, exitCode: fault.exitCode, durationMs: fault.durationMs, log, ...facts },
+      idempotencyKey: `prepare:${ref.id}:${fault.step}:${fault.ordinal}`,
+    });
+  }
+
   /** Runs the bootstrap of one target in its own folder. A failure is a configuration fault. */
-  private async runBootstrap(sandbox: Sandbox, ref: SandboxRef, target: PreparedTarget, count: number): Promise<void> {
+  private async runBootstrap(
+    sandbox: Sandbox,
+    ref: SandboxRef,
+    target: PreparedTarget,
+    count: number,
+    input: PrepareSandboxInput,
+    allowList: readonly string[],
+  ): Promise<void> {
     const command = target.runtime.bootstrapCommand;
     if (command === null) return;
+    const started = Date.now();
     const result = await sandbox.exec(ref, {
       file: "sh",
       args: ["-c", bootstrapScript(command)],
@@ -1159,6 +1223,16 @@ export class SandboxManager {
       ...(Object.keys(target.environment).length === 0 ? {} : { env: target.environment }),
     });
     if (result.exitCode !== 0) {
+      await this.recordCommandFailure(input, sandbox, ref, {
+        step: "bootstrap",
+        command,
+        exitCode: result.exitCode,
+        durationMs: Date.now() - started,
+        log: `--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}\n`,
+        allowList,
+        sentence: `${count > 1 ? `The bootstrap command of ${target.repository}` : "The bootstrap command"} failed with exit code ${String(result.exitCode)}.`,
+        ordinal: target.repository,
+      });
       // The bootstrap command comes from the repository configuration, so a failure of it is
       // a configuration fault. A retry runs the same command and fails again.
       throw new RunConfigurationError(

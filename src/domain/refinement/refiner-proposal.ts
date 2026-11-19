@@ -23,6 +23,8 @@ export const REFINER_QUESTIONS_LIMIT = 5;
 /** docs/specs/change-sets.md, DI-21.139. The caps of the proposed targets and edges. */
 export const REFINER_TARGETS_LIMIT = 10;
 export const REFINER_EDGES_LIMIT = 20;
+/** docs/specs/context-authority-and-cited-conflicts.md. The most conflicts one proposal reports. */
+export const REFINER_CONFLICTS_LIMIT = 5;
 
 /**
  * docs/specs/refiner-agent.md. The refiner writes one proposal file. It is data, never code, and
@@ -79,6 +81,22 @@ const proposalSchemaOf = (criteriaLimit: number) =>
         )
         .max(REFINER_EDGES_LIMIT)
         .default([]),
+      // docs/specs/context-authority-and-cited-conflicts.md. Two context items that disagree, each
+      // with a passage quoted from it. The context resolver checks each quote against the pinned
+      // content. An older proposal names none.
+      conflicts: z
+        .array(
+          z
+            .object({
+              subject: z.string().min(1),
+              left: z.object({ item: z.string().min(1), quote: z.string().min(1) }).strict(),
+              right: z.object({ item: z.string().min(1), quote: z.string().min(1) }).strict(),
+            })
+            .strict(),
+        )
+        .default([])
+        // More reports than the limit never fail a proposal. Factoree checks the first ones only.
+        .transform((conflicts) => conflicts.slice(0, REFINER_CONFLICTS_LIMIT)),
     })
     .strict();
 
@@ -170,7 +188,8 @@ export const REFINER_PROPOSAL_SCHEMA = [
   '  "patterns": [string],',
   '  "missingHosts": [{ "host": string, "reason": string }],',
   '  "targets": [{ "repository": string, "file": string, "line": number, "reason": string }],',
-  '  "edges": [{ "provider": string, "consumer": string, "file": string, "line": number }]',
+  '  "edges": [{ "provider": string, "consumer": string, "file": string, "line": number }],',
+  '  "conflicts": [{ "subject": string, "left": { "item": string, "quote": string }, "right": { "item": string, "quote": string } }]',
   "}",
 ].join("\n");
 

@@ -15,6 +15,7 @@ import { MemorySecretStore } from "../support/memory-secret-store.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { RepositoryReadError, type RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import { pairKey, type ConflictReport } from "~/domain/context/conflicts.js";
 
 const PRIMARY_URL = "https://git/acme/webhook-service";
 const SHA_A = "a".repeat(40);
@@ -85,14 +86,29 @@ const threeWayFiles = {
   "docs/ADR-055.md": "Status: accepted. Notification retry lives in a third place.\n",
 };
 
-const decision = {
-  questionId: "CTX-1",
+const refOf = (path: string): string => `repository:acme/webhook-service:${path}`;
+
+/** docs/specs/context-authority-and-cited-conflicts.md. A conflict the refiner quoted from two files. */
+const reportOf = (left: string, leftQuote: string, right: string, rightQuote: string): ConflictReport => ({
+  subject: "notification retry",
+  left: { item: `acme/webhook-service ${left}`, quote: leftQuote },
+  right: { item: `acme/webhook-service ${right}`, quote: rightQuote },
+});
+
+const readmeReport = reportOf("README.md", "notification retry lives here", "docs/ADR-031.md", "Notification retry lives elsewhere");
+const adrReport = reportOf("docs/ADR-031.md", "Notification retry lives here", "docs/ADR-042.md", "Notification retry lives elsewhere");
+const thirdReport = reportOf("docs/ADR-031.md", "Notification retry lives here", "docs/ADR-055.md", "Notification retry lives in a third place");
+
+/** SDD section 23. The answer settles this pair in this authority domain, and no other pair. */
+const answerFor = (left: string, right: string) => ({
+  questionId: `CTX-${left}`,
   question: "Which ADR governs notification retry?",
   answer: "ADR-031 governs notification retry.",
-  // SDD section 23. The answer settles this subject in this authority domain, and no other pair.
-  subject: "notification",
+  subject: pairKey(refOf(left), refOf(right)),
   domain: "architecture_intent" as const,
-};
+});
+
+const decision = answerFor("docs/ADR-031.md", "docs/ADR-042.md");
 
 /**
  * Reads the recorded value of the counter from the registry. The test proves the value, not the
@@ -148,17 +164,33 @@ describe("resolveContext activity", () => {
 
   it("reports a resolved conflict in the summary and no unresolved conflict", async () => {
     const { activities } = build(files);
-    const output = await activities.resolveContext(input());
+    const output = await activities.resolveContext(input({ conflictReports: [readmeReport] }));
     expect(output.conflictCount).toBeGreaterThan(0);
     expect(output.unresolvedConflict).toBeNull();
     expect(output.summary).toMatch(/conflict/i);
   });
 
-  it("reports an unresolved conflict with one focused question", async () => {
+  it("reports an unresolved conflict with one question that quotes both files", async () => {
+    const { activities } = build(conflictedFiles);
+    const output = await activities.resolveContext(input({ conflictReports: [adrReport] }));
+    expect(output.unresolvedConflict?.subject).toBe(pairKey(refOf("docs/ADR-031.md"), refOf("docs/ADR-042.md")));
+    expect(output.unresolvedConflict?.question).toContain("Notification retry lives here");
+    expect(output.unresolvedConflict?.question).toContain("Notification retry lives elsewhere");
+  });
+
+  it("raises no conflict for two files that only share words (issue 60)", async () => {
     const { activities } = build(conflictedFiles);
     const output = await activities.resolveContext(input());
-    expect(output.unresolvedConflict?.subject).toBe("notification");
-    expect(output.unresolvedConflict?.question.endsWith("?")).toBe(true);
+    expect(output.unresolvedConflict).toBeNull();
+    expect(output.conflictCount).toBe(0);
+  });
+
+  it("drops a report whose quote the file does not hold", async () => {
+    const { activities } = build(conflictedFiles);
+    const invented = reportOf("docs/ADR-031.md", "Notification retry lives on the moon", "docs/ADR-042.md", "Notification retry lives elsewhere");
+    const output = await activities.resolveContext(input({ conflictReports: [invented] }));
+    expect(output.unresolvedConflict).toBeNull();
+    expect(output.conflictCount).toBe(0);
   });
 
   it("names every pinned repository in the summary", async () => {
@@ -171,7 +203,7 @@ describe("resolveContext activity", () => {
 
   it("freezes no contract while a conflict stays unresolved", async () => {
     const { activities, contracts, versions } = build(conflictedFiles);
-    const output = await activities.resolveContext(input());
+    const output = await activities.resolveContext(input({ conflictReports: [adrReport] }));
     expect(contracts.all()).toHaveLength(0);
     expect(versions).toHaveLength(0);
     expect(output.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -181,7 +213,7 @@ describe("resolveContext activity", () => {
 
   it("says in the summary that the contract is not frozen, and why", async () => {
     const { activities } = build(conflictedFiles);
-    const output = await activities.resolveContext(input());
+    const output = await activities.resolveContext(input({ conflictReports: [adrReport] }));
     expect(output.summary).toMatch(/did not freeze/i);
     expect(output.summary).toMatch(/conflict is unresolved/i);
     // Nothing reached the store, so the summary must not claim a record.
@@ -192,7 +224,7 @@ describe("resolveContext activity", () => {
     const tenantId = "tenant-unfrozen";
     const { activities } = build(conflictedFiles);
     const before = await conflictTotal(tenantId);
-    const output = await activities.resolveContext(input({ tenantId }));
+    const output = await activities.resolveContext(input({ tenantId, conflictReports: [adrReport] }));
     expect(output.unresolvedConflict).not.toBeNull();
     expect(await conflictTotal(tenantId)).toBe(before);
   });
@@ -201,23 +233,26 @@ describe("resolveContext activity", () => {
     const tenantId = "tenant-frozen";
     const { activities, contracts } = build(conflictedFiles);
     const before = await conflictTotal(tenantId);
-    await activities.resolveContext(input({ tenantId, decisions: [decision] }));
+    await activities.resolveContext(input({ tenantId, decisions: [decision], conflictReports: [adrReport] }));
     expect(contracts.all()).toHaveLength(1);
     const afterFirst = await conflictTotal(tenantId);
     expect(afterFirst).toBe(before + 1);
     // A Temporal retry repeats the work. The store writes nothing, so the counter must not move.
-    await activities.resolveContext(input({ tenantId, decisions: [decision] }));
+    await activities.resolveContext(input({ tenantId, decisions: [decision], conflictReports: [adrReport] }));
     expect(await conflictTotal(tenantId)).toBe(afterFirst);
   });
 
   it("agrees the noun with the count in the summary", async () => {
     const one = await build(conflictedFiles).activities.resolveContext(
-      input({ decisions: [decision] }),
+      input({ decisions: [decision], conflictReports: [adrReport] }),
     );
     expect(one.summary).toContain("recorded 1 conflict.");
 
     const many = await build(threeWayFiles).activities.resolveContext(
-      input({ decisions: [decision] }),
+      input({
+        decisions: [decision, answerFor("docs/ADR-031.md", "docs/ADR-055.md")],
+        conflictReports: [adrReport, thirdReport],
+      }),
     );
     expect(many.summary).toMatch(/recorded [2-9]\d* conflicts\./);
     expect(many.summary).toMatch(/\d+ context items/);
@@ -225,7 +260,7 @@ describe("resolveContext activity", () => {
 
   it("freezes the settled contract once the human answer arrives", async () => {
     const { activities, contracts, versions } = build(conflictedFiles);
-    const unresolved = await activities.resolveContext(input());
+    const unresolved = await activities.resolveContext(input({ conflictReports: [adrReport] }));
     expect(contracts.all()).toHaveLength(0);
 
     const settled = await activities.resolveContext(
@@ -233,6 +268,7 @@ describe("resolveContext activity", () => {
         decisions: [
           decision,
         ],
+        conflictReports: [adrReport],
       }),
     );
     expect(settled.unresolvedConflict).toBeNull();

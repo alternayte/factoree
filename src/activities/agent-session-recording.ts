@@ -8,12 +8,16 @@ import {
   type AgentSessionRole,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
+import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
+import { faultEgressFacts, withDeniedHosts, type FaultSandbox } from "~/domain/diagnostics/egress-facts.js";
 
 export interface AgentSessionRecordingDependencies {
   sessions: AgentSessionStore;
   logger: Logger;
   /** docs/specs/run-speed.md. Each agent session is one stage of the run. */
   stages?: RunStageStore | undefined;
+  /** docs/specs/run-diagnostics.md. A session that did not finish writes a run event. */
+  events?: RunEventRecorder | undefined;
 }
 
 export interface AgentSessionContext {
@@ -26,6 +30,11 @@ export interface AgentSessionContext {
   idempotencyKey: string;
   /** The sandbox the session ran in, for its run stage row. */
   sandboxId?: string;
+  /**
+   * docs/specs/run-diagnostics.md. The sandbox of the session and its effective allow list, for
+   * the denied hosts and the host hints of a session that did not finish.
+   */
+  egress?: FaultSandbox | null;
 }
 
 /** The hang an activity reports to the workflow, or null. */
@@ -139,4 +148,78 @@ export const recordAgentSession = async (
     model_ms: usage?.modelMs ?? null,
     tool_ms: usage?.toolMs ?? null,
   });
+
+  await recordSessionFaults(dependencies.events, context, results);
 };
+
+/**
+ * docs/specs/run-diagnostics.md. One run event per invocation that hung or did not finish. A
+ * session that Factoree cancelled for a stop or a deadline is no fault: the end of the run says why.
+ */
+export const recordSessionFaults = async (
+  events: RunEventRecorder | undefined,
+  context: Pick<AgentSessionContext, "tenantId" | "runId" | "role" | "attempt" | "runner" | "idempotencyKey" | "egress"> & {
+    /** The setup run of a setup session, which has no run. */
+    setupId?: string;
+  },
+  results: ReadonlyArray<AgentRunResult>,
+): Promise<void> => {
+  if (events === undefined) return;
+  const subject = context.setupId === undefined ? { runId: context.runId } : { setupId: context.setupId };
+  for (const [index, result] of results.entries()) {
+    const base = {
+      tenantId: context.tenantId,
+      subject,
+      stage: context.role,
+      attempt: context.attempt,
+      role: context.role,
+      idempotencyKey: `${context.idempotencyKey}:session:${String(index)}`,
+    };
+    if (result.outcome === "hung") {
+      await recordRunEvent(events, {
+        ...base,
+        kind: "session_hung",
+        message: `The ${context.role} session wrote no output for ${String(Math.round(result.silenceLimitMs / 1000))} seconds, so Factoree stopped it.`,
+        detail: { runner: result.session.runner, silenceLimitMs: result.silenceLimitMs },
+      });
+      continue;
+    }
+    if (result.completed || result.cancelled) continue;
+    const facts = await faultEgressFacts(context.egress ?? null, result.failureLog);
+    const summary = result.summary.trim();
+    await recordRunEvent(events, {
+      ...base,
+      kind: "session_failed",
+      message: withDeniedHosts(
+        `The ${context.role} session exited ${String(result.exitCode)} without finishing.${summary === "" ? "" : ` It reported: ${summary.slice(0, 500)}`}`,
+        facts,
+      ),
+      detail: {
+        runner: result.session.runner,
+        model: result.model,
+        exitCode: result.exitCode,
+        summary,
+        log: result.failureLog,
+        ...facts,
+      },
+    });
+  }
+};
+
+
+/** docs/specs/run-diagnostics.md. A session that starts again after a hang writes `retry_started`. */
+export const recordHangRetry = async (
+  events: RunEventRecorder | undefined,
+  input: { tenantId: string; runId: string; role: AgentSessionRole; attempt: number; stage: string },
+): Promise<void> =>
+  recordRunEvent(events, {
+    tenantId: input.tenantId,
+    subject: { runId: input.runId },
+    stage: input.stage,
+    attempt: input.attempt,
+    role: input.role,
+    kind: "retry_started",
+    message: `The ${input.role} session hung, so Factoree tries it once more.`,
+    detail: { what: `${input.role} session`, reason: "the session hung" },
+    idempotencyKey: `run:${input.runId}:${input.role}:${String(input.attempt)}:hang-retry`,
+  });

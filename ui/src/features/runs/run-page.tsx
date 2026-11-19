@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { getRunOptions, getRunQueryKey } from "@/api/@tanstack/react-query.gen";
+import { getRunOptions, getRunQueryKey, listRunEventsOptions } from "@/api/@tanstack/react-query.gen";
+import { Diagnosis, EventList } from "./run-events";
 import { publishRunDraft, stopRun } from "@/api/sdk.gen";
 import type { GetRunResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
@@ -222,7 +223,9 @@ function RunDetail({
           )}
         </Alert>
       ) : null}
-      {run.failureMessage ? (
+      {run.diagnosis ? (
+        <Diagnosis diagnosis={run.diagnosis} className="mb-4" />
+      ) : run.failureMessage ? (
         <Alert tone="warning" className="mb-4" title="Why the run ended">
           {run.failureMessage}
         </Alert>
@@ -296,6 +299,13 @@ function RunDetail({
           <StageTimeline run={run} />
         </Section>
       </div>
+      <Section
+        title="Events"
+        description="Each fault and each Factoree decision, in order, with the output tail and the egress facts of a fault."
+        className="mt-4"
+      >
+        <RunEvents runId={run.id} workspaceId={workspaceId} />
+      </Section>
       <Section title="Agent sessions" className="mt-4">
         <Sessions run={run} />
       </Section>
@@ -389,6 +399,14 @@ function Targets({ run }: { run: Run }) {
       ))}
     </ul>
   );
+}
+
+/** docs/specs/run-diagnostics.md. The run events, one page of up to 200. */
+function RunEvents({ runId, workspaceId }: { runId: string; workspaceId: string }) {
+  const events = useQuery(listRunEventsOptions({ path: { id: runId }, query: { linearWorkspaceId: workspaceId, limit: 200 } }));
+  if (events.isPending) return <Skeleton className="h-16" />;
+  if (events.isError) return <ErrorAlert error={events.error} title="The events could not be read" />;
+  return <EventList events={events.data.items} />;
 }
 
 function StageTimeline({ run }: { run: Run }) {

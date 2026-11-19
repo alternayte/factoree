@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { registerRepositorySetupRoutes } from "~/http/admin/repository-setup.routes.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 import type { RepositorySetupRecord, RepositorySetupStore } from "~/domain/setup/repository-setup.js";
+import { MemoryRunEventStore } from "../support/memory-run-event-store.js";
 
 const repository = (fullName: string, productId: string): RepositoryRecord =>
   ({ fullName, productId, tenantId: "tenant-1", absentSince: null, needsSetupReason: null }) as RepositoryRecord;
@@ -29,6 +30,7 @@ const build = () => {
     products: { findById: () => Promise.resolve({ id: "product-1" }) } as never,
     tenants: { findByWorkspace: () => Promise.resolve({ id: "tenant-1", linearWorkspaceId: "w", name: "W" }) } as never,
     setups,
+    events: new MemoryRunEventStore(),
     registeredRepositories: () => Promise.resolve([repository("acme/c-dash", "product-1"), repository("acme/billing", "product-2")]),
     installations: () => Promise.resolve(["42"]),
     listInstallationRepositories: () =>

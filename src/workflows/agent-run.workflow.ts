@@ -43,6 +43,7 @@ import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js"
 import type { SkillRegistrySettings } from "~/domain/runs/skill-registry.js";
 import type { AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
+import type { ConflictReport } from "~/domain/context/conflicts.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 // The workflow bundler resolves a relative path only, so this type import does not use the
 // `~/` alias either. F8. The type now lives in the domain layer; the workflow re-exports it, so
@@ -345,6 +346,12 @@ const CHANGE_SET_PUBLICATION_PATCH = "change-set-publication";
  * consumer pull request. An older history sets none.
  */
 const CHANGE_SET_STATUS_PATCH = "change-set-status";
+/**
+ * docs/specs/context-authority-and-cited-conflicts.md. The context resolves again after the refiner
+ * with the conflicts it reported, so a quoted disagreement asks a human before the Validation
+ * Contract freezes. A history recorded before it never ran that resolution, so it replays without it.
+ */
+const CITED_CONFLICTS_PATCH = "cited-context-conflicts";
 
 /** docs/specs/change-sets.md, slice 7. One target whose pull request opened. */
 interface PublishedTarget {
@@ -2520,6 +2527,7 @@ export async function agentRunWorkflow(
         referenceRepositories: Array<{ slug: string; url: string; ref: string }>;
         targetRepositories: Array<{ slug: string; url: string; ref: string; githubInstallationId: string }>;
         supersedes?: string;
+        conflictReports?: ConflictReport[];
       };
       const resolveContextLoop = async (
         scope: ContextScope,
@@ -2543,6 +2551,7 @@ export async function agentRunWorkflow(
               // docs/specs/change-sets.md. The other targets of a change set, each at its default branch.
               ...(scope.targetRepositories.length > 0 ? { targetRepositories: scope.targetRepositories } : {}),
               ...(scope.supersedes === undefined ? {} : { supersedes: scope.supersedes }),
+              ...(scope.conflictReports === undefined ? {} : { conflictReports: scope.conflictReports }),
               workItemReferences: refined.workItemReferences,
               decisions,
               githubInstallationId: primaryRepositoryInstallationId,
@@ -3110,6 +3119,27 @@ export async function agentRunWorkflow(
           if (stopRequested) return await cancelRun();
           if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
         }
+      }
+
+      // docs/specs/context-authority-and-cited-conflicts.md. A conflict exists only when the refiner
+      // quoted two items that disagree. The context resolves again with the reports, so the resolver
+      // checks each quote, the ladder resolves a pair of two classes, and a pair of one class asks a
+      // human before anything freezes. A run whose reports all fail the checks keeps its contract.
+      const conflictReports = proposal.conflicts ?? [];
+      if (conflictReports.length > 0 && patched(CITED_CONFLICTS_PATCH)) {
+        const pinnedOf = (slug: string, sha: string) => ({ ...repositoryRef(slug), ref: sha });
+        const cited = await resolveContextLoop({
+          primaryRepository: pinnedOf(resolvedContext.primary.slug, resolvedContext.primary.sha),
+          referenceRepositories: resolvedContext.references.map((reference) => pinnedOf(reference.slug, reference.sha)),
+          targetRepositories: targetBases
+            .slice(1)
+            .map((target) => ({ ...pinnedOf(target.slug, target.sha), githubInstallationId: target.githubInstallationId })),
+          supersedes: resolvedContext.sha256,
+          conflictReports,
+        });
+        if ("ended" in cited) return cited.ended;
+        resolvedContext = cited.resolved;
+        if (stopRequested) return await cancelRun();
       }
 
       // docs/specs/refiner-agent.md. The Validation Contract freezes after the refiner and before

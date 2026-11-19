@@ -425,9 +425,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    */
   const refineOverrides = new Map<string, (input: RefineActivityInput) => RefineActivityOutput>();
   /**
-   * The conflicts the context double reports for one run id, in order. It reports the first
-   * conflict no recorded decision settles. A decision settles a conflict when it carries the
-   * same authority domain and the same subject, which is the rule `detectConflicts` applies.
+   * The conflicts the context double reports for one run id, in order. It reports them only on a
+   * resolution that carries refiner reports, because docs/specs/context-authority-and-cited-conflicts.md
+   * raises a conflict only from a report. It reports the first conflict no recorded decision
+   * settles. A decision settles a conflict when it carries the same authority domain and the same
+   * subject, which is the rule `conflictsOf` applies to the pair key.
    * `tests/unit/context-conflicts.test.ts` proves that rule against the real domain. A conflict
    * marked `settledByDecision: false` survives every answer, which is the case the bounded
    * question rounds exist for.
@@ -531,7 +533,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
             "to a commit SHA.",
         );
       }
-      const all = contextConflicts.get(input.runId) ?? [];
+      const all = (input.conflictReports ?? []).length === 0 ? [] : (contextConflicts.get(input.runId) ?? []);
       const settled = (conflict: HarnessConflict): boolean =>
         conflict.settledByDecision !== false &&
         input.decisions.some(

@@ -7,6 +7,7 @@ import { RepositoryContextSource } from "~/domain/context/repository-source.js";
 import { DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION } from "~/domain/context/repository-context-configuration.js";
 import type { RepositoryContextConfiguration } from "~/domain/context/repository-context-configuration.js";
 import type { RecordedDecision } from "~/domain/refinement/refinement-engine.js";
+import type { ConflictReport } from "~/domain/context/conflicts.js";
 import type { ContextFixture } from "./context-fixture-repository.js";
 import { PRIMARY_SLUG, REFERENCE_SLUG } from "./context-fixture-repository.js";
 
@@ -24,6 +25,8 @@ export interface ResolveFixtureContextInput {
   /** Defaults to Linear plus the two repository sources of Phase 4. Task 10 adds Backstage. */
   sources?: ContextSourceRegistry;
   contextConfiguration?: RepositoryContextConfiguration;
+  /** docs/specs/context-authority-and-cited-conflicts.md. The conflicts the refiner reported. */
+  conflictReports?: ConflictReport[];
 }
 
 /**
@@ -51,4 +54,5 @@ export const resolveFixtureContext = (
         new RepositoryContextSource({ reader: input.reader }),
       ]),
     contextConfiguration: input.contextConfiguration ?? DEFAULT_REPOSITORY_CONTEXT_CONFIGURATION,
+    ...(input.conflictReports === undefined ? {} : { conflictReports: input.conflictReports }),
   });

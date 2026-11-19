@@ -13,7 +13,14 @@ import {
   triageSessionKey,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
-import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
+import {
+  hangOf,
+  providerUnreachableOf,
+  recordAgentSession,
+  recordHangRetry,
+  type AgentHang,
+  type AgentProviderUnreachable,
+} from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -42,6 +49,7 @@ import type { RunStageStore } from "~/domain/runs/run-stage.js";
 import type { PrReviewFinding, TriagedFinding } from "~/domain/pull-requests/pr-follow-up.js";
 import { decideTriage, parseTriageReport, TRIAGE_REPORT_SCHEMA_TEXT, TriageReportInvalidError } from "~/domain/review/triage-report.js";
 import { renderTriagePrompt, TRIAGE_PROMPT_VERSION } from "~/prompts/triage.js";
+import type { RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 
 /**
  * SDD section 40. The Reviewer runs in a fresh session, against the goal, the frozen Validation
@@ -168,6 +176,8 @@ export interface TriageActivityOutput {
 }
 
 export interface ReviewActivityDependencies {
+  /** docs/specs/run-diagnostics.md. The writer of run events, absent in a test that records none. */
+  events?: RunEventRecorder | undefined;
   sandbox: Sandbox;
   runners: AgentRunnerRegistry;
   executions: AgentExecutionRepository;
@@ -350,7 +360,7 @@ const runReviewerSession = async (
     idempotencyKey: input.idempotencyKey,
   });
   await recordAgentSession(
-    { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages },
+    { sessions: dependencies.sessions, logger: dependencies.logger, stages: dependencies.stages, events: dependencies.events },
     {
       tenantId: input.tenantId,
       productId: input.productId,
@@ -360,6 +370,8 @@ const runReviewerSession = async (
       runner: runner.name,
       idempotencyKey: input.idempotencyKey,
       sandboxId: input.spriteId,
+      // The review activity names no allow list, so its sessions get no host hints.
+      egress: { sandbox: dependencies.sandbox, ref: input.ref, allowList: null },
     },
     [sessionResult],
   );
@@ -469,6 +481,9 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // report, so a partial report of the hung session is never read.
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
+      // docs/specs/run-diagnostics.md. Only a hang writes `retry_started` here, not a retry after an outage.
+      if (input.afterHang === true) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: 0, stage: "REVIEWING" });
+      if (input.afterHang === true) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: input.attempt, stage: "REVIEWING" });
       const reportPath = `${reviewDirectory}/${reviewerReportName(input.attempt, afterHang, unreachableRetry)}`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,

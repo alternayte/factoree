@@ -7,6 +7,8 @@ export interface RecoveryActivityDependencies {
   runViews?: RunViewReader | undefined;
   redactor: Redactor;
   logger: Logger;
+  /** docs/specs/run-diagnostics.md. The Run page of a run, where its diagnosis is. */
+  runPageUrl?: ((runId: string) => string) | undefined;
 }
 
 export const createRecoveryActivities = (dependencies: RecoveryActivityDependencies) => ({
@@ -21,16 +23,18 @@ export const createRecoveryActivities = (dependencies: RecoveryActivityDependenc
     message: string;
     kind?: "run" | "configuration";
   }): Promise<string> {
+    // docs/specs/run-diagnostics.md. The person in Linear reaches the full diagnosis in one click.
+    const link = dependencies.runPageUrl === undefined ? "" : `\n\nThe diagnosis of this run: ${dependencies.runPageUrl(input.runId)}`;
     try {
       const run = (await dependencies.runViews?.detail(input.tenantId, input.runId)) ?? null;
-      if (run === null) return input.message;
-      return dependencies.redactor.redactText(renderFailurePost(input.message, run, input.kind ?? "run"));
+      if (run === null) return `${input.message}${link}`;
+      return `${dependencies.redactor.redactText(renderFailurePost(input.message, run, input.kind ?? "run"))}${link}`;
     } catch (error) {
       dependencies.logger.warn("the failure post was built without the run facts", {
         run_id: input.runId,
         error: String(error),
       });
-      return input.message;
+      return `${input.message}${link}`;
     }
   },
 });

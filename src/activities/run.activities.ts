@@ -7,6 +7,7 @@ import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentSessionPort } from "~/domain/runs/ports.js";
 import type { RunSlotClaim, RunSlots } from "~/domain/runs/run-slots.js";
 import { metrics } from "~/telemetry/metrics.js";
+import { FAULT_KINDS, recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 import { isTerminalRunStatus } from "~/domain/runs/run-status.js";
 import { failureCategoryOf } from "~/domain/runs/failure-category.js";
 import { mergeOrderOf, type MergeOrder, type TargetEdge } from "~/domain/runs/merge-order.js";
@@ -20,6 +21,8 @@ export interface RunActivityDependencies {
   agentSession: AgentSessionPort;
   /** docs/specs/run-failure-detail.md. A failure message holds error text, so it is redacted. */
   redactor: Redactor;
+  /** docs/specs/run-diagnostics.md. A repair start and the end of a run write run events. */
+  events?: RunEventRecorder | undefined;
 }
 
 export const createRunActivities = (dependencies: RunActivityDependencies) => ({
@@ -83,6 +86,22 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
         tenant_id: run.tenantId,
         product_id: run.productId,
         reason: input.repairReason ?? "VERIFICATION",
+      });
+      const repair = input.repairCount ?? 0;
+      const reason = input.repairReason ?? "VERIFICATION";
+      await recordRunEvent(dependencies.events, {
+        tenantId: run.tenantId,
+        subject: { runId: run.id },
+        stage: "REPAIRING",
+        attempt: repair,
+        role: "implementer",
+        kind: "repair_started",
+        message:
+          reason === "AGENT_HUNG"
+            ? `Factoree resumes the hung implementer as repair ${String(repair)}.`
+            : `Factoree starts repair ${String(repair)} after the ${reason.toLowerCase()} stage failed.`,
+        detail: { repair, reason },
+        idempotencyKey: `run:${run.id}:repair:${String(repair)}`,
       });
     }
   },
@@ -151,6 +170,23 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
           reason: input.failureReason ?? "UNKNOWN",
           category: failureCategory ?? "INTERNAL",
         });
+    }
+    // docs/specs/run-diagnostics.md. The end of the run, linked to its newest fault. The status the
+    // run held before this write is the stage it ended in.
+    const failed = input.status !== "READY_FOR_HUMAN" && input.status !== "REPORTED" && input.status !== "CANCELLED";
+    if (!alreadyTerminal && dependencies.events !== undefined) {
+      const cause = failed ? await dependencies.events.store.newest(run.tenantId, { runId: run.id }, FAULT_KINDS).catch(() => null) : null;
+      await recordRunEvent(dependencies.events, {
+        tenantId: run.tenantId,
+        subject: { runId: run.id },
+        stage: before?.status ?? input.status,
+        attempt: run.repairCount ?? 0,
+        role: null,
+        kind: "run_ended",
+        message: input.failureMessage ?? `The run ended ${input.status}.`,
+        detail: { status: input.status, reason: input.failureReason ?? null, lastStatus: before?.status ?? null, causeEventId: cause?.id ?? null },
+        idempotencyKey: `run:${run.id}:ended`,
+      });
     }
     // The Run reached a terminal state. Every runner session of this Run is now dead, so the
     // runner must not keep it. This bounds `CliAgentRunner.sessions` by the Runs in flight.

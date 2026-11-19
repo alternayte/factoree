@@ -8,7 +8,7 @@ import type { RepositoryRef } from "~/domain/context/context-source.js";
 import type { ContextSourceProvider } from "~/domain/context/context-source-provider.js";
 import { readRepositoryContextConfiguration } from "~/domain/context/repository-context-configuration.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
-import { conflictQuestion } from "~/domain/context/conflicts.js";
+import { conflictQuestion, pairKey, type ConflictReport } from "~/domain/context/conflicts.js";
 import { requiredContextLines } from "~/domain/context/context-contract.js";
 import { deliverableItems } from "~/domain/context/context-delivery.js";
 import {
@@ -48,6 +48,11 @@ export interface ResolveContextActivityInput {
   supersedes?: string;
   workItemReferences: string[];
   decisions: RecordedDecision[];
+  /**
+   * docs/specs/context-authority-and-cited-conflicts.md. The conflicts the refiner reported. Absent
+   * for the resolution before the refiner, and in an older history.
+   */
+  conflictReports?: ConflictReport[];
   /** The GitHub App installation that grants the primary repository. Empty when it holds none. */
   githubInstallationId: string;
   /**
@@ -189,6 +194,7 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
             decisions: input.decisions,
             sources,
             contextConfiguration,
+            ...(input.conflictReports === undefined ? {} : { conflictReports: input.conflictReports }),
             ...(input.workItemContent === undefined
               ? {}
               : {
@@ -204,6 +210,18 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
       );
     } catch (error) {
       throw asRunConfigurationErrorIfDeterministic(dependencies.redactor, error);
+    }
+
+    for (const dropped of resolved.droppedReports) {
+      dependencies.logger.warn("Factoree dropped a conflict the refiner reported", {
+        tenant_id: input.tenantId,
+        product_id: input.productId,
+        run_id: input.runId,
+        step: "resolve_context",
+        subject: dependencies.redactor.redactText(dropped.report.subject),
+        items: dependencies.redactor.redactText(`${dropped.report.left.item} | ${dropped.report.right.item}`),
+        reason: dropped.reason,
+      });
     }
 
     // SDD section 21 freezes the Context Contract. SDD section 23 forbids a start of
@@ -306,9 +324,14 @@ export const createContextActivities = (dependencies: ContextActivityDependencie
           ? null
           : {
               id: resolved.unresolvedConflict.id,
-              subject: resolved.unresolvedConflict.subject,
+              // docs/specs/context-authority-and-cited-conflicts.md. The answer is keyed by the pair,
+              // so the workflow records the pair as the subject the answer settles.
+              subject:
+                resolved.unresolvedConflict.refs === undefined
+                  ? resolved.unresolvedConflict.subject
+                  : pairKey(...resolved.unresolvedConflict.refs),
               domain: resolved.unresolvedConflict.authorityDomain,
-              question: conflictQuestion(resolved.unresolvedConflict),
+              question: dependencies.redactor.redactText(conflictQuestion(resolved.unresolvedConflict)),
             },
       conflictCount: resolved.contract.conflicts.length,
       summary: [summary, ...unread].join("\n"),

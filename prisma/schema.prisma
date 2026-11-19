@@ -7,20 +7,20 @@ datasource db {
 }
 
 model Tenant {
-  id                String              @id @default(uuid())
-  linearWorkspaceId String              @unique
-  name              String
-  createdAt         DateTime            @default(now())
-  installations     LinearInstallation[]
-  githubInstallations GitHubInstallation[]
-  products          Product[]
+  id                   String                @id @default(uuid())
+  linearWorkspaceId    String                @unique
+  name                 String
+  createdAt            DateTime              @default(now())
+  installations        LinearInstallation[]
+  githubInstallations  GitHubInstallation[]
+  products             Product[]
   productPolicyChanges ProductPolicyChange[]
-  runs              Run[]
-  webhooks          ProcessedWebhook[]
-  warmSnapshots     WarmSnapshot[]
-  retiredSnapshots  RetiredWarmSnapshot[]
-  buildAheadFailures BuildAheadFailure[]
-  linearMembers     LinearMember[]
+  runs                 Run[]
+  webhooks             ProcessedWebhook[]
+  warmSnapshots        WarmSnapshot[]
+  retiredSnapshots     RetiredWarmSnapshot[]
+  buildAheadFailures   BuildAheadFailure[]
+  linearMembers        LinearMember[]
 }
 
 model GitHubInstallation {
@@ -37,141 +37,142 @@ model GitHubInstallation {
 }
 
 model LinearInstallation {
-  id                  String   @id @default(uuid())
-  tenantId            String
-  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  linearWorkspaceId   String   @unique
-  appUserId           String?
-  accessTokenCipher   String
-  refreshTokenCipher  String?
-  expiresAt           DateTime?
-  scopes              String[]
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                 String    @id @default(uuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  linearWorkspaceId  String    @unique
+  appUserId          String?
+  accessTokenCipher  String
+  refreshTokenCipher String?
+  expiresAt          DateTime?
+  scopes             String[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 model ContextSourceConfiguration {
-  id          String   @id @default(uuid())
-  tenantId    String
+  id         String   @id @default(uuid())
+  tenantId   String
   // SDD section 5 and section 7. A context source belongs to the Product, alongside secrets,
   // autonomy, risk caps, action policy, and redaction.
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   // The identifier the built source reports from `ContextSource.id()`.
-  sourceId    String
-  kind        String
-  enabled     Boolean  @default(true)
-  endpoint    String
+  sourceId   String
+  kind       String
+  enabled    Boolean  @default(true)
+  endpoint   String
   // SDD section 30. This column names a ProductSecret. It never holds a credential.
-  secretName  String?
-  settings    Json
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  secretName String?
+  settings   Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@unique([productId, sourceId])
   @@index([tenantId])
 }
 
 model Run {
-  id                       String    @id @default(uuid())
-  tenantId                 String
-  tenant                   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                        String                      @id @default(uuid())
+  tenantId                  String
+  tenant                    Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   // Task 9. Delegation routes through the Product, not the Project, so this column carries a
   // Product id, with a real foreign key. There is no fallback to a Project default.
-  productId                String
-  product                  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  linearIssueId            String?
+  productId                 String
+  product                   Product                     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  linearIssueId             String?
   // docs/specs/run-recovery.md. A follow-up run shares the agent session of the run it follows.
-  linearAgentSessionId     String
-  followUpOfRunId          String?   @map("follow_up_of_run_id")
-  temporalWorkflowId       String    @unique
-  status                   String
-  failureReason            String?
-  failureCategory          String?
+  linearAgentSessionId      String
+  followUpOfRunId           String?                     @map("follow_up_of_run_id")
+  temporalWorkflowId        String                      @unique
+  status                    String
+  failureReason             String?
+  failureCategory           String?
   // docs/specs/run-visibility.md. The sentence that told the human why the run ended, and the
   // work item title and URL, so a run list names the issue. Null on a run from before them.
-  failureMessage           String?   @map("failure_message")
-  workItemTitle            String?   @map("work_item_title")
-  workItemUrl              String?   @map("work_item_url")
-  autonomyLevel            String
-  implementerRunner        String?
-  validatorRunner          String?
-  reviewerRunner           String?
-  spriteId                 String?
-  spriteAdapter            String?
-  spriteRetainUntil        DateTime?
+  failureMessage            String?                     @map("failure_message")
+  workItemTitle             String?                     @map("work_item_title")
+  workItemUrl               String?                     @map("work_item_url")
+  autonomyLevel             String
+  implementerRunner         String?
+  validatorRunner           String?
+  reviewerRunner            String?
+  spriteId                  String?
+  spriteAdapter             String?
+  spriteRetainUntil         DateTime?
   // docs/specs/sandbox-provider-spillover.md. The sandbox provider the run is pinned to. It stays
   // after the reaper clears spriteAdapter, so the run page and the proof pack can name it.
-  sandboxProviderId        String?   @map("sandbox_provider_id")
-  organizationSkillsSha    String?
+  sandboxProviderId         String?                     @map("sandbox_provider_id")
+  organizationSkillsSha     String?
   // docs/specs/skill-registry.md. The registry set the run used, null for every released skill,
   // and the resolution id that pins each version. Both stay null without a registry.
-  skillRegistrySet         String?   @map("skill_registry_set")
-  skillResolutionId        String?   @map("skill_resolution_id")
+  skillRegistrySet          String?                     @map("skill_registry_set")
+  skillResolutionId         String?                     @map("skill_resolution_id")
   // docs/specs/external-context-delivery.md. One entry per context file of the work sprite: ref,
   // path, SHA-256, verified and the skip reason. It holds no content (SDD section 55).
-  deliveredContext         Json?     @map("delivered_context")
-  contextContractVersion   String?
+  deliveredContext          Json?                       @map("delivered_context")
+  contextContractVersion    String?
   validationContractVersion String?
-  proofPackSha256          String?
-  proofPackPostedAt        DateTime?
+  proofPackSha256           String?
+  proofPackPostedAt         DateTime?
   // docs/specs/proof-pack-and-visual-evidence.md. The proof-pack.json document an agent reads.
-  proofPackDocument        Json?
+  proofPackDocument         Json?
   // docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The redacted input of the last proof pack,
   // so an amendment after publication renders the whole proof pack again.
-  proofPackInput           Json?     @map("proof_pack_input")
+  proofPackInput            Json?                       @map("proof_pack_input")
   // docs/specs/change-sets.md, slice 9, DI-21.158. On the run that opened a change set: the PR
   // workflow that runs the one set run of the set, the workflow id of that run, and the time it took
   // the set. Null while no set run runs.
-  changeSetLockHolder      String?   @map("change_set_lock_holder")
-  changeSetLockRun         String?   @map("change_set_lock_run")
-  changeSetLockAt          DateTime? @map("change_set_lock_at")
+  changeSetLockHolder       String?                     @map("change_set_lock_holder")
+  changeSetLockRun          String?                     @map("change_set_lock_run")
+  changeSetLockAt           DateTime?                   @map("change_set_lock_at")
   // docs/specs/own-proposals-and-parallel-runs.md. Every proposal Factoree took without asking.
-  decisions                Json      @default("[]")
-  repairCount              Int       @default(0)
-  createdAt                DateTime  @default(now())
-  startedAt                DateTime?
-  completedAt              DateTime?
+  decisions                 Json                        @default("[]")
+  repairCount               Int                         @default(0)
+  createdAt                 DateTime                    @default(now())
+  startedAt                 DateTime?
+  completedAt               DateTime?
   // DI-21.56. The time the Run waited for a run slot (QUEUED) or a sandbox slot. It is not work,
   // so the shown duration and the deadline leave it out.
-  waitedMs                 Int       @default(0) @map("waited_ms")
+  waitedMs                  Int                         @default(0) @map("waited_ms")
   // docs/specs/release-0-1-0.md, DI-15.13. The moment the Run took one of its Product's
   // maxConcurrentRuns slots. A Run holds the slot until its status is terminal.
-  slotGrantedAt            DateTime?
+  slotGrantedAt             DateTime?
   // docs/specs/egress-honesty-and-issue-status.md, DI-21.49. The Linear state the run moved its
   // issue from, and the state it set. Both null when the run moved nothing.
-  issueStateFromId         String?   @map("issue_state_from_id")
-  issueStateSetId          String?   @map("issue_state_set_id")
+  issueStateFromId          String?                     @map("issue_state_from_id")
+  issueStateSetId           String?                     @map("issue_state_set_id")
   // Issue #45, DI-21.65. The first stop that reached the workflow: when, from where ("linear" or
   // "factoree_ui"), and the admin who sent a Factoree UI stop. Null when nobody stopped the run.
-  stopRequestedAt          DateTime? @map("stop_requested_at")
-  stopSource               String?   @map("stop_source")
-  stopRequestedBy          String?   @map("stop_requested_by")
+  stopRequestedAt           DateTime?                   @map("stop_requested_at")
+  stopSource                String?                     @map("stop_source")
+  stopRequestedBy           String?                     @map("stop_requested_by")
   // docs/specs/draft-of-failed-run.md, DI-21.79. The request that started the draft workflow: when,
   // from where ("linear" or "factoree_ui"), and the Linear user or the admin who asked.
-  draftRequestedAt         DateTime? @map("draft_requested_at")
-  draftSource              String?   @map("draft_source")
-  draftRequestedBy         String?   @map("draft_requested_by")
+  draftRequestedAt          DateTime?                   @map("draft_requested_at")
+  draftSource               String?                     @map("draft_source")
+  draftRequestedBy          String?                     @map("draft_requested_by")
   // docs/specs/blocked-by-wait.md. Each blocker of a WAITING_FOR_BLOCKERS run as the last read saw
   // it: issue id, identifier, URL, state type and Factoree pull request URL. Null before the first
   // read, and on a run that never waited.
-  blockers                 Json?     @map("blockers")
+  blockers                  Json?                       @map("blockers")
   // docs/specs/blocked-by-wait.md, DI-21.83. The workflow input of a waiting run, built at the
   // delegation, so the sweep starts the run with it. Null on a run that never waited.
-  waitingStartInput        Json?     @map("waiting_start_input")
-  executions               AgentExecution[]
-  agentSessions            AgentSession[]
-  stages                   RunStage[]
-  skills                   RunSkill[]
-  skillProposals           RunSkillProposal[]
-  evidence                 Evidence[]
-  contextContracts         ContextContract[]
-  validationContract       ValidationContract?
-  validationResults        ValidationAssertionResult[]
-  reviewFindings           ReviewFinding[]
-  targets                  RunTarget[]
-  targetEdges              RunTargetEdge[]
-  originOfPullRequests     PullRequest[]
+  waitingStartInput         Json?                       @map("waiting_start_input")
+  executions                AgentExecution[]
+  agentSessions             AgentSession[]
+  stages                    RunStage[]
+  events                    RunEvent[]
+  skills                    RunSkill[]
+  skillProposals            RunSkillProposal[]
+  evidence                  Evidence[]
+  contextContracts          ContextContract[]
+  validationContract        ValidationContract?
+  validationResults         ValidationAssertionResult[]
+  reviewFindings            ReviewFinding[]
+  targets                   RunTarget[]
+  targetEdges               RunTargetEdge[]
+  originOfPullRequests      PullRequest[]
 
   @@index([tenantId])
   @@index([productId, status])
@@ -182,10 +183,10 @@ model Run {
 }
 
 model AgentExecution {
-  id             String    @id @default(uuid())
+  id             String   @id @default(uuid())
   tenantId       String
   runId          String
-  run            Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   role           String
   runner         String
   model          String?
@@ -198,7 +199,7 @@ model AgentExecution {
   // unchanged arguments collides on the same key and does not write a second row. A distinct
   // attempt, for example a repair loop attempt, uses a distinct key and writes a distinct row.
   idempotencyKey String
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime @default(now())
 
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
@@ -240,6 +241,31 @@ model AgentSession {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([runId])
+}
+
+// docs/specs/run-diagnostics.md. One fault or one Factoree decision of a run or a setup run, in
+// order. Exactly one of run_id and setup_id is set; the migration holds the check.
+model RunEvent {
+  id             String           @id @default(uuid())
+  tenantId       String           @map("tenant_id")
+  runId          String?          @map("run_id")
+  run            Run?             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  setupId        String?          @map("setup_id")
+  setup          RepositorySetup? @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  stage          String
+  attempt        Int
+  role           String?
+  kind           String
+  message        String
+  detail         Json
+  // The activity key, the kind and an ordinal. A Temporal retry of an activity writes no second row.
+  idempotencyKey String           @map("idempotency_key")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([runId, createdAt])
+  @@index([setupId, createdAt])
+  @@map("run_event")
 }
 
 // docs/specs/run-speed.md. One row per stage of a run: when it started and when it ended. The
@@ -302,10 +328,10 @@ model RunSkillProposal {
 }
 
 model Evidence {
-  id                    String   @id @default(uuid())
+  id                    String               @id @default(uuid())
   tenantId              String
   runId                 String
-  run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run                   Run                  @relation(fields: [runId], references: [id], onDelete: Cascade)
   // Null for a deterministic check. SDD section 35 records a check that answers no assertion.
   // Otherwise the validation assertion this artifact answers.
   validationAssertionId String?
@@ -317,30 +343,30 @@ model Evidence {
   metadata              Json
   // A Temporal retry of one activity must not write a second row.
   idempotencyKey        String
-  createdAt             DateTime @default(now())
+  createdAt             DateTime             @default(now())
 
   @@unique([runId, idempotencyKey])
   @@index([tenantId, runId])
 }
 
 model ContextContract {
-  id          String   @id @default(uuid())
-  tenantId    String
-  runId       String
-  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id        String            @id @default(uuid())
+  tenantId  String
+  runId     String
+  run       Run               @relation(fields: [runId], references: [id], onDelete: Cascade)
   // docs/specs/change-sets.md, DI-21.143. A target the refiner adds freezes a new contract of the
   // Run. Each one keeps its row, and the highest revision is the contract of the Run.
-  revision    Int      @default(1)
+  revision  Int               @default(1)
   // SDD section 21 fixes the document schema version. `Run.contextContractVersion` holds the
   // SHA-256 below, because that value identifies the exact contract. See DI-4.11.
-  version     Int
-  sha256      String
+  version   Int
+  sha256    String
   // The rendered contract. SDD section 55 forbids a copy of a repository. This text names paths
   // and hashes. It holds no file body.
-  document    String
-  createdAt   DateTime @default(now())
-  items       ContextItem[]
-  conflicts   ContextConflict[]
+  document  String
+  createdAt DateTime          @default(now())
+  items     ContextItem[]
+  conflicts ContextConflict[]
 
   @@unique([runId, revision])
   @@index([tenantId])
@@ -394,10 +420,10 @@ model ContextConflict {
 }
 
 model ValidationContract {
-  id          String   @id @default(uuid())
+  id          String                @id @default(uuid())
   tenantId    String
-  runId       String   @unique
-  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId       String                @unique
+  run         Run                   @relation(fields: [runId], references: [id], onDelete: Cascade)
   // SDD section 24 fixes the document schema version. `Run.validationContractVersion` holds the
   // SHA-256 below, because that value identifies the exact frozen contract. See controller
   // decision 5.
@@ -409,18 +435,18 @@ model ValidationContract {
   document    String
   // docs/specs/pr-review-merge-and-deploy.md, D1, DI-21.116. The Validation Plan of the last user
   // validation pass that passed, as parsed JSON. A bring-current check replays it with no agent.
-  passingPlan Json?    @map("passing_plan")
-  createdAt   DateTime @default(now())
+  passingPlan Json?                 @map("passing_plan")
+  createdAt   DateTime              @default(now())
   assertions  ValidationAssertion[]
 
   @@index([tenantId])
 }
 
 model ValidationAssertion {
-  id                   String             @id @default(uuid())
+  id                   String                      @id @default(uuid())
   tenantId             String
   validationContractId String
-  validationContract   ValidationContract @relation(fields: [validationContractId], references: [id], onDelete: Cascade)
+  validationContract   ValidationContract          @relation(fields: [validationContractId], references: [id], onDelete: Cascade)
   // SDD section 24 requires a unique identifier, a source requirement, an observable behavior, a
   // method, required evidence, and permitted preconditions on every assertion.
   assertionKey         String
@@ -495,27 +521,27 @@ model ProcessedWebhook {
 /// or per tenant, sandbox provider and set (docs/specs/change-sets.md).
 /// docs/specs/sandbox-provider-spillover.md. `adapter` holds the sandbox provider id.
 model WarmSnapshot {
-  id            String   @id @default(uuid())
-  tenantId      String
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  adapter       String
+  id                  String   @id @default(uuid())
+  tenantId            String
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  adapter             String
   // docs/specs/change-sets.md, DI-21.135. The repository URL, or the subject of a set snapshot: its
   // sorted repository URLs joined by a space.
-  repositoryUrl String
+  repositoryUrl       String
   // DI-21.135. The sorted repository URLs of a set snapshot. Empty for a snapshot of one repository.
-  repositoryUrls String[] @default([]) @map("repository_urls")
+  repositoryUrls      String[] @default([]) @map("repository_urls")
   // docs/specs/kiln-sandbox-size.md. The Kiln template: the image digest and the size.
-  template      String
+  template            String
   // docs/specs/run-speed.md. The SHA-256 of the bootstrap command, the warm command and the
   // effective bootstrap allow list: the inputs that decide what the snapshot holds.
-  bootstrapKey  String
+  bootstrapKey        String
   // The exit code of a failed warm command, or null when it passed or none ran.
   warmCommandExitCode Int?
   // docs/specs/change-sets.md, DI-21.148. The wired pairs of a set that its build-ahead could not
   // start within the sandbox size, each with its reason. A run of the set tests them alone.
-  unwiredPairs  Json?    @map("unwired_pairs")
-  snapshotId    String
-  createdAt     DateTime @default(now())
+  unwiredPairs        Json?    @map("unwired_pairs")
+  snapshotId          String
+  createdAt           DateTime @default(now())
 
   @@unique([tenantId, adapter, repositoryUrl])
 }
@@ -539,26 +565,26 @@ model RetiredWarmSnapshot {
 // docs/specs/sandbox-provider-spillover.md. `adapter` holds the sandbox provider id. A held lease
 // is one of the three slots a run takes at start: unbound while no sandbox of the run uses it.
 model SandboxLease {
-  id            String    @id @default(uuid())
-  adapter       String
-  runId         String
-  held          Boolean   @default(false)
+  id                  String    @id @default(uuid())
+  adapter             String
+  runId               String
+  held                Boolean   @default(false)
   // Null between the reservation and the end of the create.
-  sandboxId     String?
-  createdAt     DateTime  @default(now())
+  sandboxId           String?
+  createdAt           DateTime  @default(now())
   // Set while a worker deletes this retained sandbox to free its slot.
-  evictingSince DateTime?
+  evictingSince       DateTime?
   // Set when a delete at the provider failed. The sandbox still lives, so the lease stays, and the
   // reaper deletes it again on each pass until the provider confirms it.
-  destroyFailedAt DateTime? @map("destroy_failed_at")
+  destroyFailedAt     DateTime? @map("destroy_failed_at")
   // docs/specs/host-credentials.md. Set while the sandbox holds a `github` binding, whose token
   // expires after 1 hour. The worker binds a new token on each such sandbox, with the egress list
   // it applied last, because an E2B update replaces the whole network configuration.
-  bindingTenantId  String?  @map("binding_tenant_id")
-  bindingProductId String?  @map("binding_product_id")
-  bindingHosts     String[] @default([]) @map("binding_hosts")
-  bindingRepositories String[] @default([]) @map("binding_repositories")
-  bindingBoundAt   DateTime? @map("binding_bound_at")
+  bindingTenantId     String?   @map("binding_tenant_id")
+  bindingProductId    String?   @map("binding_product_id")
+  bindingHosts        String[]  @default([]) @map("binding_hosts")
+  bindingRepositories String[]  @default([]) @map("binding_repositories")
+  bindingBoundAt      DateTime? @map("binding_bound_at")
 
   @@unique([adapter, sandboxId])
   @@index([adapter, createdAt])
@@ -607,85 +633,85 @@ model BuildAheadFailure {
 }
 
 model Product {
-  id             String   @id @default(uuid())
-  tenantId       String
-  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  slug           String
-  name           String
+  id                           String                       @id @default(uuid())
+  tenantId                     String
+  tenant                       Tenant                       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  slug                         String
+  name                         String
   // "pending" until an operator supplies secrets and activates it. A pending Product runs at L0.
-  status         String   @default("pending")
-  linearTeamKey  String
-  linearTeamId   String
-  defaultAutonomy String  @default("L0")
+  status                       String                       @default("pending")
+  linearTeamKey                String
+  linearTeamId                 String
+  defaultAutonomy              String                       @default("L0")
   // docs/specs/autonomy-levels.md. The highest level each Linear label allows, by label. Null
   // means the SDD section 28 list, each label capped at L2.
-  riskCaps       Json?
+  riskCaps                     Json?
   // R-4. The egress ceiling of every sandbox of this Product. A repository can only narrow it.
-  allowedDomains String[] @default([])
-  maxRunMinutes  Int      @default(90)
+  allowedDomains               String[]                     @default([])
+  maxRunMinutes                Int                          @default(90)
   // docs/specs/claude-code-runner.md. The runner of every role that names none: opencode or claude.
-  defaultRunner  String   @default("opencode") @map("default_runner")
+  defaultRunner                String                       @default("opencode") @map("default_runner")
   // The default model, in the form of the default runner. Null means the CLI default model.
-  model          String?
+  model                        String?
   // The runner and the model of each role. Null means the default runner and the default model.
-  runnerImplementer String? @map("runner_implementer")
-  runnerRefiner     String? @map("runner_refiner")
-  runnerValidator   String? @map("runner_validator")
-  runnerReviewer    String? @map("runner_reviewer")
-  runnerSetup       String? @map("runner_setup")
-  modelImplementer  String? @map("model_implementer")
-  modelRefiner      String? @map("model_refiner")
-  modelValidator    String? @map("model_validator")
-  modelReviewer     String? @map("model_reviewer")
-  modelSetup        String? @map("model_setup")
+  runnerImplementer            String?                      @map("runner_implementer")
+  runnerRefiner                String?                      @map("runner_refiner")
+  runnerValidator              String?                      @map("runner_validator")
+  runnerReviewer               String?                      @map("runner_reviewer")
+  runnerSetup                  String?                      @map("runner_setup")
+  modelImplementer             String?                      @map("model_implementer")
+  modelRefiner                 String?                      @map("model_refiner")
+  modelValidator               String?                      @map("model_validator")
+  modelReviewer                String?                      @map("model_reviewer")
+  modelSetup                   String?                      @map("model_setup")
   // The reasoning effort of each role. Null means the CLI default for that role.
-  effortImplementer String?
-  effortRefiner     String?
-  effortValidator   String?
-  effortReviewer    String?
+  effortImplementer            String?
+  effortRefiner                String?
+  effortValidator              String?
+  effortReviewer               String?
   // docs/specs/repository-setup-and-services.md. Null means the implementer's effort.
-  effortSetup       String?  @map("effort_setup")
+  effortSetup                  String?                      @map("effort_setup")
   // The silence limit: an agent session that writes no output for this many minutes is hung.
-  silenceMinutes Int      @default(10)
+  silenceMinutes               Int                          @default(10)
   // Issue #39, DI-21.66. The most criteria a refiner proposal may hold, 1 to 50.
-  refinerCriteriaLimit Int @default(20) @map("refiner_criteria_limit")
+  refinerCriteriaLimit         Int                          @default(20) @map("refiner_criteria_limit")
   // Issue #43, DI-21.67. The repair budget of a run, 0 to 10. A repository's
   // `repair.maxAttempts` in .factoree/config.yaml replaces it.
-  repairMaxAttempts Int @default(2) @map("repair_max_attempts")
+  repairMaxAttempts            Int                          @default(2) @map("repair_max_attempts")
   // SDD section 51. The hours a finished sandbox stays for inspection before the reaper deletes it.
-  sandboxRetentionHours Int @default(24)
+  sandboxRetentionHours        Int                          @default(24)
   // docs/specs/sandbox-provider-spillover.md. The sandbox provider ids the runs of this product may
   // use. Empty allows every provider.
-  sandboxProviderIds String[] @default([]) @map("sandbox_provider_ids")
+  sandboxProviderIds           String[]                     @default([]) @map("sandbox_provider_ids")
   // docs/specs/setup-app-change-issues.md. one_per_change or one_for_all: how many app-change
   // issues a merged setup creates.
-  appChangeIssues String @default("one_per_change") @map("app_change_issues")
+  appChangeIssues              String                       @default("one_per_change") @map("app_change_issues")
   // The most Runs of this Product that run at one time. The gate before PREPARING enforces it (DI-15.13).
-  maxConcurrentRuns Int   @default(2)
+  maxConcurrentRuns            Int                          @default(2)
   // SDD section 16. A Product can define one organization-wide skills repository. The value is
   // an owner and repository slug, the same shape a Repository's `fullName` uses.
   organizationSkillsRepository String?
   // docs/specs/skill-registry.md. The skill registry of this Product: its kind, its base URL and
   // its set. A null set means every released skill. The service key is the Product secret
   // SKILL_REGISTRY_KEY, never a column.
-  skillRegistryKind String? @map("skill_registry_kind")
-  skillRegistryUrl  String? @map("skill_registry_url")
-  skillRegistrySet  String? @map("skill_registry_set")
+  skillRegistryKind            String?                      @map("skill_registry_kind")
+  skillRegistryUrl             String?                      @map("skill_registry_url")
+  skillRegistrySet             String?                      @map("skill_registry_set")
   // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer: the GitHub App slug and the check
   // name of an external review app. Both null means the product names none. Only the product sets
   // it, never .factoree/config.yaml (R-4).
-  prReviewerAppSlug   String? @map("pr_reviewer_app_slug")
-  prReviewerCheckName String? @map("pr_reviewer_check_name")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  repositories   Repository[]
-  setups         RepositorySetup[]
-  appChangeIssueRows SetupAppChangeIssue[]
-  secrets        ProductSecret[]
-  hostCredentials HostCredential[]
-  contextSources ContextSourceConfiguration[]
-  runs           Run[]
-  policyChanges  ProductPolicyChange[]
+  prReviewerAppSlug            String?                      @map("pr_reviewer_app_slug")
+  prReviewerCheckName          String?                      @map("pr_reviewer_check_name")
+  createdAt                    DateTime                     @default(now())
+  updatedAt                    DateTime                     @updatedAt
+  repositories                 Repository[]
+  setups                       RepositorySetup[]
+  appChangeIssueRows           SetupAppChangeIssue[]
+  secrets                      ProductSecret[]
+  hostCredentials              HostCredential[]
+  contextSources               ContextSourceConfiguration[]
+  runs                         Run[]
+  policyChanges                ProductPolicyChange[]
 
   @@unique([tenantId, slug])
   // One Linear team maps to at most one Product. This constraint makes the routing rule of
@@ -695,19 +721,19 @@ model Product {
 }
 
 model Repository {
-  id                   String   @id @default(uuid())
+  id                   String        @id @default(uuid())
   tenantId             String
   productId            String
-  product              Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product              Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
   fullName             String
-  defaultBranch        String   @default("main")
+  defaultBranch        String        @default("main")
   // The commit of `.factoree/config.yaml` that discovery last read.
   configSha            String
   // Names only. A value never reaches this column.
-  linearProjects       String[] @default([])
-  requestedSecretNames String[] @default([])
-  discoveredAt         DateTime @default(now())
-  lastSeenAt           DateTime @default(now())
+  linearProjects       String[]      @default([])
+  requestedSecretNames String[]      @default([])
+  discoveredAt         DateTime      @default(now())
+  lastSeenAt           DateTime      @default(now())
   // Set when the configuration file disappears. The row stays, so the Run history survives.
   absentSince          DateTime?
   // The installation that granted access to this repository. Discovery knows it at sync time.
@@ -715,8 +741,8 @@ model Repository {
   githubInstallationId String
   // docs/specs/repository-setup-and-services.md. Set when a build-ahead fails, so the product page
   // offers "Run setup again". A build-ahead that succeeds clears it.
-  needsSetupReason     String?   @map("needs_setup_reason")
-  needsSetupAt         DateTime? @map("needs_setup_at")
+  needsSetupReason     String?       @map("needs_setup_reason")
+  needsSetupAt         DateTime?     @map("needs_setup_at")
   runTargets           RunTarget[]
   pullRequests         PullRequest[]
 
@@ -755,55 +781,55 @@ model HostCredential {
 }
 
 model ProductSecret {
-  id          String   @id @default(uuid())
-  tenantId    String
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  name        String
-  valueCipher String
-  injectIntoImplementer Boolean @default(false)
-  kind        String   @default("test")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                    String   @id @default(uuid())
+  tenantId              String
+  productId             String
+  product               Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name                  String
+  valueCipher           String
+  injectIntoImplementer Boolean  @default(false)
+  kind                  String   @default("test")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   @@unique([productId, name])
   @@index([tenantId])
 }
 
 model RunTarget {
-  id              String     @id @default(uuid())
-  tenantId        String
-  runId           String
-  run             Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
-  repositoryId    String
-  repository      Repository @relation(fields: [repositoryId], references: [id])
-  selectionReason String
-  baseSha         String?
-  patchSha256     String?
-  commitSha       String?
-  pullRequestUrl  String?
+  id                String          @id @default(uuid())
+  tenantId          String
+  runId             String
+  run               Run             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  repositoryId      String
+  repository        Repository      @relation(fields: [repositoryId], references: [id])
+  selectionReason   String
+  baseSha           String?
+  patchSha256       String?
+  commitSha         String?
+  pullRequestUrl    String?
   // docs/specs/proof-pack-and-visual-evidence.md. The pull request preview that CI published for
   // the commit, from a GitHub deployment status. A link for humans, never evidence.
-  previewUrl      String?
+  previewUrl        String?
   // docs/specs/egress-honesty-and-issue-status.md, DI-21.51. The pull request number, and open,
   // merged or closed from the GitHub pull_request event.
-  pullRequestNumber Int?     @map("pull_request_number")
-  pullRequestState  String?  @map("pull_request_state")
+  pullRequestNumber Int?            @map("pull_request_number")
+  pullRequestState  String?         @map("pull_request_state")
   // docs/specs/change-sets.md, DI-21.127. The SHA-256 of .factoree/config.yaml of this target at its
   // base commit. Null until context resolution pins that commit, or when the target holds no file.
-  configSha         String?  @map("config_sha")
+  configSha         String?         @map("config_sha")
   // docs/specs/run-recovery.md. The base64 of the last patch a check sprite captured of this target,
   // so a follow-up run can read what the failed run tried.
-  lastPatchBase64   String?  @map("last_patch_base64")
+  lastPatchBase64   String?         @map("last_patch_base64")
   // docs/specs/draft-of-failed-run.md, DI-21.76. The attempt whose check sprite received the last
   // patch, so a draft names the review of that same patch.
-  lastPatchAttempt  Int?     @map("last_patch_attempt")
+  lastPatchAttempt  Int?            @map("last_patch_attempt")
   // docs/specs/change-sets.md. The place of this target in the merge order, from 1, or null when
   // no edge orders it.
-  mergeOrder        Int?     @map("merge_order")
-  createdAt       DateTime   @default(now())
-  providerOf      RunTargetEdge[] @relation("provider")
-  consumerOf      RunTargetEdge[] @relation("consumer")
+  mergeOrder        Int?            @map("merge_order")
+  createdAt         DateTime        @default(now())
+  providerOf        RunTargetEdge[] @relation("provider")
+  consumerOf        RunTargetEdge[] @relation("consumer")
 
   @@unique([runId, repositoryId])
   @@index([runId])
@@ -1003,35 +1029,36 @@ model Apikey {
 // docs/specs/repository-setup-and-services.md. One setup run: the setup agent writes the
 // configuration of one repository, Factoree proves each part, and opens a pull request.
 model RepositorySetup {
-  id                   String    @id @default(uuid())
-  tenantId             String    @map("tenant_id")
-  productId            String    @map("product_id")
-  product              Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  repositoryFullName   String    @map("repository_full_name")
-  githubInstallationId String    @map("github_installation_id")
-  workflowId           String    @map("workflow_id")
+  id                   String                @id @default(uuid())
+  tenantId             String                @map("tenant_id")
+  productId            String                @map("product_id")
+  product              Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  repositoryFullName   String                @map("repository_full_name")
+  githubInstallationId String                @map("github_installation_id")
+  workflowId           String                @map("workflow_id")
   // queued, running, proposed, partial, failed, merged, unchanged.
   status               String
-  pullRequestUrl       String?   @map("pull_request_url")
+  pullRequestUrl       String?               @map("pull_request_url")
   // The setup report: each part proven or failed, and the hosts the sandbox reached.
   report               Json?
-  failureMessage       String?   @map("failure_message")
+  failureMessage       String?               @map("failure_message")
   // The usage of the setup agent session: runner, model, effort, outcome, tokens, cost, time.
-  sessionUsage         Json?     @map("session_usage")
+  sessionUsage         Json?                 @map("session_usage")
   // docs/specs/setup-app-change-issues.md. The setup Factoree started when every app-change issue
   // of this setup ended. Null until then, so a round starts one follow-up setup.
-  followUpSetupId      String?   @map("follow_up_setup_id")
+  followUpSetupId      String?               @map("follow_up_setup_id")
   // docs/specs/setup-speed-and-history.md. The setup input key, the setup a skipped setup copied,
   // the Temporal run id (every setup of a repository shares one workflow id), the proof time, and
   // whether the session sandbox started from the warm snapshot.
-  inputKey             String?   @map("input_key")
-  skippedFromSetupId   String?   @map("skipped_from_setup_id")
-  temporalRunId        String?   @map("temporal_run_id")
-  proofMs              Int?      @map("proof_ms")
+  inputKey             String?               @map("input_key")
+  skippedFromSetupId   String?               @map("skipped_from_setup_id")
+  temporalRunId        String?               @map("temporal_run_id")
+  proofMs              Int?                  @map("proof_ms")
   warm                 Boolean?
-  createdAt            DateTime  @default(now()) @map("created_at")
-  endedAt              DateTime? @map("ended_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  endedAt              DateTime?             @map("ended_at")
   appChangeIssues      SetupAppChangeIssue[]
+  events               RunEvent[]
 
   @@index([productId, repositoryFullName, createdAt])
   @@map("repository_setup")
@@ -1076,60 +1103,60 @@ model ModelCatalog {
 // docs/specs/pr-review-merge-and-deploy.md, DI-21.99. One pull request that a run published. The PR
 // workflow keyed `pr:<tenant>:<repository>#<number>` owns it after the run ends READY_FOR_HUMAN.
 model PullRequest {
-  id                String     @id @default(uuid())
-  tenantId          String     @map("tenant_id")
-  repositoryId      String     @map("repository_id")
-  repository        Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  number            Int
-  url               String
-  headBranch        String     @map("head_branch")
+  id                   String              @id @default(uuid())
+  tenantId             String              @map("tenant_id")
+  repositoryId         String              @map("repository_id")
+  repository           Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  number               Int
+  url                  String
+  headBranch           String              @map("head_branch")
   // The newest head commit GitHub reported: the published commit, then each synchronize.
-  headSha           String     @map("head_sha")
-  baseBranch        String     @map("base_branch")
+  headSha              String              @map("head_sha")
+  baseBranch           String              @map("base_branch")
   // The run that published the pull request. Issue completion on a merge reads its issue state,
   // because a later run on the same branch moved no issue.
-  originRunId       String     @map("origin_run_id")
-  originRun         Run        @relation(fields: [originRunId], references: [id], onDelete: Cascade)
+  originRunId          String              @map("origin_run_id")
+  originRun            Run                 @relation(fields: [originRunId], references: [id], onDelete: Cascade)
   // open, merged or closed.
-  state             String     @default("open")
-  mergeCommitSha    String?    @map("merge_commit_sha")
-  closedAt          DateTime?  @map("closed_at")
+  state                String              @default("open")
+  mergeCommitSha       String?             @map("merge_commit_sha")
+  closedAt             DateTime?           @map("closed_at")
   // The PR follow-up runs that a failed PR reviewer check started. The spec caps them at 3.
-  reviewerFollowUps Int        @default(0) @map("reviewer_follow_ups")
+  reviewerFollowUps    Int                 @default(0) @map("reviewer_follow_ups")
   // The contract revision of the head commit. It starts at 1 and each PR follow-up run adds one.
   // ValidationContract.version is the schema version, not this counter.
-  contractRevision  Int        @default(1) @map("contract_revision")
+  contractRevision     Int                 @default(1) @map("contract_revision")
   // off, enabled, unavailable or stopped. Factoree turns on GitHub auto-merge only at L4. enabled
   // means Factoree turned it on. stopped means a human turned off what Factoree turned on (DI-21.105).
-  autoMerge         String     @default("off") @map("auto_merge")
-  autoMergeReason   String?    @map("auto_merge_reason")
+  autoMerge            String              @default("off") @map("auto_merge")
+  autoMergeReason      String?             @map("auto_merge_reason")
   // docs/specs/pr-review-merge-and-deploy.md, DI-21.104. The head commit whose every Factoree check
   // passed: the commit a publication pushed. Only this head can auto-merge.
-  verifiedHeadSha   String?    @map("verified_head_sha")
+  verifiedHeadSha      String?             @map("verified_head_sha")
   // The autonomy level of the run that published the verified head. Null on a row from before it.
-  autonomyLevel     String?    @map("autonomy_level")
+  autonomyLevel        String?             @map("autonomy_level")
   // DI-21.106. The base branch whose L4 gate Factoree read. Null until it reads one.
-  autoMergeGateBase String?    @map("auto_merge_gate_base")
+  autoMergeGateBase    String?             @map("auto_merge_gate_base")
   // D2. The base SHA of the verified head, and the run that published it. A PR follow-up run starts
   // its work sprite at this base with the pull request change applied.
-  verifiedBaseSha   String?    @map("verified_base_sha")
-  verifiedRunId     String?    @map("verified_run_id")
+  verifiedBaseSha      String?             @map("verified_base_sha")
+  verifiedRunId        String?             @map("verified_run_id")
   // DI-21.108. The failed PR reviewer check that last started a triage or a limit notice.
-  reviewerHandledKey String?   @map("reviewer_handled_key")
+  reviewerHandledKey   String?             @map("reviewer_handled_key")
   // DI-21.114. The PR follow-up runs that reviewerFollowUps counted, by run id, so a retry of the
   // count after a successful write counts nothing.
-  reviewerFollowUpKeys String[] @default([]) @map("reviewer_follow_up_keys")
+  reviewerFollowUpKeys String[]            @default([]) @map("reviewer_follow_up_keys")
   // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
   // starts no other one on that head until the base branch moves.
-  bringCurrentHeadSha String?  @map("bring_current_head_sha")
+  bringCurrentHeadSha  String?             @map("bring_current_head_sha")
   // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
   // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
-  changeSetStatusKey String?   @map("change_set_status_key")
-  workflowId        String     @map("workflow_id")
-  createdAt         DateTime   @default(now()) @map("created_at")
-  updatedAt         DateTime   @updatedAt @map("updated_at")
-  events            PullRequestEvent[]
-  deploys           PullRequestDeploy[]
+  changeSetStatusKey   String?             @map("change_set_status_key")
+  workflowId           String              @map("workflow_id")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  events               PullRequestEvent[]
+  deploys              PullRequestDeploy[]
 
   @@unique([tenantId, repositoryId, number])
   @@index([tenantId, headSha])
