@@ -12,6 +12,7 @@ import {
   type WaitingRunStore,
 } from "~/domain/runs/blocker-wait.js";
 import type { StopRequest } from "~/domain/runs/run-stop.js";
+import { DrainMode, endsDrain, HELD_LINE, type DrainState } from "~/domain/runs/drain-mode.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import { createLinearBlockerReader } from "~/adapters/linear/linear-blockers.js";
 import { createLogger } from "~/telemetry/logger.js";
@@ -30,7 +31,10 @@ const read = (issueId: string, identifier: string, state: string): ReadBlocker =
 
 /** An in-memory store with the same conditional writes as the Prisma store. */
 const memoryStore = () => {
-  const runs = new Map<string, WaitingRun & { status: string; stop?: StopRequest }>();
+  const runs = new Map<string, Omit<WaitingRun, "status"> & { status: string; stop?: StopRequest }>();
+  const waiting = (status: string) => status === "WAITING_FOR_BLOCKERS" || status === "WAITING_FOR_UPDATE";
+  const asWaiting = (run: Omit<WaitingRun, "status"> & { status: string }): WaitingRun =>
+    structuredClone({ ...run, status: run.status === "WAITING_FOR_UPDATE" ? "WAITING_FOR_UPDATE" : "WAITING_FOR_BLOCKERS" });
   const pullRequests = new Map<string, string[]>();
   /** When set, the next list answers this snapshot, as a sweep that read before another wrote. */
   const snapshot: { runs: WaitingRun[] | null } = { runs: null };
@@ -48,7 +52,7 @@ const memoryStore = () => {
         temporalWorkflowId: input.temporalWorkflowId,
         blockers: input.blockers,
         startInput: input.startInput,
-        status: "WAITING_FOR_BLOCKERS",
+        status: input.status ?? "WAITING_FOR_BLOCKERS",
       });
       return Promise.resolve({ runId: id, created: true });
     },
@@ -59,12 +63,19 @@ const memoryStore = () => {
         stale ??
           [...runs.values()]
             .filter((run) => run.status === "WAITING_FOR_BLOCKERS" && (tenantId === undefined || run.tenantId === tenantId))
-            .map((run) => structuredClone(run)),
+            .map(asWaiting),
       );
+    },
+    listHeld: () => Promise.resolve([...runs.values()].filter((run) => run.status === "WAITING_FOR_UPDATE").map(asWaiting)),
+    holdForUpdate(runId) {
+      const run = runs.get(runId);
+      if (run === undefined || run.status !== "WAITING_FOR_BLOCKERS") return Promise.resolve(false);
+      run.status = "WAITING_FOR_UPDATE";
+      return Promise.resolve(true);
     },
     findWaiting: (tenantId, runId) => {
       const run = runs.get(runId);
-      return Promise.resolve(run !== undefined && run.tenantId === tenantId && run.status === "WAITING_FOR_BLOCKERS" ? run : null);
+      return Promise.resolve(run !== undefined && run.tenantId === tenantId && waiting(run.status) ? asWaiting(run) : null);
     },
     replaceBlockers(runId, previous, next) {
       const run = runs.get(runId);
@@ -84,10 +95,11 @@ const memoryStore = () => {
     },
     cancel(tenantId, runId, request) {
       const run = runs.get(runId);
-      if (run === undefined || run.tenantId !== tenantId || run.status !== "WAITING_FOR_BLOCKERS") return Promise.resolve(null);
+      if (run === undefined || run.tenantId !== tenantId || !waiting(run.status)) return Promise.resolve(null);
+      const before = asWaiting(run);
       run.status = "CANCELLED";
       run.stop = request;
-      return Promise.resolve(run);
+      return Promise.resolve(before);
     },
     pullRequestsOf: (_tenantId, issueIds) =>
       Promise.resolve(new Map([...pullRequests].filter(([issueId]) => issueIds.includes(issueId)))),
@@ -95,8 +107,9 @@ const memoryStore = () => {
   return { store, runs, pullRequests, snapshot };
 };
 
-const build = () => {
+const build = (release = "0.16.0") => {
   const { store, runs, pullRequests, snapshot } = memoryStore();
+  let drainState: DrainState | null = null;
   /** The blockers Linear answers for each work item. */
   const linear = new Map<string, ReadBlocker[]>();
   let readFails = false;
@@ -104,6 +117,30 @@ const build = () => {
   const started = new Set<string>();
   const starts: string[] = [];
   const posts: Array<{ sessionId: string; kind: string; body: string }> = [];
+  const start = (workflowId: string) => {
+    starts.push(workflowId);
+    if (started.has(workflowId)) return Promise.resolve("already_started" as const);
+    started.add(workflowId);
+    return Promise.resolve("started" as const);
+  };
+  const post = (_tenantId: string, sessionId: string, kind: string, body: string) => {
+    posts.push({ sessionId, kind, body });
+    return Promise.resolve();
+  };
+  const drain = new DrainMode({
+    settings: {
+      read: () => Promise.resolve(drainState),
+      write: (state) => {
+        drainState = state;
+        return Promise.resolve();
+      },
+    },
+    store,
+    start,
+    post,
+    release,
+    logger,
+  });
   const wait = new BlockerWait({
     store,
     reader: () =>
@@ -114,17 +151,10 @@ const build = () => {
           return Promise.resolve(new Map(issueIds.flatMap((id) => (linear.has(id) ? [[id, linear.get(id) ?? []] as const] : []))));
         },
       }),
-    start: (workflowId) => {
-      starts.push(workflowId);
-      if (started.has(workflowId)) return Promise.resolve("already_started" as const);
-      started.add(workflowId);
-      return Promise.resolve("started" as const);
-    },
-    post: (_tenantId, sessionId, kind, body) => {
-      posts.push({ sessionId, kind, body });
-      return Promise.resolve();
-    },
+    start,
+    post,
     logger,
+    drain,
   });
   const hold = (issueId = "issue-2", workflowId = "workflow-2") =>
     wait.hold({
@@ -140,6 +170,7 @@ const build = () => {
     });
   return {
     wait,
+    drain,
     hold,
     runs,
     pullRequests,
@@ -298,7 +329,7 @@ describe("the sweep", () => {
     const run = harness.runs.get("run-1");
     if (run === undefined) throw new Error("no run");
     // This sweep read the row before another sweep wrote FAC-5 to it.
-    harness.snapshot.runs = [structuredClone(run)];
+    harness.snapshot.runs = [structuredClone({ ...run, status: "WAITING_FOR_BLOCKERS" as const })];
     const written: Blocker[] = [{ ...read("issue-5", "FAC-5", "started"), pullRequestUrls: [] }];
     run.blockers = written;
     harness.linear.set("issue-2", [read("issue-5", "FAC-5", "started")]);
@@ -403,5 +434,72 @@ describe("the Linear blocker reader", () => {
         ["issue-3", []],
       ]),
     );
+  });
+});
+
+describe("drain mode", () => {
+  const delegate = (drain: DrainMode, workflowId = "workflow-9") =>
+    drain.hold({
+      tenantId: "tenant-1",
+      productId: "product-1",
+      linearIssueId: "issue-9",
+      linearAgentSessionId: "session-issue-9",
+      temporalWorkflowId: workflowId,
+      autonomyLevel: "L2",
+      workItemTitle: "Ninth",
+      workItemUrl: null,
+      startInput,
+    });
+
+  it("holds a new run while it is on, and starts it once it ends", async () => {
+    const { drain, runs, starts, posts } = build();
+    expect(await delegate(drain)).toBe(false);
+    await drain.turnOn("admin-1");
+    expect(await delegate(drain, "workflow-10")).toBe(true);
+    expect([...runs.values()].map((run) => run.status)).toEqual(["WAITING_FOR_UPDATE"]);
+    expect(posts).toEqual([{ sessionId: "session-issue-9", kind: "elicitation", body: HELD_LINE }]);
+    expect(await drain.release()).toBe(0);
+    await drain.turnOff();
+    expect(await drain.release()).toBe(1);
+    expect(starts).toEqual(["workflow-10"]);
+  });
+
+  it("ends only for a worker of a newer release, so a restart keeps it on", async () => {
+    const { drain } = build("0.16.0");
+    await drain.turnOn(null);
+    expect(await drain.endIfNewer()).toBe(false);
+    expect(await drain.isOn()).toBe(true);
+    const state = await drain.state();
+    expect(endsDrain(state, "0.16.0")).toBe(false);
+    expect(endsDrain(state, "0.16.1")).toBe(true);
+    expect(endsDrain(null, "0.17.0")).toBe(false);
+  });
+
+  it("moves a blocked run whose blockers closed to the update wait, and starts it after the update", async () => {
+    const { wait, drain, hold, linear, runs, starts, posts } = build();
+    linear.set("issue-2", [read("issue-1", "FAC-1", "started")]);
+    await hold();
+    await drain.turnOn(null);
+    linear.set("issue-2", [read("issue-1", "FAC-1", "completed")]);
+    await wait.sweep();
+    expect(starts).toEqual([]);
+    expect([...runs.values()][0]?.status).toBe("WAITING_FOR_UPDATE");
+    expect(posts.at(-1)?.body).toBe(HELD_LINE);
+    await drain.turnOff();
+    await drain.release();
+    expect(starts).toEqual(["workflow-2"]);
+  });
+
+  it("answers a reply with the held line, and a stop cancels the held run", async () => {
+    const { wait, drain, runs, posts, starts } = build();
+    await drain.turnOn(null);
+    await delegate(drain);
+    const run = [...runs.values()][0];
+    expect(await wait.answerReply("tenant-1", run?.id ?? "")).toBe(true);
+    expect(posts.at(-1)).toEqual({ sessionId: "session-issue-9", kind: "response", body: HELD_LINE });
+    expect(await wait.stop("tenant-1", run?.id ?? "", { source: "linear" })).toBe(true);
+    await drain.turnOff();
+    expect(await drain.release()).toBe(0);
+    expect(starts).toEqual([]);
   });
 });

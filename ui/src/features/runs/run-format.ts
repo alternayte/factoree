@@ -56,10 +56,16 @@ export const STATUS_FILTERS = [
   "DRAFT_PUBLISHED",
   "CANCELLED",
   "WAITING_FOR_BLOCKERS",
+  "WAITING_FOR_UPDATE",
   "QUEUED",
   "IMPLEMENTING",
   "REPAIRING",
 ] as const;
+
+/** A run with a row and no workflow yet: it waits for blockers, or for the update of drain mode. */
+export function waitsWithoutWorkflow(status: string): boolean {
+  return status === "WAITING_FOR_BLOCKERS" || status === "WAITING_FOR_UPDATE";
+}
 
 /** docs/specs/blocked-by-wait.md. A blocker holds the run while its state is not completed or canceled. */
 export function isOpenBlocker(blocker: { state: string }): boolean {

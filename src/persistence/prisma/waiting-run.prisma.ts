@@ -6,9 +6,12 @@ import { failureCategoryOf } from "~/domain/runs/failure-category.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 
 const WAITING = "WAITING_FOR_BLOCKERS";
+const HELD = "WAITING_FOR_UPDATE";
+const EITHER = { in: [WAITING, HELD] };
 
 const waitingSelect = {
   id: true,
+  status: true,
   tenantId: true,
   productId: true,
   linearIssueId: true,
@@ -42,6 +45,7 @@ const toWaiting = (row: WaitingRow): WaitingRun | null =>
   isRecord(row.waitingStartInput)
     ? {
         id: row.id,
+        status: row.status === HELD ? HELD : WAITING,
         tenantId: row.tenantId,
         productId: row.productId,
         linearIssueId: row.linearIssueId,
@@ -70,7 +74,7 @@ export class PrismaWaitingRunStore implements WaitingRunStore {
           autonomyLevel: input.autonomyLevel,
           workItemTitle: input.workItemTitle,
           workItemUrl: input.workItemUrl,
-          status: WAITING,
+          status: input.status ?? WAITING,
           blockers: input.blockers === null ? Prisma.DbNull : (input.blockers as unknown as Prisma.InputJsonValue),
           waitingStartInput: input.startInput as unknown as Prisma.InputJsonValue,
         },
@@ -98,8 +102,18 @@ export class PrismaWaitingRunStore implements WaitingRunStore {
     return rows.flatMap((row) => toWaiting(row) ?? []);
   }
 
+  async listHeld(): Promise<WaitingRun[]> {
+    const rows = await this.prisma.run.findMany({ where: { status: HELD }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: waitingSelect });
+    return rows.flatMap((row) => toWaiting(row) ?? []);
+  }
+
+  async holdForUpdate(runId: string): Promise<boolean> {
+    const { count } = await this.prisma.run.updateMany({ where: { id: runId, status: WAITING }, data: { status: HELD } });
+    return count === 1;
+  }
+
   async findWaiting(tenantId: string, runId: string): Promise<WaitingRun | null> {
-    const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId, status: WAITING }, select: waitingSelect });
+    const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId, status: EITHER }, select: waitingSelect });
     return row === null ? null : toWaiting(row);
   }
 
@@ -120,11 +134,11 @@ export class PrismaWaitingRunStore implements WaitingRunStore {
   }
 
   async cancel(tenantId: string, runId: string, request: StopRequest, at: Date): Promise<WaitingRun | null> {
-    const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId, status: WAITING }, select: waitingSelect });
+    const row = await this.prisma.run.findFirst({ where: { tenantId, id: runId, status: EITHER }, select: waitingSelect });
     if (row === null) return null;
     // DI-21.90. The status condition makes the cancel and the adoption by the workflow exclude each other.
     const { count } = await this.prisma.run.updateMany({
-      where: { tenantId, id: runId, status: WAITING },
+      where: { tenantId, id: runId, status: EITHER },
       data: {
         status: "CANCELLED",
         failureReason: "STOPPED_BY_HUMAN",

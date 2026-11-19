@@ -4,7 +4,8 @@ import { Activity, Boxes, Building2, KeyRound, LogOut, Settings2 } from "lucide-
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Brand } from "@/app/brand";
 import { Button } from "@/components/button";
-import { ErrorAlert, Skeleton } from "@/components/layout";
+import { Alert, ErrorAlert, Skeleton } from "@/components/layout";
+import { useDrainMode } from "@/features/settings/drain-section";
 import type { Me } from "@/lib/session";
 import { signOut } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -77,6 +78,8 @@ export function Frame({
 export const navList = "flex gap-0.5 sm:flex-col";
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
+  // docs/specs/drain-mode.md. While drain mode is on, every page says that new runs wait.
+  const drain = useDrainMode();
   return (
     <Frame
       navLabel="Main"
@@ -92,6 +95,14 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         </div>
       }
     >
+      {drain.data?.on ? (
+        <Alert tone="warning" className="mb-4" title="Drain mode is on">
+          New runs wait for the update: {String(drain.data.heldCount)} {drain.data.heldCount === 1 ? "run waits" : "runs wait"}.{" "}
+          <Link to="/settings/install" className="link">
+            Install settings
+          </Link>
+        </Alert>
+      ) : null}
       {children}
     </Frame>
   );

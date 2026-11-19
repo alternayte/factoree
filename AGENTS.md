@@ -107,5 +107,6 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - failed-run draft: the draft pull request Factoree publishes from the last patch of a failed run on human request, never marked ready by Factoree. Avoid: partial PR, WIP PR, unverified PR.
 - selector re-check: one validator round, after a browser entry fails only on its selector, that may change only that entry's selectors before Factoree runs it again. Avoid: selector repair, selector retry.
 - run event: one recorded fault or Factoree decision of a run or a setup run, with its stage, attempt, kind and typed detail. Avoid: run log, event log entry, audit event.
+- drain mode: the install-wide pause that holds each new agent run as WAITING_FOR_UPDATE while the open runs finish, before a release that open runs cannot replay. Avoid: maintenance mode, pause, freeze.
 - diagnosis: the end reason of a failed run or setup and the run event that caused it. Avoid: root cause, error summary, failure report.
 - host hint: a host name in a failed output tail that is not on the effective allow list, a guess and never evidence. Avoid: suspected host, guessed host.

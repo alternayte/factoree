@@ -10,6 +10,7 @@ import type { RepositoryRegistry } from "~/domain/products/repository-registry.j
 import type { WebhookLog } from "~/domain/runs/run-repository.js";
 import type { RunStopLog, StopRequest } from "~/domain/runs/run-stop.js";
 import type { BlockerWait } from "~/domain/runs/blocker-wait.js";
+import type { DrainMode } from "~/domain/runs/drain-mode.js";
 import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import type { OpenDeployFailure } from "~/domain/pull-requests/deploys.js";
 import {
@@ -72,6 +73,7 @@ export interface WorkflowStarter {
 export type DelegationOutcome =
   | { kind: "started"; agentSessionId: string; workflowId: string }
   | { kind: "waiting_for_blockers"; workflowId: string }
+  | { kind: "held_for_update"; workflowId: string }
   | { kind: "duplicate" }
   | { kind: "stopped"; workflowId: string }
   | { kind: "prompt_forwarded"; workflowId: string }
@@ -135,6 +137,8 @@ export interface DelegationDependencies {
   drafts?: RunDraftStore | undefined;
   /** docs/specs/blocked-by-wait.md. The hold of a blocked work item, its stop and its reply. */
   blockerWait?: Pick<BlockerWait, "hold" | "stop" | "answerReply"> | undefined;
+  /** docs/specs/drain-mode.md. While drain mode is on, a new run waits as a row for the update. */
+  drainMode?: Pick<DrainMode, "hold"> | undefined;
   /**
    * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.124. The failed deploys of a session. A
    * reply after one starts a follow-up run.
@@ -211,7 +215,7 @@ export class DelegationService {
       // fixed answer. A run that left the wait since the read takes the reply as before.
       if (
         latest !== null &&
-        latest.status === "WAITING_FOR_BLOCKERS" &&
+        (latest.status === "WAITING_FOR_BLOCKERS" || latest.status === "WAITING_FOR_UPDATE") &&
         this.dependencies.blockerWait !== undefined &&
         (await this.dependencies.blockerWait.answerReply(tenantId, latest.id))
       ) {
@@ -421,7 +425,22 @@ export class DelegationService {
       if (held) return { kind: "waiting_for_blockers", workflowId: runWorkflowId };
     }
 
-    await this.dependencies.starter.start({ workflowId: runWorkflowId, args: [startInput] });
+    // docs/specs/drain-mode.md. While drain mode is on, no new run starts: it waits as a row, and the
+    // sweep starts it with this input once drain mode ends. A follow-up run waits too.
+    const heldForUpdate =
+      this.dependencies.drainMode !== undefined &&
+      (await this.dependencies.drainMode.hold({
+        tenantId,
+        productId: product.id,
+        linearIssueId: startInput.linearIssueId,
+        linearAgentSessionId: event.agentSession.id,
+        temporalWorkflowId: runWorkflowId,
+        autonomyLevel: defaultAutonomy,
+        workItemTitle: workItem.title,
+        workItemUrl: workItem.url,
+        startInput,
+      }));
+    if (!heldForUpdate) await this.dependencies.starter.start({ workflowId: runWorkflowId, args: [startInput] });
     // DI-21.124. The failed deploy took its reply. A failed mark never undoes the start, and the
     // workflow id keeps a second start of the same deploy out.
     if (followUp?.deploy !== undefined && this.dependencies.deployFailures !== undefined) {
@@ -432,6 +451,7 @@ export class DelegationService {
       }
     }
 
+    if (heldForUpdate) return { kind: "held_for_update", workflowId: runWorkflowId };
     return { kind: "started", agentSessionId: event.agentSession.id, workflowId: runWorkflowId };
   }
 

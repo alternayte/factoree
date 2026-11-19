@@ -2,6 +2,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type { AgentRunWorkflowInput } from "~/workflows/agent-run.workflow.js";
 import { stopResponse, type StopRequest } from "./run-stop.js";
+import { HELD_LINE, type DrainMode } from "./drain-mode.js";
 
 /**
  * docs/specs/blocked-by-wait.md. One blocker of a work item, as the run row stores it in
@@ -122,9 +123,16 @@ export const replyLine = (blockers: readonly Blocker[] | null): string => {
 export const closedWithoutMergeLine = (blocker: Blocker, pullRequest: string): string =>
   `The pull request ${pullRequest} of ${blocker.identifier} closed without a merge. ${blocker.identifier} is still open, so this issue keeps waiting for it.`;
 
-/** One run in WAITING_FOR_BLOCKERS. */
+/**
+ * A run with a row and no workflow: it waits for its blockers, or, in drain mode, for the update
+ * (docs/specs/drain-mode.md).
+ */
+export type WaitingStatus = "WAITING_FOR_BLOCKERS" | "WAITING_FOR_UPDATE";
+
+/** One run in WAITING_FOR_BLOCKERS or WAITING_FOR_UPDATE. */
 export interface WaitingRun {
   id: string;
+  status: WaitingStatus;
   tenantId: string;
   productId: string;
   linearIssueId: string | null;
@@ -146,13 +154,23 @@ export interface CreateWaitingRunInput {
   workItemUrl: string | null;
   startInput: AgentRunWorkflowInput;
   blockers: Blocker[] | null;
+  /** Absent means WAITING_FOR_BLOCKERS. */
+  status?: WaitingStatus;
 }
 
 export interface WaitingRunStore {
-  /** Writes the WAITING_FOR_BLOCKERS row. `created` is false when the workflow id has a row. */
+  /** Writes the waiting row. `created` is false when the workflow id has a row. */
   createWaiting(input: CreateWaitingRunInput): Promise<{ runId: string; created: boolean }>;
-  /** Every waiting run, or every waiting run of one tenant. */
+  /** Every run that waits for blockers, or every such run of one tenant. */
   listWaiting(tenantId?: string): Promise<WaitingRun[]>;
+  /** docs/specs/drain-mode.md. Every run that waits for the update, oldest first. */
+  listHeld(): Promise<WaitingRun[]>;
+  /**
+   * docs/specs/drain-mode.md. Moves a run from WAITING_FOR_BLOCKERS to WAITING_FOR_UPDATE. It answers
+   * false when another sweep, a stop or the start took the run.
+   */
+  holdForUpdate(runId: string): Promise<boolean>;
+  /** A run in either waiting status. */
   findWaiting(tenantId: string, runId: string): Promise<WaitingRun | null>;
   /**
    * Writes the blockers of a run only while it waits and still holds `previous`, so of two sweeps
@@ -165,7 +183,7 @@ export interface WaitingRunStore {
    */
   clearBlockers(runId: string, previous: Blocker[]): Promise<boolean>;
   /**
-   * Ends a waiting run as CANCELLED with STOPPED_BY_HUMAN and records the stop. It answers null
+   * Ends a run in either waiting status as CANCELLED with STOPPED_BY_HUMAN and records the stop. It answers null
    * when the run no longer waits, because a workflow adopted it.
    */
   cancel(tenantId: string, runId: string, request: StopRequest, at: Date): Promise<WaitingRun | null>;
@@ -192,6 +210,8 @@ export interface BlockerWaitDependencies {
   post: (tenantId: string, sessionId: string, kind: "elicitation" | "response", body: string) => Promise<void>;
   logger: Logger;
   now?: () => Date;
+  /** docs/specs/drain-mode.md. A run that no blocker holds waits for the update while drain mode is on. */
+  drain?: Pick<DrainMode, "isOn" | "holdReleasedBlockedRun">;
 }
 
 /**
@@ -303,6 +323,10 @@ export class BlockerWait {
           }
         }
         if (open.length > 0) continue;
+        if (this.dependencies.drain !== undefined && (await this.dependencies.drain.isOn())) {
+          await this.dependencies.drain.holdReleasedBlockedRun(run);
+          continue;
+        }
         const outcome = await this.dependencies.start(run.temporalWorkflowId, run.startInput);
         if (outcome === "started") released += 1;
         this.dependencies.logger.info(outcome === "started" ? "run released; no blocker is open" : "run already started", log);
@@ -330,7 +354,7 @@ export class BlockerWait {
   async answerReply(tenantId: string, runId: string): Promise<boolean> {
     const run = await this.dependencies.store.findWaiting(tenantId, runId);
     if (run === null) return false;
-    await this.post(tenantId, run.linearAgentSessionId, "response", replyLine(run.blockers));
+    await this.post(tenantId, run.linearAgentSessionId, "response", run.status === "WAITING_FOR_UPDATE" ? HELD_LINE : replyLine(run.blockers));
     return true;
   }
 
