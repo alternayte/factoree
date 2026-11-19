@@ -4,7 +4,14 @@ import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js"
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import { AgentSessionUnavailableError } from "~/domain/runs/agent-runner.js";
 import { agentSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, recordHangRetry, type AgentHang } from "./agent-session-recording.js";
+import {
+  hangOf,
+  providerUnreachableOf,
+  recordAgentSession,
+  recordSessionRetries,
+  type AgentHang,
+  type AgentProviderUnreachable,
+} from "./agent-session-recording.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -110,6 +117,12 @@ export interface ImplementActivityInput {
    */
   attempt: number;
   /**
+   * docs/specs/provider-unreachable.md. 0 for the first session, 1 or 2 after a provider-unreachable
+   * retry. It keeps the session, result and evidence rows distinct without raising the attempt
+   * ordinal, which must count only real attempts. Absent in an older history.
+   */
+  unreachableRetry?: number;
+  /**
    * docs/specs/agent-session-usage-and-hangs.md. The session that hung in the previous attempt.
    * This attempt resumes it with "continue" instead of starting a fresh session. Null or absent
    * starts a fresh session.
@@ -136,6 +149,11 @@ export interface ImplementActivityOutput {
   /** docs/specs/agent-session-usage-and-hangs.md. Set when the session wrote no output for the silence limit. */
   hang: AgentHang;
   /**
+   * docs/specs/provider-unreachable.md. Set when the session could not reach the model provider.
+   * Absent in a history recorded before it existed.
+   */
+  providerUnreachable?: AgentProviderUnreachable;
+  /**
    * docs/specs/egress-honesty-and-issue-status.md, DI-21.48. The named hosts the effective allow
    * list does not hold. Any one ends the Run. Absent in a history recorded before it existed.
    */
@@ -152,8 +170,8 @@ export interface ImplementActivityOutput {
  * DI-21.47. The result file of one implementer attempt. It sits outside the primary worktree, so
  * it never reaches the patch, and each attempt has its own, so a repair never reads an old one.
  */
-export const implementerResultPath = (workspacePath: string, attempt: number): string =>
-  `${workspacePath}/implementer/result-${String(attempt)}.json`;
+export const implementerResultPath = (workspacePath: string, attempt: number, unreachableRetry = 0): string =>
+  `${workspacePath}/implementer/result-${String(attempt)}${unreachableRetry > 0 ? `-unreachable-${String(unreachableRetry)}` : ""}.json`;
 
 /** docs/specs/agent-session-usage-and-hangs.md. The whole prompt of the resume after a hang. */
 export const CONTINUE_PROMPT = "continue";
@@ -216,8 +234,9 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     }
 
     const actionPolicy = buildActionPolicy({ stagingRead: input.stagingRead });
+    const unreachableRetry = input.unreachableRetry ?? 0;
     const sandboxRef = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
-    const resultPath = input.egress === undefined || input.egress === null ? null : implementerResultPath(input.workspacePath, input.attempt);
+    const resultPath = input.egress === undefined || input.egress === null ? null : implementerResultPath(input.workspacePath, input.attempt, unreachableRetry);
     if (resultPath !== null) {
       await dependencies.sandbox.exec(sandboxRef, { file: "mkdir", args: ["-p", `${input.workspacePath}/implementer`], cwd: "/" });
     }
@@ -361,7 +380,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
     let result: AgentRunResult;
     try {
       const hung = input.continueSession ?? null;
-      if (hung !== null) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "implementer", attempt: input.attempt, stage: "IMPLEMENTING" });
+      await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "implementer", attempt: input.attempt, stage: "IMPLEMENTING", afterHang: hung !== null, unreachableRetry });
       result = hung === null ? await runFresh() : await resumeAfterHang(hung);
     } finally {
       running = false;
@@ -390,7 +409,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       // A Temporal retry presents the same Run, the same role, and the same attempt ordinal, so
       // it upserts the one row. A later attempt carries a different ordinal and writes its own
       // row.
-      idempotencyKey: `run:${input.runId}:implementer:${input.attempt}`,
+      idempotencyKey: `run:${input.runId}:implementer:${input.attempt}${unreachableRetry > 0 ? `:unreachable-${unreachableRetry}` : ""}`,
     });
 
     // SDD section 39. An implementation that did not finish leaves one immutable artifact, so the
@@ -425,7 +444,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         },
         // A Temporal retry of this activity writes nothing new, and a repair attempt carries its
         // own ordinal and writes its own row.
-        idempotencyKey: `run:${input.runId}:implement:${input.attempt}`,
+        idempotencyKey: `run:${input.runId}:implement:${input.attempt}${unreachableRetry > 0 ? `:unreachable-${unreachableRetry}` : ""}`,
       });
     }
 
@@ -438,7 +457,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
         role: "implementer",
         attempt: input.attempt,
         runner: runner.name,
-        idempotencyKey: agentSessionKey(input.runId, "implementer", input.attempt, false),
+        idempotencyKey: agentSessionKey(input.runId, "implementer", input.attempt, false, unreachableRetry),
         sandboxId: input.spriteId,
         egress: { sandbox: dependencies.sandbox, ref: sandboxRef, allowList: input.egress?.allowed ?? null },
       },
@@ -525,6 +544,7 @@ export const createAgentActivities = (dependencies: AgentActivityDependencies) =
       durationMs: result.durationMs,
       cancelledSession,
       hang: hangOf([result]),
+      providerUnreachable: providerUnreachableOf([result]),
       missingHosts,
       ...(missingRepositories.length === 0 ? {} : { missingRepositories }),
     };

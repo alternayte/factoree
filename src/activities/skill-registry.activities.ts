@@ -3,7 +3,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { RepositorySpec } from "~/domain/runs/checkout.js";
-import type { RunSkillStore } from "~/domain/runs/run-skill.js";
+import type { RunSkillResolution, RunSkillStore } from "~/domain/runs/run-skill.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import {
   MAX_PROPOSAL_FILE_BYTES,
@@ -12,10 +12,12 @@ import {
   SKILL_PROPOSALS_DIRECTORY,
   SKILL_REGISTRY_KEY_SECRET,
   SkillRegistryError,
+  type PinnedSkillResolution,
   type SkillProposal,
   type SkillProposalFile,
   type SkillRegistry,
   type SkillRegistrySettings,
+  type SkillResolution,
   type SkillRunOutcome,
 } from "~/domain/runs/skill-registry.js";
 
@@ -65,6 +67,64 @@ export const registryOf = async (
   }
   dependencies.redactor.addSecret(key);
   return dependencies.registries(settings, key);
+};
+
+/**
+ * docs/specs/provider-unreachable.md, section 4. The skill resolution a run already holds, and the
+ * registry skills it recorded with their pinned version and digest.
+ */
+export interface FrozenSkills {
+  resolution: RunSkillResolution;
+  pins: PinnedSkillResolution["skills"];
+}
+
+/** The frozen skills of a run, or null when it recorded no registry resolution yet. */
+export const frozenSkillsOf = async (
+  store: RunSkillStore | undefined,
+  tenantId: string,
+  runId: string,
+): Promise<FrozenSkills | null> => {
+  if (store === undefined) return null;
+  const resolution = await store.resolutionOf(tenantId, runId);
+  if (resolution === null) return null;
+  const rows = await store.list(tenantId, runId);
+  const pins = rows.flatMap((row) =>
+    row.scope === "registry" && row.version !== null && row.sha256 !== null
+      ? [{ name: row.name, version: row.version, sha256: row.sha256 }]
+      : [],
+  );
+  return { resolution, pins };
+};
+
+/**
+ * docs/specs/provider-unreachable.md, section 4. Delivers the frozen resolution of a run again, never a
+ * newer one. The registry serves the recorded pins and the worker recomputes the resolution id, or
+ * the current resolution stands in when its id is the recorded one. Any other answer is a
+ * configuration fault: the run must not take a newer resolution than the one it froze.
+ *
+ * The recorded rows hold no registry skill that a repository skill of the same name shadowed, so
+ * they cannot always rebuild the id. The unchanged current resolution covers that case.
+ */
+export const redeliverFrozenSkills = async (
+  registry: SkillRegistry | null,
+  frozen: FrozenSkills,
+): Promise<SkillResolution> => {
+  const { resolution } = frozen;
+  if (registry === null) {
+    throw new RunConfigurationError(
+      `the run froze the skill resolution ${resolution.id}, and the Product names no skill registry that can deliver it again`,
+    );
+  }
+  if (registry.resolvePinned !== undefined && frozen.pins.length > 0) {
+    const pinned = await registry.resolvePinned({ set: resolution.set, id: resolution.id, skills: frozen.pins });
+    if (pinned.id === resolution.id) return pinned;
+  }
+  const delivery = await registry.resolve();
+  if (delivery.kind === "archives" && delivery.resolution.id === resolution.id) return delivery.resolution;
+  throw new RunConfigurationError(
+    `the run froze the skill resolution ${resolution.id}, and the skill registry cannot deliver the same resolution again. ` +
+      "Factoree does not replace it with a newer one",
+  );
 };
 
 /** Every skill source of the run, in precedence order: registry, then organization. */

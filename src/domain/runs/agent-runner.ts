@@ -70,6 +70,11 @@ export interface AgentRunResult {
    * `silenceLimitMs`, and the runner stopped it.
    */
   outcome: AgentSessionOutcome;
+  /**
+   * docs/specs/provider-unreachable.md. Set when the session did not finish and its output names a
+   * provider connectivity failure, for example `EAI_AGAIN`. The summary keeps the API error text.
+   */
+  failureKind?: "PROVIDER_UNREACHABLE";
   /** The silence limit the runner applied to this session. A hang report names it. */
   silenceLimitMs: number;
   /**

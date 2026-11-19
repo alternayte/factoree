@@ -14,6 +14,11 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { buildRetainedLog } from "~/domain/runs/retained-log.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentSessionOutcome, AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import {
+  PROVIDER_UNREACHABLE_GRACE_MS,
+  ProviderOutageWatch,
+  isProviderUnreachableText,
+} from "./provider-unreachable.js";
 
 /** One command line a runner starts inside the sandbox. */
 export interface CliAgentCommand {
@@ -104,6 +109,11 @@ export interface CliAgentRunnerOptions {
    * A test lowers it.
    */
   silenceLimitMs?: number;
+  /**
+   * docs/specs/provider-unreachable.md. How long the output may show only provider connectivity
+   * errors before the runner ends the session. A test lowers it.
+   */
+  providerUnreachableGraceMs?: number;
 }
 
 /**
@@ -150,6 +160,7 @@ export abstract class CliAgentRunner implements AgentRunner {
   abstract readonly name: string;
   private readonly pollIntervalMs: number;
   private readonly silenceLimitMs: number;
+  private readonly providerUnreachableGraceMs: number;
   private readonly clock: () => number;
   // Every session of one Run, by process id. A Temporal activity retry can present an old
   // `AgentSessionRef`, so an entry must live until the Run itself ends. `releaseRun` disposes
@@ -162,6 +173,7 @@ export abstract class CliAgentRunner implements AgentRunner {
   constructor(protected readonly cliOptions: CliAgentRunnerOptions) {
     this.pollIntervalMs = cliOptions.pollIntervalMs ?? 1_000;
     this.silenceLimitMs = cliOptions.silenceLimitMs ?? DEFAULT_SILENCE_LIMIT_MS;
+    this.providerUnreachableGraceMs = cliOptions.providerUnreachableGraceMs ?? PROVIDER_UNREACHABLE_GRACE_MS;
     this.clock = cliOptions.clock ?? Date.now;
   }
 
@@ -378,6 +390,12 @@ export abstract class CliAgentRunner implements AgentRunner {
     // number of characters, and a length test would read a working agent as a silent one.
     let lastOutput: string | null = null;
     let lastOutputAt = startedAt;
+    // docs/specs/provider-unreachable.md. One watch per stream, each with its own run of
+    // connectivity events and its own deadline. New stdout model activity also clears the stderr
+    // watch, because it proves the CLI is working again after a stderr-only error. Any other
+    // event in one stream clears only that stream.
+    const stdoutWatch = new ProviderOutageWatch(this.providerUnreachableGraceMs);
+    const stderrWatch = new ProviderOutageWatch(this.providerUnreachableGraceMs);
 
     for (;;) {
       const snapshot = await live.sandbox.readProcess(live.ref, live.process);
@@ -387,6 +405,11 @@ export abstract class CliAgentRunner implements AgentRunner {
         lastOutput = output;
         lastOutputAt = this.clock();
       }
+      // The watches read the complete lines each poll added, so a blank line or an unfinished
+      // line changes nothing.
+      const now = this.clock();
+      if (stdoutWatch.feed(snapshot.stdout, now).modelActivity) stderrWatch.clear();
+      stderrWatch.feed(snapshot.stderr, now);
 
       if (!snapshot.running) {
         return await this.buildResult(live, snapshot, startedAt, {
@@ -406,6 +429,20 @@ export abstract class CliAgentRunner implements AgentRunner {
           cancelled: true,
           completed: false,
           fallbackExitCode: 124,
+        });
+      }
+
+      // docs/specs/provider-unreachable.md. The CLI backs off for minutes on a connectivity error
+      // and then exits. Factoree ends it early, so the retry has the budget the backoff would burn.
+      const deadlines = [stdoutWatch.deadline, stderrWatch.deadline].filter((due): due is number => due !== null);
+      if (deadlines.length > 0 && this.clock() >= Math.min(...deadlines)) {
+        await live.sandbox.cancelProcess(live.ref, live.process);
+        const final = await live.sandbox.readProcess(live.ref, live.process);
+        return await this.buildResult(live, final, startedAt, {
+          cancelled: true,
+          completed: false,
+          fallbackExitCode: 1,
+          unreachable: true,
         });
       }
 
@@ -443,7 +480,7 @@ export abstract class CliAgentRunner implements AgentRunner {
     live: LiveSession,
     snapshot: ProcessSnapshot,
     startedAt: number,
-    options: { cancelled: boolean; completed?: boolean; fallbackExitCode: number; hung?: boolean },
+    options: { cancelled: boolean; completed?: boolean; fallbackExitCode: number; hung?: boolean; unreachable?: boolean },
   ): Promise<AgentRunResult> {
     // DI-21.17. A shell answers 127 when the command does not exist. The agent never ran, so the
     // caller would only see that it wrote nothing: FAC-74 reported "The refiner wrote no
@@ -467,7 +504,15 @@ export abstract class CliAgentRunner implements AgentRunner {
       !completed && parsed.errorMessage !== undefined && parsed.errorMessage.length > 0
         ? parsed.errorMessage
         : parsed.summary;
-    const outcome: AgentSessionOutcome = options.hung === true ? "hung" : completed ? "finished" : "failed";
+    // docs/specs/provider-unreachable.md. A session that did not finish and whose output names a
+    // provider connectivity failure is an infrastructure fault, not an agent fault. A cancel by
+    // Factoree is not one, except the fast-fail that cancelled the session for that very reason.
+    const unreachable =
+      options.hung !== true &&
+      !completed &&
+      (options.unreachable === true || (!options.cancelled && isProviderUnreachableText(output)));
+    const outcome: AgentSessionOutcome =
+      options.hung === true ? "hung" : completed ? "finished" : unreachable ? "unreachable" : "failed";
     // The duration ends when the process ends. The usage read below is Factoree's own time.
     const durationMs = this.clock() - startedAt;
     const reading = await this.safeReadUsage({
@@ -497,6 +542,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       durationMs,
       cancelled: options.cancelled,
       outcome,
+      ...(unreachable ? { failureKind: "PROVIDER_UNREACHABLE" as const } : {}),
       silenceLimitMs: live.settings.silenceLimitMs,
       usage: reading.usage,
       model: reading.model,

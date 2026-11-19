@@ -38,7 +38,14 @@ import type { RunRunners } from "~/domain/runs/project-runtime-config.js";
 import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 import type { RunSkillStore } from "~/domain/runs/run-skill.js";
 import type { SkillRegistrySettings, SkillResolution } from "~/domain/runs/skill-registry.js";
-import { asRunFault, registryOf, type SkillRegistryFactory } from "./skill-registry.activities.js";
+import {
+  asRunFault,
+  frozenSkillsOf,
+  redeliverFrozenSkills,
+  registryOf,
+  type FrozenSkills,
+  type SkillRegistryFactory,
+} from "./skill-registry.activities.js";
 import type { ContextContractStore } from "~/domain/context/context-contract-store.js";
 import type { SetCheckFacts } from "~/domain/runs/set-check.js";
 import type { ContextDeliverySourceProvider } from "~/domain/context/context-source-provider.js";
@@ -348,6 +355,11 @@ const build = async (
    * reviewer. Absent, a sandbox with a patch hook is a check sprite.
    */
   kind: "work" | "check" = beforeBootstrap === undefined ? "work" : "check",
+  /**
+   * docs/specs/provider-unreachable.md, section 4. The skill resolution the run froze with an earlier
+   * work sandbox. A work sandbox that replaces it takes exactly these skills.
+   */
+  frozenSkills: FrozenSkills | null = null,
 ): Promise<PreparedSandbox> => {
   // SDD section 30. A model provider credential of the coding agent reaches the sandbox from the
   // Project secret store, never from a workflow argument, so no Temporal history holds its value.
@@ -494,8 +506,12 @@ const build = async (
           githubInstallationId: input.githubInstallationId,
         },
       );
-      const delivery = registry === null ? null : await registry.resolve();
-      if (delivery?.kind === "archives") registrySkills = delivery.resolution;
+      if (frozenSkills !== null) {
+        registrySkills = await redeliverFrozenSkills(registry, frozenSkills);
+      } else {
+        const delivery = registry === null ? null : await registry.resolve();
+        if (delivery?.kind === "archives") registrySkills = delivery.resolution;
+      }
     } catch (error) {
       throw asRunFault(error);
     }
@@ -970,7 +986,11 @@ const prepare = async (
   dependencies: SandboxActivityDependencies,
   input: PrepareSandboxActivityInput,
 ): Promise<PrepareSandboxActivityOutput> => {
-  const prepared = await build(dependencies, input);
+  // docs/specs/provider-unreachable.md, section 4. A run that already recorded a skill resolution holds
+  // an earlier work sandbox, for example the one an unreachable provider replaces. This sandbox takes
+  // the same pins, and the record of the run stays as it is.
+  const frozenSkills = await frozenSkillsOf(dependencies.skills, input.tenantId, input.runId);
+  const prepared = await build(dependencies, input, undefined, "work", frozenSkills);
 
   // SDD section 51. The Run keeps the sandbox reference and the retention deadline, so
   // `SpriteReaper` can delete the sandbox after the window ends. The workflow never deletes
@@ -1004,8 +1024,11 @@ const prepare = async (
   }
 
   // docs/specs/skill-registry.md and SDD section 55. The run records each skill it received and
-  // the resolution that pins the registry versions. A retried preparation replaces the record.
-  await dependencies.skills?.replace(input.tenantId, input.runId, prepared.skillRecords, prepared.skillResolution);
+  // the resolution that pins the registry versions. A replacement of a work sandbox keeps the record
+  // of the run, so the resolution and the activation flags of its skills survive.
+  if (frozenSkills === null) {
+    await dependencies.skills?.replace(input.tenantId, input.runId, prepared.skillRecords, prepared.skillResolution);
+  }
 
   // docs/specs/external-context-delivery.md. Only the work sprite gets context files: the user
   // validator and the reviewer start fresh in a check sprite and judge the artefacts. The images

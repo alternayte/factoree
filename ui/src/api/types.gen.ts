@@ -1991,6 +1991,25 @@ export type GetRunResponses = {
             stage: string;
             attempt: number;
             role: string | null;
+            kind: "provider_unreachable";
+            message: string;
+            detail: {
+              runner: string;
+              model: string | null;
+              exitCode: number | null;
+              summary: string;
+              log: string | null;
+              egress: "recorded" | "not_recorded" | "unreadable";
+              deniedHosts: Array<string>;
+              hostHints: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
             kind: "command_failed";
             message: string;
             detail: {
@@ -2252,6 +2271,25 @@ export type ListRunEventsResponses = {
           stage: string;
           attempt: number;
           role: string | null;
+          kind: "provider_unreachable";
+          message: string;
+          detail: {
+            runner: string;
+            model: string | null;
+            exitCode: number | null;
+            summary: string;
+            log: string | null;
+            egress: "recorded" | "not_recorded" | "unreadable";
+            deniedHosts: Array<string>;
+            hostHints: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
           kind: "command_failed";
           message: string;
           detail: {
@@ -2496,7 +2534,7 @@ export type ListProductAgentSessionsResponses = {
     runner: string;
     model: string | null;
     effort: string | null;
-    outcome: "finished" | "hung" | "failed";
+    outcome: "finished" | "hung" | "failed" | "unreachable";
     durationMs: number;
     createdAt: string;
   }>;
@@ -2678,6 +2716,25 @@ export type ListRepositorySetupEventsResponses = {
           detail: {
             runner: string;
             silenceLimitMs: number;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "provider_unreachable";
+          message: string;
+          detail: {
+            runner: string;
+            model: string | null;
+            exitCode: number | null;
+            summary: string;
+            log: string | null;
+            egress: "recorded" | "not_recorded" | "unreadable";
+            deniedHosts: Array<string>;
+            hostHints: Array<string>;
           };
           createdAt: string;
         }
@@ -2878,6 +2935,25 @@ export type ListRepositorySetupHistoryResponses = {
             detail: {
               runner: string;
               silenceLimitMs: number;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "provider_unreachable";
+            message: string;
+            detail: {
+              runner: string;
+              model: string | null;
+              exitCode: number | null;
+              summary: string;
+              log: string | null;
+              egress: "recorded" | "not_recorded" | "unreadable";
+              deniedHosts: Array<string>;
+              hostHints: Array<string>;
             };
             createdAt: string;
           }

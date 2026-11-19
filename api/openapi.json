@@ -7638,6 +7638,107 @@
                                         "kind": {
                                           "type": "string",
                                           "enum": [
+                                            "provider_unreachable"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "runner": {
+                                              "type": "string"
+                                            },
+                                            "model": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "exitCode": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "summary": {
+                                              "type": "string"
+                                            },
+                                            "log": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "egress": {
+                                              "type": "string",
+                                              "enum": [
+                                                "recorded",
+                                                "not_recorded",
+                                                "unreadable"
+                                              ]
+                                            },
+                                            "deniedHosts": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "hostHints": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "runner",
+                                            "model",
+                                            "exitCode",
+                                            "summary",
+                                            "log",
+                                            "egress",
+                                            "deniedHosts",
+                                            "hostHints"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
                                             "command_failed"
                                           ]
                                         },
@@ -8846,6 +8947,107 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "provider_unreachable"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "runner": {
+                                    "type": "string"
+                                  },
+                                  "model": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "string",
+                                    "enum": [
+                                      "recorded",
+                                      "not_recorded",
+                                      "unreadable"
+                                    ]
+                                  },
+                                  "deniedHosts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "hostHints": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "runner",
+                                  "model",
+                                  "exitCode",
+                                  "summary",
+                                  "log",
+                                  "egress",
+                                  "deniedHosts",
+                                  "hostHints"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
                                   "command_failed"
                                 ]
                               },
@@ -9730,7 +9932,8 @@
                         "enum": [
                           "finished",
                           "hung",
-                          "failed"
+                          "failed",
+                          "unreachable"
                         ]
                       },
                       "durationMs": {
@@ -10334,6 +10537,107 @@
                                 "required": [
                                   "runner",
                                   "silenceLimitMs"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "provider_unreachable"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "runner": {
+                                    "type": "string"
+                                  },
+                                  "model": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "string",
+                                    "enum": [
+                                      "recorded",
+                                      "not_recorded",
+                                      "unreadable"
+                                    ]
+                                  },
+                                  "deniedHosts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "hostHints": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "runner",
+                                  "model",
+                                  "exitCode",
+                                  "summary",
+                                  "log",
+                                  "egress",
+                                  "deniedHosts",
+                                  "hostHints"
                                 ]
                               },
                               "createdAt": {
@@ -11205,6 +11509,107 @@
                                             "required": [
                                               "runner",
                                               "silenceLimitMs"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "provider_unreachable"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "runner": {
+                                                "type": "string"
+                                              },
+                                              "model": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "exitCode": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "summary": {
+                                                "type": "string"
+                                              },
+                                              "log": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "egress": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "recorded",
+                                                  "not_recorded",
+                                                  "unreadable"
+                                                ]
+                                              },
+                                              "deniedHosts": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "hostHints": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "runner",
+                                              "model",
+                                              "exitCode",
+                                              "summary",
+                                              "log",
+                                              "egress",
+                                              "deniedHosts",
+                                              "hostHints"
                                             ]
                                           },
                                           "createdAt": {

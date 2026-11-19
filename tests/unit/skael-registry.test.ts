@@ -132,4 +132,53 @@ describe("SkaelRegistry (docs/specs/skill-registry.md)", () => {
 
     await expect(registry.check()).rejects.toThrow(/403/);
   });
+  describe("resolvePinned (docs/specs/provider-unreachable.md, section 4)", () => {
+    const pins = [
+      { name: "lint", version: 7, sha256: sha256Hex(lint) },
+      { name: "deploy", version: 2, sha256: sha256Hex(deploy) },
+    ];
+    const pinned = { set: "go-tools", id: resolutionIdOf(pins), skills: pins };
+    const registryOf = (routes: Record<string, () => Response>) =>
+      new SkaelRegistry({ url: "https://skael.test", key: "sk-1", set: "go-tools", fetch: fetchOf(routes) });
+
+    it("downloads the exact pinned versions and returns the recorded resolution", async () => {
+      const registry = registryOf({
+        "/api/skills/deploy/versions/2/download": () => new Response(deploy),
+        "/api/skills/lint/versions/7/download": () => new Response(lint),
+      });
+
+      const resolution = await registry.resolvePinned(pinned);
+
+      expect(resolution.set).toBe("go-tools");
+      expect(resolution.id).toBe(pinned.id);
+      expect(resolution.skills.map((skill) => [skill.name, skill.version, skill.sha256])).toEqual([
+        ["deploy", 2, sha256Hex(deploy)],
+        ["lint", 7, sha256Hex(lint)],
+      ]);
+    });
+
+    it("refuses an archive whose digest is not the pinned one", async () => {
+      const changed = skillArchive("lint", "A different body.");
+      const registry = registryOf({
+        "/api/skills/deploy/versions/2/download": () => new Response(deploy),
+        "/api/skills/lint/versions/7/download": () => new Response(changed),
+      });
+
+      const error = await registry.resolvePinned(pinned).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(SkillRegistryError);
+      expect((error as SkillRegistryError).deterministic).toBe(true);
+      expect((error as Error).message).toContain('"lint"');
+    });
+
+    it("fails with a deterministic error when a pinned version is gone", async () => {
+      const registry = registryOf({ "/api/skills/deploy/versions/2/download": () => new Response(deploy) });
+
+      const error = await registry.resolvePinned(pinned).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(SkillRegistryError);
+      expect((error as SkillRegistryError).deterministic).toBe(true);
+      expect((error as Error).message).toContain("404");
+    });
+  });
 });

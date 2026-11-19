@@ -37,7 +37,7 @@ export function ModelWarning({ hasRunnerCredential, className }: { hasRunnerCred
   );
 }
 
-const OUTCOME_TONE = { finished: "success", hung: "danger", failed: "danger" } as const;
+const OUTCOME_TONE = { finished: "success", hung: "danger", failed: "danger", unreachable: "warning" } as const;
 
 const SHOWN = 10;
 

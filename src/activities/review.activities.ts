@@ -5,8 +5,22 @@ import type { ValidationContractStore } from "~/domain/validation/validation-con
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import { agentSessionKey, describeSilenceLimit, type AgentSessionStore } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, recordHangRetry, type AgentHang } from "./agent-session-recording.js";
+import {
+  agentSessionKey,
+  describeSilenceLimit,
+  reviewerReportName,
+  triageReportName,
+  triageSessionKey,
+  type AgentSessionStore,
+} from "~/domain/runs/agent-session.js";
+import {
+  hangOf,
+  providerUnreachableOf,
+  recordAgentSession,
+  recordSessionRetries,
+  type AgentHang,
+  type AgentProviderUnreachable,
+} from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -78,6 +92,11 @@ export interface ReviewActivityInput {
    */
   afterHang?: boolean;
   /**
+   * docs/specs/provider-unreachable.md. 1 or 2 for the fresh session that follows an unreachable
+   * provider. It writes its own files and its own rows, as the session after a hang does.
+   */
+  unreachableRetry?: number;
+  /**
    * docs/specs/work-item-images-and-links.md. One line per image file of the sandbox. Absent in a
    * history recorded before the images existed.
    */
@@ -114,6 +133,8 @@ export interface ReviewActivityOutput {
    * for the silence limit. The report is then unusable.
    */
   hang: AgentHang;
+  /** docs/specs/provider-unreachable.md. Set when the session could not reach the model provider. */
+  providerUnreachable?: AgentProviderUnreachable;
 }
 
 /**
@@ -137,6 +158,11 @@ export interface TriageActivityInput {
   repositoryInstructions: string;
   timeoutMs: number;
   afterHang?: boolean;
+  /**
+   * docs/specs/provider-unreachable.md. 1 or 2 for the fresh session that follows an unreachable
+   * provider. It writes its own files and its own rows, as the session after a hang does.
+   */
+  unreachableRetry?: number;
 }
 
 export interface TriageActivityOutput {
@@ -145,6 +171,8 @@ export interface TriageActivityOutput {
   reportUsable: boolean;
   reportProblem: string | null;
   hang: AgentHang;
+  /** docs/specs/provider-unreachable.md. Set when the session could not reach the model provider. */
+  providerUnreachable?: AgentProviderUnreachable;
 }
 
 export interface ReviewActivityDependencies {
@@ -451,10 +479,10 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // `cat` call at step 13 both read this one value.
       // docs/specs/agent-session-usage-and-hangs.md. The fresh session after a hang writes its own
       // report, so a partial report of the hung session is never read.
-      const afterHang = input.afterHang === true;
-    if (afterHang) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: 0, stage: "REVIEWING" });
-      if (afterHang) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: input.attempt, stage: "REVIEWING" });
-      const reportPath = `${reviewDirectory}/report-${input.attempt}${afterHang ? "-after-hang" : ""}.json`;
+      const unreachableRetry = input.unreachableRetry ?? 0;
+      const afterHang = input.afterHang === true || unreachableRetry > 0;
+      await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: input.attempt, stage: "REVIEWING", afterHang: input.afterHang === true, unreachableRetry });
+      const reportPath = `${reviewDirectory}/${reviewerReportName(input.attempt, afterHang, unreachableRetry)}`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -487,7 +515,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         actionPolicy,
         timeoutMs: input.timeoutMs,
         attempt: input.attempt,
-        idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang),
+        idempotencyKey: agentSessionKey(input.runId, "reviewer", input.attempt, afterHang, unreachableRetry),
       });
 
       // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing. The workflow
@@ -508,6 +536,28 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
           changedFiles: diff.changedFiles,
           worktreeSha: "",
           hang,
+        };
+      }
+
+      // docs/specs/provider-unreachable.md. A session that could not reach the provider proves
+      // nothing. The workflow retries it.
+      const providerUnreachable = providerUnreachableOf([sessionResult]);
+      if (providerUnreachable !== null) {
+        return {
+          passed: false,
+          verdict: "fail",
+          findingCount: 0,
+          blockingCount: 0,
+          summary: "",
+          changeDescription: "",
+          failures: [],
+          sessionId: sessionResult.session.sessionId,
+          reportUsable: false,
+          reportProblem: "The Reviewer session could not reach the model provider.",
+          changedFiles: diff.changedFiles,
+          worktreeSha: "",
+          hang: null,
+          providerUnreachable,
         };
       }
 
@@ -703,11 +753,12 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
    */
   async triagePullRequestFindings(input: TriageActivityInput): Promise<TriageActivityOutput> {
     await registerProjectSecrets(dependencies.redactor, dependencies.secrets, input.tenantId, input.productId, dependencies.logger);
-    const unusable = (problem: string, hang: AgentHang = null): TriageActivityOutput => ({
+    const unusable = (problem: string, hang: AgentHang = null, providerUnreachable: AgentProviderUnreachable = null): TriageActivityOutput => ({
       decisions: [],
       reportUsable: false,
       reportProblem: dependencies.redactor.redactText(problem),
       hang,
+      ...(providerUnreachable === null ? {} : { providerUnreachable }),
     });
     const actionPolicy = buildActionPolicy({ role: "reviewer" });
     const ref = { id: input.spriteId, adapter: input.adapter, workspacePath: input.workspacePath };
@@ -720,8 +771,11 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
     const beforeFingerprint = await worktreeFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
     const beforeGitState = await worktreeGitStateFingerprint(gitDependencies, { ref, primaryPath: input.primaryPath });
 
-    const afterHang = input.afterHang === true;
-    const reportPath = `${triageDirectory}/report${afterHang ? "-after-hang" : ""}.json`;
+    const unreachableRetry = input.unreachableRetry ?? 0;
+    const afterHang = input.afterHang === true || unreachableRetry > 0;
+    const reportPath = `${triageDirectory}/${triageReportName(afterHang, unreachableRetry)}`;
+    // docs/specs/run-diagnostics.md. Triage has no attempt, so its events use 0.
+    await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "reviewer", attempt: 0, stage: "REVIEWING", afterHang: input.afterHang === true, unreachableRetry });
     const prompt = renderTriagePrompt({
       pullRequestUrl: input.pullRequestUrl,
       reviewerName: input.reviewerName,
@@ -750,11 +804,13 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       actionPolicy,
       timeoutMs: input.timeoutMs,
       attempt: 0,
-      idempotencyKey: `${agentSessionKey(input.runId, "reviewer", null, afterHang)}:triage`,
+      idempotencyKey: triageSessionKey(input.runId, afterHang, unreachableRetry),
     });
 
     const hang = hangOf([sessionResult]);
     if (hang !== null) return unusable(`The triage session wrote no output for ${describeSilenceLimit(hang.silenceLimitMs)}, so Factoree stopped it.`, hang);
+    const triageUnreachable = providerUnreachableOf([sessionResult]);
+    if (triageUnreachable !== null) return unusable("The triage session could not reach the model provider.", null, triageUnreachable);
     if (!sessionResult.completed || sessionResult.cancelled) {
       return unusable(sessionResult.cancelled ? "The triage session was cancelled." : "The triage session did not complete.");
     }

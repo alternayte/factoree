@@ -25,10 +25,19 @@ import {
   agentSessionKey,
   describeSilenceLimit,
   planCorrectionSessionKey,
+  selectorRecheckDirectoryName,
   selectorRecheckSessionKey,
+  validatorPlanName,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, recordHangRetry, type AgentHang } from "./agent-session-recording.js";
+import {
+  hangOf,
+  providerUnreachableOf,
+  recordAgentSession,
+  recordSessionRetries,
+  type AgentHang,
+  type AgentProviderUnreachable,
+} from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -141,6 +150,11 @@ export interface UserValidateActivityInput {
    * hung one in the same pass. It writes its own plan file and its own rows.
    */
   afterHang?: boolean;
+  /**
+   * docs/specs/provider-unreachable.md. 1 or 2 for the fresh session that follows an unreachable
+   * provider. It writes its own files and its own rows, as the session after a hang does.
+   */
+  unreachableRetry?: number;
   /** docs/specs/repository-setup-and-services.md. The accounts of the config. Absent in an old history. */
   accounts?: AccountConfig[];
   /** Issue #44, DI-21.68. The browser check limits of the config. Absent in an old history. */
@@ -210,6 +224,8 @@ export interface UserValidateActivityOutput {
    * for the silence limit. The pass then ran no check and recorded no result.
    */
   hang: AgentHang;
+  /** docs/specs/provider-unreachable.md. Set when the session could not reach the model provider. */
+  providerUnreachable?: AgentProviderUnreachable;
   /**
    * docs/specs/repository-setup-and-services.md. The fakes of the stack the pass ran against.
    * docs/specs/change-sets.md: each names its target, and a fake a wired provider replaced is absent.
@@ -586,10 +602,13 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             );
       const promptPath = setCheck === undefined ? input.primaryPath : `${input.workspacePath}/targets`;
 
-      const afterHang = input.afterHang === true;
-      if (afterHang) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "validator", attempt: input.attempt, stage: "USER_VALIDATING" });
+      const unreachableRetry = input.unreachableRetry ?? 0;
+      const afterHang = input.afterHang === true || unreachableRetry > 0;
+      // docs/specs/run-diagnostics.md. Only a hang writes `retry_started` here, not a retry after an outage.
+      await recordSessionRetries(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "validator", attempt: input.attempt, stage: "USER_VALIDATING", afterHang: input.afterHang === true, unreachableRetry });
       // A hung session can leave a partial plan, and the fresh session must never read it.
-      const planPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}.json`;
+      const planBase = validatorPlanName(afterHang, unreachableRetry);
+      const planPath = `${validationDirectory}/${planBase}.json`;
       const validatorInput = buildUserValidatorInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -756,7 +775,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             cancelled: sessionResult.cancelled,
             summary: sessionResult.summary,
           },
-          idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+          idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang, unreachableRetry),
         });
         invocations = [sessionResult];
         passSessionId = sessionResult.session.sessionId;
@@ -769,7 +788,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         // the file on one pass and not on the next, from the same prompt. One reminder costs a few
         // seconds and recovers the pass, so the session is asked once more before the Run gives up.
         // A hung session gets no reminder. The workflow starts one fresh session instead.
-        if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung") {
+        if (planResult.exitCode !== 0 && sessionResult.outcome !== "hung" && providerUnreachableOf(invocations) === null) {
           dependencies.logger.warn("the validator wrote no plan, asking once more", {
             tenant_id: input.tenantId,
             product_id: input.productId,
@@ -795,13 +814,31 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             role: "validator",
             attempt: input.attempt,
             runner: runner.name,
-            idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
+            idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang, unreachableRetry),
             sandboxId: input.spriteId,
             egress: { sandbox: uv.sandbox, ref, allowList: input.egress?.allowed ?? null },
           },
           invocations,
         );
 
+        // docs/specs/provider-unreachable.md. A session that could not reach the model provider
+        // proves nothing either, so the pass runs no check. The workflow retries it.
+        const providerUnreachable = providerUnreachableOf(invocations);
+        if (providerUnreachable !== null) {
+          return {
+            passed: false,
+            results: [],
+            hasFailure: false,
+            hasManual: false,
+            hasBlocked: false,
+            summary: "The User Validator session could not reach the model provider.",
+            failures: [],
+            sessionId: passSessionId,
+            previewUrl: null,
+            hang: null,
+            providerUnreachable,
+          };
+        }
         // docs/specs/agent-session-usage-and-hangs.md. A hung session proves nothing, so the pass
         // runs no check and records no result. The `finally` below stops the early preview.
         const hang = hangOf(invocations);
@@ -849,8 +886,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           }
         }
         let read = await round.read();
+        // docs/specs/provider-unreachable.md. A resume that could not reach the model provider
+        // leaves the fallback too, as a hung one does: a fresh session would meet the same outage
+        // and be thrown away by the retry. The caller reads the outage from `into` and returns it.
         const resumeFailed =
-          resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
+          resumed === null ||
+          (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung" && resumed.outcome !== "unreachable");
         if (resumeFailed && read.exitCode !== 0 && !context.cancellationSignal.aborted) {
           dependencies.logger.warn(round.freshLog, { ...round.logFields, resumed: resumed !== null });
           await recordRunEvent(dependencies.events, {
@@ -966,13 +1007,13 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         });
 
         // A new file, so a session that writes nothing cannot leave the rejected plan in place.
-        const correctedPlanPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}-corrected.json`;
+        const correctedPlanPath = `${validationDirectory}/${planBase}-corrected.json`;
         const correction = buildPlanCorrection({
           reasons,
           assertions: storedContract.assertions,
           planPath: correctedPlanPath,
         });
-        const correctionKey = planCorrectionSessionKey(input.runId, input.attempt, afterHang);
+        const correctionKey = planCorrectionSessionKey(input.runId, input.attempt, afterHang, unreachableRetry);
         const readCorrectedPlan = () => uv.sandbox.exec(ref, { file: "cat", args: [correctedPlanPath] });
 
         const correctionInvocations: AgentRunResult[] = [];
@@ -1004,6 +1045,26 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           },
           correctionInvocations,
         );
+
+        // docs/specs/provider-unreachable.md. An outage while the validator corrects its plan is
+        // not a rejected plan. It passes up as a provider failure, so the workflow retries the
+        // pass instead of reading it as "wrote no corrected plan" and starting a repair.
+        const correctionUnreachable = providerUnreachableOf(correctionInvocations);
+        if (correctionUnreachable !== null) {
+          return {
+            passed: false,
+            results: [],
+            hasFailure: false,
+            hasManual: false,
+            hasBlocked: false,
+            summary: "The User Validator session could not reach the model provider while it corrected its plan.",
+            failures: [],
+            sessionId: passSessionId,
+            previewUrl: null,
+            hang: null,
+            providerUnreachable: correctionUnreachable,
+          };
+        }
 
         const correctionHang = hangOf(correctionInvocations);
         if (correctionHang !== null) {
@@ -1052,8 +1113,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // docs/specs/by-eye-criteria-and-selector-recheck.md. The one selector re-check round of the
       // pass. The validator gets the failed step, the error, the final screenshot and the page
       // HTML in this sandbox, and writes the corrected entries. The domain checks and runs them.
+      // docs/specs/provider-unreachable.md. An outage during the one selector re-check is not a
+      // rejected answer. The closure records it here; the pass reads it after validation runs and
+      // returns a provider failure, instead of letting the stood-down failure start a repair.
+      let recheckUnreachable: AgentProviderUnreachable = null;
       const selectorRecheck: SelectorRecheck = async (requests) => {
-        const recheckDirectory = `${validationDirectory}/${afterHang ? "selector-recheck-after-hang" : "selector-recheck"}`;
+        const recheckDirectory = `${validationDirectory}/${selectorRecheckDirectoryName(afterHang, unreachableRetry)}`;
         const logFields = { tenant_id: input.tenantId, product_id: input.productId, run_id: input.runId, step: "user_validate", attempt: input.attempt };
         await uv.sandbox.exec(ref, { file: "mkdir", args: ["-p", recheckDirectory] });
         await recordRunEvent(dependencies.events, {
@@ -1099,7 +1164,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         }
         const answerPath = `${recheckDirectory}/corrected-entries.json`;
         const recheck = buildSelectorRecheck({ failures, answerPath });
-        const recheckKey = selectorRecheckSessionKey(input.runId, input.attempt, afterHang);
+        const recheckKey = selectorRecheckSessionKey(input.runId, input.attempt, afterHang, unreachableRetry);
         const recheckInvocations: AgentRunResult[] = [];
         const read = await cancellable(() =>
           askOnce({
@@ -1128,6 +1193,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           },
           recheckInvocations,
         );
+        const recheckProviderUnreachable = providerUnreachableOf(recheckInvocations);
+        if (recheckProviderUnreachable !== null) {
+          recheckUnreachable = recheckProviderUnreachable;
+          return { text: null, problem: "the validator could not reach the model provider during the selector re-check" };
+        }
         const recheckHang = hangOf(recheckInvocations);
         if (recheckHang !== null) {
           return { text: null, problem: `the validator session wrote no output for ${describeSilenceLimit(recheckHang.silenceLimitMs)}` };
@@ -1214,6 +1284,25 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             },
           ),
       );
+
+      // docs/specs/provider-unreachable.md. The selector re-check could not reach the provider, so
+      // the stood-down failure is not evidence. The pass reports the outage and persists no bogus
+      // outcome, so the workflow retries it instead of starting a repair.
+      if (recheckUnreachable !== null) {
+        return {
+          passed: false,
+          results: [],
+          hasFailure: false,
+          hasManual: false,
+          hasBlocked: false,
+          summary: "The User Validator session could not reach the model provider during the selector re-check.",
+          failures: [],
+          sessionId: passSessionId,
+          previewUrl: previewBaseUrl,
+          hang: null,
+          providerUnreachable: recheckUnreachable,
+        };
+      }
 
       // Step 10. Persists every outcome, keyed on the row identifier of the matching stored
       // assertion, never on the contract-level identifier.

@@ -2,6 +2,7 @@ import {
   resolutionIdOf,
   sha256Hex,
   SkillRegistryError,
+  type PinnedSkillResolution,
   type ResolvedSkill,
   type SkillActivationReport,
   type SkillDelivery,
@@ -79,6 +80,26 @@ export class SkaelRegistry implements SkillRegistry {
   async resolve(): Promise<SkillDelivery> {
     const resolution = this.options.set === null ? await this.resolveAll() : await this.resolveSet(this.options.set);
     return { kind: "archives", resolution };
+  }
+
+  /**
+   * docs/specs/provider-unreachable.md, section 4. The pinned versions of a resolution a run already
+   * holds, downloaded one by one from the version endpoint that `resolveAll` uses. Each archive is
+   * checked against its pinned digest. The caller compares the resolution id.
+   */
+  async resolvePinned(pinned: PinnedSkillResolution): Promise<SkillResolution> {
+    const skills: ResolvedSkill[] = [];
+    for (const entry of pinned.skills) {
+      const download = await this.call(
+        "GET",
+        `/api/skills/${encodeURIComponent(entry.name)}/versions/${entry.version}/download`,
+        undefined,
+        DOWNLOAD_TIMEOUT_MS,
+      );
+      skills.push(this.checked(entry, new Uint8Array(await download.arrayBuffer())));
+    }
+    skills.sort((left, right) => left.name.localeCompare(right.name));
+    return { set: pinned.set, id: resolutionIdOf(skills), complete: true, skills };
   }
 
   /**

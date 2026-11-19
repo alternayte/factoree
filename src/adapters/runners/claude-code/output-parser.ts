@@ -1,4 +1,6 @@
 import type { AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import { assistantText } from "../assistant-text.js";
+import { isProviderUnreachableText } from "../provider-unreachable.js";
 
 export interface ClaudeOutput {
   sessionId: string | null;
@@ -12,6 +14,11 @@ export interface ClaudeOutput {
   model: string | null;
   /** docs/specs/skill-registry.md. The input of every tool use block, as JSON. */
   toolInputs: string[];
+  /**
+   * docs/specs/provider-unreachable.md. The failure the CLI reported: the text of an error result,
+   * or a plain line that names a provider connectivity error such as `EAI_AGAIN`.
+   */
+  errorMessage?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -39,21 +46,6 @@ const resultUsage = (event: Record<string, unknown>): AgentSessionUsage | null =
     turns: numberOf(event["num_turns"]),
     longestTurnMs: null,
   };
-};
-
-/** Joins every text block of one assistant message. A tool use block carries no text. */
-const assistantText = (message: unknown): string | null => {
-  if (!isRecord(message)) return null;
-  const content = message["content"];
-  if (!Array.isArray(content)) return null;
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!isRecord(block)) continue;
-    if (block["type"] !== "text") continue;
-    const text = block["text"];
-    if (typeof text === "string" && text.length > 0) parts.push(text);
-  }
-  return parts.length === 0 ? null : parts.join("\n");
 };
 
 /** The input of every tool use block of one assistant message, as JSON. */
@@ -85,6 +77,12 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   let lastPlainLine = "";
   let usage: AgentSessionUsage | null = null;
   let model: string | null = null;
+  let errorMessage: string | null = null;
+  let lastUnreachableLine: string | null = null;
+  // docs/specs/provider-unreachable.md. During its backoff Claude Code writes only
+  // `api_retry` system events, with no error text. They name no cause on their own, so the
+  // last one becomes the error message when nothing better was written.
+  let apiRetry: string | null = null;
   const toolInputs: string[] = [];
 
   for (const rawLine of text.split(/\r\n|\r|\n/)) {
@@ -96,6 +94,7 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
       parsed = JSON.parse(trimmed);
     } catch {
       lastPlainLine = trimmed;
+      if (isProviderUnreachableText(trimmed)) lastUnreachableLine = trimmed;
       continue;
     }
     if (!isRecord(parsed)) {
@@ -112,9 +111,26 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
       continue;
     }
 
+    // docs/specs/provider-unreachable.md. A retry of the provider during the CLI backoff. Only a
+    // null `error_status` means the CLI could not reach the provider. A status such as 429 or
+    // 529 is the provider answering, so the message never says it could not be reached.
+    if (parsed["type"] === "system" && parsed["subtype"] === "api_retry") {
+      const status = parsed["error_status"];
+      const error = parsed["error"];
+      const named = typeof error === "string" && error.length > 0 && error !== "unknown" ? `: ${error}` : "";
+      apiRetry =
+        status === null
+          ? `The model provider could not be reached: the Claude CLI retried the API${named}.`
+          : typeof status === "number" || typeof status === "string"
+            ? `The model provider answered with status ${String(status)} and the Claude CLI retried the API${named}.`
+            : `The Claude CLI retried the API${named}.`;
+      continue;
+    }
+
     if (parsed["type"] === "result") {
       const value = parsed["result"];
       if (typeof value === "string") resultSummary = value;
+      if (parsed["is_error"] === true && typeof value === "string" && value.length > 0) errorMessage = value;
       usage = resultUsage(parsed) ?? usage;
       continue;
     }
@@ -127,5 +143,6 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   }
 
   const summary = resultSummary ?? lastAssistant ?? lastPlainLine;
-  return { sessionId, summary, usage, model, toolInputs };
+  const failure = errorMessage ?? lastUnreachableLine ?? apiRetry;
+  return { sessionId, summary, usage, model, toolInputs, ...(failure === null ? {} : { errorMessage: failure }) };
 };

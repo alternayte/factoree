@@ -7,6 +7,8 @@ import type {
 } from "~/activities/refinement.activities.js";
 import { RefinementEngine } from "~/domain/refinement/refinement-engine.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
+import type { AgentResumeInput, AgentRunInput, AgentRunResult, AgentSessionRef } from "~/domain/runs/agent-runner.js";
+import { agentSessionKey, refinerLimitCorrectionSessionKey, refinerProposalName } from "~/domain/runs/agent-session.js";
 import type { AgentExecutionRecord, RecordAgentExecutionInput } from "~/domain/runs/agent-execution.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
@@ -45,7 +47,7 @@ const input: ProposeRefinementActivityInput = {
  * Answers the tree fingerprint and the proposal read. `trees` gives the tree of each fingerprint.
  * A function `proposal` answers per read path, so a corrected file can differ from the first.
  */
-const build = (options: { trees: string[]; proposal: string | null | ((path: string) => string | null) }) => {
+const build = (options: { trees: string[]; proposal: string | null | ((path: string) => string | null) }, runner: FakeRunner = new FakeRunner("claude")) => {
   const sandbox = new FakeSandbox();
   let fingerprints = 0;
   sandbox.onExec = (command) => {
@@ -60,7 +62,7 @@ const build = (options: { trees: string[]; proposal: string | null | ((path: str
     }
     return { exitCode: 0, stdout: "", stderr: "" };
   };
-  const runner = new FakeRunner("claude");
+  const sessions = new MemoryAgentSessionStore();
   const recorded: RecordAgentExecutionInput[] = [];
   const redactor = new Redactor();
   const activities = createRefinementActivities({
@@ -69,7 +71,7 @@ const build = (options: { trees: string[]; proposal: string | null | ((path: str
     agent: {
       sandbox,
       runners: new AgentRunnerRegistry([runner]),
-      sessions: new MemoryAgentSessionStore(),
+      sessions,
       executions: {
         record(entry: RecordAgentExecutionInput): Promise<AgentExecutionRecord> {
           recorded.push(entry);
@@ -81,7 +83,7 @@ const build = (options: { trees: string[]; proposal: string | null | ((path: str
       redactor,
     },
   });
-  return { activities, runner, recorded, sandbox };
+  return { activities, runner, recorded, sandbox, sessions };
 };
 
 /** A proposal with `count` stated criteria that quote the ticket. */
@@ -187,6 +189,156 @@ describe("the proposeRefinement activity (docs/specs/refiner-agent.md)", () => {
     expect(output.status).toBe("unavailable");
     expect(output.message).toBeUndefined();
     expect(runner.resumes).toHaveLength(0);
+  });
+});
+
+describe("the proposeRefinement activity, limit correction under an outage (docs/specs/provider-unreachable.md, plan section 8)", () => {
+  const OUTAGE = "getaddrinfo EAI_AGAIN api.example.test";
+  const unreachable = (result: AgentRunResult): AgentRunResult => ({
+    ...result,
+    completed: false,
+    exitCode: 1,
+    outcome: "unreachable",
+    failureKind: "PROVIDER_UNREACHABLE",
+    summary: OUTAGE,
+  });
+  /** A refiner whose CLI named no session, so a correction cannot resume it. */
+  const processNamed = { sessionId: "process-fake", processId: "process-fake", runner: "claude" };
+
+  // The workflow carries these as 0, 1, 2 and as after-hang with no number, then 3 and 4. A retry
+  // number alone makes the session fresh, and `afterHang` alone is the one session after a hang.
+  const variants: Array<{ label: string; afterHang?: boolean; unreachableRetry?: number }> = [
+    { label: "retry 1", unreachableRetry: 1 },
+    { label: "retry 2", unreachableRetry: 2 },
+    { label: "after a hang", afterHang: true },
+    { label: "after a hang, retry 3", afterHang: true, unreachableRetry: 3 },
+    { label: "after a hang, retry 4", afterHang: true, unreachableRetry: 4 },
+    { label: "after a hang flag with retry 1", afterHang: true, unreachableRetry: 1 },
+  ];
+  const effective = (variant: { afterHang?: boolean; unreachableRetry?: number }): { afterHang: boolean; retry: number } => {
+    const retry = variant.unreachableRetry ?? 0;
+    return { afterHang: variant.afterHang === true || retry > 0, retry };
+  };
+  const inputOf = (variant: { afterHang?: boolean; unreachableRetry?: number }): ProposeRefinementActivityInput => ({
+    ...input,
+    criteriaLimit: 3,
+    ...(variant.afterHang === true ? { afterHang: true } : {}),
+    ...(variant.unreachableRetry === undefined ? {} : { unreachableRetry: variant.unreachableRetry }),
+  });
+
+  it.each(variants)("starts the fresh correction under its own key and file, $label", async (variant) => {
+    const { afterHang, retry } = effective(variant);
+    const base = refinerProposalName(afterHang, retry);
+    const runner = new FakeRunner("claude", { session: processNamed });
+    const { activities, recorded, sessions } = build(
+      {
+        trees: ["a".repeat(40)],
+        // Only the fresh session writes the corrected file.
+        proposal: (path) => (!path.endsWith("-corrected.json") ? proposalOf(4) : runner.runs.length > 1 ? proposalOf(2) : null),
+      },
+      runner,
+    );
+
+    const output = await run(activities, inputOf(variant));
+
+    expect(output.status).toBe("proposed");
+    expect(runner.runs).toHaveLength(2);
+    // The first session and the correction name files of this retry, and no file of another.
+    expect(runner.runs[0]!.prompt).toContain(`/workspace/refinement/${base}.json`);
+    expect(runner.runs[1]!.prompt).toContain(`/workspace/refinement/${base}-corrected.json`);
+    expect(runner.runs[1]!.prompt).not.toContain(`/workspace/refinement/${base}.json`);
+    expect(runner.runs[1]!.prompt).not.toContain("/workspace/refinement/proposal-corrected.json");
+    const first = agentSessionKey("run-1", "refiner", null, afterHang, retry);
+    const correction = refinerLimitCorrectionSessionKey("run-1", afterHang, retry);
+    expect(correction).not.toBe(first);
+    expect(correction).not.toBe(refinerLimitCorrectionSessionKey("run-1", false, 0));
+    expect(recorded.map((entry) => entry.idempotencyKey)).toEqual([correction, first]);
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual([first, correction]);
+  });
+
+  it("gives the correction of every variant a key and a file that no other variant uses", () => {
+    const all = [{ label: "first session" } as { label: string; afterHang?: boolean; unreachableRetry?: number }, ...variants.slice(0, 5)].map(effective);
+    expect(new Set(all.map(({ afterHang, retry }) => refinerLimitCorrectionSessionKey("run-1", afterHang, retry))).size).toBe(all.length);
+    expect(new Set(all.map(({ afterHang, retry }) => `${refinerProposalName(afterHang, retry)}-corrected.json`)).size).toBe(all.length);
+  });
+
+  it.each(variants)("resumes the session for the correction in a file of its own, $label", async (variant) => {
+    const { afterHang, retry } = effective(variant);
+    const base = refinerProposalName(afterHang, retry);
+    const { activities, runner, recorded, sessions } = build({
+      trees: ["a".repeat(40)],
+      proposal: (path) => (path.endsWith(`${base}-corrected.json`) ? proposalOf(3) : proposalOf(4)),
+    });
+
+    const output = await run(activities, inputOf(variant));
+
+    expect(output.status).toBe("proposed");
+    expect(output.accepted).toHaveLength(3);
+    expect(runner.runs).toHaveLength(1);
+    expect(runner.resumes[0]!.input.prompt).toContain(`/workspace/refinement/${base}-corrected.json`);
+    // A resume is the session of the first, so it writes no row of the correction key.
+    const first = agentSessionKey("run-1", "refiner", null, afterHang, retry);
+    expect(recorded.map((entry) => entry.idempotencyKey)).toEqual([first]);
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual([first]);
+  });
+
+  it.each(variants)("reports the outage of the correction session itself, and starts no later fresh session, $label", async (variant) => {
+    const { afterHang, retry } = effective(variant);
+    const base = refinerProposalName(afterHang, retry);
+    class UnreachableCorrectionRunner extends FakeRunner {
+      override async run(runInput: AgentRunInput): Promise<AgentRunResult> {
+        const result = await super.run(runInput);
+        return this.runs.length === 1 ? result : unreachable(result);
+      }
+    }
+    const runner = new UnreachableCorrectionRunner("claude", { session: processNamed });
+    const { activities, recorded, sessions } = build(
+      {
+        trees: ["a".repeat(40)],
+        // The fresh session leaves a corrected file even so. An outage still ends the pass as
+        // unavailable, so neither proposal is taken as the outcome of a good correction.
+        proposal: (path) => (!path.endsWith(`${base}-corrected.json`) ? proposalOf(4) : runner.runs.length > 1 ? proposalOf(2) : null),
+      },
+      runner,
+    );
+
+    const output = await run(activities, inputOf(variant));
+
+    expect(output.status).toBe("unavailable");
+    expect(output.providerUnreachable).toEqual({ summary: OUTAGE });
+    expect(output.accepted).toEqual([]);
+    expect(output.decisions).toEqual([]);
+    expect(output.hang).toBeNull();
+    // The first session and the one fresh correction. No third session, no resume.
+    expect(runner.runs).toHaveLength(2);
+    expect(runner.resumes).toHaveLength(0);
+    const first = agentSessionKey("run-1", "refiner", null, afterHang, retry);
+    const correction = refinerLimitCorrectionSessionKey("run-1", afterHang, retry);
+    expect(recorded.map((entry) => entry.idempotencyKey)).toEqual([correction, first]);
+    expect(sessions.rows.map((row) => [row.idempotencyKey, row.outcome])).toEqual([
+      [first, "finished"],
+      [correction, "unreachable"],
+    ]);
+  });
+
+  it("reports the outage of a correction resume, and starts no fresh session", async () => {
+    class UnreachableResumeRunner extends FakeRunner {
+      override async resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+        return unreachable(await super.resume(session, resumeInput));
+      }
+    }
+    const runner = new UnreachableResumeRunner("claude");
+    const { activities } = build(
+      { trees: ["a".repeat(40)], proposal: (path) => (path.endsWith("-corrected.json") && runner.runs.length > 1 ? proposalOf(2) : path.endsWith("-corrected.json") ? null : proposalOf(4)) },
+      runner,
+    );
+
+    const output = await run(activities, { ...input, criteriaLimit: 3, unreachableRetry: 1 });
+
+    expect(output.status).toBe("unavailable");
+    expect(output.providerUnreachable).toEqual({ summary: OUTAGE });
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.runs).toHaveLength(1);
   });
 });
 

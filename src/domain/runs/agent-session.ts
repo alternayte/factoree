@@ -12,9 +12,11 @@ export type AgentSessionRole = "implementer" | "validator" | "reviewer" | "refin
 
 /**
  * How one session ended. `hung` means it wrote no output for the silence limit, and Factoree
- * stopped it. `failed` covers every other session that did not finish, a human stop included.
+ * stopped it. `unreachable` means the session could not reach the model provider, an
+ * infrastructure fault (docs/specs/provider-unreachable.md). `failed` covers every other session that did not finish, a human stop included.
  */
-export type AgentSessionOutcome = "finished" | "hung" | "failed";
+export const AGENT_SESSION_OUTCOMES = ["finished", "hung", "failed", "unreachable"] as const;
+export type AgentSessionOutcome = (typeof AGENT_SESSION_OUTCOMES)[number];
 
 /**
  * The usage of one session, as the agent CLI recorded it. A field the CLI does not report is
@@ -137,6 +139,8 @@ export interface AgentRoleTotals {
   role: AgentSessionRole;
   sessions: number;
   hung: number;
+  /** docs/specs/provider-unreachable.md. The sessions that could not reach the model provider. */
+  unreachable: number;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -169,6 +173,7 @@ export const summarizeAgentSessions = (rows: ReadonlyArray<RecordAgentSessionInp
       role,
       sessions: own.length,
       hung: own.filter((row) => row.outcome === "hung").length,
+      unreachable: own.filter((row) => row.outcome === "unreachable").length,
       inputTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
@@ -232,8 +237,17 @@ export const describeAgentRole = (role: AgentSessionRole): string =>
  * AgentExecution row always had. The fresh session after a hang adds a suffix, so it writes its
  * own row instead of colliding with the hung one. DI-14.44.
  */
-export const agentSessionKey = (runId: string, role: AgentSessionRole, attempt: number | null, afterHang: boolean): string =>
-  `run:${runId}:${role}${attempt === null ? "" : `:${attempt}`}${afterHang ? ":after-hang" : ""}`;
+export const agentSessionKey = (
+  runId: string,
+  role: AgentSessionRole,
+  attempt: number | null,
+  afterHang: boolean,
+  /** docs/specs/provider-unreachable.md. 0 for the first session, 1 or 2 after an unreachable provider. */
+  unreachableRetry = 0,
+): string =>
+  `run:${runId}:${role}${attempt === null ? "" : `:${attempt}`}${afterHang ? ":after-hang" : ""}${
+    unreachableRetry > 0 ? `:unreachable-${unreachableRetry}` : ""
+  }`;
 
 const PLAN_CORRECTION_SUFFIX = ":plan-correction";
 
@@ -241,22 +255,57 @@ const PLAN_CORRECTION_SUFFIX = ":plan-correction";
  * DI-15.23. The key of the one session that corrects a rejected Validation Plan. It keeps the
  * attempt of its pass and adds a marker, so it writes its own row beside the first session.
  */
-export const planCorrectionSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
-  `${agentSessionKey(runId, "validator", attempt, afterHang)}${PLAN_CORRECTION_SUFFIX}`;
+export const planCorrectionSessionKey = (runId: string, attempt: number, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "validator", attempt, afterHang, unreachableRetry)}${PLAN_CORRECTION_SUFFIX}`;
 
 /**
  * docs/specs/by-eye-criteria-and-selector-recheck.md. The key of the one selector re-check round of
  * a pass. It writes its own row beside the first session, as the plan correction does.
  */
-export const selectorRecheckSessionKey = (runId: string, attempt: number, afterHang: boolean): string =>
-  `${agentSessionKey(runId, "validator", attempt, afterHang)}:selector-recheck`;
+export const selectorRecheckSessionKey = (runId: string, attempt: number, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "validator", attempt, afterHang, unreachableRetry)}:selector-recheck`;
 
 /**
  * Issue #39, DI-21.66. The key of the one fresh refiner session that corrects an over-limit
  * proposal when the first session cannot be resumed. It writes its own row beside the first.
  */
-export const refinerLimitCorrectionSessionKey = (runId: string, afterHang: boolean): string =>
-  `${agentSessionKey(runId, "refiner", null, afterHang)}:limit-correction`;
+export const refinerLimitCorrectionSessionKey = (runId: string, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "refiner", null, afterHang, unreachableRetry)}:limit-correction`;
+
+/**
+ * docs/specs/provider-unreachable.md. The key of the one finding triage session of a PR follow-up
+ * run. It carries the hang marker and the retry number of its own session, as the reviewer's does.
+ */
+export const triageSessionKey = (runId: string, afterHang: boolean, unreachableRetry = 0): string =>
+  `${agentSessionKey(runId, "reviewer", null, afterHang, unreachableRetry)}:triage`;
+
+/**
+ * docs/specs/provider-unreachable.md. The file and directory names a session writes in its sandbox.
+ * Each takes the `afterHang` the activity derived (`input.afterHang || unreachableRetry > 0`) and the
+ * retry number, and adds the same `-unreachable-N` suffix as the session key. Two sessions of one
+ * step never share a name, and retry 0 keeps the legacy name.
+ */
+const unreachableSuffix = (unreachableRetry: number): string => (unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : "");
+
+/** The refiner proposal file, without its extension. A fresh session never reads a partial proposal. */
+export const refinerProposalName = (afterHang: boolean, unreachableRetry = 0): string =>
+  `${afterHang ? "proposal-after-hang" : "proposal"}${unreachableSuffix(unreachableRetry)}`;
+
+/** The Validation Plan file of a validator session, without its extension. */
+export const validatorPlanName = (afterHang: boolean, unreachableRetry = 0): string =>
+  `${afterHang ? "plan-after-hang" : "plan"}${unreachableSuffix(unreachableRetry)}`;
+
+/** The directory of one selector re-check round. */
+export const selectorRecheckDirectoryName = (afterHang: boolean, unreachableRetry = 0): string =>
+  `${afterHang ? "selector-recheck-after-hang" : "selector-recheck"}${unreachableSuffix(unreachableRetry)}`;
+
+/** The report file of one reviewer session. */
+export const reviewerReportName = (attempt: number, afterHang: boolean, unreachableRetry = 0): string =>
+  `report-${attempt}${afterHang ? "-after-hang" : ""}${unreachableSuffix(unreachableRetry)}.json`;
+
+/** The report file of one finding triage session. */
+export const triageReportName = (afterHang: boolean, unreachableRetry = 0): string =>
+  `report${afterHang ? "-after-hang" : ""}${unreachableSuffix(unreachableRetry)}.json`;
 
 /** True for the row of a plan correction session. The Proof Pack reads it. */
 export const isPlanCorrectionSession = (row: Pick<RecordAgentSessionInput, "role" | "idempotencyKey">): boolean =>

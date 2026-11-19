@@ -29,6 +29,7 @@ import type {
   PrepareSandboxActivityInput,
 } from "~/activities/sandbox.activities.js";
 import type { ImplementActivityInput } from "~/activities/agent.activities.js";
+import type { ReadWorkItemContentActivityOutput } from "~/activities/work-item.activities.js";
 import type { VerifyActivityInput } from "~/activities/verification.activities.js";
 import type {
   BuildValidationContractActivityInput,
@@ -39,6 +40,8 @@ import type {
 import type {
   ReviewActivityInput,
   ReviewActivityOutput,
+  TriageActivityInput,
+  TriageActivityOutput,
 } from "~/activities/review.activities.js";
 import type {
   PublishActivityInput,
@@ -164,6 +167,27 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const verifyCalls: VerifyActivityInput[] = [];
   const cancelledSessions: Array<{ runnerName: string; session: { sessionId: string } }> = [];
   const destroyed: string[] = [];
+  /** docs/specs/provider-unreachable.md. Every recorded `destroySandbox` input, in order, failed or not. */
+  const destroyCalls: Array<{ runId: string; spriteId: string; reason: string }> = [];
+  /**
+   * docs/specs/provider-unreachable.md. A run id in this map makes the `destroySandbox` double throw
+   * the returned error. Throw an `ApplicationFailure`: Temporal wraps it in an `ActivityFailure`,
+   * which is the shape the workflow sees after the retries of the real activity.
+   */
+  const destroyFailures = new Map<string, () => Error>();
+  /** A run id in this map holds `destroySandbox` open until the test resolves the promise. */
+  const heldDestroys = new Map<string, Promise<void>>();
+  /**
+   * A `runId:status` key in this map makes the `setRunStatus` double throw the returned error. The
+   * function reads how many times that status was recorded for the run, starting at one.
+   */
+  const statusFailures = new Map<string, (occurrence: number) => Error | null>();
+  /** docs/specs/work-item-images-and-links.md. A run id in this map replaces the work item content the double reads. */
+  const workItemContents = new Map<string, ReadWorkItemContentActivityOutput>();
+  /** docs/specs/external-context-delivery.md. A run id in this map gives the Context Contract delivery refs. */
+  const contextDeliveryRefs = new Map<string, string[]>();
+  /** A run id in this map makes the `prepareSandbox` double throw. The function reads the call number, from one. */
+  const prepareFailures = new Map<string, (call: number) => Error | null>();
   /** docs/specs/check-isolation.md. The check sprite preparations, and the check sprites released. */
   const checkPrepared: PrepareCheckSandboxActivityInput[] = [];
   /** docs/specs/refiner-agent.md. The refiner sessions, and the proposal a test sets per Run. */
@@ -188,7 +212,27 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * docs/specs/agent-session-usage-and-hangs.md. A run id in this map decides, per Implementer
    * call, whether the session hung.
    */
+  // docs/specs/provider-unreachable.md. Makes an Implementer call report an unreachable provider.
+  const implementProviderUnreachable = new Map<string, (call: ImplementActivityInput) => { summary: string } | null>();
   const implementHangs = new Map<string, (call: ImplementActivityInput) => { silenceLimitMs: number } | null>();
+  /**
+   * docs/specs/provider-unreachable.md. Per-run hooks that make the Refiner, the User Validator, the
+   * Reviewer and the PR finding triage report an unreachable provider or a hang, per call. The
+   * function reads the recorded input (`afterHang`, `unreachableRetry`, `attempt`) of that call. An
+   * unreachable provider wins over a hang when one call answers both.
+   */
+  const refinerProviderUnreachable = new Map<string, (call: ProposeRefinementActivityInput) => { summary: string } | null>();
+  const refinerHangs = new Map<string, (call: ProposeRefinementActivityInput) => { silenceLimitMs: number } | null>();
+  const userValidateProviderUnreachable = new Map<string, (call: UserValidateActivityInput) => { summary: string } | null>();
+  const userValidateHangs = new Map<string, (call: UserValidateActivityInput) => { silenceLimitMs: number } | null>();
+  const reviewProviderUnreachable = new Map<string, (call: ReviewActivityInput) => { summary: string } | null>();
+  const reviewHangs = new Map<string, (call: ReviewActivityInput) => { silenceLimitMs: number } | null>();
+  const triageProviderUnreachable = new Map<string, (call: TriageActivityInput) => { summary: string } | null>();
+  const triageHangs = new Map<string, (call: TriageActivityInput) => { silenceLimitMs: number } | null>();
+  /** docs/specs/pr-review-merge-and-deploy.md. Every recorded `triagePullRequestFindings` call, in order. */
+  const triageCalls: TriageActivityInput[] = [];
+  /** Every recorded `prepareTriageSandbox` input, in order. */
+  const triagePrepared: PrepareSandboxActivityInput[] = [];
   /** The run ids whose live Implementer session the activity cancelled. */
   const cancelledLiveSessions: string[] = [];
   /** Every message the workflow posted to the human on the error path. */
@@ -421,6 +465,12 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       statuses.push(input.status);
       statusCalls.push(input);
       await heldStatuses.get(`${input.runId}:${input.status}`);
+      const statusFailure = statusFailures.get(`${input.runId}:${input.status}`);
+      if (statusFailure !== undefined) {
+        const occurrence = statusCalls.filter((call) => call.runId === input.runId && call.status === input.status).length;
+        const error = statusFailure(occurrence);
+        if (error !== null) throw error;
+      }
     },
     claimRunSlot: async (input: { runId: string }): Promise<RunSlotClaim> => {
       runSlotCalls.push(input.runId);
@@ -508,6 +558,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         ...(input.targetRepositories === undefined
           ? {}
           : { targets: input.targetRepositories.map((repository, index) => ({ slug: repository.slug, sha: `${"abcdef"[index % 6] ?? "a"}`.repeat(40) })) }),
+        ...(contextDeliveryRefs.has(input.runId) ? { deliveryRefs: contextDeliveryRefs.get(input.runId) } : {}),
         unresolvedConflict,
         conflictCount: all.length,
         summary:
@@ -575,15 +626,16 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     // docs/specs/pr-review-merge-and-deploy.md, slice 3. No review event reaches the PR workflow here.
     planPullRequestFollowUp: async () => ({ kind: "none", reason: "no review event" }),
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
-    readWorkItemContent: async () => ({
-      comments: null,
-      commentCount: 0,
-      images: [],
-      links: [],
-      skippedImages: [],
-      linksNotRead: [],
-      visionFailure: null,
-    }),
+    readWorkItemContent: async (activityInput: { runId?: string }): Promise<ReadWorkItemContentActivityOutput> =>
+      workItemContents.get(activityInput.runId ?? "") ?? {
+        comments: null,
+        commentCount: 0,
+        images: [],
+        links: [],
+        skippedImages: [],
+        linksNotRead: [],
+        visionFailure: null,
+      },
     // docs/specs/sandbox-provider-spillover.md. The harness has one bare sandbox, so no provider is pinned.
     selectSandboxProvider: (activityInput: { runId: string }) => {
       providerSelections.push(activityInput.runId);
@@ -597,6 +649,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     prepareSandbox: async (activityInput: PrepareSandboxActivityInput) => {
       activityOrder.push("prepareSandbox");
       prepared.push(activityInput);
+      const prepareFailure = prepareFailures.get(activityInput.runId);
+      if (prepareFailure !== undefined) {
+        const error = prepareFailure(prepared.filter((entry) => entry.runId === activityInput.runId).length);
+        if (error !== null) throw error;
+      }
       if (configurationFaults.has(activityInput.runId)) {
         throw new RunConfigurationError("the bootstrap command failed with exit code 1: no such file");
       }
@@ -663,6 +720,19 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     proposeRefinement: async (activityInput: ProposeRefinementActivityInput) => {
       activityOrder.push("proposeRefinement");
       refinerCalls.push(activityInput);
+      const unreachable = refinerProviderUnreachable.get(activityInput.runId)?.(activityInput) ?? null;
+      const hang = unreachable === null ? (refinerHangs.get(activityInput.runId)?.(activityInput) ?? null) : null;
+      if (unreachable !== null || hang !== null) {
+        return {
+          status: "unavailable" as const,
+          accepted: [],
+          decisions: [],
+          visualEvidenceGap: null,
+          reason: unreachable === null ? "The Refiner session wrote no output." : "The Refiner session could not reach the model provider.",
+          hang,
+          ...(unreachable === null ? {} : { providerUnreachable: unreachable }),
+        };
+      }
       const outcome = refinerOutcomes.get(activityInput.runId);
       if (outcome !== undefined) return outcome;
       return { status: "proposed" as const, accepted: [], decisions: [], visualEvidenceGap: null, reason: "", hang: null };
@@ -670,7 +740,11 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     releaseCheckSandbox: async (activityInput: { spriteId: string }) => {
       releasedChecks.push(activityInput.spriteId);
     },
-    destroySandbox: async (activityInput: { spriteId: string }) => {
+    destroySandbox: async (activityInput: { runId: string; spriteId: string; reason: string }) => {
+      destroyCalls.push({ runId: activityInput.runId, spriteId: activityInput.spriteId, reason: activityInput.reason });
+      await heldDestroys.get(activityInput.runId);
+      const failure = destroyFailures.get(activityInput.runId);
+      if (failure !== undefined) throw failure();
       destroyed.push(activityInput.spriteId);
     },
     reapExpiredSandboxes: async () => 0,
@@ -704,6 +778,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         durationMs: 10,
         cancelledSession: cancelledLiveSessions.includes(activityInput.runId),
         hang: implementHangs.get(activityInput.runId)?.(activityInput) ?? null,
+        providerUnreachable: implementProviderUnreachable.get(activityInput.runId)?.(activityInput) ?? null,
       };
     },
     verify: async (activityInput: VerifyActivityInput) => {
@@ -767,6 +842,25 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       }
       const delegate = userValidateDelegates.get(activityInput.runId);
       if (delegate !== undefined) return await delegate(activityInput);
+      const unreachable = userValidateProviderUnreachable.get(activityInput.runId)?.(activityInput) ?? null;
+      const hang = unreachable === null ? (userValidateHangs.get(activityInput.runId)?.(activityInput) ?? null) : null;
+      if (unreachable !== null || hang !== null) {
+        // The real activity runs no check for a session that proved nothing.
+        return {
+          passed: false,
+          results: [],
+          hasFailure: false,
+          hasManual: false,
+          hasBlocked: false,
+          summary:
+            unreachable === null ? "The User Validator session wrote no output." : "The User Validator session could not reach the model provider.",
+          failures: [],
+          sessionId: "ses_fake_validator",
+          previewUrl: null,
+          hang,
+          ...(unreachable === null ? {} : { providerUnreachable: unreachable }),
+        };
+      }
       const outcome = userValidationOutcomes.get(activityInput.runId);
       if (outcome !== undefined) return outcome(activityInput.attempt);
       return {
@@ -807,6 +901,28 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
         } finally {
           clearInterval(heartbeat);
         }
+      }
+      const unreachable = reviewProviderUnreachable.get(activityInput.runId)?.(activityInput) ?? null;
+      const hang = unreachable === null ? (reviewHangs.get(activityInput.runId)?.(activityInput) ?? null) : null;
+      if (unreachable !== null || hang !== null) {
+        // The real activity reads no report from a session that proved nothing.
+        return {
+          passed: false,
+          verdict: "fail",
+          findingCount: 0,
+          blockingCount: 0,
+          summary: "",
+          changeDescription: "",
+          failures: [],
+          sessionId: "ses_fake_reviewer",
+          reportUsable: false,
+          reportProblem:
+            unreachable === null ? "The Reviewer session wrote no output." : "The Reviewer session could not reach the model provider.",
+          changedFiles: ["src/app.ts"],
+          worktreeSha: "",
+          hang,
+          ...(unreachable === null ? {} : { providerUnreachable: unreachable }),
+        };
       }
       // Controller ruling B. When the test supplied a scripted report, the double parses it
       // with the real `parseReviewReport` and decides it with the real `decideReview`, so the
@@ -879,6 +995,47 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       if (outcome === undefined) return passing;
       return { ...passing, ...outcome(activityInput.attempt) };
     },
+    // docs/specs/pr-review-merge-and-deploy.md. The check sprite of the pull request head, where the triage runs.
+    prepareTriageSandbox: async (activityInput: PrepareSandboxActivityInput & { pullRequestHead: string }) => {
+      activityOrder.push("prepareTriageSandbox");
+      triagePrepared.push(activityInput);
+      return {
+        spriteId: `triage-${activityInput.runId}`,
+        adapter: "fake",
+        workspacePath: "/workspace",
+        primaryPath: "/workspace/primary",
+        baseSha: "a".repeat(40),
+        referencePaths: [],
+        referenceBaseShas: [],
+        baselineCheckpointId: null,
+        runtime: {
+          ...DEFAULT_PROJECT_RUNTIME_CONFIG,
+          ...(runtimeOverrides.get(activityInput.runId) ?? {}),
+        },
+        verifyCommands: DEFAULT_VERIFY_COMMANDS,
+        preview: null,
+        repositoryInstructions: "Use the existing test idiom.",
+      };
+    },
+    triagePullRequestFindings: async (activityInput: TriageActivityInput): Promise<TriageActivityOutput> => {
+      activityOrder.push("triagePullRequestFindings");
+      triageCalls.push(activityInput);
+      const unreachable = triageProviderUnreachable.get(activityInput.runId)?.(activityInput) ?? null;
+      const hang = unreachable === null ? (triageHangs.get(activityInput.runId)?.(activityInput) ?? null) : null;
+      if (unreachable !== null || hang !== null) {
+        return {
+          decisions: [],
+          reportUsable: false,
+          reportProblem:
+            unreachable === null ? "The triage session wrote no output." : "The triage session could not reach the model provider.",
+          hang,
+          ...(unreachable === null ? {} : { providerUnreachable: unreachable }),
+        };
+      }
+      // The default triage keeps no finding, so the Run ends REPORTED with no change.
+      return { decisions: [], reportUsable: true, reportProblem: null, hang: null };
+    },
+    answerDroppedFindings: async () => undefined,
     publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
       activityOrder.push("publish");
       publishCalls.push(activityInput);
@@ -1076,6 +1233,13 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     verifyCalls,
     cancelledSessions,
     destroyed,
+    destroyCalls,
+    workItemContents,
+    contextDeliveryRefs,
+    destroyFailures,
+    heldDestroys,
+    statusFailures,
+    prepareFailures,
     checkPrepared,
     releasedChecks,
     refinerCalls,
@@ -1086,6 +1250,17 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldStatuses,
     failingImplementations,
     implementHangs,
+    implementProviderUnreachable,
+    refinerProviderUnreachable,
+    refinerHangs,
+    userValidateProviderUnreachable,
+    userValidateHangs,
+    reviewProviderUnreachable,
+    reviewHangs,
+    triageProviderUnreachable,
+    triageHangs,
+    triageCalls,
+    triagePrepared,
     cancelledLiveSessions,
     postedErrors,
     postedProgress,

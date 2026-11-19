@@ -18,6 +18,8 @@ export const RUN_FAILURE_CATEGORIES = [
   "INPUT_UNRESOLVED",
   /** An agent session itself failed or hung. */
   "AGENT",
+  /** docs/specs/provider-unreachable.md. The sandbox could not reach the model provider. */
+  "INFRASTRUCTURE",
   /** Deterministic verification did not pass within the repair budget. SDD section 35. */
   "VERIFICATION",
   /** User-level validation did not pass, or Factoree ran no validation. SDD section 36. */
@@ -42,6 +44,7 @@ const CATEGORY_BY_REASON: Record<RunFailureReason, RunFailureCategory> = {
   CONFIGURATION_INVALID: "CONFIGURATION",
   IMPLEMENTATION_FAILED: "AGENT",
   AGENT_HUNG: "AGENT",
+  PROVIDER_UNREACHABLE: "INFRASTRUCTURE",
   VERIFICATION_FAILED: "VERIFICATION",
   REFINEMENT_UNRESOLVED: "INPUT_UNRESOLVED",
   REFINEMENT_UNAVAILABLE: "AGENT",
