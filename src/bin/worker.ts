@@ -28,6 +28,7 @@ import {
 import { PrismaAgentExecutionRepository } from "~/persistence/prisma/agent-execution.prisma.js";
 import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.prisma.js";
 import { PrismaRunStageStore } from "~/persistence/prisma/run-stage.prisma.js";
+import { PrismaRunEventStore } from "~/persistence/prisma/run-event.prisma.js";
 import { PrismaEvidenceStore } from "~/persistence/prisma/evidence.prisma.js";
 import { PrismaValidationResultStore } from "~/persistence/prisma/validation-result.prisma.js";
 import { PrismaReviewFindingStore } from "~/persistence/prisma/review-finding.prisma.js";
@@ -178,6 +179,8 @@ try {
 const warmSnapshots = new PrismaWarmSnapshotStore(prisma);
 // docs/specs/run-speed.md. One row per stage of each run.
 const stages = new PrismaRunStageStore(prisma);
+// docs/specs/run-diagnostics.md. The faults and the Factoree decisions of each run and setup run.
+const events = { store: new PrismaRunEventStore(prisma), redactor, logger };
 // docs/specs/host-credentials.md. The secrets and the token provider are built further down, and
 // a credential is read only when a sandbox is prepared.
 const hostCredentials = createHostCredentialWiring({ prisma, secrets: () => secrets, tokens: () => githubTokens });
@@ -187,6 +190,7 @@ const sandboxManager = new SandboxManager({
   logger,
   warmSnapshots,
   stages,
+  events,
   hostCredentials: hostCredentials.access,
   credentialBindings,
   // docs/specs/proof-pack-and-visual-evidence.md. The install script was proven on the Sprite image.
@@ -524,6 +528,7 @@ const worker = await Worker.create({
     executions: new PrismaAgentExecutionRepository(prisma),
     sessions: new PrismaAgentSessionStore(prisma),
     stages,
+    events,
     secrets,
     evidence: new PrismaEvidenceStore(prisma),
     redactor,
@@ -549,6 +554,7 @@ const worker = await Worker.create({
     changeSets: pullRequestRecords,
     commitStatuses: new GitHubCommitStatuses({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
+    runPageUrl: (runId: string) => `${env.FACTOREE_PUBLIC_URL.replace(/\/+$/, "")}/runs/${runId}`,
     validationContracts,
     // docs/specs/pr-review-merge-and-deploy.md, D1. The same store holds the passing plans.
     validationPlans: validationContracts,

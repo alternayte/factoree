@@ -8,11 +8,16 @@ import type { AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { setupWorkflowId, type RepositorySetupRecord, type RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import { renderSetupReport } from "~/domain/setup/setup-report.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
+import type { RunEventStore } from "~/domain/diagnostics/run-event.js";
+import { setupDiagnosisOf } from "~/domain/diagnostics/diagnosis.js";
+import { diagnosisSchema, eventsQuerySchema, runEventPageSchema, toDiagnosisJson, toEventJson } from "./run-events.schemas.js";
 
 export interface RepositorySetupRouteDependencies {
   products: ProductRegistry;
   tenants: TenantRegistry;
   setups: RepositorySetupStore;
+  /** docs/specs/run-diagnostics.md. The run events of each setup run. */
+  events: RunEventStore;
   /** docs/specs/setup-speed-and-history.md. The app-change issues the setup history links. */
   appChangeIssues?: Pick<AppChangeIssueStore, "listForRepository"> | undefined;
   /** Every repository of the tenant, registered to any product. */
@@ -54,6 +59,8 @@ const setupSchema = z.object({
 
 /** docs/specs/setup-speed-and-history.md. One setup in the setup history of a repository. */
 const setupHistoryEntrySchema = setupSchema.extend({
+  /** docs/specs/run-diagnostics.md. How a failed or partial setup ended and its newest fault. */
+  diagnosis: diagnosisSchema,
   workflowId: z.string(),
   /** Every setup of a repository shares the workflow id. Null for a setup from before the setup history. */
   temporalRunId: z.string().nullable(),
@@ -180,6 +187,37 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
   );
 
   app.get<{ Params: { id: string } }>(
+    "/admin/repository-setups/:id/events",
+    {
+      schema: {
+        tags: ["products"],
+        operationId: "listRepositorySetupEvents",
+        summary: "The faults and Factoree decisions of a setup run, in order",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        querystring: schemaOf(eventsQuerySchema),
+        response: { 200: schemaOf(runEventPageSchema), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const query = eventsQuerySchema.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(query.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const setup = await dependencies.setups.findById(request.params.id);
+      // The tenant check is part of the lookup. SDD section 52 forbids relying on the caller.
+      if (setup === null || setup.tenantId !== tenant.id) return reply.code(404).send({ error: "setup not found" });
+      const page = await dependencies.events.list({
+        tenantId: tenant.id,
+        subject: { setupId: setup.id },
+        limit: query.data.limit,
+        ...(query.data.cursor === undefined ? {} : { cursor: query.data.cursor }),
+      });
+      return { items: page.items.map(toEventJson), nextCursor: page.nextCursor };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
     "/admin/products/:id/repository-setups/history",
     {
       schema: {
@@ -200,10 +238,12 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
       if (!product) return reply.code(404).send({ error: "product not found" });
       const setups = await dependencies.setups.listForRepository(product.id, query.data.repository);
       const issues = (await dependencies.appChangeIssues?.listForRepository(tenant.id, query.data.repository)) ?? [];
-      return setups.map((setup) => {
+      const diagnoses = await Promise.all(setups.map((setup) => setupDiagnosisOf(dependencies.events, tenant.id, setup)));
+      return setups.map((setup, index) => {
         const usage = setup.sessionUsage;
         return {
           ...toSetup(setup),
+          diagnosis: toDiagnosisJson(diagnoses[index] ?? null),
           workflowId: setup.workflowId,
           temporalRunId: setup.temporalRunId,
           warm: setup.warm,

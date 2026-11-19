@@ -14,6 +14,8 @@ import { runVerification } from "~/domain/runs/verification.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
 import { metrics } from "~/telemetry/metrics.js";
 import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
+import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
+import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
 
 /** The SHA-256 of an empty output, for a check that ran no command. */
 const EMPTY_SHA256 = createHash("sha256").update("", "utf8").digest("hex");
@@ -26,6 +28,8 @@ export interface VerificationActivityDependencies {
   logger: Logger;
   /** docs/specs/run-speed.md. The stage rows of each run. */
   stages?: RunStageStore | undefined;
+  /** docs/specs/run-diagnostics.md. A failed check writes a run event. */
+  events?: RunEventRecorder | undefined;
 }
 
 export interface VerifyActivityInput {
@@ -209,6 +213,34 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
         },
         idempotencyKey: `run:${input.runId}:verify:${input.attempt}:${check.name}`,
       });
+      if (!check.passed) {
+        // docs/specs/run-diagnostics.md. The verify input names no allow list, so a failed check
+        // carries the egress log but no host hints.
+        const facts = await faultEgressFacts({ sandbox: dependencies.sandbox, ref, allowList: null }, check.log);
+        await recordRunEvent(dependencies.events, {
+          tenantId: input.tenantId,
+          subject: { runId: input.runId },
+          stage: "VERIFYING",
+          attempt: input.attempt,
+          role: null,
+          kind: "command_failed",
+          message: withDeniedHosts(
+            check.timedOut
+              ? `The verify command ${check.name} ran out of time after ${String(Math.round(check.durationMs / 1000))} seconds.`
+              : `The verify command ${check.name} failed with exit code ${String(check.exitCode)}.`,
+            facts,
+          ),
+          detail: {
+            step: "verify",
+            command: check.command,
+            exitCode: check.exitCode,
+            durationMs: check.durationMs,
+            log: check.log,
+            ...facts,
+          },
+          idempotencyKey: `run:${input.runId}:verify:${input.attempt}:${check.name}:event`,
+        });
+      }
     }
 
     metrics.verificationDuration.observe(

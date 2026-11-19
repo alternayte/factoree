@@ -7426,6 +7426,739 @@
                         }
                       ]
                     },
+                    "diagnosis": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "stage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "attempt": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "cause": {
+                              "anyOf": [
+                                {
+                                  "oneOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session_failed"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "runner": {
+                                              "type": "string"
+                                            },
+                                            "model": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "exitCode": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "summary": {
+                                              "type": "string"
+                                            },
+                                            "log": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "egress": {
+                                              "type": "string",
+                                              "enum": [
+                                                "recorded",
+                                                "not_recorded",
+                                                "unreadable"
+                                              ]
+                                            },
+                                            "deniedHosts": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "hostHints": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "runner",
+                                            "model",
+                                            "exitCode",
+                                            "summary",
+                                            "log",
+                                            "egress",
+                                            "deniedHosts",
+                                            "hostHints"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session_hung"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "runner": {
+                                              "type": "string"
+                                            },
+                                            "silenceLimitMs": {
+                                              "type": "number"
+                                            }
+                                          },
+                                          "required": [
+                                            "runner",
+                                            "silenceLimitMs"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "command_failed"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "step": {
+                                              "type": "string"
+                                            },
+                                            "command": {
+                                              "type": "string"
+                                            },
+                                            "exitCode": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "durationMs": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "log": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "egress": {
+                                              "type": "string",
+                                              "enum": [
+                                                "recorded",
+                                                "not_recorded",
+                                                "unreadable"
+                                              ]
+                                            },
+                                            "deniedHosts": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "hostHints": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "step",
+                                            "command",
+                                            "exitCode",
+                                            "durationMs",
+                                            "log",
+                                            "egress",
+                                            "deniedHosts",
+                                            "hostHints"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "plan_rejected"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "problems": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "round": {
+                                              "type": "string",
+                                              "enum": [
+                                                "first",
+                                                "correction"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "problems",
+                                            "round"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "proposal_rejected"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "problem": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "problem"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "selector_recheck"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "assertionKeys": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "assertionKeys"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "check_unstable"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "assertionKey": {
+                                              "type": "string"
+                                            },
+                                            "reason": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "assertionKey",
+                                            "reason"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "retry_started"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "what": {
+                                              "type": "string"
+                                            },
+                                            "reason": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "what",
+                                            "reason"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "repair_started"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "repair": {
+                                              "type": "number"
+                                            },
+                                            "reason": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "repair",
+                                            "reason"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "run_ended"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "status": {
+                                              "type": "string"
+                                            },
+                                            "reason": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "lastStatus": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "causeEventId": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "status",
+                                            "reason",
+                                            "lastStatus",
+                                            "causeEventId"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    }
+                                  ],
+                                  "description": "One fault or one Factoree decision of a run or a setup run."
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "status",
+                            "reason",
+                            "stage",
+                            "attempt",
+                            "message",
+                            "cause"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "temporalWorkflowId": {
                       "type": "string"
                     },
@@ -7805,6 +8538,7 @@
                     "waitedMs",
                     "sandboxProvider",
                     "blockers",
+                    "diagnosis",
                     "temporalWorkflowId",
                     "terminal",
                     "stopRequestedAt",
@@ -7827,6 +8561,803 @@
                     "findings",
                     "skills",
                     "skillProposals"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/runs/{id}/events": {
+      "get": {
+        "operationId": "listRunEvents",
+        "summary": "The faults and Factoree decisions of a run, in order",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "default": 100,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "session_failed"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "runner": {
+                                    "type": "string"
+                                  },
+                                  "model": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "string",
+                                    "enum": [
+                                      "recorded",
+                                      "not_recorded",
+                                      "unreadable"
+                                    ]
+                                  },
+                                  "deniedHosts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "hostHints": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "runner",
+                                  "model",
+                                  "exitCode",
+                                  "summary",
+                                  "log",
+                                  "egress",
+                                  "deniedHosts",
+                                  "hostHints"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "session_hung"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "runner": {
+                                    "type": "string"
+                                  },
+                                  "silenceLimitMs": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "runner",
+                                  "silenceLimitMs"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "command_failed"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "step": {
+                                    "type": "string"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "durationMs": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "string",
+                                    "enum": [
+                                      "recorded",
+                                      "not_recorded",
+                                      "unreadable"
+                                    ]
+                                  },
+                                  "deniedHosts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "hostHints": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "step",
+                                  "command",
+                                  "exitCode",
+                                  "durationMs",
+                                  "log",
+                                  "egress",
+                                  "deniedHosts",
+                                  "hostHints"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "plan_rejected"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "problems": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "round": {
+                                    "type": "string",
+                                    "enum": [
+                                      "first",
+                                      "correction"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "problems",
+                                  "round"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "proposal_rejected"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "problem": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "problem"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "selector_recheck"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "assertionKeys": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "assertionKeys"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "check_unstable"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "assertionKey": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "assertionKey",
+                                  "reason"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "retry_started"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "what": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "what",
+                                  "reason"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "repair_started"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "repair": {
+                                    "type": "number"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "repair",
+                                  "reason"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "run_ended"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "status": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "lastStatus": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "causeEventId": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "status",
+                                  "reason",
+                                  "lastStatus",
+                                  "causeEventId"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          }
+                        ],
+                        "description": "One fault or one Factoree decision of a run or a setup run."
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
                   ]
                 }
               }
@@ -8596,6 +10127,803 @@
         }
       }
     },
+    "/admin/repository-setups/{id}/events": {
+      "get": {
+        "operationId": "listRepositorySetupEvents",
+        "summary": "The faults and Factoree decisions of a setup run, in order",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "default": 100,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "session_failed"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "runner": {
+                                    "type": "string"
+                                  },
+                                  "model": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "string",
+                                    "enum": [
+                                      "recorded",
+                                      "not_recorded",
+                                      "unreadable"
+                                    ]
+                                  },
+                                  "deniedHosts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "hostHints": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "runner",
+                                  "model",
+                                  "exitCode",
+                                  "summary",
+                                  "log",
+                                  "egress",
+                                  "deniedHosts",
+                                  "hostHints"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "session_hung"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "runner": {
+                                    "type": "string"
+                                  },
+                                  "silenceLimitMs": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "runner",
+                                  "silenceLimitMs"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "command_failed"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "step": {
+                                    "type": "string"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "durationMs": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "string",
+                                    "enum": [
+                                      "recorded",
+                                      "not_recorded",
+                                      "unreadable"
+                                    ]
+                                  },
+                                  "deniedHosts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "hostHints": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "step",
+                                  "command",
+                                  "exitCode",
+                                  "durationMs",
+                                  "log",
+                                  "egress",
+                                  "deniedHosts",
+                                  "hostHints"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "plan_rejected"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "problems": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "round": {
+                                    "type": "string",
+                                    "enum": [
+                                      "first",
+                                      "correction"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "problems",
+                                  "round"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "proposal_rejected"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "problem": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "problem"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "selector_recheck"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "assertionKeys": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "assertionKeys"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "check_unstable"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "assertionKey": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "assertionKey",
+                                  "reason"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "retry_started"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "what": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "what",
+                                  "reason"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "repair_started"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "repair": {
+                                    "type": "number"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "repair",
+                                  "reason"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "run_ended"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "status": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "lastStatus": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "causeEventId": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "status",
+                                  "reason",
+                                  "lastStatus",
+                                  "causeEventId"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          }
+                        ],
+                        "description": "One fault or one Factoree decision of a run or a setup run."
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/products/{id}/repository-setups/history": {
       "get": {
         "operationId": "listRepositorySetupHistory",
@@ -8701,6 +11029,739 @@
                         "type": [
                           "string",
                           "null"
+                        ]
+                      },
+                      "diagnosis": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "stage": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "attempt": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "cause": {
+                                "anyOf": [
+                                  {
+                                    "oneOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "session_failed"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "runner": {
+                                                "type": "string"
+                                              },
+                                              "model": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "exitCode": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "summary": {
+                                                "type": "string"
+                                              },
+                                              "log": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "egress": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "recorded",
+                                                  "not_recorded",
+                                                  "unreadable"
+                                                ]
+                                              },
+                                              "deniedHosts": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "hostHints": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "runner",
+                                              "model",
+                                              "exitCode",
+                                              "summary",
+                                              "log",
+                                              "egress",
+                                              "deniedHosts",
+                                              "hostHints"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "session_hung"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "runner": {
+                                                "type": "string"
+                                              },
+                                              "silenceLimitMs": {
+                                                "type": "number"
+                                              }
+                                            },
+                                            "required": [
+                                              "runner",
+                                              "silenceLimitMs"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "command_failed"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "step": {
+                                                "type": "string"
+                                              },
+                                              "command": {
+                                                "type": "string"
+                                              },
+                                              "exitCode": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "durationMs": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "log": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "egress": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "recorded",
+                                                  "not_recorded",
+                                                  "unreadable"
+                                                ]
+                                              },
+                                              "deniedHosts": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "hostHints": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "step",
+                                              "command",
+                                              "exitCode",
+                                              "durationMs",
+                                              "log",
+                                              "egress",
+                                              "deniedHosts",
+                                              "hostHints"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "plan_rejected"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "problems": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "round": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "first",
+                                                  "correction"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "problems",
+                                              "round"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "proposal_rejected"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "problem": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "problem"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "selector_recheck"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "assertionKeys": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "assertionKeys"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "check_unstable"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "assertionKey": {
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "assertionKey",
+                                              "reason"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "retry_started"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "what": {
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "what",
+                                              "reason"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "repair_started"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "repair": {
+                                                "type": "number"
+                                              },
+                                              "reason": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "repair",
+                                              "reason"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "run_ended"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "status": {
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "lastStatus": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "causeEventId": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "status",
+                                              "reason",
+                                              "lastStatus",
+                                              "causeEventId"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      }
+                                    ],
+                                    "description": "One fault or one Factoree decision of a run or a setup run."
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "reason",
+                              "stage",
+                              "attempt",
+                              "message",
+                              "cause"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
                         ]
                       },
                       "workflowId": {
@@ -8846,6 +11907,7 @@
                       "createdAt",
                       "endedAt",
                       "skippedFromSetupId",
+                      "diagnosis",
                       "workflowId",
                       "temporalRunId",
                       "warm",

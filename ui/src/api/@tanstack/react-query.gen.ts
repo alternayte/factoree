@@ -40,8 +40,10 @@ import {
   listProductAgentSessions,
   listProducts,
   listProductSecrets,
+  listRepositorySetupEvents,
   listRepositorySetupHistory,
   listRepositorySetups,
+  listRunEvents,
   listRuns,
   listSandboxProviders,
   listSetupLinearTeams,
@@ -150,12 +152,18 @@ import type {
   ListProductSecretsResponse,
   ListProductsError,
   ListProductsResponse,
+  ListRepositorySetupEventsData,
+  ListRepositorySetupEventsError,
+  ListRepositorySetupEventsResponse,
   ListRepositorySetupHistoryData,
   ListRepositorySetupHistoryError,
   ListRepositorySetupHistoryResponse,
   ListRepositorySetupsData,
   ListRepositorySetupsError,
   ListRepositorySetupsResponse,
+  ListRunEventsData,
+  ListRunEventsError,
+  ListRunEventsResponse,
   ListRunsData,
   ListRunsError,
   ListRunsResponse,
@@ -872,6 +880,72 @@ export const getRunOptions = (options: Options<GetRunData>) =>
     queryKey: getRunQueryKey(options),
   });
 
+export const listRunEventsQueryKey = (options: Options<ListRunEventsData>) => createQueryKey("listRunEvents", options);
+
+/**
+ * The faults and Factoree decisions of a run, in order
+ */
+export const listRunEventsOptions = (options: Options<ListRunEventsData>) =>
+  queryOptions<
+    ListRunEventsResponse,
+    ListRunEventsError,
+    ListRunEventsResponse,
+    ReturnType<typeof listRunEventsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listRunEvents({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listRunEventsQueryKey(options),
+  });
+
+export const listRunEventsInfiniteQueryKey = (
+  options: Options<ListRunEventsData>,
+): QueryKey<Options<ListRunEventsData>> => createQueryKey("listRunEvents", options, true);
+
+/**
+ * The faults and Factoree decisions of a run, in order
+ */
+export const listRunEventsInfiniteOptions = (options: Options<ListRunEventsData>) => {
+  const opts = infiniteQueryOptions<
+    ListRunEventsResponse,
+    ListRunEventsError,
+    InfiniteData<ListRunEventsResponse>,
+    QueryKey<Options<ListRunEventsData>>,
+    string | Pick<QueryKey<Options<ListRunEventsData>>[0], "body" | "headers" | "path" | "query">
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<QueryKey<Options<ListRunEventsData>>[0], "body" | "headers" | "path" | "query"> =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listRunEvents({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listRunEventsInfiniteQueryKey(options),
+    },
+  );
+  return opts as Omit<typeof opts, "initialData">;
+};
+
 export const stopRunMutation = (
   options?: Partial<Options<StopRunData>>,
 ): UseMutationOptions<StopRunResponse, StopRunError, Options<StopRunData>> => {
@@ -974,6 +1048,73 @@ export const startRepositorySetupsMutation = (
     },
   };
   return mutationOptions;
+};
+
+export const listRepositorySetupEventsQueryKey = (options: Options<ListRepositorySetupEventsData>) =>
+  createQueryKey("listRepositorySetupEvents", options);
+
+/**
+ * The faults and Factoree decisions of a setup run, in order
+ */
+export const listRepositorySetupEventsOptions = (options: Options<ListRepositorySetupEventsData>) =>
+  queryOptions<
+    ListRepositorySetupEventsResponse,
+    ListRepositorySetupEventsError,
+    ListRepositorySetupEventsResponse,
+    ReturnType<typeof listRepositorySetupEventsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listRepositorySetupEvents({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listRepositorySetupEventsQueryKey(options),
+  });
+
+export const listRepositorySetupEventsInfiniteQueryKey = (
+  options: Options<ListRepositorySetupEventsData>,
+): QueryKey<Options<ListRepositorySetupEventsData>> => createQueryKey("listRepositorySetupEvents", options, true);
+
+/**
+ * The faults and Factoree decisions of a setup run, in order
+ */
+export const listRepositorySetupEventsInfiniteOptions = (options: Options<ListRepositorySetupEventsData>) => {
+  const opts = infiniteQueryOptions<
+    ListRepositorySetupEventsResponse,
+    ListRepositorySetupEventsError,
+    InfiniteData<ListRepositorySetupEventsResponse>,
+    QueryKey<Options<ListRepositorySetupEventsData>>,
+    string | Pick<QueryKey<Options<ListRepositorySetupEventsData>>[0], "body" | "headers" | "path" | "query">
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<QueryKey<Options<ListRepositorySetupEventsData>>[0], "body" | "headers" | "path" | "query"> =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listRepositorySetupEvents({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listRepositorySetupEventsInfiniteQueryKey(options),
+    },
+  );
+  return opts as Omit<typeof opts, "initialData">;
 };
 
 export const listRepositorySetupHistoryQueryKey = (options: Options<ListRepositorySetupHistoryData>) =>

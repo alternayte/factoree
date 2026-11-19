@@ -4,7 +4,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
 import { agentSessionKey, refinerLimitCorrectionSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
+import { hangOf, recordAgentSession, recordHangRetry, type AgentHang } from "./agent-session-recording.js";
 import { AgentSessionUnavailableError, UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -51,6 +51,7 @@ import { gateMissingHosts, type EgressFacts, type MissingHost } from "~/domain/r
 import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type { TargetEdge } from "~/domain/runs/merge-order.js";
 import type { ConflictReport } from "~/domain/context/conflicts.js";
+import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 
 export interface RefineActivityInput {
   runId: string;
@@ -89,6 +90,8 @@ export interface RefineActivityOutput {
 }
 
 export interface RefinementActivityDependencies {
+  /** docs/specs/run-diagnostics.md. The writer of run events, absent in a test that records none. */
+  events?: RunEventRecorder | undefined;
   refinement: RefinementEngine;
   logger: Logger;
   /** docs/specs/refiner-agent.md. The ports the refiner agent session needs. */
@@ -340,6 +343,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     const directory = `${input.workspacePath}/refinement`;
     await agent.sandbox.exec(ref, { file: "mkdir", args: ["-p", directory] });
     const afterHang = input.afterHang === true;
+    if (afterHang) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "refiner", attempt: 1, stage: "REFINING" });
     // A hung session can leave a partial proposal, and the fresh session must never read it.
     const proposalPath = `${directory}/${afterHang ? "proposal-after-hang" : "proposal"}.json`;
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
@@ -449,6 +453,17 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         const resumeFailed =
           resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
         if (resumeFailed && corrected.exitCode !== 0 && !context.cancellationSignal.aborted) {
+          await recordRunEvent(dependencies.events, {
+            tenantId: input.tenantId,
+            subject: { runId: input.runId },
+            stage: "REFINING",
+            attempt: 1,
+            role: "refiner",
+            kind: "retry_started",
+            message: "The refiner session could not be resumed, so Factoree started one fresh session to correct the proposal.",
+            detail: { what: "refiner correction session", reason: "the session could not be resumed" },
+            idempotencyKey: `run:${input.runId}:refine:${afterHang ? "after-hang:" : ""}fresh-correction`,
+          });
           dependencies.logger.warn("the refiner session cannot be resumed; starting one fresh session to correct the proposal", {
             tenant_id: input.tenantId,
             run_id: input.runId,
@@ -534,7 +549,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       });
       // The refiner runs before the first Implementer attempt, so its row carries attempt 1.
       await recordAgentSession(
-        { sessions: agent.sessions, logger: dependencies.logger, stages: agent.stages },
+        { sessions: agent.sessions, logger: dependencies.logger, stages: agent.stages, events: dependencies.events },
         {
           tenantId: input.tenantId,
           productId: input.productId,
@@ -544,12 +559,13 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
           runner: runner.name,
           idempotencyKey: agentSessionKey(input.runId, "refiner", null, afterHang),
           sandboxId: input.spriteId,
+          egress: { sandbox: agent.sandbox, ref, allowList: input.egress?.allowed ?? null },
         },
         invocations,
       );
       if (correctionInvocations.length > 0) {
         await recordAgentSession(
-          { sessions: agent.sessions, logger: dependencies.logger, stages: agent.stages },
+          { sessions: agent.sessions, logger: dependencies.logger, stages: agent.stages, events: dependencies.events },
           {
             tenantId: input.tenantId,
             productId: input.productId,
@@ -559,6 +575,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
             runner: runner.name,
             idempotencyKey: correctionKey,
             sandboxId: input.spriteId,
+            egress: { sandbox: agent.sandbox, ref, allowList: input.egress?.allowed ?? null },
           },
           correctionInvocations,
         );
@@ -589,11 +606,23 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
       } catch (error) {
         // Issue #39. Still over a cap after the correction round: the human splits the Work Item
         // or raises the limit, so the message names that and not the schema.
+        const problem =
+          error instanceof RefinerProposalError && error.overLimit !== null ? overLimitMessage(error.overLimit) : agent.redactor.redactText(String(error));
+        await recordRunEvent(dependencies.events, {
+          tenantId: input.tenantId,
+          subject: { runId: input.runId },
+          stage: "REFINING",
+          attempt: 1,
+          role: "refiner",
+          kind: "proposal_rejected",
+          message: `Factoree could not use the refiner proposal: ${problem}`,
+          detail: { problem },
+          idempotencyKey: `run:${input.runId}:refine:${afterHang ? "after-hang:" : ""}proposal-rejected`,
+        });
         if (error instanceof RefinerProposalError && error.overLimit !== null) {
-          const message = overLimitMessage(error.overLimit);
-          return { status: "unavailable", ...empty, reason: message, message };
+          return { status: "unavailable", ...empty, reason: problem, message: problem };
         }
-        return { status: "unavailable", ...empty, reason: agent.redactor.redactText(String(error)) };
+        return { status: "unavailable", ...empty, reason: problem };
       }
       // DI-21.48. A host the allow list already holds is a misread fault, not a missing host.
       const hosts = gateMissingHosts(gated.missingHosts, input.egress?.allowed ?? []);
