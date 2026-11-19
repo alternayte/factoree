@@ -18,6 +18,12 @@ export default tseslint.config(
     },
   },
   {
+    // docs/specs/run-workflow-structure.md. The run workflow was one file of 4,870 lines. A file in
+    // src/workflows that grows past this limit needs a visible rule change.
+    files: ["src/workflows/**/*.ts"],
+    rules: { "max-lines": ["error", { max: 800 }] },
+  },
+  {
     files: ["src/domain/**/*.ts", "src/workflows/**/*.ts"],
     rules: {
       "no-restricted-imports": [

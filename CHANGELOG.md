@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The run workflow is split by run kind. `agentRunWorkflow` dispatches to one story per kind (new run, PR follow-up run, bring-current run) in `src/workflows/agent-run/stories`, and the stories call shared stages in `src/workflows/agent-run/stages`. No stage names a run kind (`checks/run-kind.sh`), and no file in `src/workflows` passes 800 lines (ESLint). Every recorded history replays, and every run takes the same path and sends the same Linear posts (`docs/specs/run-workflow-structure.md`).
 - An upgrade to 0.16.0 needs no open runs. The run workflow no longer holds the old branch of its 27 `patched` gates, so a run that an earlier release started cannot replay. Stop or finish each open run before the upgrade (`docs/quickstart.md`, section 10).
 - The `IMPLEMENTATION_FAILED` message carries the agent output, so the post names the real cause.
 - A work sandbox that replaces an earlier one after an outage keeps the frozen skill resolution and the PR head, the siblings, the targets and the context. A failed release of the old sandbox no longer ends the run.
