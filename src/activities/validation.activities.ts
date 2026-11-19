@@ -28,7 +28,7 @@ import {
   selectorRecheckSessionKey,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
-import { hangOf, recordAgentSession, type AgentHang } from "./agent-session-recording.js";
+import { hangOf, recordAgentSession, recordHangRetry, type AgentHang } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
@@ -53,6 +53,7 @@ import type { AssertionResult } from "~/domain/validation/validation-result.js";
 import type { EvidencePersistence } from "~/activities/evidence.activities.js";
 import { attachRunnerEnvironment } from "~/domain/products/runner-credentials.js";
 import { recordStage, timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
+import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 
 export interface BuildValidationContractActivityInput {
   runId: string;
@@ -110,6 +111,8 @@ export interface UserValidationActivityDependencies {
 }
 
 export interface ValidationActivityDependencies {
+  /** docs/specs/run-diagnostics.md. The writer of run events, absent in a test that records none. */
+  events?: RunEventRecorder | undefined;
   contracts: ValidationContractStore;
   runs: RunRepository;
   logger: Logger;
@@ -584,6 +587,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const promptPath = setCheck === undefined ? input.primaryPath : `${input.workspacePath}/targets`;
 
       const afterHang = input.afterHang === true;
+      if (afterHang) await recordHangRetry(dependencies.events, { tenantId: input.tenantId, runId: input.runId, role: "validator", attempt: input.attempt, stage: "USER_VALIDATING" });
       // A hung session can leave a partial plan, and the fresh session must never read it.
       const planPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}.json`;
       const validatorInput = buildUserValidatorInput({
@@ -783,7 +787,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         }
 
         await recordAgentSession(
-          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
+          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages, events: dependencies.events },
           {
             tenantId: input.tenantId,
             productId: input.productId,
@@ -793,6 +797,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             runner: runner.name,
             idempotencyKey: agentSessionKey(input.runId, "validator", input.attempt, afterHang),
             sandboxId: input.spriteId,
+            egress: { sandbox: uv.sandbox, ref, allowList: input.egress?.allowed ?? null },
           },
           invocations,
         );
@@ -848,6 +853,17 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
         if (resumeFailed && read.exitCode !== 0 && !context.cancellationSignal.aborted) {
           dependencies.logger.warn(round.freshLog, { ...round.logFields, resumed: resumed !== null });
+          await recordRunEvent(dependencies.events, {
+            tenantId: input.tenantId,
+            subject: { runId: input.runId },
+            stage: "USER_VALIDATING",
+            attempt: input.attempt,
+            role: "validator",
+            kind: "retry_started",
+            message: "The validator session could not be resumed, so Factoree started one fresh validator session.",
+            detail: { what: "validator session", reason: round.freshLog },
+            idempotencyKey: `${round.key}:fresh`,
+          });
           const freshInput = buildUserValidatorInput({
             goal: input.goal,
             validationContract: storedContract.document,
@@ -937,6 +953,17 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           ...logFields,
           reasons,
         });
+        await recordRunEvent(dependencies.events, {
+          tenantId: input.tenantId,
+          subject: { runId: input.runId },
+          stage: "USER_VALIDATING",
+          attempt: input.attempt,
+          role: "validator",
+          kind: "plan_rejected",
+          message: `Factoree rejected the validation plan and asked the validator to correct it: ${reasons.join(" ")}`,
+          detail: { problems: reasons, round: "first" },
+          idempotencyKey: `run:${input.runId}:validate:${String(input.attempt)}:${afterHang ? "after-hang:" : ""}plan-rejected`,
+        });
 
         // A new file, so a session that writes nothing cannot leave the rejected plan in place.
         const correctedPlanPath = `${validationDirectory}/${afterHang ? "plan-after-hang" : "plan"}-corrected.json`;
@@ -963,7 +990,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         );
 
         await recordAgentSession(
-          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
+          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages, events: dependencies.events },
           {
             tenantId: input.tenantId,
             productId: input.productId,
@@ -973,6 +1000,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             runner: runner.name,
             idempotencyKey: correctionKey,
             sandboxId: input.spriteId,
+            egress: { sandbox: uv.sandbox, ref, allowList: input.egress?.allowed ?? null },
           },
           correctionInvocations,
         );
@@ -997,6 +1025,18 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules);
         liveSession = correctionInvocations.at(-1)?.session ?? liveSession;
         if (planText === null || secondRejection !== null) {
+          const problems = secondRejection === null ? ["The validator wrote no corrected Validation Plan."] : secondRejection;
+          await recordRunEvent(dependencies.events, {
+            tenantId: input.tenantId,
+            subject: { runId: input.runId },
+            stage: "USER_VALIDATING",
+            attempt: input.attempt,
+            role: "validator",
+            kind: "plan_rejected",
+            message: `Factoree rejected the corrected validation plan: ${problems.join(" ")}`,
+            detail: { problems, round: "correction" },
+            idempotencyKey: `run:${input.runId}:validate:${String(input.attempt)}:${afterHang ? "after-hang:" : ""}corrected-plan-rejected`,
+          });
           dependencies.logger.warn("the corrected validation plan was rejected", {
             ...logFields,
             reasons:
@@ -1016,6 +1056,17 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         const recheckDirectory = `${validationDirectory}/${afterHang ? "selector-recheck-after-hang" : "selector-recheck"}`;
         const logFields = { tenant_id: input.tenantId, product_id: input.productId, run_id: input.runId, step: "user_validate", attempt: input.attempt };
         await uv.sandbox.exec(ref, { file: "mkdir", args: ["-p", recheckDirectory] });
+        await recordRunEvent(dependencies.events, {
+          tenantId: input.tenantId,
+          subject: { runId: input.runId },
+          stage: "USER_VALIDATING",
+          attempt: input.attempt,
+          role: "validator",
+          kind: "selector_recheck",
+          message: `Browser checks failed only on their selectors, so the validator may correct the selectors of ${requests.map((request) => request.assertionId).join(", ")} once.`,
+          detail: { assertionKeys: requests.map((request) => request.assertionId) },
+          idempotencyKey: `run:${input.runId}:validate:${String(input.attempt)}:${afterHang ? "after-hang:" : ""}selector-recheck`,
+        });
         const failures = [];
         for (const request of requests) {
           const base = `${recheckDirectory}/${fileSafe(request.assertionId)}`;
@@ -1063,7 +1114,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           }),
         );
         await recordAgentSession(
-          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages },
+          { sessions: uv.sessions, logger: dependencies.logger, stages: uv.stages, events: dependencies.events },
           {
             tenantId: input.tenantId,
             productId: input.productId,
@@ -1073,6 +1124,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             runner: runner.name,
             idempotencyKey: recheckKey,
             sandboxId: input.spriteId,
+            egress: { sandbox: uv.sandbox, ref, allowList: input.egress?.allowed ?? null },
           },
           recheckInvocations,
         );
@@ -1212,6 +1264,19 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         execution_ms: Date.now() - executionStarted,
         total_ms: Date.now() - started,
       });
+      for (const assertionOutcome of outcome.outcomes.filter((candidate) => candidate.result === "UNSTABLE")) {
+        await recordRunEvent(dependencies.events, {
+          tenantId: input.tenantId,
+          subject: { runId: input.runId },
+          stage: "USER_VALIDATING",
+          attempt: input.attempt,
+          role: "validator",
+          kind: "check_unstable",
+          message: `${assertionOutcome.assertionId} gave a different result when Factoree ran it again, so it counts as unstable and starts no repair.`,
+          detail: { assertionKey: assertionOutcome.assertionId, reason: assertionOutcome.reason },
+          idempotencyKey: `run:${input.runId}:validate:${String(input.attempt)}:${afterHang ? "after-hang:" : ""}unstable:${assertionOutcome.assertionId}`,
+        });
+      }
 
       return {
         passed: outcome.passed,

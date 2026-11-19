@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { defaultPayloadConverter } from "@temporalio/common";
+import { WorkflowNotFoundError } from "@temporalio/client";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { pullRequestEventSignal, pullRequestStateQuery, pullRequestWorkflow } from "~/workflows/pr.workflow.js";
@@ -16,7 +17,16 @@ import { waitFor } from "./support/harness.js";
  */
 const completedResult = async (workflowId: string): Promise<unknown> => {
   const child = environment.client.workflow.getHandle(workflowId);
-  await waitFor(async () => (await child.describe()).status.name === "COMPLETED", `the run ${workflowId}`);
+  // The PR workflow starts the child, so the first poll can come before the child exists.
+  const completedOrAbsent = async (): Promise<boolean> => {
+    try {
+      return (await child.describe()).status.name === "COMPLETED";
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return false;
+      throw error;
+    }
+  };
+  await waitFor(completedOrAbsent, `the run ${workflowId}`);
   const completed = (await child.fetchHistory()).events?.find((event) => event.workflowExecutionCompletedEventAttributes);
   const payload = completed?.workflowExecutionCompletedEventAttributes?.result?.payloads?.[0];
   return payload === undefined ? undefined : defaultPayloadConverter.fromPayload(payload);

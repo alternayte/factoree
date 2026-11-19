@@ -89,12 +89,18 @@ import type {
   ListProductSecretsResponses,
   ListProductsErrors,
   ListProductsResponses,
+  ListRepositorySetupEventsData,
+  ListRepositorySetupEventsErrors,
+  ListRepositorySetupEventsResponses,
   ListRepositorySetupHistoryData,
   ListRepositorySetupHistoryErrors,
   ListRepositorySetupHistoryResponses,
   ListRepositorySetupsData,
   ListRepositorySetupsErrors,
   ListRepositorySetupsResponses,
+  ListRunEventsData,
+  ListRunEventsErrors,
+  ListRunEventsResponses,
   ListRunsData,
   ListRunsErrors,
   ListRunsResponses,
@@ -715,6 +721,29 @@ export const getRun = <ThrowOnError extends boolean = false>(
     ...options,
   });
 
+/**
+ * The faults and Factoree decisions of a run, in order
+ */
+export const listRunEvents = <ThrowOnError extends boolean = false>(
+  options: Options<ListRunEventsData, ThrowOnError>,
+): RequestResult<ListRunEventsResponses, ListRunEventsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRunEventsResponses, ListRunEventsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/runs/{id}/events",
+    ...options,
+  });
+
 export const stopRun = <ThrowOnError extends boolean = false>(
   options: Options<StopRunData, ThrowOnError>,
 ): RequestResult<StopRunResponses, StopRunErrors, ThrowOnError> =>
@@ -825,6 +854,29 @@ export const startRepositorySetups = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+/**
+ * The faults and Factoree decisions of a setup run, in order
+ */
+export const listRepositorySetupEvents = <ThrowOnError extends boolean = false>(
+  options: Options<ListRepositorySetupEventsData, ThrowOnError>,
+): RequestResult<ListRepositorySetupEventsResponses, ListRepositorySetupEventsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRepositorySetupEventsResponses, ListRepositorySetupEventsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/repository-setups/{id}/events",
+    ...options,
   });
 
 export const listRepositorySetupHistory = <ThrowOnError extends boolean = false>(

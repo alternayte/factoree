@@ -8,20 +8,20 @@ Factoree records each fault and each Factoree decision of a run or a setup run a
 ## Decisions
 - One table, `run_event`: tenant, run or repository setup (exactly one), stage, attempt, role, kind, message, detail JSON, idempotency key, created at. Rows cascade with their run or setup — one write path covers runs and setups, and a new fault is a new kind, not a migration.
 - The detail of each kind is a zod schema in `src/domain/diagnostics`, in one discriminated union. The API returns the parsed shape — an untyped detail becomes a log dump.
-- Kinds: `session_failed`, `session_hung`, `provider_unreachable` (after #62), `command_failed` (bootstrap, warm, verify, seed, preview, setup proof), `plan_rejected`, `proposal_rejected`, `selector_recheck`, `check_unstable`, `retry_started`, `repair_started`, `egress_denied`, `run_ended` — each fault that reached an issue in #37 to #65 maps to one kind.
+- Kinds: `session_failed`, `session_hung`, `provider_unreachable` (after #62), `command_failed` (bootstrap, compose stack and seed, verify, setup proof), `plan_rejected`, `proposal_rejected`, `selector_recheck`, `check_unstable`, `retry_started`, `repair_started`, `run_ended` — each fault that reached an issue in #37 to #65 maps to one kind. The denied hosts of a fault are part of its own event, so there is no separate egress kind.
 - Factoree records faults and its own decisions only. Normal progress stays in `run_stage` — the event list stays short enough to read.
-- Activities write the events through a `RunEventLog` port with a Prisma adapter. The workflow schedules no new activity, and no patch gate is needed — the command sequence does not change.
-- `completeRun` writes `run_ended`. It reads the open `run_stage` row for the stage and links the newest fault event of the run as the cause — the 113 `failRun` sites stay unchanged and still give the cause.
+- Activities and the sandbox manager write the events through the `RunEventStore` port with a Prisma adapter. The workflow schedules no new activity, and no patch gate is needed — the command sequence does not change.
+- `completeRun` writes `run_ended`. The run status before the end names the stage, because every stage writes its status first, and `run_stage` rows are written only when a stage ends. It links the newest fault event of the run as the cause — the 113 `failRun` sites stay unchanged and still give the cause.
 - An event write that fails is logged and never fails its activity — diagnostics must not end a run.
 - The idempotency key is the activity key plus the kind and an ordinal — a Temporal retry of an activity writes no duplicate.
 - A log tail is `buildRetainedLog` output: redacted first, then cut to 32 KB — this keeps the SDD section 60 and 61 rules, and stores no full transcript.
 - Every agent role and the setup agent store the log tail of a session that did not finish. Today only the implementer stores it — the refiner, validator, reviewer and setup failures were invisible.
 - Factoree stores the raw redacted output and the facts it knows itself: command, exit code, duration, allow list. It never parses the error format of one language or tool — Factoree stays stack-agnostic.
-- On Kiln, `command_failed` and `session_failed` list the denied hosts from the egress log of that sandbox.
-- On every provider, these events also list each host name in the log tail that is not on the effective allow list, as `hostHints`. The API labels them as hints — an agent claim is never evidence, and neither is a guess.
-- When the provider has no egress log, the event says "this sandbox provider records no egress" — E2B and Sprites have none (E2B and Sprites docs, read 2026-11-19).
+- On Kiln, `command_failed` and `session_failed` list the denied hosts from the egress log of that sandbox. The sandbox manager reads the log before a failed preparation destroys its sandbox.
+- On every provider, these events also list each host name in the log tail that is not on the effective allow list, as `hostHints`. The API labels them as hints — an agent claim is never evidence, and neither is a guess. The verify and review activities receive no allow list, so their events carry no hints — a hint without the allow list would name every host in the output.
+- Each fault event states `egress`: `recorded`, `not_recorded` or `unreadable`. `not_recorded` reads "this sandbox provider records no egress" — E2B and Sprites have none (E2B and Sprites docs, read 2026-11-19).
 - `GET /admin/runs/:id/events` and `GET /admin/repository-setups/:id/events` return the events in order, with cursor pagination, in OpenAPI — any agent with an HTTP tool and the API key reads them.
-- `GET /admin/runs/:id` and the setup detail get `diagnosis`: end reason, stage, attempt, message, cause event with its log tail, denied hosts and host hints. It is null for a run that did not fail — one call answers "why did it fail".
+- `GET /admin/runs/:id` and each entry of the setup history get `diagnosis`: end reason, stage, attempt, message, cause event with its log tail, denied hosts and host hints. It is null for a run that did not fail — one call answers "why did it fail".
 - Every member of the workspace reads events and diagnoses, as for the run detail now — the Linear failure post already shows the same redacted tails to the same people.
 - The Run page and the setup history page show the event list under the stage timeline, with the diagnosis at the top of a failed run.
 - The Linear failure post of a run links to its Run page — the person in Linear reaches the full diagnosis in one click.
@@ -31,7 +31,7 @@ Factoree records each fault and each Factoree decision of a run or a setup run a
 - An MCP server or a CLI for Factoree.
 - A Factoree egress proxy in front of the sandboxes.
 - Full transcripts. Kept transcripts stay a separate product switch.
-- Build-ahead failures. `BuildAheadFailure` keeps them.
+- Build-ahead failures and the warm command. `BuildAheadFailure` keeps them, and a build-ahead sandbox belongs to no run.
 - The restructure of `agent-run.workflow.ts`, which goes in its own spec.
 - New retries or new failure handling. This spec records what happens and does not change it.
 

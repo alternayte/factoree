@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useState } from "react";
-import { listRepositorySetupHistoryOptions } from "@/api/@tanstack/react-query.gen";
+import { listRepositorySetupEventsOptions, listRepositorySetupHistoryOptions } from "@/api/@tanstack/react-query.gen";
+import { Diagnosis, EventList } from "@/features/runs/run-events";
 import type { ListRepositorySetupHistoryResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Alert, Badge, Empty, ErrorAlert, PageHeader, Section, SkeletonRows } from "@/components/layout";
@@ -140,7 +141,7 @@ export function SetupHistoryPage({
                       {open === entry.id ? (
                         <tr>
                           <td colSpan={12}>
-                            <SetupDetail entry={entry} entries={entries} />
+                            <SetupDetail entry={entry} entries={entries} linearWorkspaceId={linearWorkspaceId} />
                           </td>
                         </tr>
                       ) : null}
@@ -156,7 +157,15 @@ export function SetupHistoryPage({
   );
 }
 
-function SetupDetail({ entry, entries }: { entry: Entry; entries: Entry[] }) {
+/** docs/specs/run-diagnostics.md. The run events of one setup run. */
+function SetupEvents({ setupId, linearWorkspaceId }: { setupId: string; linearWorkspaceId: string }) {
+  const events = useQuery(listRepositorySetupEventsOptions({ path: { id: setupId }, query: { linearWorkspaceId, limit: 200 } }));
+  if (events.isPending) return <SkeletonRows rows={2} />;
+  if (events.isError) return <ErrorAlert error={events.error} title="The events could not be read" />;
+  return <EventList events={events.data.items} />;
+}
+
+function SetupDetail({ entry, entries, linearWorkspaceId }: { entry: Entry; entries: Entry[]; linearWorkspaceId: string }) {
   const source =
     entry.skippedFromSetupId === null ? null : entries.find((other) => other.id === entry.skippedFromSetupId);
   return (
@@ -167,7 +176,11 @@ function SetupDetail({ entry, entries }: { entry: Entry; entries: Entry[] }) {
           setup ran no session and copied its report.
         </p>
       ) : null}
-      {entry.failureMessage ? <p className="text-body">{entry.failureMessage}</p> : null}
+      {entry.diagnosis ? (
+        <Diagnosis diagnosis={entry.diagnosis} />
+      ) : entry.failureMessage ? (
+        <p className="text-body">{entry.failureMessage}</p>
+      ) : null}
       {entry.appChangeIssues.length > 0 ? (
         <div>
           <h3 className="t-label mb-1">App-change issues</h3>
@@ -192,6 +205,12 @@ function SetupDetail({ entry, entries }: { entry: Entry; entries: Entry[] }) {
       ) : null}
       {entry.report ? (
         <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap text-body">{entry.report}</pre>
+      ) : null}
+      {entry.skippedFromSetupId === null ? (
+        <div>
+          <h3 className="t-label mb-1">Events</h3>
+          <SetupEvents setupId={entry.id} linearWorkspaceId={linearWorkspaceId} />
+        </div>
       ) : null}
     </div>
   );

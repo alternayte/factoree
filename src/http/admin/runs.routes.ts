@@ -7,6 +7,9 @@ import type { DraftRequest } from "~/domain/runs/run-draft.js";
 import type { DraftOutcome } from "~/domain/runs/delegation-service.js";
 import { principalOf } from "../auth/admin-guard.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
+import type { RunEventStore } from "~/domain/diagnostics/run-event.js";
+import { runDiagnosisOf } from "~/domain/diagnostics/diagnosis.js";
+import { diagnosisSchema, eventsQuerySchema, runEventPageSchema, toDiagnosisJson, toEventJson } from "./run-events.schemas.js";
 
 /** The most runs one page returns. */
 export const MAX_RUNS_PER_PAGE = 100;
@@ -75,6 +78,11 @@ export const runListItemSchema = z.object({
 });
 
 export const runDetailSchema = runListItemSchema.extend({
+  /**
+   * docs/specs/run-diagnostics.md. How a failed run ended and the run event that caused it, with
+   * its log tail, denied hosts and host hints. Null for a run that did not fail.
+   */
+  diagnosis: diagnosisSchema,
   temporalWorkflowId: z.string(),
   /** Issue #45. True when the status is terminal, so the run takes no stop. */
   terminal: z.boolean(),
@@ -188,6 +196,8 @@ export const registerRunRoutes = (
     userName: (userId: string) => Promise<string | null>;
     /** docs/specs/draft-of-failed-run.md. The draft path of a Linear reply: DelegationService.requestDraft. */
     requestDraft: (input: { tenantId: string; runId: string; request: DraftRequest }) => Promise<DraftOutcome>;
+    /** docs/specs/run-diagnostics.md. The run events of each run. */
+    events: RunEventStore;
   },
 ): void => {
   useSchemasAsDocumentation(app);
@@ -241,7 +251,38 @@ export const registerRunRoutes = (
       if (!tenant) return reply.code(404).send({ error: "tenant not found" });
       const run = await dependencies.runViews.detail(tenant.id, request.params.id);
       if (!run) return reply.code(404).send({ error: "run not found" });
-      return run;
+      const diagnosis = await runDiagnosisOf(dependencies.events, tenant.id, run);
+      return { ...run, diagnosis: toDiagnosisJson(diagnosis) };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/admin/runs/:id/events",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "listRunEvents",
+        summary: "The faults and Factoree decisions of a run, in order",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        querystring: schemaOf(eventsQuerySchema),
+        response: { 200: schemaOf(runEventPageSchema), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const query = eventsQuerySchema.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(query.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const run = await dependencies.runViews.detail(tenant.id, request.params.id);
+      if (!run) return reply.code(404).send({ error: "run not found" });
+      const page = await dependencies.events.list({
+        tenantId: tenant.id,
+        subject: { runId: run.id },
+        limit: query.data.limit,
+        ...(query.data.cursor === undefined ? {} : { cursor: query.data.cursor }),
+      });
+      return { items: page.items.map(toEventJson), nextCursor: page.nextCursor };
     },
   );
 

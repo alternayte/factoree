@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Run diagnostics (`docs/specs/run-diagnostics.md`). Factoree records each fault and each Factoree decision of a run or a setup run as a run event: a session that failed or hung, a failed bootstrap, compose stack, verify command or setup proof part, a rejected validation plan or refiner proposal, a selector re-check, an unstable check, a retry, a repair and the end of the run. A fault event holds the exit code, the redacted output tail, the hosts the Kiln egress log denied and the host hints: the hosts in the output that the allow list does not hold.
+- `GET /admin/runs/:id/events` and `GET /admin/repository-setups/:id/events` list the events in order. `GET /admin/runs/:id` and the setup history entries carry a `diagnosis`: how a failed run or setup ended and the event that caused it. An agent with a `fct_` API key reads both.
+- The Run page shows the diagnosis and the events. The setup history page shows them per setup. The Linear failure post links to the Run page.
+
+### Fixed
+
+- A PR workflow test no longer fails when it reads its child run before the child exists.
+
 ## [0.14.0] - 2026-11-19
 
 ### Changed

@@ -37,6 +37,7 @@ import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters
 import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import type { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { createRunActivities } from "./run.activities.js";
+import type { RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 import { createLinearActivities } from "./linear.activities.js";
 import { createSandboxActivities, type ProviderFailover } from "./sandbox.activities.js";
 import { createProviderSelectionActivities } from "./provider-selection.activities.js";
@@ -110,6 +111,8 @@ export interface ActivityDependencies {
   sessions: AgentSessionStore;
   /** docs/specs/run-speed.md. One row per stage of a run. */
   stages?: RunStageStore | undefined;
+  /** docs/specs/run-diagnostics.md. The writer of run events. */
+  events?: RunEventRecorder | undefined;
   secrets: SecretStore;
   evidence: EvidenceStore;
   redactor: Redactor;
@@ -202,6 +205,8 @@ export interface ActivityDependencies {
   commitStatuses?: CommitStatusPort | undefined;
   /** The product page of the Factoree UI, which a missing-host post names. */
   productPageUrl?: ((productId: string) => string) | undefined;
+  /** docs/specs/run-diagnostics.md. The Run page of a run, linked from its failure post. */
+  runPageUrl?: ((runId: string) => string) | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -323,6 +328,7 @@ const NO_SETUP_STORE: RepositorySetupStore = {
 
 export const createActivities = (dependencies: ActivityDependencies) => ({
   ...createRunActivities({
+    events: dependencies.events,
     runs: dependencies.runs,
     slots: dependencies.runSlots,
     logger: dependencies.logger,
@@ -365,6 +371,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
   }),
   ...createAgentActivities({
+    events: dependencies.events,
     runners: dependencies.runners,
     sandbox: dependencies.sandbox,
     executions: dependencies.executions,
@@ -378,6 +385,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     registries: dependencies.skillRegistries,
   }),
   ...createRefinementActivities({
+    events: dependencies.events,
     refinement: dependencies.refinement,
     logger: dependencies.logger,
     agent: {
@@ -402,6 +410,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     redactor: dependencies.redactor,
   }),
   ...createValidationActivities({
+    events: dependencies.events,
     contracts: dependencies.validationContracts,
     runs: dependencies.runs,
     logger: dependencies.logger,
@@ -426,6 +435,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     },
   }),
   ...createReviewActivities({
+    events: dependencies.events,
     sandbox: dependencies.sandbox,
     runners: dependencies.runners,
     executions: dependencies.executions,
@@ -481,6 +491,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
   }),
   ...createRecoveryActivities({
+    runPageUrl: dependencies.runPageUrl,
     runViews: dependencies.runViews,
     redactor: dependencies.redactor,
     logger: dependencies.logger,
@@ -495,6 +506,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     organizationSkills: dependencies.organizationSkills,
   }),
   ...createVerificationActivities({
+    events: dependencies.events,
     sandbox: dependencies.sandbox,
     evidence: dependencies.evidence,
     secrets: dependencies.secrets,
@@ -508,6 +520,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
   }),
   ...createSetupActivities({
+    events: dependencies.events,
     setups: dependencies.setups ?? NO_SETUP_STORE,
     products: dependencies.products,
     sandbox: dependencies.sandbox,
