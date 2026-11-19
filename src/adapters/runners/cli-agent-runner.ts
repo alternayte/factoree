@@ -16,7 +16,7 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 import type { AgentSessionOutcome, AgentSessionUsage } from "~/domain/runs/agent-session.js";
 import {
   PROVIDER_UNREACHABLE_GRACE_MS,
-  endsInProviderUnreachable,
+  ProviderOutageWatch,
   isProviderUnreachableText,
 } from "./provider-unreachable.js";
 
@@ -390,10 +390,12 @@ export abstract class CliAgentRunner implements AgentRunner {
     // number of characters, and a length test would read a working agent as a silent one.
     let lastOutput: string | null = null;
     let lastOutputAt = startedAt;
-    // docs/specs/provider-unreachable.md. When the output began to end in a connectivity error.
-    let unreachableSince: number | null = null;
-    let lastStdout = "";
-    let lastStderr = "";
+    // docs/specs/provider-unreachable.md. One watch per stream, each with its own run of
+    // connectivity events and its own deadline. New stdout model activity also clears the stderr
+    // watch, because it proves the CLI is working again after a stderr-only error. Any other
+    // event in one stream clears only that stream.
+    const stdoutWatch = new ProviderOutageWatch(this.providerUnreachableGraceMs);
+    const stderrWatch = new ProviderOutageWatch(this.providerUnreachableGraceMs);
 
     for (;;) {
       const snapshot = await live.sandbox.readProcess(live.ref, live.process);
@@ -402,23 +404,12 @@ export abstract class CliAgentRunner implements AgentRunner {
       if (output !== lastOutput) {
         lastOutput = output;
         lastOutputAt = this.clock();
-        // Each stream is judged alone. New stdout after an old stderr error is model activity, so
-        // the stale error must not keep the timer armed. New stderr is judged on its own tail.
-        // Blank-only additions are no activity, so a stray newline never hides a new stderr error.
-        const stdout = snapshot.stdout.trim();
-        const stderr = snapshot.stderr.trim();
-        const stdoutChanged = stdout !== lastStdout;
-        const stderrChanged = stderr !== lastStderr;
-        lastStdout = stdout;
-        lastStderr = stderr;
-        const newestEndsUnreachable = stdoutChanged
-          ? endsInProviderUnreachable(snapshot.stdout)
-          : stderrChanged && endsInProviderUnreachable(snapshot.stderr);
-        if (stdoutChanged || stderrChanged) {
-          if (!newestEndsUnreachable) unreachableSince = null;
-          else unreachableSince ??= lastOutputAt;
-        }
       }
+      // The watches read the complete lines each poll added, so a blank line or an unfinished
+      // line changes nothing.
+      const now = this.clock();
+      if (stdoutWatch.feed(snapshot.stdout, now).modelActivity) stderrWatch.clear();
+      stderrWatch.feed(snapshot.stderr, now);
 
       if (!snapshot.running) {
         return await this.buildResult(live, snapshot, startedAt, {
@@ -443,7 +434,8 @@ export abstract class CliAgentRunner implements AgentRunner {
 
       // docs/specs/provider-unreachable.md. The CLI backs off for minutes on a connectivity error
       // and then exits. Factoree ends it early, so the retry has the budget the backoff would burn.
-      if (unreachableSince !== null && this.clock() - unreachableSince >= this.providerUnreachableGraceMs) {
+      const deadlines = [stdoutWatch.deadline, stderrWatch.deadline].filter((due): due is number => due !== null);
+      if (deadlines.length > 0 && this.clock() >= Math.min(...deadlines)) {
         await live.sandbox.cancelProcess(live.ref, live.process);
         const final = await live.sandbox.readProcess(live.ref, live.process);
         return await this.buildResult(live, final, startedAt, {
@@ -518,8 +510,7 @@ export abstract class CliAgentRunner implements AgentRunner {
     const unreachable =
       options.hung !== true &&
       !completed &&
-      (!options.cancelled || options.unreachable === true) &&
-      isProviderUnreachableText(output);
+      (options.unreachable === true || (!options.cancelled && isProviderUnreachableText(output)));
     const outcome: AgentSessionOutcome =
       options.hung === true ? "hung" : completed ? "finished" : unreachable ? "unreachable" : "failed";
     // The duration ends when the process ends. The usage read below is Factoree's own time.

@@ -39,6 +39,16 @@ export interface SkillResolution {
 }
 
 /**
+ * docs/specs/provider-unreachable.md, section 4. The resolution a run already holds: the set, the
+ * resolution id, and the pinned version and digest of each registry skill the run recorded.
+ */
+export interface PinnedSkillResolution {
+  set: string | null;
+  id: string;
+  skills: ReadonlyArray<{ name: string; version: number; sha256: string }>;
+}
+
+/**
  * How a source reaches the work sprite. A registry hands the worker checked archives. The
  * organization skills repository is a git checkout inside the sandbox.
  */
@@ -97,6 +107,13 @@ export interface SkillRegistry {
   readonly scope: SkillSourceScope;
   /** Resolves the skills of one run. */
   resolve(): Promise<SkillDelivery>;
+  /**
+   * docs/specs/provider-unreachable.md, section 4. Downloads the exact pinned versions, and checks
+   * each archive against its pinned digest. A work sandbox that replaces an earlier one takes the
+   * skills of the run through this method, so a registry whose defaults moved changes nothing. A
+   * registry that cannot serve a pinned version leaves it out, and the replacement then fails.
+   */
+  resolvePinned?(pinned: PinnedSkillResolution): Promise<SkillResolution>;
   reportActivations(report: SkillActivationReport): Promise<void>;
   reportOutcome(report: SkillOutcomeReport): Promise<void>;
   submit(proposal: SkillProposal): Promise<SkillProposalReceipt>;

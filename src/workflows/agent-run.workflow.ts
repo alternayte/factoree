@@ -1,5 +1,6 @@
 import {
   ActivityCancellationType,
+  ActivityFailure,
   CancellationScope,
   condition,
   defineQuery,
@@ -701,6 +702,9 @@ const FIRST_IMPLEMENTER_ATTEMPT = 1;
 /** docs/specs/provider-unreachable.md. The sessions of one step before the Run ends: the first and two retries. */
 const PROVIDER_UNREACHABLE_ATTEMPTS = 3;
 
+/** docs/specs/provider-unreachable.md. The most characters of provider detail a failure message carries. */
+const PROVIDER_DETAIL_MAX_CHARS = 1_000;
+
 /**
  * Specification section 10. Matches a human reply against the ambiguous candidates by whole
  * token, never by substring. `acme/checkout-api` must not match a reply that names
@@ -1092,13 +1096,18 @@ export async function agentRunWorkflow(
   const failProviderUnreachable = async (
     role: AgentSessionRole,
     unreachable: { summary: string },
-  ): Promise<AgentRunWorkflowResult> =>
-    await failRun(
+  ): Promise<AgentRunWorkflowResult> => {
+    // Every role ends here, so one bound covers the Implementer, the Refiner, the Validator, the
+    // Reviewer and the triage. The detail is trimmed and capped like the Implementer output of
+    // `IMPLEMENTATION_FAILED`, and a blank one reads `none reported`.
+    const detail = unreachable.summary.trim().slice(0, PROVIDER_DETAIL_MAX_CHARS).trim();
+    return await failRun(
       "PROVIDER_UNREACHABLE",
       `The ${describeAgentRole(role)} session could not reach the model provider ${PROVIDER_UNREACHABLE_ATTEMPTS} times in the same step, ` +
-        `so Factoree ended the Run. Provider error: ${unreachable.summary.trim() === "" ? "none reported" : unreachable.summary.trim()} ` +
+        `so Factoree ended the Run. Provider error: ${detail === "" ? "none reported" : detail} ` +
         "Factoree published nothing.",
     );
+  };
 
   /**
    * docs/specs/provider-unreachable.md. Runs a session again while the provider stays unreachable,
@@ -3330,15 +3339,32 @@ export async function agentRunWorkflow(
             status = "PREPARING";
             await activities.setRunStatus({ runId: id, status });
             // docs/specs/provider-unreachable.md. Release the old work sandbox before the fresh one
-            // is built, so the run never holds a fourth live sandbox against its hold of three.
-            await cancelActivities.destroySandbox({
-              tenantId: input.tenantId,
-              runId: id,
-              spriteId: preparedSandbox.spriteId,
-              adapter: preparedSandbox.adapter,
-              workspacePath: preparedSandbox.workspacePath,
-              reason: "SUPERSEDED",
-            });
+            // is built, so the run never holds a fourth live sandbox against its hold of three. The
+            // release is best effort. Temporal already retried it, so an `ActivityFailure` here means
+            // the release failed for good or timed out, and the preparation below releases the
+            // superseded sandbox. A cancellation and every other error keep their meaning, and the
+            // calls around this one keep theirs.
+            try {
+              await cancelActivities.destroySandbox({
+                tenantId: input.tenantId,
+                runId: id,
+                spriteId: preparedSandbox.spriteId,
+                adapter: preparedSandbox.adapter,
+                workspacePath: preparedSandbox.workspacePath,
+                reason: "SUPERSEDED",
+              });
+            } catch (error) {
+              if (isCancellation(error) || !(error instanceof ActivityFailure)) throw error;
+              const releaseCause = causeOf(error).trim().slice(0, 1_000);
+              await notify(() =>
+                activities.postProgress({
+                  sessionId: input.agentSessionId,
+                  message:
+                    `Factoree could not release the old work sandbox ${preparedSandbox.spriteId}. It continues, ` +
+                    `because the next preparation releases the superseded sandbox.${releaseCause === "" ? "" : ` Cause: ${releaseCause}`}`,
+                }),
+              );
+            }
             const freshWorkInput =
               siblingRepositories.length === 0
                 ? workInputOf(prepareInput)

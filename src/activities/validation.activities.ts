@@ -25,7 +25,9 @@ import {
   agentSessionKey,
   describeSilenceLimit,
   planCorrectionSessionKey,
+  selectorRecheckDirectoryName,
   selectorRecheckSessionKey,
+  validatorPlanName,
   type AgentSessionStore,
 } from "~/domain/runs/agent-session.js";
 import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
@@ -593,7 +595,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
       // A hung session can leave a partial plan, and the fresh session must never read it.
-      const planBase = `${afterHang ? "plan-after-hang" : "plan"}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}`;
+      const planBase = validatorPlanName(afterHang, unreachableRetry);
       const planPath = `${validationDirectory}/${planBase}.json`;
       const validatorInput = buildUserValidatorInput({
         goal: input.goal,
@@ -871,8 +873,12 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           }
         }
         let read = await round.read();
+        // docs/specs/provider-unreachable.md. A resume that could not reach the model provider
+        // leaves the fallback too, as a hung one does: a fresh session would meet the same outage
+        // and be thrown away by the retry. The caller reads the outage from `into` and returns it.
         const resumeFailed =
-          resumed === null || (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung");
+          resumed === null ||
+          (!resumed.completed && !resumed.cancelled && resumed.outcome !== "hung" && resumed.outcome !== "unreachable");
         if (resumeFailed && read.exitCode !== 0 && !context.cancellationSignal.aborted) {
           dependencies.logger.warn(round.freshLog, { ...round.logFields, resumed: resumed !== null });
           const freshInput = buildUserValidatorInput({
@@ -1064,7 +1070,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // returns a provider failure, instead of letting the stood-down failure start a repair.
       let recheckUnreachable: AgentProviderUnreachable = null;
       const selectorRecheck: SelectorRecheck = async (requests) => {
-        const recheckDirectory = `${validationDirectory}/${afterHang ? "selector-recheck-after-hang" : "selector-recheck"}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}`;
+        const recheckDirectory = `${validationDirectory}/${selectorRecheckDirectoryName(afterHang, unreachableRetry)}`;
         const logFields = { tenant_id: input.tenantId, product_id: input.productId, run_id: input.runId, step: "user_validate", attempt: input.attempt };
         await uv.sandbox.exec(ref, { file: "mkdir", args: ["-p", recheckDirectory] });
         const failures = [];

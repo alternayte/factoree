@@ -231,7 +231,7 @@ model AgentSession {
   // docs/specs/run-speed.md. The time the session spent in model calls and in tool calls.
   modelMs          Int?     @map("model_ms")
   toolMs           Int?     @map("tool_ms")
-  // finished, hung or failed.
+  // finished, hung, failed or unreachable (docs/specs/provider-unreachable.md).
   outcome          String
   // One key per session. A Temporal retry of the activity upserts the same row.
   idempotencyKey   String   @map("idempotency_key")

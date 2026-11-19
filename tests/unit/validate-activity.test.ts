@@ -4,8 +4,16 @@ import { CancelledFailure } from "@temporalio/common";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import {
+  agentSessionKey,
+  planCorrectionSessionKey,
+  selectorRecheckDirectoryName,
+  selectorRecheckSessionKey,
+  validatorPlanName,
+} from "~/domain/runs/agent-session.js";
+import {
   AgentSessionUnavailableError,
   type AgentResumeInput,
+  type AgentRunInput,
   type AgentRunResult,
   type AgentSessionRef,
 } from "~/domain/runs/agent-runner.js";
@@ -427,6 +435,85 @@ describe("the userValidate activity, a rejected Validation Plan (DI-15.23)", () 
     expect(runner.runs[1]!.prompt).toContain("# Validation Plan correction");
     expect(output.passed).toBe(true);
   });
+
+  // docs/specs/provider-unreachable.md. An outage on the resume is not a failed resume that a
+  // fresh session can fix: the fresh session would meet the same outage, and the workflow retries.
+  class UnreachableResumeRunner extends FakeRunner {
+    override async resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+      const result = await super.resume(session, resumeInput);
+      return {
+        ...result,
+        completed: false,
+        exitCode: 1,
+        outcome: "unreachable",
+        failureKind: "PROVIDER_UNREACHABLE",
+        summary: "getaddrinfo EAI_AGAIN api.example.test",
+      };
+    }
+  }
+
+  it("starts no fresh session when the correction resume cannot reach the provider", async () => {
+    const runner = new UnreachableResumeRunner();
+    const { activities, browser, results, sessions } = build(runner, planFiles(rejectedPlan, planText, () => runner.runs.length > 1));
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.runs).toHaveLength(1);
+    expect(output.providerUnreachable).toEqual({ summary: "getaddrinfo EAI_AGAIN api.example.test" });
+    expect(output.passed).toBe(false);
+    expect(output.hasFailure).toBe(false);
+    expect(output.results).toEqual([]);
+    expect(browser.calls).toHaveLength(0);
+    expect(results.rows).toHaveLength(0);
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual([
+      "run:run-1:validator:1",
+      "run:run-1:validator:1:plan-correction",
+    ]);
+  });
+
+  it("returns the outage of a fresh correction session when the session could not be resumed", async () => {
+    // The runner names the session by its process, so the correction starts one fresh session,
+    // and that session cannot reach the provider.
+    class UnreachableFreshRunner extends FakeRunner {
+      override async run(runInput: AgentRunInput): Promise<AgentRunResult> {
+        const result = await super.run(runInput);
+        return this.runs.length === 1
+          ? result
+          : { ...result, completed: false, exitCode: 1, outcome: "unreachable", failureKind: "PROVIDER_UNREACHABLE", summary: "EAI_AGAIN" };
+      }
+    }
+    const runner = new UnreachableFreshRunner("opencode", {
+      session: { sessionId: "process-fake", processId: "process-fake", runner: "opencode" },
+    });
+    const { activities, browser, results } = build(runner, planFiles(rejectedPlan, planText, () => runner.runs.length > 1));
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(0);
+    expect(runner.runs).toHaveLength(2);
+    expect(output.providerUnreachable).toEqual({ summary: "EAI_AGAIN" });
+    expect(browser.calls).toHaveLength(0);
+    expect(results.rows).toHaveLength(0);
+  });
+
+  it("starts no fresh session when the correction resume hung", async () => {
+    class HungResumeRunner extends FakeRunner {
+      override async resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+        const result = await super.resume(session, resumeInput);
+        return { ...result, completed: false, exitCode: 1, outcome: "hung" };
+      }
+    }
+    const runner = new HungResumeRunner();
+    const { activities, results } = build(runner, planFiles(rejectedPlan, planText, () => runner.runs.length > 1));
+
+    const output = await run(activities);
+
+    expect(runner.runs).toHaveLength(1);
+    expect(output.hang).toMatchObject({ silenceLimitMs: 600_000 });
+    expect(output.providerUnreachable).toBeUndefined();
+    expect(results.rows).toHaveLength(0);
+  });
 });
 
 describe("the userValidate activity, a selector re-check (docs/specs/by-eye-criteria-and-selector-recheck.md)", () => {
@@ -456,13 +543,13 @@ describe("the userValidate activity, a selector re-check (docs/specs/by-eye-crit
         },
       ],
     });
-  const sandboxAnswering = (corrected: string | null): FakeSandbox => {
+  const sandboxAnswering = (corrected: string | null, written: () => boolean = () => true): FakeSandbox => {
     const sandbox = new FakeSandbox();
     sandbox.onExec = (command) => {
       if (command.file !== "cat") return { exitCode: 0, stdout: "", stderr: "" };
       const path = command.args[0] ?? "";
       if (path.endsWith("/plan.json")) return { exitCode: 0, stdout: planText, stderr: "" };
-      if (path.endsWith("/selector-recheck/corrected-entries.json") && corrected !== null) {
+      if (path.endsWith("/selector-recheck/corrected-entries.json") && corrected !== null && written()) {
         return { exitCode: 0, stdout: corrected, stderr: "" };
       }
       return { exitCode: 1, stdout: "", stderr: "No such file" };
@@ -523,6 +610,52 @@ describe("the userValidate activity, a selector re-check (docs/specs/by-eye-crit
     expect(logLines.some((line) => line["message"] === "selector re-check rejected; the failure stands")).toBe(true);
   });
 
+  it("starts no fresh session when the selector re-check resume cannot reach the provider", async () => {
+    // docs/specs/provider-unreachable.md. The pass reports the outage, so the workflow retries it
+    // instead of a fresh session meeting the same outage or a repair starting on the stood-down failure.
+    class UnreachableResumeRunner extends FakeRunner {
+      override async resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+        const result = await super.resume(session, resumeInput);
+        return { ...result, completed: false, exitCode: 1, outcome: "unreachable", failureKind: "PROVIDER_UNREACHABLE", summary: "EAI_AGAIN" };
+      }
+    }
+    const runner = new UnreachableResumeRunner();
+    const { activities, browser, results } = build(runner, sandboxAnswering(answer("Welcome"), () => runner.runs.length > 1));
+    scriptBrowser(browser, [strictFailure, strictFailure, passingBrowserResult]);
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.runs).toHaveLength(1);
+    // The first run and the rerun only. The corrected entry never ran.
+    expect(browser.calls).toHaveLength(2);
+    expect(output.providerUnreachable).toEqual({ summary: "EAI_AGAIN" });
+    expect(output.passed).toBe(false);
+    expect(output.hasFailure).toBe(false);
+    expect(output.results).toEqual([]);
+    expect(results.rows).toHaveLength(0);
+  });
+
+  it("starts one fresh session when the selector re-check resume fails for another reason", async () => {
+    class FailingResumeRunner extends FakeRunner {
+      override async resume(session: AgentSessionRef, resumeInput: AgentResumeInput): Promise<AgentRunResult> {
+        const result = await super.resume(session, resumeInput);
+        return { ...result, completed: false, exitCode: 1 };
+      }
+    }
+    const runner = new FailingResumeRunner();
+    const { activities, browser } = build(runner, sandboxAnswering(answer("Welcome"), () => runner.runs.length > 1));
+    scriptBrowser(browser, [strictFailure, strictFailure, passingBrowserResult]);
+
+    const output = await run(activities);
+
+    expect(runner.resumes).toHaveLength(1);
+    expect(runner.runs).toHaveLength(2);
+    expect(runner.runs[1]!.prompt).toContain("# Selector re-check");
+    expect(output.providerUnreachable).toBeUndefined();
+    expect(output.passed).toBe(true);
+  });
+
   it("asks for no re-check when a run failed for a reason other than its selector", async () => {
     const runner = new FakeRunner();
     const { activities, browser } = build(runner, sandboxAnswering(answer("Welcome")));
@@ -575,5 +708,163 @@ describe("the userValidate activity, for-your-eye screenshots (docs/specs/by-eye
     const row = evidence.rows.find((candidate) => candidate.source === "for-your-eye:AC-R3:screenshot");
     expect(row).toMatchObject({ storageRef: null });
     expect(row!.metadata).toMatchObject({ captured: false, reason: "The page `/events` did not load within 30 s." });
+  });
+});
+
+describe("the userValidate activity, the keys and directories of a retry (docs/specs/provider-unreachable.md, plan section 8)", () => {
+  // The workflow carries (afterHang, unreachableRetry) as 0, 1 and 2 in the first series and as
+  // after-hang with no number, then 3 and 4, after a hang. The activity must write each session
+  // under a name of its own, so a retry never reads the plan of another session or upserts its row.
+  const variants: Array<{ label: string; afterHang?: boolean; unreachableRetry?: number }> = [
+    { label: "retry 1", unreachableRetry: 1 },
+    { label: "retry 2", unreachableRetry: 2 },
+    { label: "after a hang", afterHang: true },
+    { label: "after a hang, retry 3", afterHang: true, unreachableRetry: 3 },
+    { label: "after a hang, retry 4", afterHang: true, unreachableRetry: 4 },
+  ];
+  const effective = (variant: { afterHang?: boolean; unreachableRetry?: number }): { afterHang: boolean; retry: number } => {
+    const retry = variant.unreachableRetry ?? 0;
+    return { afterHang: variant.afterHang === true || retry > 0, retry };
+  };
+
+  /** A sandbox that answers the plan, the corrected plan and the corrected entries by pattern, whatever the retry. */
+  const retrySandbox = (options: { first: string; corrected?: string | null; answer?: string; written?: () => boolean }): FakeSandbox => {
+    const sandbox = new FakeSandbox();
+    const written = options.written ?? ((): boolean => true);
+    sandbox.onExec = (command) => {
+      if (command.file !== "cat") return { exitCode: 0, stdout: "", stderr: "" };
+      const path = command.args[0] ?? "";
+      if (/\/validation\/plan[^/]*-corrected\.json$/.test(path)) {
+        return options.corrected !== undefined && options.corrected !== null && written()
+          ? { exitCode: 0, stdout: options.corrected, stderr: "" }
+          : { exitCode: 1, stdout: "", stderr: "No such file" };
+      }
+      if (/\/validation\/plan[^/]*\.json$/.test(path)) return { exitCode: 0, stdout: options.first, stderr: "" };
+      if (/\/selector-recheck[^/]*\/corrected-entries\.json$/.test(path) && options.answer !== undefined && written()) {
+        return { exitCode: 0, stdout: options.answer, stderr: "" };
+      }
+      return { exitCode: 1, stdout: "", stderr: "No such file" };
+    };
+    return sandbox;
+  };
+  const runVariant = (
+    activities: ReturnType<typeof build>["activities"],
+    variant: { afterHang?: boolean; unreachableRetry?: number },
+  ): Promise<UserValidateActivityOutput> =>
+    new MockActivityEnvironment().run(
+      (activityInput: typeof input & { afterHang?: boolean; unreachableRetry?: number }) => activities.userValidate(activityInput),
+      {
+        ...input,
+        ...(variant.afterHang === true ? { afterHang: true } : {}),
+        ...(variant.unreachableRetry === undefined ? {} : { unreachableRetry: variant.unreachableRetry }),
+      },
+    );
+
+  it.each(variants)("corrects a rejected plan under its own keys and files, $label", async (variant) => {
+    const { afterHang, retry } = effective(variant);
+    const planName = validatorPlanName(afterHang, retry);
+    const runner = new FakeRunner();
+    const { activities, sessions, executions } = build(runner, retrySandbox({ first: rejectedPlan, corrected: planText }));
+
+    const output = await runVariant(activities, variant);
+
+    expect(output.passed).toBe(true);
+    // The first session reads its own plan file, and the correction names its own corrected file.
+    expect(runner.runs[0]!.prompt).toContain(`/workspace/validation/${planName}.json`);
+    expect(runner.resumes[0]!.input.prompt).toContain(`/workspace/validation/${planName}-corrected.json`);
+    expect(runner.resumes[0]!.input.prompt).not.toContain("/workspace/validation/plan-corrected.json");
+    const keys = [agentSessionKey("run-1", "validator", 1, afterHang, retry), planCorrectionSessionKey("run-1", 1, afterHang, retry)];
+    expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual(keys);
+    expect(executions.rows.map((row) => row.idempotencyKey)).toEqual([keys[0]]);
+    // Neither key is a key of the first session of the step.
+    expect(keys).not.toContain(agentSessionKey("run-1", "validator", 1, false, 0));
+    expect(keys).not.toContain(planCorrectionSessionKey("run-1", 1, false, 0));
+  });
+
+  it.each(variants)("starts the fresh correction under its own key and file, $label", async (variant) => {
+    const { afterHang, retry } = effective(variant);
+    const planName = validatorPlanName(afterHang, retry);
+    // The CLI named no session, so the correction starts one fresh session.
+    const runner = new FakeRunner("opencode", { session: { sessionId: "process-fake", processId: "process-fake", runner: "opencode" } });
+    const { activities, sessions, executions } = build(
+      runner,
+      retrySandbox({ first: rejectedPlan, corrected: planText, written: () => runner.runs.length > 1 }),
+    );
+
+    const output = await runVariant(activities, variant);
+
+    expect(output.passed).toBe(true);
+    expect(runner.runs).toHaveLength(2);
+    expect(runner.runs[1]!.prompt).toContain(`/workspace/validation/${planName}-corrected.json`);
+    expect(runner.runs[1]!.prompt).not.toContain(`/workspace/validation/${planName}.json`);
+    expect(executions.rows.map((row) => row.idempotencyKey)).toEqual([
+      agentSessionKey("run-1", "validator", 1, afterHang, retry),
+      planCorrectionSessionKey("run-1", 1, afterHang, retry),
+    ]);
+    expect(sessions.rows).toHaveLength(2);
+  });
+
+  it("gives every variant a correction key and a corrected file that no other variant uses", () => {
+    const all = [{ label: "first session" } as { label: string; afterHang?: boolean; unreachableRetry?: number }, ...variants].map(effective);
+    const keys = all.map(({ afterHang, retry }) => planCorrectionSessionKey("run-1", 1, afterHang, retry));
+    const files = all.map(({ afterHang, retry }) => `${validatorPlanName(afterHang, retry)}-corrected.json`);
+    expect(new Set(keys).size).toBe(all.length);
+    expect(new Set(files).size).toBe(all.length);
+  });
+
+  describe("a selector re-check", () => {
+    const strictFailure: BrowserRunResult = {
+      passed: false,
+      steps: [
+        { index: 0, action: "goto", passed: true, detail: "Opened /." },
+        { index: 1, action: "expectText", passed: false, detail: "strict mode violation" },
+      ],
+      consoleLines: [],
+      network: [],
+      artifacts: [{ kind: "screenshot", name: "final", contentType: "image/png", bytes: new Uint8Array([7]) }],
+      failureReason: "locator.textContent: Error: strict mode violation: locator('h1') resolved to 2 elements:",
+      selectorFailure: { index: 1, action: "expectText", selector: "h1", kind: "strict_mode" },
+      pageHtml: "<html><body><h1>Welcome</h1><h1>Welcome back</h1></body></html>",
+    };
+    const answer = JSON.stringify({
+      entries: [
+        {
+          assertionId: "VAL-UI-001",
+          kind: "browser",
+          steps: [
+            { action: "goto", path: "/" },
+            { action: "expectText", selector: 'role=heading[name="Welcome"]', text: "Welcome" },
+          ],
+        },
+      ],
+    });
+    const script = (browser: ReturnType<typeof build>["browser"]): void => {
+      const queue: BrowserRunResult[] = [strictFailure, strictFailure, passingBrowserResult];
+      browser.run = (scenario) => {
+        browser.calls.push(scenario);
+        return Promise.resolve(queue.shift() ?? passingBrowserResult);
+      };
+    };
+
+    it.each(variants)("writes into its own directory and records its own key, $label", async (variant) => {
+      const { afterHang, retry } = effective(variant);
+      const directory = `/workspace/validation/${selectorRecheckDirectoryName(afterHang, retry)}`;
+      const runner = new FakeRunner();
+      const sandbox = retrySandbox({ first: planText, answer });
+      const { activities, browser, sessions } = build(runner, sandbox);
+      script(browser);
+
+      const output = await runVariant(activities, variant);
+
+      expect(output.passed).toBe(true);
+      const prompt = runner.resumes[0]!.input.prompt;
+      expect(prompt).toContain(`${directory}/VAL-UI-001-final.png`);
+      expect(prompt).not.toContain("/workspace/validation/selector-recheck/");
+      expect(sandbox.files.get(`${directory}/VAL-UI-001.html`)).toBe(strictFailure.pageHtml);
+      const keys = [agentSessionKey("run-1", "validator", 1, afterHang, retry), selectorRecheckSessionKey("run-1", 1, afterHang, retry)];
+      expect(sessions.rows.map((row) => row.idempotencyKey)).toEqual(keys);
+      expect(keys).not.toContain(agentSessionKey("run-1", "validator", 1, false, 0));
+      expect(keys).not.toContain(selectorRecheckSessionKey("run-1", 1, false, 0));
+    });
   });
 });

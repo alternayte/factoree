@@ -1,4 +1,5 @@
 import type { AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import { assistantText } from "../assistant-text.js";
 import { isProviderUnreachableText } from "../provider-unreachable.js";
 
 export interface ClaudeOutput {
@@ -45,21 +46,6 @@ const resultUsage = (event: Record<string, unknown>): AgentSessionUsage | null =
     turns: numberOf(event["num_turns"]),
     longestTurnMs: null,
   };
-};
-
-/** Joins every text block of one assistant message. A tool use block carries no text. */
-const assistantText = (message: unknown): string | null => {
-  if (!isRecord(message)) return null;
-  const content = message["content"];
-  if (!Array.isArray(content)) return null;
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!isRecord(block)) continue;
-    if (block["type"] !== "text") continue;
-    const text = block["text"];
-    if (typeof text === "string" && text.length > 0) parts.push(text);
-  }
-  return parts.length === 0 ? null : parts.join("\n");
 };
 
 /** The input of every tool use block of one assistant message, as JSON. */
@@ -125,15 +111,19 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
       continue;
     }
 
-    // docs/specs/provider-unreachable.md. A retry of the provider during the CLI backoff.
+    // docs/specs/provider-unreachable.md. A retry of the provider during the CLI backoff. Only a
+    // null `error_status` means the CLI could not reach the provider. A status such as 429 or
+    // 529 is the provider answering, so the message never says it could not be reached.
     if (parsed["type"] === "system" && parsed["subtype"] === "api_retry") {
       const status = parsed["error_status"];
       const error = parsed["error"];
-      const statusText = typeof status === "number" || typeof status === "string" ? ` (status ${String(status)})` : "";
+      const named = typeof error === "string" && error.length > 0 && error !== "unknown" ? `: ${error}` : "";
       apiRetry =
-        "The model provider could not be reached: the Claude CLI retried the API" +
-        statusText +
-        `${typeof error === "string" && error.length > 0 && error !== "unknown" ? `: ${error}` : ""}.`;
+        status === null
+          ? `The model provider could not be reached: the Claude CLI retried the API${named}.`
+          : typeof status === "number" || typeof status === "string"
+            ? `The model provider answered with status ${String(status)} and the Claude CLI retried the API${named}.`
+            : `The Claude CLI retried the API${named}.`;
       continue;
     }
 

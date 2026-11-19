@@ -3,7 +3,12 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Sandbox } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import { agentSessionKey, refinerLimitCorrectionSessionKey, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import {
+  agentSessionKey,
+  refinerLimitCorrectionSessionKey,
+  refinerProposalName,
+  type AgentSessionStore,
+} from "~/domain/runs/agent-session.js";
 import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
 import { AgentSessionUnavailableError, UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
@@ -342,7 +347,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
     const unreachableRetry = input.unreachableRetry ?? 0;
     const afterHang = input.afterHang === true || unreachableRetry > 0;
     // A hung session can leave a partial proposal, and the fresh session must never read it.
-    const proposalBase = `${afterHang ? "proposal-after-hang" : "proposal"}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}`;
+    const proposalBase = refinerProposalName(afterHang, unreachableRetry);
     const proposalPath = `${directory}/${proposalBase}.json`;
     const fingerprint = { sandbox: agent.sandbox, redactor: agent.redactor };
     // docs/specs/change-sets.md. The refiner must not change any target of a change set.

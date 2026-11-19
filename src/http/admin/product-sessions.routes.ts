@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
-import type { ProductAgentSessionReader } from "~/domain/runs/agent-session.js";
+import { AGENT_SESSION_OUTCOMES, type ProductAgentSessionReader } from "~/domain/runs/agent-session.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 
 /** The most sessions one call returns. The product page shows the newest few. */
@@ -22,7 +22,7 @@ export const productAgentSessionSchema = z.object({
   /** The model the CLI reported for the session, else the model Factoree asked for, else null. */
   model: z.string().nullable(),
   effort: z.string().nullable(),
-  outcome: z.enum(["finished", "hung", "failed", "unreachable"]),
+  outcome: z.enum(AGENT_SESSION_OUTCOMES),
   durationMs: z.number(),
   createdAt: z.string(),
 });

@@ -5,7 +5,14 @@ import type { ValidationContractStore } from "~/domain/validation/validation-con
 import type { ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { AgentRunResult, AgentRunner, AgentRunnerRegistry, AgentSessionRef } from "~/domain/runs/agent-runner.js";
-import { agentSessionKey, describeSilenceLimit, type AgentSessionStore } from "~/domain/runs/agent-session.js";
+import {
+  agentSessionKey,
+  describeSilenceLimit,
+  reviewerReportName,
+  triageReportName,
+  triageSessionKey,
+  type AgentSessionStore,
+} from "~/domain/runs/agent-session.js";
 import { hangOf, providerUnreachableOf, recordAgentSession, type AgentHang, type AgentProviderUnreachable } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
@@ -462,7 +469,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       // report, so a partial report of the hung session is never read.
       const unreachableRetry = input.unreachableRetry ?? 0;
       const afterHang = input.afterHang === true || unreachableRetry > 0;
-      const reportPath = `${reviewDirectory}/report-${input.attempt}${afterHang ? "-after-hang" : ""}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}.json`;
+      const reportPath = `${reviewDirectory}/${reviewerReportName(input.attempt, afterHang, unreachableRetry)}`;
       const reviewerInput = buildReviewerInput({
         goal: input.goal,
         validationContract: storedContract.document,
@@ -753,7 +760,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
 
     const unreachableRetry = input.unreachableRetry ?? 0;
     const afterHang = input.afterHang === true || unreachableRetry > 0;
-    const reportPath = `${triageDirectory}/report${afterHang ? "-after-hang" : ""}${unreachableRetry > 0 ? `-unreachable-${unreachableRetry}` : ""}.json`;
+    const reportPath = `${triageDirectory}/${triageReportName(afterHang, unreachableRetry)}`;
     const prompt = renderTriagePrompt({
       pullRequestUrl: input.pullRequestUrl,
       reviewerName: input.reviewerName,
@@ -782,7 +789,7 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
       actionPolicy,
       timeoutMs: input.timeoutMs,
       attempt: 0,
-      idempotencyKey: `${agentSessionKey(input.runId, "reviewer", null, afterHang, unreachableRetry)}:triage`,
+      idempotencyKey: triageSessionKey(input.runId, afterHang, unreachableRetry),
     });
 
     const hang = hangOf([sessionResult]);

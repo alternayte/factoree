@@ -302,6 +302,25 @@ describe("agent usage (agent-session-usage-and-hangs.md)", () => {
     expect(buildProofPackDocument(input({ agentUsage })).agentUsage?.roles).toHaveLength(2);
   });
 
+  // docs/specs/provider-unreachable.md. proof-pack.json is the machine-readable record, so it carries
+  // the per-role count of sessions that could not reach the model provider. The prose does not.
+  it("keeps the per-role unreachable count in proof-pack.json and out of the prose", () => {
+    const agentUsage = summarizeAgentSessions([
+      row("implementer", { outcome: "unreachable", usage: null }),
+      row("implementer", { attempt: 2, outcome: "unreachable", usage: null, idempotencyKey: "run:run-1:implementer:2" }),
+      row("implementer", { attempt: 3, idempotencyKey: "run:run-1:implementer:3" }),
+      row("reviewer"),
+    ]);
+    const document = JSON.parse(JSON.stringify(buildProofPackDocument(input({ agentUsage })))) as {
+      agentUsage: { roles: unknown[] };
+    };
+    expect(document.agentUsage.roles).toEqual([
+      expect.objectContaining({ role: "implementer", sessions: 3, hung: 0, unreachable: 2 }),
+      expect.objectContaining({ role: "reviewer", sessions: 1, hung: 0, unreachable: 0 }),
+    ]);
+    expect(renderProofPack(input({ agentUsage }), null)).not.toMatch(/unreachable/i);
+  });
+
   it("shows no usage line when the Run recorded no session", () => {
     expect(renderProofPack(input({ agentUsage: summarizeAgentSessions([]) }), null)).not.toContain("Agent usage");
     expect(buildProofPackDocument(input()).agentUsage).toBeNull();

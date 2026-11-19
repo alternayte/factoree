@@ -17,6 +17,15 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 import { GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
 import { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
 import type { AgentRunner } from "~/domain/runs/agent-runner.js";
+import type { RunSkill, RunSkillStore } from "~/domain/runs/run-skill.js";
+import {
+  resolutionIdOf,
+  sha256Hex,
+  SKILL_REGISTRY_KEY_SECRET,
+  SkillRegistryError,
+  type SkillRegistry,
+  type SkillResolution,
+} from "~/domain/runs/skill-registry.js";
 
 const stubRunner = (name: string): AgentRunner => ({
   name,
@@ -79,6 +88,7 @@ const build = (
   },
   failover?: ProviderFailover,
   products?: SandboxActivityDependencies["products"],
+  extra: Partial<SandboxActivityDependencies> = {},
 ) => {
   const runs = {
     setSandbox: vi.fn().mockResolvedValue(superseded),
@@ -138,6 +148,7 @@ const build = (
     tokens,
     ...(failover === undefined ? {} : { failover }),
     ...(products === undefined ? {} : { products }),
+    ...extra,
   });
   return { activities, sandbox, runs, redactor };
 };
@@ -548,5 +559,258 @@ describe("the prepareSandbox activity when the provider fails the create", () =>
 
     await expect(activities.prepareSandbox(input)).rejects.toThrow("disk full");
     expect(failover.markDown).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * docs/specs/provider-unreachable.md, section 4. The work sandbox of an unreachable-provider retry is
+ * released by `destroySandbox`, and by the next `prepareSandbox` when that release failed.
+ */
+describe("the release of a superseded work sandbox", () => {
+  const destroyInput = {
+    tenantId: "tenant-1",
+    runId: "run-1",
+    spriteId: "sprite-old",
+    adapter: "fake",
+    workspacePath: "/workspace",
+    reason: "SUPERSEDED",
+  };
+
+  it("leaves the run row untouched when the sandbox destroy fails", async () => {
+    const { activities, sandbox, runs } = build({ spriteId: null, adapter: null });
+    vi.spyOn(sandbox, "destroy").mockRejectedValueOnce(new Error("provider api down"));
+
+    await expect(activities.destroySandbox(destroyInput)).rejects.toThrow("provider api down");
+
+    // The row still names the sprite, so the next preparation or the reaper can release it.
+    expect(runs.clearSandbox).not.toHaveBeenCalled();
+  });
+
+  it("clears the run row and counts the release when the destroy succeeds", async () => {
+    const { activities, sandbox, runs } = build({ spriteId: null, adapter: null });
+    const before = await supersededCount();
+
+    await activities.destroySandbox(destroyInput);
+
+    expect(sandbox.destroyed).toEqual(["sprite-old"]);
+    expect(runs.clearSandbox).toHaveBeenCalledWith("tenant-1", "run-1");
+    expect(await supersededCount()).toBe(before + 1);
+  });
+
+  it("lets a later preparation release the sprite a failed destroy left on the run row", async () => {
+    // sandbox.destroy failed, so the row still names sprite-old, and setSandbox reports it as superseded.
+    const { activities, sandbox, runs } = build({ spriteId: "sprite-old", adapter: "fake" });
+    vi.spyOn(sandbox, "destroy").mockRejectedValueOnce(new Error("provider api down"));
+    await expect(activities.destroySandbox(destroyInput)).rejects.toThrow("provider api down");
+    const before = await supersededCount();
+
+    const output = await activities.prepareSandbox(input);
+
+    expect(output.baseSha).toBe(HEAD);
+    expect(sandbox.destroyed).toEqual(["sprite-old"]);
+    expect(runs.setSandbox).toHaveBeenCalledTimes(1);
+    expect(await supersededCount()).toBe(before + 1);
+  });
+
+  it("releases an already destroyed sprite without error when only the row clear failed", async () => {
+    // sandbox.destroy succeeded, clearSandbox failed, so the row names a sprite that no longer exists.
+    const { activities, sandbox, runs } = build({ spriteId: "sprite-old", adapter: "fake" });
+    runs.clearSandbox.mockRejectedValueOnce(new Error("database down"));
+    await expect(activities.destroySandbox(destroyInput)).rejects.toThrow("database down");
+    expect(sandbox.destroyed).toEqual(["sprite-old"]);
+    // A real provider refuses to destroy a sprite it no longer knows. The release must absorb that.
+    vi.spyOn(sandbox, "destroy").mockRejectedValueOnce(new Error("sprite sprite-old not found"));
+
+    const output = await activities.prepareSandbox(input);
+
+    expect(output.baseSha).toBe(HEAD);
+    expect(runs.setSandbox).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * docs/specs/provider-unreachable.md, section 4. A work sandbox that replaces an earlier one keeps the
+ * frozen skill resolution of the run: it takes the exact pinned name, version and digest, verifies
+ * them, and never changes what the run recorded.
+ */
+describe("the prepareSandbox activity and a frozen skill resolution", () => {
+  const registrySettings = { kind: "skael" as const, url: "https://skael.test", set: "go-tools" };
+  const archive = (text: string): Uint8Array => new TextEncoder().encode(text);
+  const lintV1 = { name: "lint", version: 1, archive: archive("lint v1") };
+  const lintV2 = { name: "lint", version: 2, archive: archive("lint v2") };
+  const withDigest = (skill: { name: string; version: number; archive: Uint8Array }) => ({ ...skill, sha256: sha256Hex(skill.archive) });
+  const resolutionOf = (skills: ReturnType<typeof withDigest>[]): SkillResolution => ({
+    set: "go-tools",
+    id: resolutionIdOf(skills),
+    complete: true,
+    skills,
+  });
+  const frozen = resolutionOf([withDigest(lintV1)]);
+  const moved = resolutionOf([withDigest(lintV2)]);
+  const rowOf = (skill: ReturnType<typeof withDigest>, activated: boolean): RunSkill => ({
+    scope: "registry",
+    name: skill.name,
+    path: `/workspace/registry-skills/.agents/skills/${skill.name}/SKILL.md`,
+    version: skill.version,
+    sha256: skill.sha256,
+    listed: true,
+    activated,
+  });
+
+  /** A run store that holds `rows` and `resolution`, and records every write. */
+  const storeOf = (rows: RunSkill[], resolution: { set: string | null; id: string } | null) => {
+    const store = {
+      replace: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn().mockResolvedValue(rows),
+      resolutionOf: vi.fn().mockResolvedValue(resolution),
+      markActivated: vi.fn().mockResolvedValue(undefined),
+      recordProposal: vi.fn().mockResolvedValue(undefined),
+      listProposals: vi.fn().mockResolvedValue([]),
+    };
+    return store satisfies RunSkillStore;
+  };
+
+  /**
+   * A registry whose defaults moved to `moved`. `pinned` answers a pinned resolution (the recorded one
+   * by default), and null makes a registry that has no pinned resolution.
+   */
+  const registryOf = (pinned: ((id: string) => Promise<SkillResolution>) | null = () => Promise.resolve(frozen)) => {
+    const resolve = vi.fn().mockResolvedValue({ kind: "archives", resolution: moved });
+    const resolvePinned = vi.fn((pins: { id: string }) => (pinned ?? (() => Promise.reject(new Error("unsupported"))))(pins.id));
+    const registry = {
+      scope: "registry" as const,
+      resolve,
+      ...(pinned === null ? {} : { resolvePinned }),
+      reportActivations: vi.fn(),
+      reportOutcome: vi.fn(),
+      submit: vi.fn(),
+    };
+    return { registry: registry as unknown as SkillRegistry, resolve, resolvePinned };
+  };
+
+  const prepareWith = (store: RunSkillStore, registry: SkillRegistry) =>
+    build(
+      { spriteId: "sprite-old", adapter: "fake" },
+      { [SKILL_REGISTRY_KEY_SECRET]: "sk-1" },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { skills: store, registries: () => registry },
+    );
+  const registryInput = { ...input, skillRegistry: registrySettings };
+  const deliveredArchives = (sandbox: FakeSandbox): string[] =>
+    [...sandbox.files.entries()].filter(([path]) => path.endsWith(".b64")).map(([, content]) => Buffer.from(content, "base64").toString("utf8"));
+
+  it("takes a first preparation from the registry and records the resolution", async () => {
+    const store = storeOf([], null);
+    const { registry, resolve, resolvePinned } = registryOf();
+    const { activities, sandbox } = prepareWith(store, registry);
+
+    await activities.prepareSandbox(registryInput);
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolvePinned).not.toHaveBeenCalled();
+    expect(deliveredArchives(sandbox)).toEqual(["lint v2"]);
+    expect(store.replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers the pinned skills to the replacement even though the registry defaults moved", async () => {
+    const store = storeOf([rowOf(withDigest(lintV1), true)], { set: "go-tools", id: frozen.id });
+    const { registry, resolve, resolvePinned } = registryOf();
+    const { activities, sandbox } = prepareWith(store, registry);
+
+    await activities.prepareSandbox(registryInput);
+
+    expect(resolvePinned).toHaveBeenCalledWith({
+      set: "go-tools",
+      id: frozen.id,
+      skills: [{ name: "lint", version: 1, sha256: sha256Hex(lintV1.archive) }],
+    });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(deliveredArchives(sandbox)).toEqual(["lint v1"]);
+  });
+
+  it("never replaces the run skills of a replacement, so the resolution and the activation flags stay", async () => {
+    const store = storeOf([rowOf(withDigest(lintV1), true)], { set: "go-tools", id: frozen.id });
+    const { registry } = registryOf();
+    const { activities } = prepareWith(store, registry);
+
+    await activities.prepareSandbox(registryInput);
+
+    expect(store.replace).not.toHaveBeenCalled();
+    expect(store.markActivated).not.toHaveBeenCalled();
+  });
+
+  it("fails explicitly when the pinned archives do not give the recorded resolution id, and keeps the stored skills", async () => {
+    const store = storeOf([rowOf(withDigest(lintV1), false)], { set: "go-tools", id: frozen.id });
+    // The registry answers with a resolution that differs from the recorded one.
+    const { registry, resolve } = registryOf(() => Promise.resolve(moved));
+    // Defaults moved too, so the current resolution cannot stand in for the recorded one.
+    const { activities, sandbox } = prepareWith(store, registry);
+
+    const error = await activities.prepareSandbox(registryInput).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect((error as Error).message).toContain(frozen.id);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(store.replace).not.toHaveBeenCalled();
+    // No sandbox of the replacement exists, so none is left behind, and the old one is not released.
+    expect(sandbox.calls).not.toContain("create");
+    expect(sandbox.destroyed).toEqual([]);
+  });
+
+  it("fails explicitly when the registry cannot serve the pinned content", async () => {
+    const store = storeOf([rowOf(withDigest(lintV1), false)], { set: "go-tools", id: frozen.id });
+    const { registry } = registryOf(() =>
+      Promise.reject(new SkillRegistryError("Skael answered 404 for GET /api/skills/lint/versions/1/download", true)),
+    );
+    const { activities } = prepareWith(store, registry);
+
+    const error = await activities.prepareSandbox(registryInput).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect((error as Error).message).toContain("404");
+    expect(store.replace).not.toHaveBeenCalled();
+  });
+
+  it("fails explicitly when the registry cannot re-deliver pins and its current resolution differs", async () => {
+    const store = storeOf([rowOf(withDigest(lintV1), false)], { set: "go-tools", id: frozen.id });
+    // A registry with no pinned resolution, whose defaults moved.
+    const { registry } = registryOf(null);
+    const { activities } = prepareWith(store, registry);
+
+    const error = await activities.prepareSandbox(registryInput).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect((error as Error).message).toContain(frozen.id);
+    expect(store.replace).not.toHaveBeenCalled();
+  });
+
+  it("accepts the current resolution of a registry with no pin support when it equals the recorded one", async () => {
+    // Also the case of a registry skill that a repository skill of the same name shadowed: the rows
+    // cannot rebuild the resolution, and the unchanged current resolution can.
+    const store = storeOf([], { set: "go-tools", id: frozen.id });
+    const { registry, resolve } = registryOf(null);
+    resolve.mockResolvedValue({ kind: "archives", resolution: frozen });
+    const { activities, sandbox } = prepareWith(store, registry);
+
+    await activities.prepareSandbox(registryInput);
+
+    expect(deliveredArchives(sandbox)).toEqual(["lint v1"]);
+    expect(store.replace).not.toHaveBeenCalled();
+  });
+
+  it("fails explicitly when the product no longer names the registry of a frozen resolution", async () => {
+    const store = storeOf([rowOf(withDigest(lintV1), false)], { set: "go-tools", id: frozen.id });
+    const { registry } = registryOf();
+    const { activities } = prepareWith(store, registry);
+
+    const error = await activities.prepareSandbox({ ...input, skillRegistry: null }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RunConfigurationError);
+    expect((error as Error).message).toContain(frozen.id);
+    expect(store.replace).not.toHaveBeenCalled();
   });
 });
