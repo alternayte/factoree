@@ -11,6 +11,7 @@ import { Alert, Badge, ErrorAlert, KeyValue, PageHeader, Section, SkeletonCard, 
 import { useMe } from "@/lib/session";
 import { emptySandboxForm, SandboxFields, type SandboxForm } from "./sandbox-fields";
 import { SandboxProvidersSection } from "./sandbox-providers-section";
+import { DrainSection } from "./drain-section";
 
 type Settings = GetInstallSettingsResponse;
 type Patch = UpdateInstallSettingsData["body"];
@@ -50,6 +51,7 @@ export function InstallSettingsPage() {
             pinnedImage={settings.data.sandbox.pinnedImage}
             defaultSize={settings.data.sandbox.defaultSize}
           />
+          <DrainSection canEdit={canEdit} />
         </Stack>
       ) : null}
     </>

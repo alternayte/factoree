@@ -37,7 +37,8 @@ import { createLinearIssueStatus } from "~/adapters/linear/linear-issue-status.j
 import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import { PullRequestEventRouter } from "~/domain/pull-requests/pull-request-router.js";
 import { PrismaPullRequestStore } from "~/persistence/prisma/pull-request-store.prisma.js";
-import { createBlockerWait } from "./blocker-wait-wiring.js";
+import { createRunWaits } from "./blocker-wait-wiring.js";
+import { openRunViews } from "~/temporal/upgrade-check.js";
 import type { RefusalNotifier } from "~/domain/runs/delegation-service.js";
 import { GitHubAppTokenProvider } from "~/adapters/github/app-token-provider.js";
 import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
@@ -105,7 +106,7 @@ const refusalNotifier: RefusalNotifier = {
 
 // docs/specs/blocked-by-wait.md, DI-21.89. The API holds a blocked delegation, stops or answers a
 // waiting run, and sweeps the tenant at once when a Factoree pull request merges.
-const blockerWait = createBlockerWait({
+const { blockerWait, drainMode } = createRunWaits({
   prisma,
   linearToken: (workspaceId) => linearTokens.tokenFor(workspaceId),
   client,
@@ -131,6 +132,7 @@ const delegation = new DelegationService({
   // docs/specs/draft-of-failed-run.md. The facts and the record of a draft of a failed run.
   drafts: new PrismaRunDraftStore(prisma),
   blockerWait,
+  drainMode,
   // docs/specs/pr-review-merge-and-deploy.md, slice 5. A reply after a failed deploy starts a follow-up run.
   deployFailures: new PrismaPullRequestStore(prisma),
 });
@@ -239,6 +241,12 @@ const auth = new AuthHandle({ prisma, settings, publicUrl: env.FACTOREE_PUBLIC_U
 
 const startRepositorySetup = createRepositorySetupStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
 const app = buildServer({
+  // docs/specs/drain-mode.md. The drain page lists the open runs that a breaking release waits for.
+  drain: {
+    drainMode,
+    openRuns: () => openRunViews(client, prisma),
+    heldCount: () => prisma.run.count({ where: { status: "WAITING_FOR_UPDATE" } }),
+  },
   repositorySetup: {
     listInstallationRepositories: (installationId) => discoveryClient.listInstallationRepositories(installationId),
     startSetup: startRepositorySetup,

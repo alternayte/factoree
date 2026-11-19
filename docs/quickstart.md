@@ -476,6 +476,21 @@ Helm chart runs the same check, `factoree upgrade-check`, before an upgrade.
 An upgrade from a release before 0.16.0 needs no open runs. Those runs carry
 no release memo.
 
+A release that open runs cannot replay names it in its release notes. On a
+busy install, use drain mode for it (`docs/specs/drain-mode.md`):
+
+1. Turn on drain mode in Install settings > Drain mode, or with
+   `PUT /admin/install/drain` and `{ "on": true }`. New runs now wait as
+   WAITING_FOR_UPDATE, and Linear tells each person that the run starts after
+   the update. Every open run finishes as normal.
+2. Wait until the Drain mode section lists no open run. Stop a run that holds
+   the drain up, for example one that waits for a human answer.
+3. Deploy the new release. Its worker turns drain mode off when it starts, and
+   the waiting runs start within a minute, oldest first.
+
+A restart of the same release keeps drain mode on. Turn it off by hand after a
+drain for maintenance.
+
 ## Troubleshooting
 
 **The setup token is not valid.** The API issues a new token on each start

@@ -86,7 +86,7 @@ import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
 import { LinearTokenProvider } from "~/domain/products/linear-token-provider.js";
 import { githubApiBaseUrl, githubAppCredentials, githubBaseUrl, linearOAuthFromSettings } from "./install-wiring.js";
-import { createBlockerWait } from "./blocker-wait-wiring.js";
+import { createRunWaits } from "./blocker-wait-wiring.js";
 import { PullRequestCloseHandler } from "~/domain/runs/pull-request-close.js";
 import { PrismaWebhookLog } from "~/persistence/prisma/webhook-log.prisma.js";
 import { PrismaPullRequestStore } from "~/persistence/prisma/pull-request-store.prisma.js";
@@ -464,7 +464,7 @@ const httpValidationFetch: HttpValidationFetch = async (url, init) => {
 
 // docs/specs/blocked-by-wait.md. The sweep below and the merge of a pull request both release waiting runs.
 const blockerClient = await createTemporalClient(env);
-const blockerWait = createBlockerWait({
+const { blockerWait, drainMode } = createRunWaits({
   prisma,
   linearToken: (workspaceId) => linearTokens.tokenFor(workspaceId),
   client: blockerClient,
@@ -508,6 +508,7 @@ const worker = await Worker.create({
   // The worker bundles one file per `workflowsPath`, so the barrel re-exports both.
   workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
   activities: createActivities({
+    drainModeOn: () => drainMode.isOn(),
     hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings },
     runs,
     runSlots: new PrismaRunSlots(prisma),
@@ -664,8 +665,11 @@ const blockerTimer = setInterval(() => {
   sweeping = true;
   void blockerWait
     .sweep()
-    .then(({ released }) => {
+    .then(async ({ released }) => {
       if (released > 0) logger.info("blocked runs released", { count: released, step: "blockers" });
+      // docs/specs/drain-mode.md. Once drain mode is off, the held runs start, oldest first.
+      const started = await drainMode.release();
+      if (started > 0) logger.info("held runs started after the update", { count: started, step: "drain" });
     })
     .catch((error: unknown) => {
       logger.error("the blocker sweep failed", { error: String(error), step: "blockers" });
@@ -725,6 +729,18 @@ try {
   }
 } finally {
   await replayCheck.connection.close();
+}
+
+// docs/specs/drain-mode.md. The upgrade check passed, so a worker of a newer release ends drain mode,
+// and the held runs start on this release. A restart of the same release keeps drain mode on.
+try {
+  if (await drainMode.endIfNewer()) {
+    const started = await drainMode.release();
+    logger.info("drain mode ended by this release", { step: "drain", version: buildInfo.version, started });
+  }
+} catch (error) {
+  // The next sweep starts the held runs once drain mode is off.
+  logger.error("the worker did not end drain mode", { step: "drain", error: String(error) });
 }
 
 logger.info("worker started", {

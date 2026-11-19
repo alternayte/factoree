@@ -24,6 +24,7 @@ import {
   deleteProduct,
   deleteProductSecret,
   deleteSandboxProvider,
+  getDrainMode,
   getInstallSettings,
   getMe,
   getModelCatalog,
@@ -56,6 +57,7 @@ import {
   putProductSecret,
   putSandbox,
   revokeApiKey,
+  setDrainMode,
   startLinearInstall,
   startRepositorySetups,
   startSetupLinearInstall,
@@ -108,6 +110,8 @@ import type {
   DeleteSandboxProviderData,
   DeleteSandboxProviderError,
   DeleteSandboxProviderResponse,
+  GetDrainModeData,
+  GetDrainModeResponse,
   GetInstallSettingsData,
   GetInstallSettingsResponse,
   GetMeData,
@@ -195,6 +199,9 @@ import type {
   RevokeApiKeyData,
   RevokeApiKeyError,
   RevokeApiKeyResponse,
+  SetDrainModeData,
+  SetDrainModeError,
+  SetDrainModeResponse,
   StartLinearInstallData,
   StartLinearInstallError,
   StartLinearInstallResponse,
@@ -1476,6 +1483,38 @@ export const revokeApiKeyMutation = (
   const mutationOptions: UseMutationOptions<RevokeApiKeyResponse, RevokeApiKeyError, Options<RevokeApiKeyData>> = {
     mutationFn: async (fnOptions) => {
       const { data } = await revokeApiKey({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const getDrainModeQueryKey = (options?: Options<GetDrainModeData>) => createQueryKey("getDrainMode", options);
+
+export const getDrainModeOptions = (options?: Options<GetDrainModeData>) =>
+  queryOptions<GetDrainModeResponse, DefaultError, GetDrainModeResponse, ReturnType<typeof getDrainModeQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getDrainMode({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getDrainModeQueryKey(options),
+  });
+
+export const setDrainModeMutation = (
+  options?: Partial<Options<SetDrainModeData>>,
+): UseMutationOptions<SetDrainModeResponse, SetDrainModeError, Options<SetDrainModeData>> => {
+  const mutationOptions: UseMutationOptions<SetDrainModeResponse, SetDrainModeError, Options<SetDrainModeData>> = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await setDrainMode({
         ...options,
         ...fnOptions,
         throwOnError: true,

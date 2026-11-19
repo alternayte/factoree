@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { defaultPayloadConverter } from "@temporalio/common";
 import { WorkflowNotFoundError } from "@temporalio/client";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
+import { HELD_LINE } from "~/domain/runs/drain-mode.js";
 import { Worker } from "@temporalio/worker";
 import { pullRequestEventSignal, pullRequestStateQuery, pullRequestWorkflow } from "~/workflows/pr.workflow.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
@@ -248,6 +249,8 @@ describe("pullRequestWorkflow", () => {
     let state: PullRequestState = "open";
     let headSha = "head-1";
     const bringCurrentId = `bring-current-${randomUUID()}`;
+    let drainChecks = 0;
+    const heldLines: string[] = [];
     const followUpId = `pr-follow-up-${randomUUID()}`;
     const worker = await Worker.create({
       connection: environment.nativeConnection,
@@ -278,6 +281,14 @@ describe("pullRequestWorkflow", () => {
           followUps.push(input);
           return { kind: "start", workflowId: followUpId, input: { prFollowUp: {} } };
         },
+        // docs/specs/drain-mode.md. Drain mode is on at the first check, so the first run waits once.
+        isDrainModeOn: async () => {
+          drainChecks += 1;
+          return drainChecks === 1;
+        },
+        postElicitation: async (input: { question: string }) => {
+          heldLines.push(input.question);
+        },
       },
     });
 
@@ -289,6 +300,9 @@ describe("pullRequestWorkflow", () => {
         signal: pullRequestEventSignal,
         signalArgs: [synchronize],
       });
+      // docs/specs/drain-mode.md. The run waits while drain mode is on, and starts at the next check.
+      await waitFor(() => heldLines.length === 1, "the held line");
+      await environment.sleep("61 seconds");
       await waitFor(async () => followUps.length === 1 && (await handle.query(pullRequestStateQuery)).followUp === null, "the base follow-up run");
       expect(await completedResult(followUpId)).toMatchObject({ status: "READY_FOR_HUMAN" });
       await handle.signal(pullRequestEventSignal, { ...merge, merged: false, mergeCommitSha: null, deliveryId: "github:close-3" });
@@ -297,6 +311,7 @@ describe("pullRequestWorkflow", () => {
 
     expect(result).toBe("closed");
     expect(plannedUpdates).toEqual([{ reason: "conflict", triggerKey: "github:sync-1" }]);
+    expect(heldLines).toEqual([HELD_LINE]);
     // DI-21.118. The update pushed nothing, so its head takes no second update until the base moves.
     expect(marked).toEqual(["head-2"]);
     expect(followUps).toEqual([

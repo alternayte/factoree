@@ -33,6 +33,7 @@ import {
   pullRequestLabel,
   pullRequestTone,
   temporalWorkflowUrl,
+  waitsWithoutWorkflow,
 } from "./run-format";
 
 type Run = GetRunResponse;
@@ -189,6 +190,12 @@ function RunDetail({
           </Link>
         </Alert>
       ) : null}
+      {run.status === "WAITING_FOR_UPDATE" ? (
+        // docs/specs/drain-mode.md. The sweep starts the run within a minute of the end of drain mode.
+        <Alert tone="info" className="mb-4" title="Waiting for the update">
+          <p>Drain mode is on: Factoree updates to a new release. It starts this run when the update ends.</p>
+        </Alert>
+      ) : null}
       {run.status === "WAITING_FOR_BLOCKERS" ? (
         // docs/specs/blocked-by-wait.md. Factoree starts the run within a minute of the last open blocker completing.
         <Alert tone="info" className="mb-4" title="Waiting for blockers">
@@ -284,7 +291,7 @@ function RunDetail({
               </a>
             ) : null}
             {/* docs/specs/blocked-by-wait.md. A waiting run has no workflow yet, so the link would find nothing. */}
-            {admin && run.status !== "WAITING_FOR_BLOCKERS" ? (
+            {admin && !waitsWithoutWorkflow(run.status) ? (
               <a className="link" href={temporalWorkflowUrl(temporalNamespace, run.temporalWorkflowId)} target="_blank" rel="noreferrer">
                 Workflow in Temporal
               </a>
@@ -333,10 +340,10 @@ function RunDetail({
         }}
         onConfirm={() => stop.mutate()}
       >
-        {run.status === "WAITING_FOR_BLOCKERS" ? (
+        {waitsWithoutWorkflow(run.status) ? (
           <p>
             The run has not started, so no agent or sandbox exists. The Run ends as Cancelled, and Factoree does not start
-            it when its blockers complete. Delegate the issue again to start a new one.
+            it later. Delegate the issue again to start a new one.
           </p>
         ) : (
           <p>

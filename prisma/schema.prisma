@@ -904,6 +904,11 @@ model InstallSettings {
   // The tenant whose Linear workspace admins administer the install settings.
   operatorTenantId            String?
   setupCompletedAt            DateTime?
+  // docs/specs/drain-mode.md. Set while drain mode is on: when, by whom, and the release that
+  // turned it on. A worker of a newer release clears all three at boot.
+  drainStartedAt              DateTime?
+  drainStartedBy              String?
+  drainRelease                String?
   updatedAt                   DateTime  @updatedAt
 }
 

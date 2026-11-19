@@ -45,6 +45,8 @@ import type {
   DeleteSandboxProviderData,
   DeleteSandboxProviderErrors,
   DeleteSandboxProviderResponses,
+  GetDrainModeData,
+  GetDrainModeResponses,
   GetInstallSettingsData,
   GetInstallSettingsResponses,
   GetMeData,
@@ -132,6 +134,9 @@ import type {
   RevokeApiKeyData,
   RevokeApiKeyErrors,
   RevokeApiKeyResponses,
+  SetDrainModeData,
+  SetDrainModeErrors,
+  SetDrainModeResponses,
   StartLinearInstallData,
   StartLinearInstallErrors,
   StartLinearInstallResponses,
@@ -1261,4 +1266,48 @@ export const revokeApiKey = <ThrowOnError extends boolean = false>(
     ],
     url: "/admin/api-keys/{id}",
     ...options,
+  });
+
+export const getDrainMode = <ThrowOnError extends boolean = false>(
+  options?: Options<GetDrainModeData, ThrowOnError>,
+): RequestResult<GetDrainModeResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetDrainModeResponses, unknown, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/install/drain",
+    ...options,
+  });
+
+export const setDrainMode = <ThrowOnError extends boolean = false>(
+  options: Options<SetDrainModeData, ThrowOnError>,
+): RequestResult<SetDrainModeResponses, SetDrainModeErrors, ThrowOnError> =>
+  (options.client ?? client).put<SetDrainModeResponses, SetDrainModeErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/install/drain",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });

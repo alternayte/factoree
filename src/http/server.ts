@@ -36,6 +36,7 @@ import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerSettingsRoutes } from "./admin/settings.routes.js";
 import { registerSandboxProviderRoutes } from "./admin/sandbox-providers.routes.js";
+import { registerDrainRoutes, type DrainRouteDependencies } from "./admin/drain.routes.js";
 import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
 import type { SandboxProviderStore } from "~/domain/settings/sandbox-providers.js";
 import { registerModelCatalogRoutes } from "./admin/model-catalog.routes.js";
@@ -110,9 +111,22 @@ export interface ServerDependencies {
   pullRequestRecords?: ProductRouteDependencies["pullRequests"];
   /** The GitHub and Linear calls of setup. */
   setup: Pick<SetupRouteDependencies, "github" | "linear">;
+  /** docs/specs/drain-mode.md. Absent in a server that starts no workflow, such as the OpenAPI build. */
+  drain?: DrainRouteDependencies;
   /** The built UI. Absent, or a directory without index.html, serves no UI. */
   uiRoot?: string;
 }
+
+/** A server with no workflow client documents the drain routes and turns nothing on. */
+const NO_DRAIN: DrainRouteDependencies = {
+  drainMode: {
+    state: () => Promise.resolve(null),
+    turnOn: () => Promise.reject(new Error("this server holds no drain mode")),
+    turnOff: () => Promise.reject(new Error("this server holds no drain mode")),
+  },
+  openRuns: () => Promise.resolve([]),
+  heldCount: () => Promise.resolve(0),
+};
 
 export const buildServer = (dependencies: ServerDependencies): FastifyInstance => {
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 });
@@ -301,6 +315,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         listLinearTeams: dependencies.setup.linear.listTeams,
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
       });
+      registerDrainRoutes(admin, dependencies.drain ?? NO_DRAIN);
       registerMetricsRoute(admin);
     });
   });

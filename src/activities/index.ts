@@ -78,6 +78,8 @@ import {
 } from "./skill-registry.activities.js";
 
 export interface ActivityDependencies {
+  /** docs/specs/drain-mode.md. True while drain mode is on. Absent means never. */
+  drainModeOn?: () => Promise<boolean>;
   /** docs/specs/host-credentials.md. The host credentials of each product. Absent means none. */
   hostCredentials?: {
     access: (tenantId: string, productId: string, checkoutRepositories: readonly string[]) => Promise<HostCredentialAccess>;
@@ -594,6 +596,10 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     changeSets: dependencies.changeSets ?? NO_CHANGE_SETS,
     commitStatuses: dependencies.commitStatuses ?? NO_COMMIT_STATUSES,
   }),
+  /** docs/specs/drain-mode.md. A PR workflow waits before it starts a run while drain mode is on. */
+  async isDrainModeOn(): Promise<boolean> {
+    return (await dependencies.drainModeOn?.()) ?? false;
+  },
 });
 
 export type Activities = ReturnType<typeof createActivities>;

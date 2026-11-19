@@ -2,6 +2,7 @@ import type { Client } from "@temporalio/client";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { describeBlockingRuns, unreplayableRuns, type BlockingRun, type OpenRunWorkflow } from "~/domain/runs/upgrade-check.js";
 import { MIN_REPLAYABLE_RELEASE, RELEASE_MEMO_KEY } from "~/workflows/release.js";
+import type { OpenRunView } from "~/http/admin/drain.routes.js";
 
 /** docs/specs/run-workflow-structure.md. Every open agentRun workflow, with its release memo. */
 export const listOpenRunWorkflows = async (client: Client): Promise<OpenRunWorkflow[]> => {
@@ -41,4 +42,29 @@ export const checkOpenRunsReplay = async (dependencies: {
     };
   });
   return { ok: false, blocking, report: describeBlockingRuns(blocking, MIN_REPLAYABLE_RELEASE, dependencies.publicUrl) };
+};
+
+/** docs/specs/drain-mode.md. Every open agentRun workflow with its run, oldest first, for the drain page. */
+export const openRunViews = async (client: Client, prisma: FactoreePrismaClient): Promise<OpenRunView[]> => {
+  const open = await listOpenRunWorkflows(client);
+  if (open.length === 0) return [];
+  const rows = await prisma.run.findMany({
+    where: { temporalWorkflowId: { in: open.map((workflow) => workflow.workflowId) } },
+    select: { id: true, temporalWorkflowId: true, workItemTitle: true, workItemUrl: true, status: true, createdAt: true },
+  });
+  const byWorkflow = new Map(rows.map((row) => [row.temporalWorkflowId, row]));
+  return open
+    .map((workflow): OpenRunView => {
+      const row = byWorkflow.get(workflow.workflowId);
+      return {
+        workflowId: workflow.workflowId,
+        runId: row?.id ?? null,
+        workItemTitle: row?.workItemTitle ?? null,
+        workItemUrl: row?.workItemUrl ?? null,
+        status: row?.status ?? null,
+        release: workflow.release,
+        createdAt: row?.createdAt.toISOString() ?? null,
+      };
+    })
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
 };

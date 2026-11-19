@@ -22,6 +22,7 @@ import type { StopRequest } from "~/domain/runs/run-stop.js";
 import { mayStartFollowUp } from "../domain/pull-requests/pr-follow-up.js";
 import { DEPLOY_WINDOW_MS } from "../domain/pull-requests/deploys.js";
 import { releaseMemo } from "./release.js";
+import { HELD_LINE } from "../domain/runs/drain-mode.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 
@@ -98,6 +99,10 @@ const BRING_CURRENT_PATCH = "bring-current";
  * the merge, and amends no proof pack.
  */
 const DEPLOYS_PATCH = "deploys";
+
+/** docs/specs/drain-mode.md. While drain mode is on, a PR workflow waits before it starts a run. */
+const DRAIN_MODE_PATCH = "drain-mode";
+const DRAIN_MODE_POLL = "60 seconds";
 
 /**
  * docs/specs/change-sets.md, slice 8. A history from before the change-set status sets none. The
@@ -353,7 +358,38 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     }
   };
 
+  /**
+   * docs/specs/drain-mode.md. Waits while drain mode is on, so no new run opens before a release that
+   * open runs cannot replay. The session gets the held line once. It answers false when the pull
+   * request closed during the wait, and then no run starts.
+   */
+  const waitWhileDrained = async (plan: Extract<PullRequestFollowUpPlan, { kind: "start" }>): Promise<boolean> => {
+    let told = false;
+    for (;;) {
+      let on: boolean;
+      try {
+        on = await activities.isDrainModeOn();
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        // A failed read starts the run, as with drain mode off: the worker refuses a release that cannot replay it.
+        on = false;
+      }
+      if (!on) return true;
+      if (!told) {
+        told = true;
+        try {
+          await activities.postElicitation({ sessionId: plan.input.agentSessionId, question: HELD_LINE });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          log.warn("the held line was not posted", { workflow_id: plan.workflowId, error: String(error) });
+        }
+      }
+      if (await condition(() => queue.some((queued) => queued.kind === "closed"), DRAIN_MODE_POLL)) return false;
+    }
+  };
+
   const runChildHeld = async (plan: Extract<PullRequestFollowUpPlan, { kind: "start" }>): Promise<AgentRunWorkflowResult | null> => {
+    if (patched(DRAIN_MODE_PATCH) && !(await waitWhileDrained(plan))) return null;
     let finished = false;
     let outcome: AgentRunWorkflowResult | null = null;
     let result: Promise<AgentRunWorkflowResult>;

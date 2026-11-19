@@ -4064,3 +4064,84 @@ export type RevokeApiKeyResponses = {
 };
 
 export type RevokeApiKeyResponse = RevokeApiKeyResponses[keyof RevokeApiKeyResponses];
+
+export type GetDrainModeData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/admin/install/drain";
+};
+
+export type GetDrainModeResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    on: boolean;
+    startedAt: string | null;
+    startedBy: string | null;
+    release: string | null;
+    heldCount: number;
+    openRuns?: Array<{
+      workflowId: string;
+      runId: string | null;
+      workItemTitle: string | null;
+      workItemUrl: string | null;
+      status: string | null;
+      release: string | null;
+      createdAt: string | null;
+    }>;
+  };
+};
+
+export type GetDrainModeResponse = GetDrainModeResponses[keyof GetDrainModeResponses];
+
+export type SetDrainModeData = {
+  body: {
+    on: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/admin/install/drain";
+};
+
+export type SetDrainModeErrors = {
+  /**
+   * Default Response
+   */
+  403: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type SetDrainModeError = SetDrainModeErrors[keyof SetDrainModeErrors];
+
+export type SetDrainModeResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    on: boolean;
+    startedAt: string | null;
+    startedBy: string | null;
+    release: string | null;
+    heldCount: number;
+    openRuns?: Array<{
+      workflowId: string;
+      runId: string | null;
+      workItemTitle: string | null;
+      workItemUrl: string | null;
+      status: string | null;
+      release: string | null;
+      createdAt: string | null;
+    }>;
+  };
+};
+
+export type SetDrainModeResponse = SetDrainModeResponses[keyof SetDrainModeResponses];
