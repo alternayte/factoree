@@ -11,6 +11,7 @@ import { buildSyncInstallationWorkflowId, syncInstallationWorkflow } from "~/wor
 import type { WorkflowStarter } from "~/domain/runs/delegation-service.js";
 import { buildAheadRepositoriesOf, buildAheadWorkflowId, type RequestBuildAhead } from "~/domain/runs/build-ahead.js";
 import { buildAheadSignal, buildAheadWorkflow } from "~/workflows/build-ahead.workflow.js";
+import { releaseMemo } from "~/workflows/release.js";
 import { repositorySetupWorkflow } from "~/workflows/repository-setup.workflow.js";
 import { draftRunWorkflow } from "~/workflows/draft-run.workflow.js";
 import { pullRequestEventSignal, pullRequestWorkflow } from "~/workflows/pr.workflow.js";
@@ -46,6 +47,8 @@ export const createTemporalWorkflowStarter = (client: Client, taskQueue: string)
         taskQueue,
         workflowId: input.workflowId,
         args: input.args,
+        // docs/specs/run-workflow-structure.md. `factoree upgrade-check` reads it.
+        memo: releaseMemo(),
       });
     } catch (error) {
       // A repeated delivery that passed the database check must not create a second Run.
@@ -94,6 +97,7 @@ export const createReleasedRunStarter =
         workflowId,
         args: [input],
         workflowIdReusePolicy: "REJECT_DUPLICATE",
+        memo: releaseMemo(),
       });
       return "started";
     } catch (error) {

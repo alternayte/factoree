@@ -461,6 +461,21 @@ settings.
 
     just down        # stops PostgreSQL and keeps the data volume
 
+## 10. Upgrade
+
+A worker replays each open run with its own code. Before it polls, the worker
+lists the open runs and exits 78 when one came from a release that it cannot
+replay. Its log names each such run with its work item and its Run page. The
+Helm chart runs the same check, `factoree upgrade-check`, before an upgrade.
+
+1. Run `factoree upgrade-check` with the new image and the install environment.
+2. If it exits 78, stop each run it names, or wait for the run to end.
+3. On compose, keep the previous image until the check passes. On Helm, the
+   failed check stops the upgrade, and the old pods keep the runs.
+
+An upgrade from a release before 0.16.0 needs no open runs. Those runs carry
+no release memo.
+
 ## Troubleshooting
 
 **The setup token is not valid.** The API issues a new token on each start

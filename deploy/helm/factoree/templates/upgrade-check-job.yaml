@@ -1,0 +1,36 @@
+# docs/specs/run-workflow-structure.md. Before an upgrade migrates the database or replaces a pod,
+# the new image lists the open runs and fails when one came from a release it cannot replay. A
+# failed Job stops the upgrade, so the old pods keep those runs.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "factoree.fullname" . }}-upgrade-check
+  labels:
+    {{- include "factoree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: upgrade-check
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "factoree.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: upgrade-check
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "factoree.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: upgrade-check
+          image: {{ include "factoree.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["upgrade-check"]
+          env:
+            {{- include "factoree.env" . | nindent 12 }}
+          securityContext:
+            {{- include "factoree.containerSecurityContext" . | nindent 12 }}
+      {{- include "factoree.scheduling" . | nindent 6 }}
