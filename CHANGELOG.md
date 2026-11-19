@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-19
+
 ### Added
 
 - Drain mode: an install-wide switch for a release that open runs cannot replay. While it is on, each new run, follow-up run, PR follow-up run and bring-current run waits as WAITING_FOR_UPDATE, Linear says that it starts after the update, and every open run finishes. Install settings list the open runs. A worker of a newer release turns drain mode off at boot and starts the waiting runs; a restart of the same release does not (`docs/specs/drain-mode.md`).
