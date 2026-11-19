@@ -8,7 +8,7 @@ import {
   ApplicationFailure,
   isCancellation,
   ParentClosePolicy,
-  patched,
+  deprecatePatch,
   startChild,
   TemporalFailure,
   proxyActivities,
@@ -73,9 +73,7 @@ import { completionInvariantFailures, prePublicationFailures } from "../domain/r
 import {
   inSetOrder,
   matchReplyToCandidates,
-  proposeTarget,
   proposeTargets,
-  selectTarget,
   selectTargets,
   type TargetSetOutcome,
 } from "../domain/routing/select-targets.js";
@@ -712,44 +710,6 @@ const PROVIDER_UNREACHABLE_ATTEMPTS = 3;
 /** docs/specs/provider-unreachable.md. The most characters of provider detail a failure message carries. */
 const PROVIDER_DETAIL_MAX_CHARS = 1_000;
 
-/**
- * Specification section 10. Matches a human reply against the ambiguous candidates by whole
- * token, never by substring. `acme/checkout-api` must not match a reply that names
- * `acme/checkout-api-gateway`. It returns null when no candidate matches. It also returns null
- * when more than one candidate matches. A reply that resolves nothing must not guess.
- */
-const matchReplyToCandidate = <T extends { fullName: string }>(
-  reply: string,
-  candidates: T[],
-): T | null => {
-  // Splits the reply on whitespace. It trims leading and trailing punctuation from each piece.
-  // A slash and a hyphen survive the trim, so `org/repo-name` stays one token. Lower case makes
-  // the match case-insensitive, so a reply typed in the wrong case still resolves.
-  const tokens = reply
-    .split(/\s+/)
-    .map((token) => token.replace(/^[^\w/]+|[^\w/-]+$/g, "").toLowerCase())
-    .filter((token) => token.length > 0);
-
-  // A bare repository name resolves only when one candidate carries it. Two candidates that
-  // share a bare name make that name ambiguous, even when only one of them appears in the
-  // reply. Case folding can create that same collision, so the owner count uses the folded
-  // name too.
-  const bareNameOwners = new Map<string, number>();
-  for (const candidate of candidates) {
-    const bareName = (candidate.fullName.split("/").at(-1) ?? candidate.fullName).toLowerCase();
-    bareNameOwners.set(bareName, (bareNameOwners.get(bareName) ?? 0) + 1);
-  }
-
-  const matches = candidates.filter((candidate) => {
-    const fullName = candidate.fullName.toLowerCase();
-    if (tokens.includes(fullName)) return true;
-    const bareName = (candidate.fullName.split("/").at(-1) ?? candidate.fullName).toLowerCase();
-    return tokens.includes(bareName) && bareNameOwners.get(bareName) === 1;
-  });
-
-  return matches.length === 1 ? (matches[0] ?? null) : null;
-};
-
 export async function agentRunWorkflow(
   input: AgentRunWorkflowInput,
 ): Promise<AgentRunWorkflowResult> {
@@ -950,7 +910,8 @@ export async function agentRunWorkflow(
       // whatever the outcome. Neither call can fail the Run.
       const sources = skillSources;
       const work = sprite;
-      if (sources !== null && work !== null && patched(SKILL_REGISTRY_PATCH)) {
+      if (sources !== null && work !== null) {
+        deprecatePatch(SKILL_REGISTRY_PATCH);
         if (!skillProposalsSent) await notify(() => sendSkillProposals(sources, work));
       }
       await activities.completeRun({ ...args, waitedMs });
@@ -959,7 +920,8 @@ export async function agentRunWorkflow(
       if (issueStatusTracked && endsWithoutPullRequest(args.status) && publishedPullRequestUrls.length === 0) {
         await notify(() => activities.restoreIssueStatus({ tenantId: input.tenantId, runId: id }));
       }
-      if (sources !== null && patched(SKILL_REGISTRY_PATCH)) {
+      if (sources !== null) {
+        deprecatePatch(SKILL_REGISTRY_PATCH);
         await notify(() =>
           activities.reportSkillOutcome({
             tenantId: input.tenantId,
@@ -1053,12 +1015,12 @@ export async function agentRunWorkflow(
       prFollowUp !== null || bringCurrent !== null
         ? null
         : status === "FAILED" || status === "FAILED_REVIEW"
-          ? patched(FAILURE_POST_PATCH)
-            ? "run"
-            : null
-          : status === "FAILED_CONFIGURATION" && patched(CONFIGURATION_FAILURE_POST_PATCH)
+          ? "run"
+          : status === "FAILED_CONFIGURATION"
             ? "configuration"
             : null;
+    if (kind === "run") deprecatePatch(FAILURE_POST_PATCH);
+    if (kind === "configuration") deprecatePatch(CONFIGURATION_FAILURE_POST_PATCH);
     if (kind !== null) {
       try {
         post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message, kind });
@@ -1073,7 +1035,8 @@ export async function agentRunWorkflow(
     }
     if (bringCurrent !== null) post = `${message}\n\nThis bring-current run pushed nothing to ${bringCurrent.url}.`;
     await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
-    if (prFollowUp === null && bringCurrent === null && patched(DRAFT_OFFER_PATCH)) {
+    if (prFollowUp === null && bringCurrent === null) {
+      deprecatePatch(DRAFT_OFFER_PATCH);
       await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
     }
     return { runId: id, status };
@@ -1093,7 +1056,10 @@ export async function agentRunWorkflow(
    */
   const providerUnreachableOf = (
     output: { providerUnreachable?: { summary: string } | null } | null,
-  ): { summary: string } | null => (patched(PROVIDER_UNREACHABLE_PATCH) ? (output?.providerUnreachable ?? null) : null);
+  ): { summary: string } | null => {
+    deprecatePatch(PROVIDER_UNREACHABLE_PATCH);
+    return output?.providerUnreachable ?? null;
+  };
 
   /**
    * docs/specs/provider-unreachable.md. Ends the Run when a role could not reach the model
@@ -1165,7 +1131,7 @@ export async function agentRunWorkflow(
    * can run for many minutes with no other post, and Linear marks such a session stale.
    */
   const announceRepair = async (repair: number, limit: number, reason: string, findings: number): Promise<void> => {
-    if (!patched(REPAIR_PROGRESS_PATCH)) return;
+    deprecatePatch(REPAIR_PROGRESS_PATCH);
     await notify(() =>
       activities.postProgress({
         sessionId: input.agentSessionId,
@@ -1636,11 +1602,10 @@ export async function agentRunWorkflow(
       const stopped = await condition(() => stopRequested, Math.max(1, Math.min(SANDBOX_SLOT_POLL_MS, remainingMs())));
       // DI-21.56. A wait for a sandbox slot is not work, so it moves the deadline, as a wait in
       // QUEUED does. An older history keeps its budget.
-      if (patched(SANDBOX_SLOT_WAIT_PATCH)) {
-        const waited = Date.now() - waitStarted;
-        deadline += waited;
-        waitedMs += waited;
-      }
+      deprecatePatch(SANDBOX_SLOT_WAIT_PATCH);
+      const waited = Date.now() - waitStarted;
+      deadline += waited;
+      waitedMs += waited;
       if (stopped) return null;
     }
   };
@@ -1670,7 +1635,8 @@ export async function agentRunWorkflow(
     // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run moves no issue: the run that opened
     // the pull request owns its issue status, and the merge completes it through the record.
     const startedIssueId = input.workItem.issueId;
-    if (prFollowUp === null && bringCurrent === null && startedIssueId !== null && patched(ISSUE_STATUS_PATCH)) {
+    if (prFollowUp === null && bringCurrent === null && startedIssueId !== null) {
+      deprecatePatch(ISSUE_STATUS_PATCH);
       issueStatusTracked = true;
       await notify(() => activities.startIssueWork({ tenantId: input.tenantId, runId: id, issueId: startedIssueId }));
     }
@@ -2218,7 +2184,8 @@ export async function agentRunWorkflow(
       if (input.ignoreImages === true) {
         decisions.push({ ...IGNORE_IMAGES_DECISION, answer: "Ignore the images. A human chose to run without the image check." });
       }
-      if (issueId !== null && patched(WORK_ITEM_CONTENT_PATCH)) {
+      if (issueId !== null) {
+        deprecatePatch(WORK_ITEM_CONTENT_PATCH);
         try {
           workItemContent = await workItemActivities.readWorkItemContent({
             tenantId: input.tenantId,
@@ -2339,32 +2306,6 @@ export async function agentRunWorkflow(
       }));
 
       /**
-       * Applies a confirmed target. It corrects the repository fields Refinement echoed. It
-       * records the RunTarget row. It posts the notice when `notice` is true.
-       */
-      const applyTarget = async (
-        repository: RepositoryRecord,
-        reason: string,
-        notice: boolean,
-      ): Promise<void> => {
-        primaryRepositorySlug = repository.fullName;
-        primaryRepositoryId = repository.id;
-        primaryRepositoryInstallationId = repository.githubInstallationId;
-        refined.primaryRepository = repository.fullName;
-        // Specification section 12. A sibling repository is absent at start. An agent that
-        // needs one calls clone_sibling, which the Action Policy gates. Target selection must
-        // not populate reference repositories from Product membership, because that would
-        // bypass the gate and check out every sibling unconditionally.
-        await activities.recordRunTarget({
-          tenantId: input.tenantId,
-          runId: id,
-          repositoryId: repository.id,
-          selectionReason: reason,
-        });
-        if (notice) await takeDecision({ kind: "target", statement: `chose ${repository.fullName}`, reason });
-      };
-
-      /**
        * docs/specs/change-sets.md. Applies a confirmed set: one RunTarget row per target, in set
        * order. The first target is the primary repository. One notice names the whole set.
        */
@@ -2401,114 +2342,77 @@ export async function agentRunWorkflow(
       }
       // docs/specs/change-sets.md. A run changes a set of repositories. The patch keeps the one-target
       // selection of a history that passed this point before sets existed.
-      if (!patched(CHANGE_SET_PATCH)) {
-        let targetOutcome: ReturnType<typeof selectTarget> =
-          pullRequestRepository !== null
-            ? { kind: "selected", repository: pullRequestRepository, reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
-            : selectTarget(
-                presentRepositories,
-                proposeTarget(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
-              );
-        while (targetOutcome.kind === "ambiguous") {
-          const candidateNames = targetOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
-          const proceeded = await askAndWait(
-            "target-selection",
-            "Factoree found several repositories in this Product, and no confident target. " +
-              `Candidates: ${candidateNames}. Reply with the exact repository name to use.`,
-            undefined,
-            undefined,
-            "BLOCKED_TARGET",
-          );
-          if (stopRequested) return await cancelRun();
-          if (!proceeded) {
-            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-            return await failRun(
-              "TARGET_UNRESOLVED",
-              "Factoree could not confirm the target repository of this Product, so it published " +
-                "nothing.",
-            );
-          }
-          const reply = decisions[decisions.length - 1]?.answer ?? "";
-          const chosen = matchReplyToCandidate(reply, targetOutcome.candidates);
-          targetOutcome =
-            chosen === null
-              ? { kind: "ambiguous", candidates: targetOutcome.candidates }
-              : { kind: "selected", repository: chosen, reason: "human reply", notify: false };
-        }
-        await applyTarget(targetOutcome.repository, targetOutcome.reason, targetOutcome.notify);
-        runTargets = [targetOutcome.repository];
-      } else {
-        // DI-21.131. A follow-up run changes the set of the run it follows. A repository that left
-        // the product since then cannot be changed, and a guess would re-route the work.
-        const followUpTargets = prFollowUp === null ? (input.followUpTargets ?? []) : [];
-        const followUpSet = followUpTargets.map((repositoryId) => presentRepositories.find((repository) => repository.id === repositoryId) ?? null);
-        const goneTarget = followUpSet.findIndex((repository) => repository === null || repository.absentSince !== null);
-        if (goneTarget >= 0) {
-          const gone = followUpSet[goneTarget];
-          return await failRun(
-            "TARGET_UNRESOLVED",
-            `The repository ${gone?.fullName ?? followUpTargets[goneTarget] ?? ""} of the run this run follows is no longer part of this product, so Factoree cannot change it.`,
-          );
-        }
-        // docs/specs/change-sets.md, slice 9, DI-21.159. A set PR follow-up run changes every pull request
-        // of the set that is open, and holds each merged one fixed at its merge.
-        const setRepositories = prChangeSet === null ? null : prChangeSet.members.map((member) => presentRepositories.find((repository) => repository.id === member.repositoryId) ?? null);
-        const goneMember = setRepositories === null ? -1 : setRepositories.findIndex((repository) => repository === null || repository.absentSince !== null);
-        if (goneMember >= 0) {
-          const member = prChangeSet?.members[goneMember];
-          return await failRun(
-            "TARGET_UNRESOLVED",
-            `The repository ${member?.repositoryFullName ?? ""} of ${member?.url ?? "the change set"} is no longer part of this product, so Factoree cannot change the change set.`,
-          );
-        }
-        let setOutcome: TargetSetOutcome =
-          setRepositories !== null
+      deprecatePatch(CHANGE_SET_PATCH);
+      // DI-21.131. A follow-up run changes the set of the run it follows. A repository that left
+      // the product since then cannot be changed, and a guess would re-route the work.
+      const followUpTargets = prFollowUp === null ? (input.followUpTargets ?? []) : [];
+      const followUpSet = followUpTargets.map((repositoryId) => presentRepositories.find((repository) => repository.id === repositoryId) ?? null);
+      const goneTarget = followUpSet.findIndex((repository) => repository === null || repository.absentSince !== null);
+      if (goneTarget >= 0) {
+        const gone = followUpSet[goneTarget];
+        return await failRun(
+          "TARGET_UNRESOLVED",
+          `The repository ${gone?.fullName ?? followUpTargets[goneTarget] ?? ""} of the run this run follows is no longer part of this product, so Factoree cannot change it.`,
+        );
+      }
+      // docs/specs/change-sets.md, slice 9, DI-21.159. A set PR follow-up run changes every pull request
+      // of the set that is open, and holds each merged one fixed at its merge.
+      const setRepositories = prChangeSet === null ? null : prChangeSet.members.map((member) => presentRepositories.find((repository) => repository.id === member.repositoryId) ?? null);
+      const goneMember = setRepositories === null ? -1 : setRepositories.findIndex((repository) => repository === null || repository.absentSince !== null);
+      if (goneMember >= 0) {
+        const member = prChangeSet?.members[goneMember];
+        return await failRun(
+          "TARGET_UNRESOLVED",
+          `The repository ${member?.repositoryFullName ?? ""} of ${member?.url ?? "the change set"} is no longer part of this product, so Factoree cannot change the change set.`,
+        );
+      }
+      let setOutcome: TargetSetOutcome =
+        setRepositories !== null
+          ? {
+              kind: "selected",
+              repositories: inSetOrder(setRepositories.filter((repository): repository is RepositoryRecord => repository !== null)),
+              reason: `the pull requests of the change set of ${prFollowUp?.url ?? "the pull request"}`,
+              notify: false,
+            }
+          : pullRequestRepository !== null
+          ? { kind: "selected", repositories: [pullRequestRepository], reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
+          : followUpSet.length > 0
             ? {
                 kind: "selected",
-                repositories: inSetOrder(setRepositories.filter((repository): repository is RepositoryRecord => repository !== null)),
-                reason: `the pull requests of the change set of ${prFollowUp?.url ?? "the pull request"}`,
+                repositories: inSetOrder(followUpSet.filter((repository): repository is RepositoryRecord => repository !== null)),
+                reason: "the targets of the run this run follows",
                 notify: false,
               }
-            : pullRequestRepository !== null
-            ? { kind: "selected", repositories: [pullRequestRepository], reason: `the repository of ${prFollowUp?.url ?? "the pull request"}`, notify: false }
-            : followUpSet.length > 0
-              ? {
-                  kind: "selected",
-                  repositories: inSetOrder(followUpSet.filter((repository): repository is RepositoryRecord => repository !== null)),
-                  reason: "the targets of the run this run follows",
-                  notify: false,
-                }
-              : selectTargets(
-                  presentRepositories,
-                  proposeTargets(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
-                );
-        while (setOutcome.kind === "ambiguous") {
-          const candidateNames = setOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
-          const proceeded = await askAndWait(
-            "target-selection",
-            "Factoree found several repositories in this Product, and no rule decides which ones this issue changes. " +
-              `Candidates: ${candidateNames}. Reply with the exact name of each repository to change.`,
-            undefined,
-            undefined,
-            "BLOCKED_TARGET",
+            : selectTargets(
+                presentRepositories,
+                proposeTargets(presentRepositories, `${input.workItem.title}\n\n${input.workItem.description}`, linearProject),
+              );
+      while (setOutcome.kind === "ambiguous") {
+        const candidateNames = setOutcome.candidates.map((candidate) => candidate.fullName).join(", ");
+        const proceeded = await askAndWait(
+          "target-selection",
+          "Factoree found several repositories in this Product, and no rule decides which ones this issue changes. " +
+            `Candidates: ${candidateNames}. Reply with the exact name of each repository to change.`,
+          undefined,
+          undefined,
+          "BLOCKED_TARGET",
+        );
+        if (stopRequested) return await cancelRun();
+        if (!proceeded) {
+          if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
+          return await failRun(
+            "TARGET_UNRESOLVED",
+            "Factoree could not confirm the target repositories of this Product, so it published " +
+              "nothing.",
           );
-          if (stopRequested) return await cancelRun();
-          if (!proceeded) {
-            if (remainingMs() === 0) return await failRun("RUN_TIMEOUT", timeoutMessage);
-            return await failRun(
-              "TARGET_UNRESOLVED",
-              "Factoree could not confirm the target repositories of this Product, so it published " +
-                "nothing.",
-            );
-          }
-          const chosen = matchReplyToCandidates(decisions[decisions.length - 1]?.answer ?? "", setOutcome.candidates);
-          setOutcome =
-            chosen.length === 0
-              ? { kind: "ambiguous", candidates: setOutcome.candidates }
-              : { kind: "selected", repositories: chosen, reason: "human reply", notify: false };
         }
-        await applyTargets(setOutcome.repositories, setOutcome.reason, setOutcome.notify);
+        const chosen = matchReplyToCandidates(decisions[decisions.length - 1]?.answer ?? "", setOutcome.candidates);
+        setOutcome =
+          chosen.length === 0
+            ? { kind: "ambiguous", candidates: setOutcome.candidates }
+            : { kind: "selected", repositories: chosen, reason: "human reply", notify: false };
       }
+      await applyTargets(setOutcome.repositories, setOutcome.reason, setOutcome.notify);
 
       // SDD section 20. Discovery pins one SHA for each repository. The ref below is the ref
       // discovery starts from. The checkout later uses the pinned SHA.
@@ -2836,7 +2740,7 @@ export async function agentRunWorkflow(
       ): Promise<{ prepared: PrepareSandboxActivityOutput } | { ended: AgentRunWorkflowResult }> => {
         try {
           const work = await withSandboxSlot(async (budgetMs) => {
-            if (!patched(SANDBOX_PROVIDER_PATCH)) return buildSandboxActivities(budgetMs).prepareSandbox(workSpriteInput);
+            deprecatePatch(SANDBOX_PROVIDER_PATCH);
             // docs/specs/sandbox-provider-spillover.md. The run picks its provider and holds its slots
             // there, then prepares the work sprite on it. A provider that fails the create is marked
             // down, the run gives its slots back, and it selects again. With no provider that has
@@ -3032,7 +2936,8 @@ export async function agentRunWorkflow(
       // proposal, so nobody is asked. The edges give the merge order (DI-21.141). The work sprite then
       // prepares again with the whole set, from a set snapshot when one exists. The set freezes here,
       // with the Validation Contract that follows.
-      if (refinerTargetsOpen && patched(CHANGE_SET_REFINER_PATCH)) {
+      if (refinerTargetsOpen) {
+        deprecatePatch(CHANGE_SET_REFINER_PATCH);
         let joined = 0;
         for (const added of proposal.addedTargets ?? []) {
           const repository = targetRepositories.find((candidate) => candidate.fullName.toLowerCase() === added.repository.toLowerCase());
@@ -3083,24 +2988,23 @@ export async function agentRunWorkflow(
           // DI-21.143. The Context Contract of the run lists every target, so the context resolves
           // again for the set before the Validation Contract freezes. Each repository stays at the
           // SHA the run already pinned, and an added target at the SHA the refiner read.
-          if (patched(CHANGE_SET_CONTEXT_PATCH)) {
-            const pinnedOf = (slug: string, sha: string) => ({ ...repositoryRef(slug), ref: sha });
-            const setContext = await resolveContextLoop({
-              primaryRepository: pinnedOf(resolvedContext.primary.slug, resolvedContext.primary.sha),
-              referenceRepositories: resolvedContext.references.map((reference) => pinnedOf(reference.slug, reference.sha)),
-              targetRepositories: targetBases
-                .slice(1)
-                .map((target) => ({ ...pinnedOf(target.slug, target.sha), githubInstallationId: target.githubInstallationId })),
-              supersedes: resolvedContext.sha256,
-            });
-            if ("ended" in setContext) return setContext.ended;
-            resolvedContext = setContext.resolved;
-            if (stopRequested) return await cancelRun();
-            prepareInput = {
-              ...prepareInput,
-              ...(resolvedContext.deliveryRefs === undefined ? {} : { contextRefs: resolvedContext.deliveryRefs }),
-            };
-          }
+          deprecatePatch(CHANGE_SET_CONTEXT_PATCH);
+          const pinnedOf = (slug: string, sha: string) => ({ ...repositoryRef(slug), ref: sha });
+          const setContext = await resolveContextLoop({
+            primaryRepository: pinnedOf(resolvedContext.primary.slug, resolvedContext.primary.sha),
+            referenceRepositories: resolvedContext.references.map((reference) => pinnedOf(reference.slug, reference.sha)),
+            targetRepositories: targetBases
+              .slice(1)
+              .map((target) => ({ ...pinnedOf(target.slug, target.sha), githubInstallationId: target.githubInstallationId })),
+            supersedes: resolvedContext.sha256,
+          });
+          if ("ended" in setContext) return setContext.ended;
+          resolvedContext = setContext.resolved;
+          if (stopRequested) return await cancelRun();
+          prepareInput = {
+            ...prepareInput,
+            ...(resolvedContext.deliveryRefs === undefined ? {} : { contextRefs: resolvedContext.deliveryRefs }),
+          };
           prepareInput = {
             ...prepareInput,
             targets: targetBases.map((target) => ({
@@ -3126,7 +3030,8 @@ export async function agentRunWorkflow(
       // checks each quote, the ladder resolves a pair of two classes, and a pair of one class asks a
       // human before anything freezes. A run whose reports all fail the checks keeps its contract.
       const conflictReports = proposal.conflicts ?? [];
-      if (conflictReports.length > 0 && patched(CITED_CONFLICTS_PATCH)) {
+      if (conflictReports.length > 0) {
+        deprecatePatch(CITED_CONFLICTS_PATCH);
         const pinnedOf = (slug: string, sha: string) => ({ ...repositoryRef(slug), ref: sha });
         const cited = await resolveContextLoop({
           primaryRepository: pinnedOf(resolvedContext.primary.slug, resolvedContext.primary.sha),
@@ -3326,22 +3231,21 @@ export async function agentRunWorkflow(
         // docs/specs/change-sets.md, DI-21.142. The set froze with the Validation Contract. A
         // repository the implementer names outside it is a new criterion: Factoree lists it as not
         // built, and each later attempt reads the finding.
-        if (patched(CHANGE_SET_REFINER_PATCH)) {
-          for (const missing of implementation?.missingRepositories ?? []) {
-            const name = missing.repository.trim();
-            const key = name.toLowerCase();
-            if (name === "" || frozenSetRepositories.has(key) || targetBases.some((target) => target.slug.toLowerCase() === key)) continue;
-            frozenSetRepositories.add(key);
-            const reason = missing.reason.trim().replace(/[.\s]+$/, "");
-            await takeDecision({
-              kind: "not_built",
-              statement: `did not build the change to ${name}`,
-              reason: `the targets froze with the Validation Contract, and a change to another repository is a new criterion${reason === "" ? "" : `: ${reason}`}`,
-            });
-            frozenSetFindings.push(
-              `${name} is not a target of this Run, and the targets froze with the Validation Contract. Make the change work in the targets alone. Factoree lists ${name} as not built.`,
-            );
-          }
+        deprecatePatch(CHANGE_SET_REFINER_PATCH);
+        for (const missing of implementation?.missingRepositories ?? []) {
+          const name = missing.repository.trim();
+          const key = name.toLowerCase();
+          if (name === "" || frozenSetRepositories.has(key) || targetBases.some((target) => target.slug.toLowerCase() === key)) continue;
+          frozenSetRepositories.add(key);
+          const reason = missing.reason.trim().replace(/[.\s]+$/, "");
+          await takeDecision({
+            kind: "not_built",
+            statement: `did not build the change to ${name}`,
+            reason: `the targets froze with the Validation Contract, and a change to another repository is a new criterion${reason === "" ? "" : `: ${reason}`}`,
+          });
+          frozenSetFindings.push(
+            `${name} is not a target of this Run, and the targets froze with the Validation Contract. Make the change work in the targets alone. Factoree lists ${name} as not built.`,
+          );
         }
 
         // docs/specs/provider-unreachable.md. The provider could not be reached. The first retry is a
@@ -3454,7 +3358,8 @@ export async function agentRunWorkflow(
           // docs/specs/provider-unreachable.md. The message carries the agent's own error.
           // docs/specs/provider-unreachable.md. Cap the agent output at 1000 characters, matching
           // the precedent in src/activities/setup.activities.ts, so the Linear post stays bounded.
-          const cause = patched(PROVIDER_UNREACHABLE_PATCH) ? (implementation?.summary ?? "").trim().slice(0, 1_000) : "";
+          deprecatePatch(PROVIDER_UNREACHABLE_PATCH);
+          const cause = (implementation?.summary ?? "").trim().slice(0, 1_000);
           return await failRun(
             "IMPLEMENTATION_FAILED",
             `The Implementer did not complete the change. Factoree ended the Run.${cause === "" ? "" : ` Agent output: ${cause}`}`,
@@ -3553,23 +3458,23 @@ export async function agentRunWorkflow(
         // sends no heartbeat, so a cancel never reaches it, and the sprite it builds would belong
         // to no Run. A stop or the end of the Run waits for it instead.
         let earlyReview: Promise<ReviewSpriteBuild> | null = null;
-        if (patched(EARLY_REVIEW_SPRITE_PATCH) && patched(PARALLEL_REVIEW_PATCH)) {
-          const earlier = reviewBuild;
-          reviewBuild = null;
-          if (earlier !== null) await earlier;
-          const expected = checked.patchSha256;
-          earlyReview = CancellationScope.nonCancellable(async (): Promise<ReviewSpriteBuild> => {
-            try {
-              const sprite = await prepareReviewSprite(expected);
-              if (sprite === null) return { kind: "unavailable" };
-              reviewSandbox = sprite;
-              return { kind: "sprite", sprite };
-            } catch (error) {
-              return { kind: "error", error };
-            }
-          });
-          reviewBuild = earlyReview;
-        }
+        deprecatePatch(EARLY_REVIEW_SPRITE_PATCH);
+        deprecatePatch(PARALLEL_REVIEW_PATCH);
+        const earlier = reviewBuild;
+        reviewBuild = null;
+        if (earlier !== null) await earlier;
+        const expected = checked.patchSha256;
+        earlyReview = CancellationScope.nonCancellable(async (): Promise<ReviewSpriteBuild> => {
+          try {
+            const sprite = await prepareReviewSprite(expected);
+            if (sprite === null) return { kind: "unavailable" };
+            reviewSandbox = sprite;
+            return { kind: "sprite", sprite };
+          } catch (error) {
+            return { kind: "error", error };
+          }
+        });
+        reviewBuild = earlyReview;
 
         const verifyActivities = buildVerifyActivities(remainingMs());
         let verification: VerifyActivityOutput;
@@ -3667,58 +3572,57 @@ export async function agentRunWorkflow(
         // sprite can rewrite tracked files, which the reviewer guard would read as a reviewer
         // write. The reviewer reads the verification summary and no validation evidence.
         let reviewBranch: Promise<ReviewBranchOutcome> | null = null;
-        if (patched(PARALLEL_REVIEW_PATCH)) {
-          reviewPasses += 1;
-          const reviewAttempt = attempt;
-          const verified = checked;
-          const verificationSummary = verification.summary;
-          const early = earlyReview;
-          const scope = new CancellationScope({ cancellable: true });
-          const branch = scope.run(async (): Promise<ReviewBranchOutcome> => {
-            try {
-              let sprite: PrepareCheckSandboxActivityOutput | null;
-              if (early !== null) {
-                const built = await early;
-                if (built.kind === "error") return { kind: "error", error: built.error };
-                sprite = built.kind === "sprite" ? built.sprite : null;
-              } else {
-                sprite = await prepareReviewSprite(verified.patchSha256);
-              }
-              if (sprite === null) return { kind: "unavailable" };
-              reviewSandbox = sprite;
-              const reviewInput = {
-                prepared: sprite,
-                goal: sandbox.goal,
-                attempt: reviewAttempt,
-                contextContract: resolvedContext.document,
-                constraints: refined.constraints,
-                verificationSummary,
-              };
-              let result = await runReview(reviewInput);
-              result = await retryWhileUnreachable("reviewer", result, (retry) =>
-                runReview({ ...reviewInput, unreachableRetry: retry }),
-              );
-              // docs/specs/agent-session-usage-and-hangs.md. A hung Reviewer gets one fresh session
-              // in the same review pass.
-              const hang = hangOf(result);
-              if (hang !== null && !stopRequested && remainingMs() > 0) {
-                await reportHang("reviewer", hang, "starts one fresh session");
-                result = await runReview({ ...reviewInput, afterHang: true });
-                result = await retryWhileUnreachable(
-                  "reviewer",
-                  result,
-                  (retry) => runReview({ ...reviewInput, afterHang: true, unreachableRetry: retry }),
-                  PROVIDER_UNREACHABLE_ATTEMPTS - 1,
-                );
-              }
-              return result === null ? { kind: "unavailable" } : { kind: "review", review: result };
-            } catch (error) {
-              return { kind: "error", error };
+        deprecatePatch(PARALLEL_REVIEW_PATCH);
+        reviewPasses += 1;
+        const reviewAttempt = attempt;
+        const verified = checked;
+        const verificationSummary = verification.summary;
+        const early = earlyReview;
+        const scope = new CancellationScope({ cancellable: true });
+        const branch = scope.run(async (): Promise<ReviewBranchOutcome> => {
+          try {
+            let sprite: PrepareCheckSandboxActivityOutput | null;
+            if (early !== null) {
+              const built = await early;
+              if (built.kind === "error") return { kind: "error", error: built.error };
+              sprite = built.kind === "sprite" ? built.sprite : null;
+            } else {
+              sprite = await prepareReviewSprite(verified.patchSha256);
             }
-          });
-          liveReview = { scope, branch };
-          reviewBranch = branch;
-        }
+            if (sprite === null) return { kind: "unavailable" };
+            reviewSandbox = sprite;
+            const reviewInput = {
+              prepared: sprite,
+              goal: sandbox.goal,
+              attempt: reviewAttempt,
+              contextContract: resolvedContext.document,
+              constraints: refined.constraints,
+              verificationSummary,
+            };
+            let result = await runReview(reviewInput);
+            result = await retryWhileUnreachable("reviewer", result, (retry) =>
+              runReview({ ...reviewInput, unreachableRetry: retry }),
+            );
+            // docs/specs/agent-session-usage-and-hangs.md. A hung Reviewer gets one fresh session
+            // in the same review pass.
+            const hang = hangOf(result);
+            if (hang !== null && !stopRequested && remainingMs() > 0) {
+              await reportHang("reviewer", hang, "starts one fresh session");
+              result = await runReview({ ...reviewInput, afterHang: true });
+              result = await retryWhileUnreachable(
+                "reviewer",
+                result,
+                (retry) => runReview({ ...reviewInput, afterHang: true, unreachableRetry: retry }),
+                PROVIDER_UNREACHABLE_ATTEMPTS - 1,
+              );
+            }
+            return result === null ? { kind: "unavailable" } : { kind: "review", review: result };
+          } catch (error) {
+            return { kind: "error", error };
+          }
+        });
+        liveReview = { scope, branch };
+        reviewBranch = branch;
 
         /** The reviewer beside user validation, once it ended, or null on the serial path. */
         const awaitReview = async (): Promise<ReviewBranchOutcome | null> => {
@@ -3810,8 +3714,8 @@ export async function agentRunWorkflow(
           userValidation.hasUnstable === true &&
           !userValidation.hasFailure &&
           !userValidation.hasBlocked &&
-          !userValidation.hasManual &&
-          patched(UNSTABLE_ASSERTION_PATCH);
+          !userValidation.hasManual;
+        if (unstableOnly) deprecatePatch(UNSTABLE_ASSERTION_PATCH);
         if (!userValidation.passed && !unstableOnly) {
           // SDD section 36. Only a failing assertion can be repaired. A blocked check, or a check
           // that needs a human, cannot be fixed by another Implementer attempt.
@@ -4120,7 +4024,8 @@ export async function agentRunWorkflow(
       // docs/specs/change-sets.md, slice 7, DI-21.151. A change set publishes all or nothing. A PR
       // follow-up run keeps the one repository of its pull request until slice 9. An older history
       // ends here as DI-21.134 did: no half change reaches GitHub.
-      const changeSetPublication = runTargets.length > 1 && prFollowUp === null && patched(CHANGE_SET_PUBLICATION_PATCH);
+      const changeSetPublication = runTargets.length > 1 && prFollowUp === null;
+      if (changeSetPublication) deprecatePatch(CHANGE_SET_PUBLICATION_PATCH);
       // docs/specs/change-sets.md, slice 9, DI-21.162. A set PR follow-up run pushes a new verified
       // commit to each open pull request of the set that changed, and to no other.
       const setFollowUp = runTargets.length > 1 && prFollowUp !== null && prChangeSet !== null ? prFollowUp : null;
@@ -4633,7 +4538,8 @@ export async function agentRunWorkflow(
       // A PR follow-up run shares the agent session of the run that linked the pull request.
       // docs/specs/change-sets.md: one attachment and one session link per pull request of a set.
       let pullRequestLinked = prFollowUp !== null;
-      if (prFollowUp === null && patched(PULL_REQUEST_LINK_PATCH)) {
+      if (prFollowUp === null) {
+        deprecatePatch(PULL_REQUEST_LINK_PATCH);
         let linked = 0;
         for (const target of publishedTargets) {
           const linkedUrl = target.publication.pullRequestUrl;
@@ -4709,46 +4615,46 @@ export async function agentRunWorkflow(
         }
       }
       for (const target of setFollowUp === null ? publishedTargets : []) {
-      if (patched(PR_WORKFLOW_PATCH)) {
-        const recordInput = {
-          tenantId: input.tenantId,
-          runId: id,
-          repositoryId: target.repositoryId,
-          number: target.publication.pullRequestNumber,
-          url: target.publication.pullRequestUrl,
-          headBranch: target.publication.branch,
-          headSha: target.publication.commitSha,
-          baseBranch: target.baseBranch,
-          // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run. DI-21.112: a
-          // PR follow-up commit that a first run would publish as a draft lands on the open pull
-          // request, so its head records L2, and auto-merge stays off for it.
-          autonomyLevel: prFollowUp !== null && publishDraft ? "L2" : refined.autonomyLevel,
-          // D2. The next PR follow-up run starts from this base.
-          baseSha: target.baseSha,
-          ...(prFollowUp === null ? {} : { contractRevision: prFollowUp.contractRevision }),
-        };
-        await notify(async () => {
-          const recorded = await activities.recordPullRequest(recordInput);
-          // A PR follow-up run runs under the PR workflow of its pull request, which already runs.
-          if (prFollowUp !== null) return;
-          try {
-            await startChild(pullRequestWorkflow, {
-              workflowId: recorded.workflowId,
-              args: [{ tenantId: input.tenantId, pullRequestId: recorded.pullRequestId }],
-              parentClosePolicy: ParentClosePolicy.ABANDON,
-            });
-          } catch (error) {
-            // A webhook event already started it with signal-with-start.
-            if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
-          }
-        });
-      }
+      deprecatePatch(PR_WORKFLOW_PATCH);
+      const recordInput = {
+        tenantId: input.tenantId,
+        runId: id,
+        repositoryId: target.repositoryId,
+        number: target.publication.pullRequestNumber,
+        url: target.publication.pullRequestUrl,
+        headBranch: target.publication.branch,
+        headSha: target.publication.commitSha,
+        baseBranch: target.baseBranch,
+        // DI-21.104. The PR workflow turns on auto-merge only for the head of an L4 run. DI-21.112: a
+        // PR follow-up commit that a first run would publish as a draft lands on the open pull
+        // request, so its head records L2, and auto-merge stays off for it.
+        autonomyLevel: prFollowUp !== null && publishDraft ? "L2" : refined.autonomyLevel,
+        // D2. The next PR follow-up run starts from this base.
+        baseSha: target.baseSha,
+        ...(prFollowUp === null ? {} : { contractRevision: prFollowUp.contractRevision }),
+      };
+      await notify(async () => {
+        const recorded = await activities.recordPullRequest(recordInput);
+        // A PR follow-up run runs under the PR workflow of its pull request, which already runs.
+        if (prFollowUp !== null) return;
+        try {
+          await startChild(pullRequestWorkflow, {
+            workflowId: recorded.workflowId,
+            args: [{ tenantId: input.tenantId, pullRequestId: recorded.pullRequestId }],
+            parentClosePolicy: ParentClosePolicy.ABANDON,
+          });
+        } catch (error) {
+          // A webhook event already started it with signal-with-start.
+          if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;
+        }
+      });
       }
 
       // docs/specs/change-sets.md, slice 8, DI-21.155. Each consumer pull request of the set gets its
       // `factoree/change-set` status: pending while a provider pull request is open. A set with no
       // safe order gets none. A failure costs only the status, and the next event of the set sets it.
-      if (changeSetPublication && patched(CHANGE_SET_STATUS_PATCH)) {
+      if (changeSetPublication) {
+        deprecatePatch(CHANGE_SET_STATUS_PATCH);
         await notify(async () => {
           await activities.setChangeSetStatuses({ tenantId: input.tenantId, originRunId: id });
         });
@@ -4769,7 +4675,8 @@ export async function agentRunWorkflow(
       // response. SDD section 68 forbids READY_FOR_HUMAN without it.
       // docs/specs/skill-registry.md. The proof pack lists the skill proposal, so it leaves first.
       const proposalSources = skillSources;
-      if (proposalSources !== null && patched(SKILL_REGISTRY_PATCH)) {
+      if (proposalSources !== null) {
+        deprecatePatch(SKILL_REGISTRY_PATCH);
         await notify(() => sendSkillProposals(proposalSources, preparedSandbox));
         skillProposalsSent = true;
       }
@@ -4927,21 +4834,21 @@ export async function agentRunWorkflow(
       failureMessage: message,
       completedAt: new Date(Date.now()).toISOString(),
     });
-    if (patched(INTERNAL_ERROR_POST_PATCH)) {
-      // A cancelled scope still posts, as the terminal write above still runs.
-      await CancellationScope.nonCancellable(async () => {
-        let post = message;
-        try {
-          post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message });
-        } catch {
-          // The post falls back to the message when the facts cannot be read.
-        }
-        await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
-        if (prFollowUp === null && patched(DRAFT_OFFER_PATCH)) {
-          await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
-        }
-      });
-    }
+    deprecatePatch(INTERNAL_ERROR_POST_PATCH);
+    // A cancelled scope still posts, as the terminal write above still runs.
+    await CancellationScope.nonCancellable(async () => {
+      let post = message;
+      try {
+        post = await activities.describeRunFailure({ tenantId: input.tenantId, runId: id, message });
+      } catch {
+        // The post falls back to the message when the facts cannot be read.
+      }
+      await notify(() => activities.postError({ sessionId: input.agentSessionId, message: post }));
+      if (prFollowUp === null) {
+        deprecatePatch(DRAFT_OFFER_PATCH);
+        await notify(() => activities.offerDraft({ tenantId: input.tenantId, runId: id, sessionId: input.agentSessionId }));
+      }
+    });
     // A plain error fails the workflow task, and Temporal retries that task for ever while the
     // row says FAILED. A Temporal failure ends the workflow.
     if (error instanceof TemporalFailure) throw error;

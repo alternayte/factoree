@@ -95,6 +95,7 @@ import { GitHubRepositoryDiscoveryClient } from "~/adapters/github/repository-di
 import { TenantScopedLinearTeamLookup } from "~/adapters/linear/team-lookup-by-tenant.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import { buildInfo } from "~/config/build-info.js";
+import { checkOpenRunsReplay } from "~/temporal/upgrade-check.js";
 import { isAgentRunnerName, resolveRole } from "~/domain/products/agent-settings.js";
 import { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
 import { opencodeModelsFileOf, opencodeProviderConfigOf } from "~/domain/products/model-catalog.js";
@@ -706,6 +707,24 @@ try {
 } catch (error) {
   // The sandbox provider is not configured yet, or the request failed. The next run still works.
   logger.warn("the worker did not check the warm snapshot templates", { step: "boot", error: String(error) });
+}
+
+// docs/specs/run-workflow-structure.md. An open run from a release this code cannot replay would
+// fail its next workflow task. The worker refuses to poll, so the previous release keeps the run.
+const replayCheck = await createTemporalClient(env);
+try {
+  const replay = await checkOpenRunsReplay({ client: replayCheck, prisma, publicUrl: env.FACTOREE_PUBLIC_URL });
+  if (!replay.ok) {
+    logger.error("open runs need an earlier release, so the worker does not start", {
+      step: "boot",
+      version: buildInfo.version,
+      runs: replay.blocking.map((entry) => entry.run?.runId ?? entry.workflowId),
+      report: replay.report,
+    });
+    process.exit(78);
+  }
+} finally {
+  await replayCheck.connection.close();
 }
 
 logger.info("worker started", {

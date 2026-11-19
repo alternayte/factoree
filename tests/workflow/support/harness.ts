@@ -67,6 +67,7 @@ import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import type { RecordPublishedPullRequestInput } from "~/domain/pull-requests/pull-request-store.js";
 import type { AuthorityDomain } from "~/domain/context/authority.js";
 import { mergeOrderOf, type TargetEdge } from "~/domain/runs/merge-order.js";
+import { exportHistories, historyExportDirectory, trackStartedWorkflows } from "./history-export.js";
 
 /** One conflict the context double reports. It carries the domain, the way a real record does. */
 export interface HarnessConflict {
@@ -1216,7 +1217,13 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       workflowBundle: { code: await loadAgentRunWorkflowBundle() },
       activities,
     });
-    return worker.runUntil(body());
+    const exportDirectory = historyExportDirectory();
+    if (exportDirectory === null) return worker.runUntil(body());
+    const client = environment().client;
+    const started = trackStartedWorkflows(client);
+    const result = await worker.runUntil(body());
+    await exportHistories(client, started, exportDirectory);
+    return result;
   };
 
   return {

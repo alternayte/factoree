@@ -21,6 +21,7 @@ import type { StopRequest } from "~/domain/runs/run-stop.js";
 // The workflow bundler resolves a relative path only. The module imports nothing at run time.
 import { mayStartFollowUp } from "../domain/pull-requests/pr-follow-up.js";
 import { DEPLOY_WINDOW_MS } from "../domain/pull-requests/deploys.js";
+import { releaseMemo } from "./release.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
 
@@ -361,6 +362,9 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
         workflowId: plan.workflowId,
         args: [plan.input],
         parentClosePolicy: ParentClosePolicy.ABANDON,
+        // docs/specs/run-workflow-structure.md. A run that this workflow starts carries the release
+        // memo too, so `factoree upgrade-check` sees it.
+        memo: releaseMemo(),
       });
       result = child.result();
     } catch (error) {

@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Each new run records the release that started it in its Temporal memo, `factoreeRelease`. `factoree upgrade-check` lists the open runs and fails with exit code 78 when one came from a release that this one cannot replay. It names each run with its work item and its Run page. The worker runs the check before it polls and exits 78 when it fails, and the Helm chart runs it in a pre-upgrade hook (`docs/specs/run-workflow-structure.md`).
 - A session that cannot reach the model provider ends within about a minute, retries in a fresh session and then in a fresh sandbox, and fails the run with `PROVIDER_UNREACHABLE` in the new category `INFRASTRUCTURE` after the third failure. Only the CLI's own error counts: a Claude `api_retry` event with a null `error_status`, a failed `result` event, or assistant text that starts with `API Error:`, each with a connectivity code (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`). A 429 or 529 retry, a tool result and a quoted error never count. The fast-fail needs 3 consecutive connectivity events and fires 60 seconds after the first one, while the CLI keeps retrying. The failure message carries the provider detail, trimmed to 1,000 characters. The session row shows the outcome `unreachable` (`docs/specs/provider-unreachable.md`, GitHub issue 61).
 
 ### Changed
 
+- An upgrade to 0.16.0 needs no open runs. The run workflow no longer holds the old branch of its 27 `patched` gates, so a run that an earlier release started cannot replay. Stop or finish each open run before the upgrade (`docs/quickstart.md`, section 10).
 - The `IMPLEMENTATION_FAILED` message carries the agent output, so the post names the real cause.
 - A work sandbox that replaces an earlier one after an outage keeps the frozen skill resolution and the PR head, the siblings, the targets and the context. A failed release of the old sandbox no longer ends the run.
 

@@ -1,10 +1,11 @@
 #!/bin/sh
-# docs/specs/release-0-1-0.md. The commands of the factoree image: api, worker, migrate and --version.
+# docs/specs/release-0-1-0.md. The commands of the factoree image: api, worker, migrate, upgrade-check
+# (docs/specs/run-workflow-structure.md) and --version.
 set -eu
 cd /app
 
 usage() {
-  echo "usage: factoree api | worker | migrate | --version" >&2
+  echo "usage: factoree api | worker | migrate | upgrade-check | --version" >&2
 }
 
 if [ "$#" -eq 0 ]; then
@@ -20,6 +21,9 @@ case "$command" in
     ;;
   worker)
     exec node dist/bin/worker.js "$@"
+    ;;
+  upgrade-check)
+    exec node dist/bin/upgrade-check.js "$@"
     ;;
   migrate)
     # prisma.config.ts reads FACTOREE_DATABASE_URL, the only database name Prisma needs (DI-15.12).
