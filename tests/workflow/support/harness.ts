@@ -626,6 +626,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     steerAutoMerge: async () => ({ state: "off" }),
     // docs/specs/pr-review-merge-and-deploy.md, slice 3. No review event reaches the PR workflow here.
     planPullRequestFollowUp: async () => ({ kind: "none", reason: "no review event" }),
+    // docs/specs/drain-mode.md. Drain mode is off.
+    isDrainModeOn: async () => false,
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
     readWorkItemContent: async (activityInput: { runId?: string }): Promise<ReadWorkItemContentActivityOutput> =>
       workItemContents.get(activityInput.runId ?? "") ?? {

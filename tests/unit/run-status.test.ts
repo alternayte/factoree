@@ -33,6 +33,7 @@ describe("run status", () => {
       "BLOCKED_TARGET",
       "DRAFT_PUBLISHED",
       "WAITING_FOR_BLOCKERS",
+      "WAITING_FOR_UPDATE",
     ]);
   });
 
