@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-19
+
 ### Added
 
 - Each new run records the release that started it in its Temporal memo, `factoreeRelease`. `factoree upgrade-check` lists the open runs and fails with exit code 78 when one came from a release that this one cannot replay. It names each run with its work item and its Run page. The worker runs the check before it polls and exits 78 when it fails, and the Helm chart runs it in a pre-upgrade hook (`docs/specs/run-workflow-structure.md`).
