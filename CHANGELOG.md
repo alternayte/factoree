@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-19
+
 ### Added
 
 - Run diagnostics (`docs/specs/run-diagnostics.md`). Factoree records each fault and each Factoree decision of a run or a setup run as a run event: a session that failed or hung, a failed bootstrap, compose stack, verify command or setup proof part, a rejected validation plan or refiner proposal, a selector re-check, an unstable check, a retry, a repair and the end of the run. A fault event holds the exit code, the redacted output tail, the hosts the Kiln egress log denied and the host hints: the hosts in the output that the allow list does not hold.
