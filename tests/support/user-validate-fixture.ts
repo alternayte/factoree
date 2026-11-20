@@ -73,10 +73,19 @@ export class FakeResultStore implements ValidationResultStore {
       result: input.result,
       reason: input.reason,
       attempt: input.attempt,
+      planEntrySha256: input.planEntrySha256 ?? null,
       createdAt: new Date(),
     };
     this.rows.push(row);
     return Promise.resolve(row);
+  }
+
+  markUnstable(_tenantId: string, runId: string, attempt: number, rows: ReadonlyArray<{ assertionKey: string; reason: string }>): Promise<void> {
+    for (const change of rows) {
+      const row = this.rows.find((candidate) => candidate.runId === runId && candidate.attempt === attempt && candidate.assertionKey === change.assertionKey && candidate.result === "FAIL");
+      if (row !== undefined) Object.assign(row, { result: "UNSTABLE", reason: change.reason });
+    }
+    return Promise.resolve();
   }
 
   listForRun(tenantId: string, runId: string): Promise<ValidationAssertionResultRecord[]> {

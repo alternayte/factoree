@@ -7,6 +7,7 @@ import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { setupWorkflowId, type RepositorySetupRecord, type RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import { renderSetupReport } from "~/domain/setup/setup-report.js";
+import { uncoveredDerivedHosts, type DerivedHost, type DerivedHostCoverage } from "~/domain/setup/derived-hosts.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 import type { RunEventStore } from "~/domain/diagnostics/run-event.js";
 import { setupDiagnosisOf } from "~/domain/diagnostics/diagnosis.js";
@@ -32,6 +33,13 @@ export interface RepositorySetupRouteDependencies {
    * tenant, per sandbox provider, keyed by the repository full name.
    */
   buildAheadFailures?: ((tenantId: string) => Promise<Map<string, BuildAheadFailureView[]>>) | undefined;
+  /**
+   * docs/specs/private-stack-onboarding.md. The derived hosts of a repository at the head of its
+   * default branch, read through the GitHub App. Absent means the server reads none.
+   */
+  derivedHosts?: ((fullName: string, githubInstallationId: string) => Promise<DerivedHost[]>) | undefined;
+  /** docs/specs/private-stack-onboarding.md. What already covers a derived host of the product. */
+  derivedHostCoverage?: ((tenantId: string, productId: string) => Promise<DerivedHostCoverage>) | undefined;
 }
 
 export interface BuildAheadFailureView {
@@ -42,6 +50,14 @@ export interface BuildAheadFailureView {
 
 const workspaceQuery = z.object({ linearWorkspaceId: z.string().min(1) });
 
+const derivedHostSchema = z.object({
+  host: z.string(),
+  source: z.string(),
+  kind: z.enum(["registry", "git"]),
+  /** For a git dependency on github.com: the repository it clones. */
+  repository: z.string().optional(),
+});
+
 const setupSchema = z.object({
   id: z.string(),
   status: z.enum(["queued", "running", "proposed", "partial", "failed", "merged", "unchanged"]),
@@ -51,6 +67,8 @@ const setupSchema = z.object({
   report: z.string().nullable(),
   /** The hosts outside the ecosystem host list that the setup sandbox was denied. */
   deniedHosts: z.array(z.string()),
+  /** docs/specs/private-stack-onboarding.md. The derived hosts nothing covered when the proof ran. */
+  derivedHosts: z.array(derivedHostSchema),
   createdAt: z.string(),
   endedAt: z.string().nullable(),
   /** docs/specs/setup-speed-and-history.md. The setup a skipped setup copied, or null. */
@@ -67,6 +85,8 @@ const setupHistoryEntrySchema = setupSchema.extend({
   /** Whether the session sandbox started from the warm snapshot. Null when no session ran. */
   warm: z.boolean().nullable(),
   proofMs: z.number().nullable(),
+  /** docs/specs/private-stack-onboarding.md. The time of the warm proof, or null when none ran. */
+  warmProofMs: z.number().nullable(),
   session: z
     .object({
       runner: z.string(),
@@ -121,6 +141,7 @@ const toSetup = (setup: RepositorySetupRecord): z.infer<typeof setupSchema> => (
   failureMessage: setup.failureMessage,
   report: setup.report === null ? null : renderSetupReport(setup.report),
   deniedHosts: setup.report?.deniedHosts ?? [],
+  derivedHosts: setup.report?.derivedHosts ?? [],
   createdAt: setup.createdAt.toISOString(),
   endedAt: setup.endedAt?.toISOString() ?? null,
   skippedFromSetupId: setup.skippedFromSetupId,
@@ -248,6 +269,7 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
           temporalRunId: setup.temporalRunId,
           warm: setup.warm,
           proofMs: setup.proofMs,
+          warmProofMs: setup.warmProofMs,
           session:
             usage === null
               ? null
@@ -267,6 +289,42 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
             .map((issue) => ({ identifier: issue.linearIssueIdentifier, url: issue.linearIssueUrl, changes: issue.changes, outcome: issue.outcome })),
         };
       });
+    },
+  );
+
+  /**
+   * docs/specs/private-stack-onboarding.md. Before a setup starts: the derived hosts of the
+   * repository that no allow list or host credential covers, so the operator adds them first.
+   */
+  app.get<{ Params: { id: string } }>(
+    "/admin/products/:id/repository-setups/derived-hosts",
+    {
+      schema: {
+        tags: ["products"],
+        operationId: "listSetupDerivedHosts",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        querystring: schemaOf(historyQuery),
+        response: { 200: schemaOf(z.object({ hosts: z.array(derivedHostSchema) })), 400: errorSchema, 404: errorSchema, 422: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const query = historyQuery.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(query.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      const candidate = (await candidatesOf(tenant.id, product.id)).find((entry) => entry.fullName === query.data.repository);
+      if (candidate === undefined) return reply.code(422).send({ error: `The product cannot set up ${query.data.repository}.` });
+      if (dependencies.derivedHosts === undefined) return { hosts: [] };
+      const derived = await dependencies.derivedHosts(candidate.fullName, candidate.githubInstallationId);
+      const coverage = (await dependencies.derivedHostCoverage?.(tenant.id, product.id)) ?? {
+        allowedDomains: product.allowedDomains,
+        credentialHosts: [],
+        githubRepositories: [],
+      };
+      return { hosts: uncoveredDerivedHosts(derived, coverage) };
     },
   );
 

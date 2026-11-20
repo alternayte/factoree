@@ -108,6 +108,36 @@ describe("parseValidationPlan", () => {
     expect(parseValidationPlan(JSON.stringify(plan), contract)).toEqual(plan);
   });
 
+  // docs/specs/check-faults.md. A sequenced http entry: the last request is the check, and a stored
+  // plan parses again to the same plan.
+  it("takes an http entry with setup requests and a poll, and parses its stored form again", () => {
+    const setup = { ...validHttpRequest, method: "POST" as const, path: "/projects", expectStatus: 201 };
+    const plan = parseValidationPlan(
+      JSON.stringify({
+        version: 1,
+        entries: [
+          { assertionId: "VAL-UI-001", kind: "browser", steps: validBrowserSteps },
+          { assertionId: "VAL-API-001", kind: "http", requests: [setup, validHttpRequest], poll: { timeoutSeconds: 30, intervalSeconds: 2 } },
+        ],
+      }),
+      contract,
+    );
+    expect(plan.entries[1]).toEqual({ assertionId: "VAL-API-001", kind: "http", request: validHttpRequest, setup: [setup], poll: { timeoutSeconds: 30, intervalSeconds: 2 } });
+    expect(parseValidationPlan(JSON.stringify(plan), contract)).toEqual(plan);
+    expect(() =>
+      parseValidationPlan(
+        JSON.stringify({
+          version: 1,
+          entries: [
+            { assertionId: "VAL-UI-001", kind: "browser", steps: validBrowserSteps },
+            { assertionId: "VAL-API-001", kind: "http", requests: [{ ...setup, path: "//evil.example/x" }, validHttpRequest] },
+          ],
+        }),
+        contract,
+      ),
+    ).toThrow(ValidationPlanInvalidError);
+  });
+
   it("rejects text that is not JSON (rule 1)", () => {
     expect(() => parseValidationPlan("not json", contract)).toThrow(ValidationPlanInvalidError);
   });

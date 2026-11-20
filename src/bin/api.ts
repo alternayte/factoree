@@ -1,3 +1,4 @@
+import { readDerivedHosts } from "~/domain/setup/derived-hosts.js";
 import { credentialKeyOf } from "~/domain/products/host-credentials.js";
 import { PrismaHostCredentialStore } from "~/persistence/prisma/host-credential.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
@@ -250,6 +251,13 @@ const app = buildServer({
   repositorySetup: {
     listInstallationRepositories: (installationId) => discoveryClient.listInstallationRepositories(installationId),
     startSetup: startRepositorySetup,
+    // docs/specs/private-stack-onboarding.md. The derived hosts at the head of the default branch.
+    derivedHosts: async (fullName, installationId) => {
+      const repository = (await discoveryClient.listInstallationRepositories(installationId)).find((entry) => entry.fullName === fullName);
+      if (repository === undefined) return [];
+      const headSha = await discoveryClient.headSha(fullName, repository.defaultBranch, installationId);
+      return readDerivedHosts(discoveryClient, fullName, headSha, installationId);
+    },
   },
   env,
   version: releaseVersion(),

@@ -110,3 +110,5 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - drain mode: the install-wide pause that holds each new agent run as WAITING_FOR_UPDATE while the open runs finish, before a release that open runs cannot replay. Avoid: maintenance mode, pause, freeze.
 - diagnosis: the end reason of a failed run or setup and the run event that caused it. Avoid: root cause, error summary, failure report.
 - host hint: a host name in a failed output tail that is not on the effective allow list, a guess and never evidence. Avoid: suspected host, guessed host.
+- derived host: a host that Factoree reads from a repository's committed registry config, lockfiles, git dependencies and CI workflows before setup starts. Avoid: detected host, discovered host, inferred host.
+- warm proof: the last setup proof step, which restores a snapshot of the proof sandbox and runs the bootstrap and the services again as a work sprite does. Avoid: warm check, restore test, second bootstrap.

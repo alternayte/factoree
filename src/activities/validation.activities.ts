@@ -1,3 +1,5 @@
+import { flippedAssertions, flipReason, planEntrySha256Of, type FlippedAssertion } from "~/domain/validation/flip.js";
+import type { ValidationResultStore } from "~/domain/validation/validation-result-store.js";
 import type { AccountConfig, ServicesConfig } from "~/domain/runs/project-runtime-config.js";
 import type { EgressFacts } from "~/domain/runs/egress.js";
 import { listFakes, type FakeService } from "~/domain/runs/services.js";
@@ -129,6 +131,8 @@ export interface ValidationActivityDependencies {
   userValidation?: UserValidationActivityDependencies;
   /** docs/specs/pr-review-merge-and-deploy.md, D1. The passing plans and the contract adoption. */
   plans?: ValidationPlanStore | undefined;
+  /** docs/specs/check-faults.md. The results of earlier attempts, and the one FAIL-to-UNSTABLE change. */
+  results?: Pick<ValidationResultStore, "listForRun" | "markUnstable"> | undefined;
 }
 
 export interface UserValidateActivityInput {
@@ -209,6 +213,12 @@ export interface UserValidateActivityOutput {
    * recorded before the result existed.
    */
   hasUnstable?: boolean;
+  /**
+   * docs/specs/check-faults.md, GitHub issue 49. The FAIL assertions whose unchanged check passed in
+   * an earlier attempt. The workflow makes them UNSTABLE when the reviewer reports no blocking
+   * finding. Absent when there are none.
+   */
+  flipped?: FlippedAssertion[];
   summary: string;
   /** The failing assertions, formatted for `ImplementActivityInput.repairFindings`. */
   failures: string[];
@@ -313,6 +323,34 @@ const planRejectionOf = (
 
 /** SDD section 63 names this file. */
 export const createValidationActivities = (dependencies: ValidationActivityDependencies) => ({
+  /**
+   * docs/specs/check-faults.md, GitHub issue 49. The workflow found that every failure of this
+   * attempt is a flip and the reviewer passed the change: the FAIL rows become UNSTABLE, and each
+   * one gets a run event. A retry changes nothing more.
+   */
+  async markFlippedUnstable(input: { tenantId: string; runId: string; attempt: number; flipped: FlippedAssertion[] }): Promise<void> {
+    if (dependencies.results === undefined || input.flipped.length === 0) return;
+    await dependencies.results.markUnstable(
+      input.tenantId,
+      input.runId,
+      input.attempt,
+      input.flipped.map((flip) => ({ assertionKey: flip.assertionId, reason: flipReason(flip, input.attempt) })),
+    );
+    for (const flip of input.flipped) {
+      await recordRunEvent(dependencies.events, {
+        tenantId: input.tenantId,
+        subject: { runId: input.runId },
+        stage: "USER_VALIDATING",
+        attempt: input.attempt,
+        role: "validator",
+        kind: "check_unstable",
+        message: `${flip.assertionId} passed in attempt ${String(flip.passedAttempt)} and failed in attempt ${String(input.attempt)} with the same check, while the reviewer passed the change, so it counts as unstable and starts no repair.`,
+        detail: { assertionKey: flip.assertionId, reason: flipReason(flip, input.attempt) },
+        idempotencyKey: `run:${input.runId}:validate:${String(input.attempt)}:flip:${flip.assertionId}`,
+      });
+    }
+  },
+
   /**
    * docs/specs/pr-review-merge-and-deploy.md, slice 4, D1, DI-21.116. A bring-current run checks the
    * frozen contract of the verified head: it freezes the same contract, with its passing plan, as its
@@ -1304,6 +1342,19 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         };
       }
 
+      // docs/specs/check-faults.md. The hash of each entry that ran, so a later attempt can tell an
+      // unchanged check. A change set reports no single plan, and its rows hold no hash.
+      const ranPlan = "plan" in outcome ? outcome.plan : undefined;
+      const entryHashes = new Map((ranPlan?.entries ?? []).map((entry) => [entry.assertionId, planEntrySha256Of(entry)]));
+      // Only a browser or an http check flips across attempts (docs/specs/check-faults.md, Out).
+      const flipHashes = new Map(
+        (ranPlan?.entries ?? []).filter((entry) => entry.kind === "browser" || entry.kind === "http").map((entry) => [entry.assertionId, entryHashes.get(entry.assertionId)!]),
+      );
+      const flipped =
+        dependencies.results === undefined || input.attempt <= 1 || !outcome.outcomes.some((candidate) => candidate.result === "FAIL")
+          ? []
+          : flippedAssertions(outcome.outcomes, flipHashes, await dependencies.results.listForRun(input.tenantId, input.runId), input.attempt);
+
       // Step 10. Persists every outcome, keyed on the row identifier of the matching stored
       // assertion, never on the contract-level identifier.
       const rowIdByAssertionId = new Map(
@@ -1323,6 +1374,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
           validationAssertionId,
           outcome: assertionOutcome,
           attempt: input.attempt,
+          planEntrySha256: entryHashes.get(assertionOutcome.assertionId) ?? null,
         });
       }
 
@@ -1384,6 +1436,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         ),
         hasBlocked: outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "BLOCKED"),
         hasUnstable: outcome.outcomes.some((assertionOutcome) => assertionOutcome.result === "UNSTABLE"),
+        ...(flipped.length === 0 ? {} : { flipped }),
         summary: outcome.summary,
         failures: outcome.failures,
         sessionId: passSessionId,

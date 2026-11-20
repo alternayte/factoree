@@ -24,6 +24,8 @@ import { resolvePreviewUrl } from "../../../domain/validation/preview-url.js";
 import { describeLimit } from "../../../domain/validation/browser-limits.js";
 
 const MIN_STEP_TIMEOUT_MS = 1000;
+/** GitHub issue 47. The wait between two reads of an expectText step. */
+const EXPECT_TEXT_POLL_MS = 250;
 
 type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
@@ -533,19 +535,31 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       }
       case "expectText": {
         const locator = page.locator(step.selector);
-        const actual = await timed(
-          locator.textContent({ timeout: timeoutMs }),
-          `The selector \`${step.selector}\` never matched within ${limit}.`,
-          step.selector,
-        );
+        const started = Date.now();
+        const end = Math.min(started + timeoutMs, deadline);
         // The element must contain the text. An exact match failed the FAC-47 footer, which
         // showed the version beside other text. A plan that needs exact text picks a selector
         // that holds only that text.
-        const trimmedActual = (actual ?? "").replace(/\s+/g, " ").trim();
         const trimmedExpected = step.text.replace(/\s+/g, " ").trim();
-        if (!trimmedActual.includes(trimmedExpected)) {
+        const read = async (): Promise<string> =>
+          ((await timed(
+            locator.textContent({ timeout: Math.max(1, end - Date.now()) }),
+            `The selector \`${step.selector}\` never matched within ${limit}.`,
+            step.selector,
+          )) ?? "")
+            .replace(/\s+/g, " ")
+            .trim();
+        // GitHub issue 47, docs/specs/check-faults.md. The text of an asynchronous state appears
+        // after the element does, so the step reads it again until it holds the text or the step
+        // limit ends, as Playwright's toContainText does.
+        let actual = await read();
+        while (!actual.includes(trimmedExpected) && Date.now() + EXPECT_TEXT_POLL_MS < end) {
+          await page.waitForTimeout(EXPECT_TEXT_POLL_MS);
+          actual = await read();
+        }
+        if (!actual.includes(trimmedExpected)) {
           throw new Error(
-            `Expected ${step.selector} to contain text "${trimmedExpected}", but it held "${trimmedActual}".`,
+            `Expected ${step.selector} to contain text "${trimmedExpected}", but after ${describeLimit(Date.now() - started)} it held "${actual}".`,
           );
         }
         return `Confirmed ${step.selector} holds the expected text.`;

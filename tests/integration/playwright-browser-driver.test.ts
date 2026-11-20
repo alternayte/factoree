@@ -96,6 +96,11 @@ const LATE_HANDLER_HTML = `<!doctype html><html><body>
   </script>
 </body></html>`;
 
+// GitHub issue 47. An outbox row that reads "pending" at once and "processed" two seconds later.
+const LATE_TEXT_HTML = `<!doctype html><html><body><li id="row">pending attempt 0</li>
+  <script>setTimeout(function () { document.getElementById("row").textContent = "processed"; }, 2000);</script>
+</body></html>`;
+
 // A cold SPA: the form renders only after its first load.
 const SLOW_LOGIN_HTML = `<!doctype html><html><body>
   <script>
@@ -135,6 +140,12 @@ const startFixtureServer = (): Promise<{ server: Server; baseUrl: string }> =>
         response.setHeader("Content-Type", "text/html");
         response.writeHead(200);
         response.end(LATE_HANDLER_HTML);
+        return;
+      }
+      if (request.url === "/late-text") {
+        response.setHeader("Content-Type", "text/html");
+        response.writeHead(200);
+        response.end(LATE_TEXT_HTML);
         return;
       }
       if (request.url === "/slow-login") {
@@ -240,8 +251,21 @@ describe("PlaywrightBrowserDriver", () => {
     });
 
     expect(result.passed).toBe(false);
-    expect(result.failureReason).toBeTruthy();
+    // GitHub issue 47. The reason names the last text seen and the time waited.
+    expect(result.failureReason).toMatch(/but after \d+(\.\d)? s it held "Original"/);
     expect(result.artifacts.some((a: BrowserArtifact) => a.name === "final")).toBe(true);
+  }, 60_000);
+
+  it("waits for text that appears after the element, within the step limit (GitHub issue 47)", async () => {
+    const result = await driver.run({
+      ...scenario,
+      steps: [
+        { action: "goto", path: "/late-text" },
+        { action: "expectText", selector: "#row", text: "processed" },
+      ],
+    });
+    expect(result.failureReason ?? null).toBeNull();
+    expect(result.passed).toBe(true);
   }, 60_000);
 
   it("stops the scenario after a thrown step and marks later steps not run", async () => {

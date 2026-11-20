@@ -23,6 +23,8 @@ const setupRow: RepositorySetupRecord = {
   temporalRunId: null,
   proofMs: null,
   warm: null,
+  derivedHosts: null,
+  warmProofMs: null,
   createdAt: new Date(0),
   endedAt: null,
 };
@@ -187,6 +189,60 @@ describe("proveAndPublishSetup (DI-21.20)", () => {
     });
     expect(proof).toEqual({ status: "unchanged", pullRequestUrl: null, failureMessage: null });
     expect(sandbox.calls).toContain("destroy");
+  });
+
+  it("fails the bootstrap that passes cold and fails after a warm restore (GitHub issue 59)", async () => {
+    // FAC on E2B: `func bundles download` passed in the setup sandbox and failed in every run that
+    // restored the warm snapshot, because the proof never ran the bootstrap a second time.
+    const { activities, sandbox, updates } = build("");
+    const scripts: string[] = [];
+    let restored = false;
+    const exec = sandbox.onExec;
+    sandbox.onExec = (command) => {
+      if (command.file === "sh" && (command.args.at(-1) ?? "").includes("func bundles download")) {
+        scripts.push(command.args.at(-1) ?? "");
+        return restored ? { exitCode: 1, stdout: "", stderr: "Cannot download extension bundles while in offline mode." } : { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return exec?.(command) ?? { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const removed: string[] = [];
+    Object.defineProperty(sandbox, "warmSnapshots", {
+      value: {
+        template: "t",
+        take: () => Promise.resolve("snap-1"),
+        restore: () => {
+          restored = true;
+          return Promise.resolve({ id: "restored", adapter: "fake", workspacePath: "/workspace" });
+        },
+        remove: (id: string) => {
+          removed.push(id);
+          return Promise.resolve(true);
+        },
+      },
+    });
+    const proof = await activities.proveAndPublishSetup({
+      setupId: "setup-1",
+      session: {
+        kind: "proposed",
+        defaultBranch: "main",
+        baseSha: "a".repeat(40),
+        patchBase64: "",
+        proposal:
+          "version: 1\nidentity:\n  product: anthology\n  linear:\n    teamKey: FAC\nbootstrap:\n  command: func bundles download\nverify:\n  commands:\n    - name: build\n      run: dotnet build\n",
+        observedHosts: [],
+        deniedHosts: [],
+        egressRecorded: true,
+        appChanges: [],
+        warm: false,
+      },
+    });
+    expect(scripts).toHaveLength(2);
+    // The proof runs the bootstrap as a run does: with pipefail where the shell has it.
+    expect(scripts[0]).toContain("set -o pipefail");
+    expect(proof.status).toBe("failed");
+    expect(proof.failureMessage).toContain("The bootstrap failed after a warm restore");
+    expect(removed).toEqual(["snap-1"]);
+    expect(updates.some((update) => typeof update.warmProofMs === "number")).toBe(true);
   });
 });
 

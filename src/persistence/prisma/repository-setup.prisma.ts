@@ -6,6 +6,7 @@ import type {
   RepositorySetupStore,
   SetupSessionUsage,
 } from "~/domain/setup/repository-setup.js";
+import type { DerivedHost } from "~/domain/setup/derived-hosts.js";
 import type { SetupReport } from "~/domain/setup/setup-report.js";
 
 type Row = Awaited<ReturnType<FactoreePrismaClient["repositorySetup"]["findFirstOrThrow"]>>;
@@ -28,6 +29,8 @@ const toRecord = (row: Row): RepositorySetupRecord => ({
   temporalRunId: row.temporalRunId,
   proofMs: row.proofMs,
   warm: row.warm,
+  derivedHosts: (row.derivedHosts ?? null) as DerivedHost[] | null,
+  warmProofMs: row.warmProofMs,
   createdAt: row.createdAt,
   endedAt: row.endedAt,
 });
@@ -87,13 +90,14 @@ export class PrismaRepositorySetupStore implements RepositorySetupStore {
   }
 
   async update(id: string, patch: Parameters<RepositorySetupStore["update"]>[1]): Promise<void> {
-    const { report, sessionUsage, ...rest } = patch;
+    const { report, sessionUsage, derivedHosts, ...rest } = patch;
     await this.prisma.repositorySetup.update({
       where: { id },
       data: {
         ...rest,
         ...(report === undefined || report === null ? {} : { report: json(report) }),
         ...(sessionUsage === undefined || sessionUsage === null ? {} : { sessionUsage: json(sessionUsage) }),
+        ...(derivedHosts === undefined || derivedHosts === null ? {} : { derivedHosts: json(derivedHosts) }),
       },
     });
   }

@@ -261,3 +261,52 @@ describe("executeHttpAssertion", () => {
     expect(new TextDecoder().decode(outcome.artifacts[0]!.bytes)).not.toContain(secret);
   });
 });
+
+// docs/specs/check-faults.md, GitHub issue 48. "After POST /orders, GET /orders lists the order
+// once confirmedAt is set": one request could never prove it, and every attempt spent a repair.
+describe("executeHttpAssertion with setup requests and a poll", () => {
+  const post: HttpPlanRequest = { method: "POST", path: "/orders", headers: {}, body: '{"amount":9.99}', expectStatus: 201, expectBodyContains: null };
+  const get: HttpPlanRequest = { method: "GET", path: "/orders", headers: {}, body: null, expectStatus: 200, expectBodyContains: "confirmedAt" };
+
+  const run = (answers: { post: number; gets: string[] }) => {
+    let clock = 0;
+    const calls: string[] = [];
+    let gets = 0;
+    const outcome = executeHttpAssertion({
+      ...baseInput,
+      request: get,
+      setup: [post],
+      poll: { timeoutSeconds: 10, intervalSeconds: 2 },
+      now: () => clock,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      fetchImpl: (_url, init) => {
+        calls.push(init.method);
+        if (init.method === "POST") return Promise.resolve({ status: answers.post, headers: {}, body: "" });
+        const body = answers.gets[Math.min(gets, answers.gets.length - 1)]!;
+        gets += 1;
+        return Promise.resolve({ status: 200, headers: {}, body });
+      },
+    });
+    return { outcome, calls };
+  };
+
+  it("sends the setup request first, then polls the check until it matches", async () => {
+    const { outcome, calls } = run({ post: 201, gets: ['[{"id":1}]', '[{"id":1}]', '[{"id":1,"confirmedAt":"t"}]'] });
+    const result = await outcome;
+    expect(calls).toEqual(["POST", "GET", "GET", "GET"]);
+    expect(result.result).toBe("PASS");
+    expect(result.reason).toBe("POST /orders returned 201, then GET /orders returned the expected status 200 after 3 requests in 4.0 s.");
+  });
+
+  it("fails after the poll timeout with the last answer, and spends no check on a failed setup request", async () => {
+    const never = await run({ post: 201, gets: ['[{"id":1}]'] }).outcome;
+    expect(never.result).toBe("FAIL");
+    expect(never.reason).toContain("which was absent after 6 requests in 10.0 s.");
+    const { outcome, calls } = run({ post: 500, gets: ["[]"] });
+    expect((await outcome).reason).toBe("The setup request 1, POST /orders, expected status 201 but observed 500, so the check did not run.");
+    expect(calls).toEqual(["POST"]);
+  });
+});

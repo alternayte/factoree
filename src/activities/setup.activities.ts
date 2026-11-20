@@ -23,7 +23,9 @@ import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js
 import type { WarmSnapshotStore } from "~/domain/runs/warm-snapshot.js";
 import { PreviewStartError, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import { bootstrapAllowListOf, toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
-import { narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
+import { allowListCovers, narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
+import { BOOTSTRAP_TIMEOUT_MS, bootstrapScript } from "~/domain/runs/sandbox-manager.js";
+import { readDerivedHosts, uncoveredDerivedHosts, type DerivedHostCoverage } from "~/domain/setup/derived-hosts.js";
 import { ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { alreadyRequested, type AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
@@ -36,7 +38,16 @@ import {
   type RepositorySetupStatus,
   type SetupSessionUsage,
 } from "~/domain/setup/repository-setup.js";
-import { failureExcerpt, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult, type SetupReport } from "~/domain/setup/setup-report.js";
+import {
+  failureExcerpt,
+  parseSetupSources,
+  provenConfigOf,
+  renderSetupReport,
+  withPreviewDependents,
+  withSources,
+  type SetupPartResult,
+  type SetupReport,
+} from "~/domain/setup/setup-report.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import { signInStepsOf } from "~/domain/validation/user-validator.js";
 import { renderSetupPrompt, SETUP_PROMPT_VERSION, type SetupPromptFields } from "~/prompts/setup.js";
@@ -44,7 +55,7 @@ import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { PUBLICATION_COMMIT_TIMESTAMP } from "./publishing.activities.js";
 import { NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
-import { applyEgress, assertBindable, probeCredentialHosts, type CredentialBindingStore, type CredentialEgress } from "~/domain/runs/credential-egress.js";
+import { applyEgress, assertBindable, probeCredentialHosts, probeHosts, type CredentialBindingStore, type CredentialEgress } from "~/domain/runs/credential-egress.js";
 import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
 import { recordSessionFaults } from "./agent-session-recording.js";
@@ -83,6 +94,8 @@ export interface SetupActivityDependencies {
   credentialBindings?: CredentialBindingStore | undefined;
   /** docs/specs/host-credentials.md. The hosts the product's credentials reach, for the setup prompt. */
   credentialHosts?: ((tenantId: string, productId: string) => Promise<string[]>) | undefined;
+  /** docs/specs/private-stack-onboarding.md. What already covers a derived host of the product. */
+  derivedHostCoverage?: ((tenantId: string, productId: string) => Promise<DerivedHostCoverage>) | undefined;
   /**
    * docs/specs/change-sets.md, DI-21.145. The repositories of the product, so the setup agent can
    * name the one that serves a fake. Absent means the prompt names none.
@@ -91,7 +104,7 @@ export interface SetupActivityDependencies {
 }
 
 /** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
-export type SetupPromptInputs = Omit<SetupPromptFields, "primaryRepositoryPath" | "appChangesPath">;
+export type SetupPromptInputs = Omit<SetupPromptFields, "primaryRepositoryPath" | "appChangesPath" | "sourcesPath">;
 
 /** docs/specs/setup-speed-and-history.md. What a setup does after its inputs are read. */
 export type PreparedSetup =
@@ -105,7 +118,7 @@ export type PreparedSetup =
  */
 export const setupInputKeyOf = (headSha: string, prompt: SetupPromptInputs): string =>
   createHash("sha256")
-    .update(JSON.stringify({ headSha, prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>" }) }))
+    .update(JSON.stringify({ headSha, prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>", sourcesPath: "<sources file>" }) }))
     .digest("hex");
 
 /** The agent session of one setup, and what it wrote. */
@@ -125,6 +138,8 @@ export type SetupSessionOutput =
       appChanges: string[];
       /** docs/specs/setup-speed-and-history.md. The session sandbox started from the warm snapshot. */
       warm: boolean;
+      /** docs/specs/private-stack-onboarding.md. The source of each part, keyed `<kind>:<name>`. */
+      sources?: Record<string, string>;
     }
   | { kind: "failed"; reason: string };
 
@@ -296,18 +311,28 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const repositoryHosts = hostsOf(url);
       const proofSandbox = await sandboxOf(setup, product, url);
       const egress = await credentialEgressOf(proofSandbox, setup.tenantId, setup.productId, setup.repositoryFullName);
-      const ref = await createSandbox(proofSandbox, setup.id, egress, repositoryHosts);
+      let ref = await createSandbox(proofSandbox, setup.id, egress, repositoryHosts);
       const parts: SetupPartResult[] = [];
       // docs/specs/run-diagnostics.md. The allow list of the phase a part ran in, for its host hints.
       let phaseAllowList: string[] = repositoryHosts;
       const failedParts: Array<{ part: SetupPartResult; allowList: string[] }> = [];
+      let recordedFaults = 0;
       const record = (part: SetupPartResult): void => {
         const kept = { ...part, ...(part.logTail === undefined ? {} : { logTail: dependencies.redactor.redactText(withoutUrlCredentials(part.logTail)) }) };
         parts.push(kept);
         if (!kept.passed && kept.kind !== "account") failedParts.push({ part: kept, allowList: phaseAllowList });
       };
+      /** docs/specs/private-stack-onboarding.md. The warm proof replaces the cold result of a part. */
+      const replace = (part: SetupPartResult): void => {
+        const index = parts.findIndex((entry) => entry.kind === part.kind && entry.name === part.name);
+        if (index >= 0) parts.splice(index, 1);
+        record(part);
+      };
+      // The egress log goes with each sandbox, so its faults are written before it is destroyed.
       const recordProofFaults = async (): Promise<void> => {
-        for (const [index, { part, allowList }] of failedParts.entries()) {
+        for (const { part, allowList } of failedParts.splice(0)) {
+          const index = recordedFaults;
+          recordedFaults += 1;
           const facts = await faultEgressFacts({ sandbox: dependencies.sandbox, ref, allowList }, part.logTail ?? null);
           await recordRunEvent(dependencies.events, {
             tenantId: setup.tenantId,
@@ -329,26 +354,59 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           });
         }
       };
+      const applyProposal = async (path: string): Promise<void> => {
+        // DI-21.20. An empty patch means the agent kept the config on the default branch. Factoree
+        // proves that config as it is, and git apply refuses an empty input.
+        if (session.patchBase64 === "") return;
+        const apply = await dependencies.sandbox.exec(ref, {
+          file: "sh",
+          args: ["-c", `printf '%s' "$FACTOREE_SETUP_PATCH" | base64 -d | git apply --whitespace=nowarn`],
+          cwd: path,
+          env: { FACTOREE_SETUP_PATCH: session.patchBase64 },
+        });
+        if (apply.exitCode !== 0) throw new Error(`the setup patch did not apply: ${tail(apply.stdout, apply.stderr)}`);
+      };
+      /**
+       * docs/specs/private-stack-onboarding.md, GitHub issue 59. The bootstrap runs as a run runs it:
+       * the same script, the same environment, the same phase egress and the same timeout.
+       */
+      const runBootstrap = async (path: string, afterRestore: boolean): Promise<SetupPartResult> => {
+        if (runtime.bootstrapCommand === null) return { kind: "bootstrap", name: "bootstrap", passed: true, reason: null };
+        const result = await dependencies.sandbox.exec(ref, { file: "sh", args: ["-c", bootstrapScript(runtime.bootstrapCommand)], cwd: path, timeoutMs: BOOTSTRAP_TIMEOUT_MS });
+        if (!result.timedOut && result.exitCode === 0) return { kind: "bootstrap", name: "bootstrap", passed: true, reason: null };
+        const failure = result.timedOut ? `ran longer than ${String(BOOTSTRAP_TIMEOUT_MS / 60_000)} minutes` : `exited with code ${String(result.exitCode)}`;
+        return {
+          kind: "bootstrap",
+          name: "bootstrap",
+          passed: false,
+          reason: afterRestore ? `The bootstrap failed after a warm restore: it ${failure}` : `the bootstrap ${failure}`,
+          logTail: failureExcerpt(`${result.stdout}\n${result.stderr}`),
+        };
+      };
+      const bootstrapAllowList = [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)])];
+      // docs/specs/private-stack-onboarding.md. The derived hosts that the bootstrap may reach
+      // must resolve and connect, so a private feed fails here with a reason, not in the bootstrap.
+      const reachableDerivedHosts = [
+        ...new Set(
+          (setup.derivedHosts ?? [])
+            .map((entry) => entry.host)
+            .filter((host) => host !== "github.com" && !ECOSYSTEM_HOSTS.includes(host) && (allowListCovers(bootstrapAllowList, host) || egress.access.hosts.includes(host))),
+        ),
+      ].sort();
       let handle: PreviewHandle | null = null;
       let fakes: SetupReport["fakes"] = [];
       let finalPatch: { patchBase64: string; patchSha256: string; gitVersion: string; empty: boolean } | null = null;
+      let snapshotId: string | null = null;
+      let warmProof: SetupReport["warmProof"];
+      let warmProofMs: number | null = null;
       try {
-        const primary = await checkoutPrimary(dependencies.sandbox, ref, { url, ref: session.baseSha }, readToken);
-        // DI-21.20. An empty patch means the agent kept the config on the default branch. Factoree
-        // proves that config as it is, and git apply refuses an empty input.
-        if (session.patchBase64 !== "") {
-          const apply = await dependencies.sandbox.exec(ref, {
-            file: "sh",
-            args: ["-c", `printf '%s' "$FACTOREE_SETUP_PATCH" | base64 -d | git apply --whitespace=nowarn`],
-            cwd: primary.path,
-            env: { FACTOREE_SETUP_PATCH: session.patchBase64 },
-          });
-          if (apply.exitCode !== 0) throw new Error(`the setup patch did not apply: ${tail(apply.stdout, apply.stderr)}`);
-        }
+        let primary = await checkoutPrimary(dependencies.sandbox, ref, { url, ref: session.baseSha }, readToken);
+        await applyProposal(primary.path);
 
         // Policy two: the bootstrap phase, with the repository hosts and the bootstrap allow list.
-        phaseAllowList = [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)]), ...egress.access.hosts];
-        await applyEgress(dependencies.sandbox, ref, [...new Set([...repositoryHosts, ...bootstrapAllowListOf(runtime)])], egress);
+        phaseAllowList = [...bootstrapAllowList, ...egress.access.hosts];
+        await applyEgress(dependencies.sandbox, ref, bootstrapAllowList, egress);
+        await probeHosts(dependencies.sandbox, ref, reachableDerivedHosts, "derived host");
         const services = runtime.services ?? null;
         let servicesPassed = true;
         if (runtime.docker === true) {
@@ -360,18 +418,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             record({ kind: "services", name: "services", passed: false, reason: "the stack did not start", logTail: String(error) });
           }
         }
-        if (runtime.bootstrapCommand !== null) {
-          const bootstrap = await dependencies.sandbox.exec(ref, { file: "sh", args: ["-c", runtime.bootstrapCommand], cwd: primary.path, timeoutMs: PROOF_COMMAND_TIMEOUT_MS });
-          record(
-            bootstrap.exitCode === 0
-              ? { kind: "bootstrap", name: "bootstrap", passed: true, reason: null }
-              : { kind: "bootstrap", name: "bootstrap", passed: false, reason: `the bootstrap exited with code ${bootstrap.exitCode}`, logTail: failureExcerpt(`${bootstrap.stdout}\n${bootstrap.stderr}`) },
-          );
-        } else {
-          record({ kind: "bootstrap", name: "bootstrap", passed: true, reason: null });
-        }
-        const bootstrapPassed = parts.some((part) => part.kind === "bootstrap" && part.passed);
-        if (bootstrapPassed && servicesPassed && services !== null) {
+        record(await runBootstrap(primary.path, false));
+        const coldBootstrapPassed = parts.some((part) => part.kind === "bootstrap" && part.passed);
+        if (coldBootstrapPassed && servicesPassed && services !== null) {
           try {
             await seedServices(dependencies.sandbox, ref, primary.path, services);
           } catch (error) {
@@ -384,6 +433,47 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           if (services !== null) fakes = await listFakes(dependencies.sandbox, ref, primary.path, services).catch(() => []);
         }
 
+        // docs/specs/private-stack-onboarding.md. The warm proof: the rest of the proof runs in a
+        // sandbox restored from a snapshot of this one, as every work sprite starts.
+        const snapshots = proofSandbox.warmSnapshots;
+        if (coldBootstrapPassed && servicesPassed && snapshots === undefined) warmProof = "skipped";
+        if (coldBootstrapPassed && servicesPassed && snapshots !== undefined) {
+          const warmStarted = Date.now();
+          if (runtime.warmCommand !== null && runtime.warmCommand !== undefined) {
+            const warmCommand = await dependencies.sandbox.exec(ref, { file: "sh", args: ["-c", bootstrapScript(runtime.warmCommand)], cwd: primary.path, timeoutMs: BOOTSTRAP_TIMEOUT_MS });
+            if (warmCommand.timedOut || warmCommand.exitCode !== 0) {
+              dependencies.logger.warn("the warm command failed in the setup proof, so the snapshot holds a partial build cache", { setup_id: setup.id, exit_code: warmCommand.exitCode });
+            }
+          }
+          snapshotId = await snapshots.take(ref);
+          await recordProofFaults();
+          await dependencies.sandbox.destroy(ref).catch(() => undefined);
+          ref = await snapshots.restore({ runId: setupSandboxRunId(setup.id), tenantId: setup.tenantId, productId: setup.productId }, snapshotId);
+          await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, setup.tenantId, setup.productId);
+          phaseAllowList = repositoryHosts;
+          await applyEgress(dependencies.sandbox, ref, repositoryHosts, egress);
+          await probeCredentialHosts(dependencies.sandbox, ref, egress.access);
+          primary = await refreshPrimary(dependencies.sandbox, ref, { url, ref: session.baseSha }, readToken);
+          await applyProposal(primary.path);
+          phaseAllowList = [...bootstrapAllowList, ...egress.access.hosts];
+          await applyEgress(dependencies.sandbox, ref, bootstrapAllowList, egress);
+          let warmServicesPassed = true;
+          if (runtime.docker === true) {
+            try {
+              await ensureDocker(dependencies.sandbox, ref);
+              if (services !== null) await startServices(dependencies.sandbox, ref, primary.path, services);
+            } catch (error) {
+              warmServicesPassed = false;
+              replace({ kind: "services", name: "services", passed: false, reason: "the stack did not start after a warm restore", logTail: String(error) });
+            }
+          }
+          const warmBootstrap = await runBootstrap(primary.path, true);
+          if (!warmBootstrap.passed) replace(warmBootstrap);
+          warmProof = warmBootstrap.passed && warmServicesPassed ? "passed" : "failed";
+          warmProofMs = Date.now() - warmStarted;
+        }
+
+        const bootstrapPassed = parts.some((part) => part.kind === "bootstrap" && part.passed);
         if (bootstrapPassed) {
           // Policy three: the agent phase, with the repository allow list alone.
           phaseAllowList = [...runtime.allowedDomains, ...egress.access.hosts];
@@ -456,12 +546,24 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }
       } finally {
         if (handle !== null) await stopPreview(dependencies.sandbox, ref, handle).catch(() => undefined);
-        // The egress log goes with the sandbox, so the faults are written before it is destroyed.
         await recordProofFaults();
         await dependencies.sandbox.destroy(ref).catch(() => undefined);
+        // The warm proof snapshot serves no run: build-ahead takes the warm snapshot after the merge.
+        if (snapshotId !== null && proofSandbox.warmSnapshots !== undefined) {
+          const removed = await proofSandbox.warmSnapshots.remove(snapshotId).catch(() => false);
+          if (!removed) dependencies.logger.warn("the warm proof snapshot was not removed", { setup_id: setup.id, snapshot_id: snapshotId });
+        }
+        await dependencies.setups.update(setup.id, { warmProofMs }).catch(() => undefined);
       }
 
-      const finalParts = withPreviewDependents(parts);
+      const finalParts = withSources(withPreviewDependents(parts), new Map(Object.entries(session.sources ?? {})));
+      // docs/specs/private-stack-onboarding.md. The derived hosts that still need the operator.
+      const coverage = (await dependencies.derivedHostCoverage?.(setup.tenantId, setup.productId)) ?? {
+        allowedDomains: product.allowedDomains,
+        credentialHosts: egress.access.hosts,
+        githubRepositories: [],
+      };
+      const derivedHosts = uncoveredDerivedHosts(setup.derivedHosts ?? [], coverage);
       const report: SetupReport = {
         parts: finalParts,
         observedHosts: session.observedHosts,
@@ -476,11 +578,16 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           session.appChanges.length === 0 || dependencies.appChangeIssues === undefined
             ? []
             : alreadyRequested(session.appChanges, await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName)),
+        ...(derivedHosts.length === 0 ? {} : { derivedHosts }),
+        ...(warmProof === undefined ? {} : { warmProof }),
       };
       await dependencies.setups.update(setup.id, { report });
       if (finalPatch === null) {
-        const failure = finalParts.find((part) => part.kind === "bootstrap" && !part.passed)
-          ? "The bootstrap failed, so Factoree could prove nothing."
+        const bootstrap = finalParts.find((part) => part.kind === "bootstrap" && !part.passed);
+        const failure = bootstrap !== undefined
+          ? warmProof === "failed" && bootstrap.reason !== null
+            ? `${bootstrap.reason}, so Factoree could prove nothing.`
+            : "The bootstrap failed, so Factoree could prove nothing."
           : "No verify command passed, so the config would be invalid.";
         return { status: "failed", pullRequestUrl: null, failureMessage: failure };
       }
@@ -538,6 +645,12 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const files = dependencies.repositoryFiles;
       const headSha = await files.headSha(setup.repositoryFullName, defaultBranch, setup.githubInstallationId);
       const existingConfig = await files.readFile(setup.repositoryFullName, CONFIG, headSha, setup.githubInstallationId);
+      // docs/specs/private-stack-onboarding.md. The hosts the committed files name, before any sandbox.
+      const derivedHosts = await readDerivedHosts(files, setup.repositoryFullName, headSha, setup.githubInstallationId).catch((error: unknown) => {
+        dependencies.logger.warn("the derived hosts were not read", { setup_id: setup.id, error: String(error) });
+        return [];
+      });
+      await dependencies.setups.update(setup.id, { derivedHosts });
       let repositoryInstructions: SetupPromptInputs["repositoryInstructions"] = null;
       for (const file of REPOSITORY_INSTRUCTION_FILES) {
         const text = await files.readFile(setup.repositoryFullName, file, headSha, setup.githubInstallationId);
@@ -643,6 +756,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           );
         }
         const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
+        const sourcesPath = `${ref.workspacePath}/setup-sources.txt`;
         const runner = dependencies.runners.get(runnerName);
         const startSession = () => runner.run({
           runId: setupSandboxRunId(setup.id),
@@ -652,7 +766,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           ref,
           workingDirectory: primary.path,
           repositoryPath: primary.path,
-          prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: primary.path, appChangesPath }),
+          prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: primary.path, appChangesPath, sourcesPath }),
           promptVersion: SETUP_PROMPT_VERSION,
           environment: {},
           actionPolicy: buildActionPolicy({ role: "setup" }),
@@ -757,9 +871,11 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           .split("\n")
           .map((line) => line.trim())
           .filter((line) => line !== "");
+        const sources = Object.fromEntries(parseSetupSources(dependencies.redactor.redactText((await readText(dependencies.sandbox, ref, sourcesPath)) ?? "")));
         const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: primary.baseSha });
         return {
           kind: "proposed",
+          sources,
           defaultBranch,
           baseSha: primary.baseSha,
           patchBase64: patch.patchBase64,

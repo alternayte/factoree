@@ -10119,6 +10119,35 @@
                                   "type": "string"
                                 }
                               },
+                              "derivedHosts": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "host": {
+                                      "type": "string"
+                                    },
+                                    "source": {
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "registry",
+                                        "git"
+                                      ]
+                                    },
+                                    "repository": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "host",
+                                    "source",
+                                    "kind"
+                                  ]
+                                }
+                              },
                               "createdAt": {
                                 "type": "string"
                               },
@@ -10142,6 +10171,7 @@
                               "failureMessage",
                               "report",
                               "deniedHosts",
+                              "derivedHosts",
                               "createdAt",
                               "endedAt",
                               "skippedFromSetupId"
@@ -11320,6 +11350,35 @@
                           "type": "string"
                         }
                       },
+                      "derivedHosts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "registry",
+                                "git"
+                              ]
+                            },
+                            "repository": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "host",
+                            "source",
+                            "kind"
+                          ]
+                        }
+                      },
                       "createdAt": {
                         "type": "string"
                       },
@@ -12190,6 +12249,12 @@
                           "null"
                         ]
                       },
+                      "warmProofMs": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
                       "session": {
                         "anyOf": [
                           {
@@ -12309,6 +12374,7 @@
                       "failureMessage",
                       "report",
                       "deniedHosts",
+                      "derivedHosts",
                       "createdAt",
                       "endedAt",
                       "skippedFromSetupId",
@@ -12317,6 +12383,7 @@
                       "temporalRunId",
                       "warm",
                       "proofMs",
+                      "warmProofMs",
                       "session",
                       "appChangeIssues"
                     ]
@@ -12342,6 +12409,145 @@
             }
           },
           "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/repository-setups/derived-hosts": {
+      "get": {
+        "operationId": "listSetupDerivedHosts",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/\\s]+\\/[^/\\s]+$"
+            },
+            "in": "query",
+            "name": "repository",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hosts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "host": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "registry",
+                              "git"
+                            ]
+                          },
+                          "repository": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "source",
+                          "kind"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "hosts"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
             "description": "Default Response",
             "content": {
               "application/json": {

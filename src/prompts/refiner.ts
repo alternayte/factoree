@@ -4,7 +4,7 @@ import { egressBody } from "./egress.js";
 import { targetRepositoriesBody, type TargetRepositoryLine } from "./implementer.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@12";
+export const REFINER_PROMPT_VERSION = "refiner@13";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -124,6 +124,7 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "Set `origin` to \"implied\" for an edge case that one sentence of the Work Item directly implies, and set `quote` to that exact sentence. \"Export the table to CSV\" implies \"the export includes the header row\".",
         "Set `origin` to \"new\" and `quote` to null for a criterion that adds behaviour no sentence implies. Factoree does not build it, and lists it for the human.",
         "Give each criterion the check that proves it: `test` with a test file path, `command` with a shell command, `http` with \"METHOD /path\", or `browser` with a route that starts with \"/\".",
+        "A criterion that a page action starts, such as a click, a fill or a page load, gets `browser`: no HTTP request can press a button. A criterion that needs earlier requests or a wait and no page action, such as \"after POST /orders, GET /orders lists the order once it is confirmed\", gets `http` with the check request; its plan can send the earlier requests first and poll the check.",
         "A criterion with no automated check does not freeze: Factoree drops it. Use `manual` or `code_review` only when no command, test, HTTP request or page can prove the criterion.",
         "Set `visible` to true when the criterion names a page, a screen or a UI element a user sees. Give a visible criterion the method `browser` and the route of the page, so Factoree captures a screenshot of it.",
         "A criterion a person judges by eye, such as \"follows the screenshot\", \"looks like\" or \"is consistent with the brand\", gets the method `manual`, `visible` true, and the route of its page as `target`. " +

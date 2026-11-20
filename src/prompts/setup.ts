@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@12";
+export const SETUP_PROMPT_VERSION = "setup@13";
 
 export interface SetupPromptFields {
   repository: string;
@@ -24,6 +24,11 @@ export interface SetupPromptFields {
   credentialHosts?: readonly string[];
   /** The file the agent writes the app changes it needs to. */
   appChangesPath: string;
+  /**
+   * docs/specs/private-stack-onboarding.md. The file the agent writes the source of each part to.
+   * Absent in a prompt rendered before it existed.
+   */
+  sourcesPath?: string;
   /** The text of the existing config, for a setup run that updates one, or null. */
   existingConfig: string | null;
   /**
@@ -76,6 +81,8 @@ identity:
 bootstrap:
   command: mise install && dotnet restore && (cd web && npm ci)
   keyFiles: ["mise.toml", "**/packages.lock.json", "web/package-lock.json"]
+warm:                     # optional: fills build caches before a warm snapshot
+  command: dotnet build
 verify:
   commands:
     - name: build
@@ -130,6 +137,25 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         `${fields.primaryRepositoryPath}/.factoree/. Factoree refuses the setup when any other file changes.`,
     ),
     section(
+      "Where the commands come from",
+      [
+        "Take each command from what the repository already runs, in this order:",
+        "1. The CI workflows in `.github/workflows`: the install, build, lint and test steps of the job that runs on a pull request.",
+        "2. `.devcontainer/devcontainer.json`, with its features and `postCreateCommand`.",
+        "3. The Dockerfile.",
+        "4. The task runner: `Makefile`, `justfile`, `Taskfile.yml`, or the `package.json` scripts.",
+        "Write a command of your own only when none of these holds one. The CI workflow is the build the team knows passes.",
+        "A CI step that needs what a sandbox lacks, such as a cloud login, a deploy secret or a self-hosted runner, stays out. When a product test secret would serve it, say so in the app changes file as the secret name it needs; when the app must change, write that change.",
+        ...(fields.sourcesPath === undefined
+          ? []
+          : [
+              `Write one line per part to ${fields.sourcesPath}, in the form \`<part>: <file> step "<step name>"\`, or \`<part>: none\` for a command of your own. ` +
+                "The parts are `bootstrap`, `services`, `preview`, `verify <name>` and `account <name>`. " +
+                'For example: `verify test: .github/workflows/ci.yml step "Run tests"`. The setup report shows each source.',
+            ]),
+      ].join("\n"),
+    ),
+    section(
       "What to write",
       [
         "Write `.factoree/config.yaml` with this shape:",
@@ -141,6 +167,8 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         `Set identity.product to "${fields.productSlug}" and identity.linear.teamKey to "${fields.linearTeamKey}".`,
         "Install each toolchain the image lacks with mise: write `.factoree/mise.toml` when the repository has no mise.toml or .tool-versions, and start the bootstrap with `mise install`. Every command already reads `.factoree/mise.toml` through MISE_CONFIG_FILE, so a command needs no mise prefix. A global.json names the .NET SDK version.",
         "List in bootstrap.keyFiles every lockfile and toolchain file the bootstrap reads.",
+        "The bootstrap runs in every sandbox: once in a fresh one, and again in each sandbox that Factoree restores from a warm snapshot, where everything it installed is already there. It must pass both times, from the caches. Factoree proves both. Some tools refuse to run when a network check fails, even with their cache full: Azure Functions Core Tools stops `func bundles download` when it cannot reach its CDN within two seconds. Skip such a download when its result already exists, as in `test -d <cache> || <download>`.",
+        "warm.command runs only before Factoree takes a warm snapshot, after the bootstrap. Use it only to fill build caches that speed up later commands, such as a first build. Never put in it what a verify command, the seed or the preview needs: a provider with no snapshots never runs it.",
         "List in context.authority the Markdown files that state the current architecture or design, as paths or globs relative to the root, with no leading `./`. " +
           "Leave out plans, per-ticket notes, reports, guides and runbooks: the agents read them anyway, and only a listed file can make Factoree ask which document governs. " +
           "ADRs need no entry, because Factoree reads their status. Leave context.authority out when no document states the architecture.",

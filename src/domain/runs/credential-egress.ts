@@ -94,23 +94,31 @@ export const assertBindable = (sandbox: Sandbox, access: HostCredentialAccess): 
 const UNREACHABLE = new Set([6, 7, 28]);
 
 /**
- * At preparation, each credential host must resolve and connect from inside the sandbox. A feed on
- * a private network is reachable only from some providers, and a restore error deep in a bootstrap
- * log names neither the host nor the provider.
+ * docs/specs/private-stack-onboarding.md. What to do about a host that a sandbox cannot reach: a
+ * sandbox reaches public-internet hosts only, so the fix is a registry it can reach.
  */
-export const probeCredentialHosts = async (sandbox: Sandbox, ref: SandboxRef, access: HostCredentialAccess): Promise<void> => {
-  for (const credential of access.credentials) {
+export const PUBLIC_HOSTS_ONLY =
+  "Sandboxes reach public-internet hosts only: a host that does not resolve publicly, or that resolves to a private, loopback or link-local address, is refused. " +
+  "Use a registry the sandbox can reach, with a host credential: GitHub Packages of your organization, a cloud feed such as Azure Artifacts or JFrog Cloud, or a proxy that faces the internet.";
+
+/**
+ * Each host must resolve and connect from inside the sandbox. A feed on a private network is
+ * unreachable, and a restore error deep in a bootstrap log names neither the host nor the provider.
+ */
+export const probeHosts = async (sandbox: Sandbox, ref: SandboxRef, hosts: readonly string[], label: string): Promise<void> => {
+  for (const host of hosts) {
     const result = await sandbox.exec(ref, {
       file: "curl",
-      args: ["-sS", "-o", "/dev/null", "--connect-timeout", "10", "--max-time", "20", `https://${credential.host}/`],
+      args: ["-sS", "-o", "/dev/null", "--connect-timeout", "10", "--max-time", "20", `https://${host}/`],
       cwd: "/",
       timeoutMs: 30_000,
     });
     if (result.timedOut || UNREACHABLE.has(result.exitCode)) {
-      throw new RunConfigurationError(
-        `The host credential host ${credential.host} does not resolve or connect from the sandbox provider ${sandbox.name}. ` +
-          "A host on a private network needs a provider that can reach it.",
-      );
+      throw new RunConfigurationError(`The ${label} ${host} does not resolve or connect from the sandbox provider ${sandbox.name}. ${PUBLIC_HOSTS_ONLY}`);
     }
   }
 };
+
+/** At preparation, each credential host must resolve and connect from inside the sandbox. */
+export const probeCredentialHosts = (sandbox: Sandbox, ref: SandboxRef, access: HostCredentialAccess): Promise<void> =>
+  probeHosts(sandbox, ref, access.credentials.map((credential) => credential.host), "host credential host");

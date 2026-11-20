@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listHostCredentialsOptions, listHostCredentialsQueryKey } from "@/api/@tanstack/react-query.gen";
 import { putHostCredentials } from "@/api/sdk.gen";
 import type { ListHostCredentialsResponse, PutHostCredentialsData } from "@/api/types.gen";
@@ -7,6 +7,7 @@ import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
 import { Field, Input, Select, Textarea } from "@/components/form";
 import { Badge, Empty, ErrorAlert, Section, SkeletonRows } from "@/components/layout";
+import type { CredentialPrefill } from "./derived-hosts";
 
 type Credential = ListHostCredentialsResponse["credentials"][number];
 type Kind = Credential["kind"];
@@ -54,10 +55,16 @@ export function HostCredentialsSection({
   productId,
   linearWorkspaceId,
   canEdit,
+  prefill,
 }: {
   productId: string;
   linearWorkspaceId: string;
   canEdit: boolean;
+  /**
+   * docs/specs/private-stack-onboarding.md. A derived host the operator chose on the setup panel.
+   * Each new value opens the form with the host filled in.
+   */
+  prefill?: (CredentialPrefill & { nonce: number }) | null;
 }) {
   const qc = useQueryClient();
   const options = { path: { id: productId }, query: { linearWorkspaceId } };
@@ -66,6 +73,19 @@ export function HostCredentialsSection({
   const [removing, setRemoving] = useState<Credential | null>(null);
   const credentials = list.data?.credentials ?? [];
   const suggestions = list.data?.suggestedRedirectHosts ?? {};
+  const [initial, setInitial] = useState<CredentialPrefill | null>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const [seenNonce, setSeenNonce] = useState<number | null>(null);
+  // A github.com repository joins the existing GitHub credential; any other host opens a new one.
+  if (prefill && prefill.nonce !== seenNonce && list.data) {
+    setSeenNonce(prefill.nonce);
+    const github = credentials.find((credential) => credential.kind === "github");
+    setInitial(prefill);
+    setEditing(prefill.host === "github.com" && github !== undefined ? github : "new");
+  }
+  useEffect(() => {
+    if (prefill) sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [prefill]);
 
   const save = useMutation({
     mutationFn: async (next: CredentialInput[]) =>
@@ -78,6 +98,7 @@ export function HostCredentialsSection({
   });
 
   return (
+    <div ref={sectionRef}>
     <Section
       title="Host credentials"
       description="Private registries, package feeds and git repositories. The sandbox provider adds each credential outside the sandbox, so no agent, script or file holds it."
@@ -95,8 +116,9 @@ export function HostCredentialsSection({
       </p>
       {editing !== null ? (
         <CredentialForm
-          key={editing === "new" ? "new" : editing.host}
+          key={`${editing === "new" ? "new" : editing.host}:${String(seenNonce ?? 0)}`}
           existing={editing === "new" ? null : editing}
+          initial={initial}
           suggestions={suggestions}
           mutation={save}
           onSubmit={(input) => {
@@ -109,6 +131,7 @@ export function HostCredentialsSection({
           onCancel={() => {
             save.reset();
             setEditing(null);
+            setInitial(null);
           }}
         />
       ) : null}
@@ -158,6 +181,7 @@ export function HostCredentialsSection({
         Sandboxes that start after this no longer reach the host. Factoree deletes the stored secret.
       </Confirm>
     </Section>
+    </div>
   );
 }
 
@@ -174,25 +198,30 @@ function CredentialDetail({ credential }: { credential: Credential }) {
 
 function CredentialForm({
   existing,
+  initial,
   suggestions,
   mutation,
   onSubmit,
   onCancel,
 }: {
   existing: Credential | null;
+  /** docs/specs/private-stack-onboarding.md. The derived host the form opens with. */
+  initial?: CredentialPrefill | null;
   suggestions: Record<string, string[]>;
   mutation: ReturnType<typeof useMutation<unknown, Error, CredentialInput[]>>;
   onSubmit: (input: CredentialInput) => void;
   onCancel: () => void;
 }) {
-  const [kind, setKind] = useState<Kind>(existing?.kind ?? "header");
-  const [host, setHost] = useState(existing?.kind === "github" ? "" : (existing?.host ?? ""));
+  const [kind, setKind] = useState<Kind>(existing?.kind ?? (initial?.host === "github.com" ? "github" : "header"));
+  const [host, setHost] = useState(existing?.kind === "github" ? "" : (existing?.host ?? (initial?.host === "github.com" ? "" : (initial?.host ?? ""))));
   const [username, setUsername] = useState(existing?.username ?? "");
   const [headerName, setHeaderName] = useState(existing?.headerName ?? "Authorization");
   const [pathPrefix, setPathPrefix] = useState(existing?.pathPrefix ?? "");
   const [secret, setSecret] = useState("");
   const [redirects, setRedirects] = useState((existing?.redirectHosts ?? []).join("\n"));
-  const [repositories, setRepositories] = useState((existing?.repositories ?? []).join("\n"));
+  const [repositories, setRepositories] = useState(
+    [...new Set([...(existing?.repositories ?? []), ...(initial?.repository === undefined ? [] : [initial.repository])])].join("\n"),
+  );
   const suggested = suggestions[host.trim().toLowerCase()] ?? [];
   const missingSuggestions = suggested.filter((entry) => !lines(redirects).includes(entry));
   const needsSecret = kind !== "github" && !(existing?.hasSecret && existing.host === host.trim().toLowerCase());

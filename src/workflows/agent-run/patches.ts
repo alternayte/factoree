@@ -49,4 +49,9 @@ export const PATCH = {
   changeSetStatus: "change-set-status",
   /** docs/specs/context-authority-and-cited-conflicts.md. The context resolves again with cited conflicts. */
   citedConflicts: "cited-context-conflicts",
+  /**
+   * docs/specs/check-faults.md, GitHub issue 49. A `patched` gate, not yet deprecated: a FAIL whose
+   * unchanged check passed in an earlier attempt is UNSTABLE when the reviewer passed the change.
+   */
+  crossAttemptUnstable: "cross-attempt-unstable",
 } as const;

@@ -47,6 +47,7 @@ import {
   listRunEvents,
   listRuns,
   listSandboxProviders,
+  listSetupDerivedHosts,
   listSetupLinearTeams,
   listWorkspaces,
   type Options,
@@ -173,6 +174,9 @@ import type {
   ListRunsResponse,
   ListSandboxProvidersData,
   ListSandboxProvidersResponse,
+  ListSetupDerivedHostsData,
+  ListSetupDerivedHostsError,
+  ListSetupDerivedHostsResponse,
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsError,
   ListSetupLinearTeamsResponse,
@@ -1144,6 +1148,28 @@ export const listRepositorySetupHistoryOptions = (options: Options<ListRepositor
       return data;
     },
     queryKey: listRepositorySetupHistoryQueryKey(options),
+  });
+
+export const listSetupDerivedHostsQueryKey = (options: Options<ListSetupDerivedHostsData>) =>
+  createQueryKey("listSetupDerivedHosts", options);
+
+export const listSetupDerivedHostsOptions = (options: Options<ListSetupDerivedHostsData>) =>
+  queryOptions<
+    ListSetupDerivedHostsResponse,
+    ListSetupDerivedHostsError,
+    ListSetupDerivedHostsResponse,
+    ReturnType<typeof listSetupDerivedHostsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listSetupDerivedHosts({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listSetupDerivedHostsQueryKey(options),
   });
 
 export const listContextSourcesQueryKey = (options: Options<ListContextSourcesData>) =>

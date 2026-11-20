@@ -2592,6 +2592,12 @@ export type ListRepositorySetupsResponses = {
       failureMessage: string | null;
       report: string | null;
       deniedHosts: Array<string>;
+      derivedHosts: Array<{
+        host: string;
+        source: string;
+        kind: "registry" | "git";
+        repository?: string;
+      }>;
       createdAt: string;
       endedAt: string | null;
       skippedFromSetupId: string | null;
@@ -2896,6 +2902,12 @@ export type ListRepositorySetupHistoryResponses = {
     failureMessage: string | null;
     report: string | null;
     deniedHosts: Array<string>;
+    derivedHosts: Array<{
+      host: string;
+      source: string;
+      kind: "registry" | "git";
+      repository?: string;
+    }>;
     createdAt: string;
     endedAt: string | null;
     skippedFromSetupId: string | null;
@@ -3073,6 +3085,7 @@ export type ListRepositorySetupHistoryResponses = {
     temporalRunId: string | null;
     warm: boolean | null;
     proofMs: number | null;
+    warmProofMs: number | null;
     session: {
       runner: string;
       model: string | null;
@@ -3095,6 +3108,57 @@ export type ListRepositorySetupHistoryResponses = {
 
 export type ListRepositorySetupHistoryResponse =
   ListRepositorySetupHistoryResponses[keyof ListRepositorySetupHistoryResponses];
+
+export type ListSetupDerivedHostsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+    repository: string;
+  };
+  url: "/admin/products/{id}/repository-setups/derived-hosts";
+};
+
+export type ListSetupDerivedHostsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  422: {
+    error: unknown;
+  };
+};
+
+export type ListSetupDerivedHostsError = ListSetupDerivedHostsErrors[keyof ListSetupDerivedHostsErrors];
+
+export type ListSetupDerivedHostsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    hosts: Array<{
+      host: string;
+      source: string;
+      kind: "registry" | "git";
+      repository?: string;
+    }>;
+  };
+};
+
+export type ListSetupDerivedHostsResponse = ListSetupDerivedHostsResponses[keyof ListSetupDerivedHostsResponses];
 
 export type ListContextSourcesData = {
   body?: never;
