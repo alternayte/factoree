@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-20
+
 ### Added
 
 - Derived hosts: before a setup starts, Factoree reads the hosts that the repository's committed files name, from the registry config files (`.npmrc`, `.yarnrc.yml`, `NuGet.config`, `pip.conf`, `pyproject.toml`, Maven, Gradle and Cargo), the lockfiles, the git dependencies and the CI workflows. The setup start lists each host that no allow list or host credential covers, with "Add all to product allow list" and "Add host credential", which opens the form with the host filled in. The setup report lists the hosts still uncovered (`docs/specs/private-stack-onboarding.md`).
