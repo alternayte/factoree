@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The preview proxy: on Kiln and E2B, every preview runs behind a proxy in the sandbox that sends each request as `localhost:<port>`, with Host, Origin, Referer and X-Forwarded-Host rewritten, and redirects and cookies sent back to the public host. Vite, webpack-dev-server, Next.js, Rails, Django and Phoenix need no allowed-hosts setting, and a preview that listens on localhost alone works (`docs/specs/preview-host-and-e2b-egress.md`, GitHub issue 81, `setup@15`).
+- E2B sandboxes keep a DNS log. Faults and setup reports on E2B name the hosts the allow list denied, and the E2B setup bootstrap allows only the hosts the setup session reached, as on Kiln (GitHub issue 86).
+
+### Removed
+
+- The preview environment of 0.19.0: `FACTOREE_PREVIEW_URL`, `FACTOREE_PREVIEW_HOST` and `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`. The preview proxy replaces them.
+
 ### Changed
 
 - A silent session whose processes still use CPU time is not hung before 35 minutes, on every runner. opencode, the default runner, no longer stops a long test suite at the silence limit. The `session_hung` event says whether the processes used CPU time (GitHub issue 84).

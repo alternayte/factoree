@@ -1,0 +1,50 @@
+#!/bin/sh
+# docs/specs/preview-host-and-e2b-egress.md. Runs as root in an E2B sandbox after a create and
+# after a restore. A dnsmasq on the guest's own interface address logs every lookup to a
+# root-owned file and forwards it to 8.8.8.8, which E2B allows. The address is not loopback,
+# because rootless Docker resolves through slirp4netns, which cannot reach a loopback resolver.
+# It does nothing when dnsmasq already answers on the current address. It exits nonzero, and
+# leaves /etc/resolv.conf as it was, when dnsmasq does not start.
+set -eu
+log_dir=/var/log/factoree
+log="$log_dir/dns.log"
+pid_file=/run/factoree-dns.pid
+address="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | head -n 1 || true)"
+if [ -z "$address" ]; then
+  echo "factoree-dns-start: the guest has no IPv4 interface address" >&2
+  exit 1
+fi
+
+mkdir -p "$log_dir"
+chown root:root "$log_dir"
+chmod 0755 "$log_dir"
+touch "$log"
+chown root:root "$log"
+chmod 0644 "$log"
+
+if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+  if grep -qx "nameserver $address" /etc/resolv.conf 2>/dev/null; then exit 0; fi
+  # A restore can bring a new address. The old dnsmasq listens on the old one.
+  kill "$(cat "$pid_file")" 2>/dev/null || true
+  sleep 0.2
+fi
+
+dnsmasq --no-resolv --server=8.8.8.8 --cache-size=0 --no-hosts --no-poll \
+  --listen-address="$address" --bind-interfaces --port=53 \
+  --log-queries --log-facility="$log" --pid-file="$pid_file" --user=root
+
+i=0
+until kill -0 "$(cat "$pid_file" 2>/dev/null || echo 0)" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -gt 20 ]; then
+    echo "factoree-dns-start: dnsmasq did not start" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+# A link to a resolver of the guest image is replaced by a file. A mounted file is written in place.
+if [ -L /etc/resolv.conf ]; then rm -f /etc/resolv.conf; fi
+printf 'nameserver %s\n' "$address" > /etc/resolv.conf
+chmod 0644 /etc/resolv.conf 2>/dev/null || true
+echo "#factoree-dns started $address" >> "$log"

@@ -96,10 +96,12 @@ describe("E2BSandbox (docs/specs/e2b-sandbox-provider.md)", () => {
     const sandbox = new E2BSandbox({ gateway, image: IMAGE });
     await sandbox.create(input);
     await sandbox.warmSnapshots.restore(input, "snap1");
-    const chmods = recorded.runs.filter((run) => run.options.user === "root");
+    const chmods = recorded.runs.filter((run) => run.options.user === "root" && run.command.includes("chmod 0666"));
     expect(chmods).toHaveLength(2);
     expect(chmods[0]?.command).toContain("chmod 0666 /dev/net/tun /dev/fuse");
     expect(chmods[0]?.options.envs).toEqual({});
+    // docs/specs/preview-host-and-e2b-egress.md. The DNS log starts after each create and restore too.
+    expect(recorded.runs.filter((run) => run.options.user === "root" && run.command.includes("factoree-dns-start"))).toHaveLength(2);
   });
 
   it("builds the template again after a failed build", async () => {
@@ -163,10 +165,10 @@ describe("E2BSandbox (docs/specs/e2b-sandbox-provider.md)", () => {
     const ref = await sandbox.create(input);
     await sandbox.exec(ref, { file: "npm", args: ["test"], cwd: "repo", isolated: true });
     await sandbox.exec(ref, { file: "npm", args: ["test"] });
-    // runs[0] is the root device chmod of the create (DI-21.29).
-    expect(recorded.runs[1]?.options.envs.RUNNER_TOKEN).toBeUndefined();
-    expect(recorded.runs[1]?.options).toMatchObject({ cwd: "/home/agent/workspace/repo", user: "agent", timeoutMs: 0 });
-    expect(recorded.runs[2]?.options.envs.RUNNER_TOKEN).toBe("secret");
+    // runs[0] and runs[1] are the root device chmod (DI-21.29) and the DNS log start of the create.
+    expect(recorded.runs[2]?.options.envs.RUNNER_TOKEN).toBeUndefined();
+    expect(recorded.runs[2]?.options).toMatchObject({ cwd: "/home/agent/workspace/repo", user: "agent", timeoutMs: 0 });
+    expect(recorded.runs[3]?.options.envs.RUNNER_TOKEN).toBe("secret");
   });
 
   it("reports a command that reached its limit with exit code 124", async () => {

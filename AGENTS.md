@@ -49,6 +49,7 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - work sprite: the sprite where the implementer runs for the whole run. Avoid: run sprite.
 - check sprite: a new sprite per attempt, built from the base SHA plus the captured patch, where verification, user validation and review run. Avoid: verification sandbox, second sprite.
 - pull request preview: the live copy of the published commit that the repository CI hosts. It is a link for humans and never evidence. Avoid: Kiln preview, review app, preview environment.
+- preview proxy: the root-owned proxy in the sandbox, behind the exposed port, that makes a preview see each request as localhost:<port>. Avoid: host rewrite proxy, reverse proxy, preview tunnel.
 - visual evidence: the screenshots, video and trace that Factoree captures from a browser assertion in the check sprite. Avoid: demo, visual proof.
 - self-check: the implementer's own browser checks in the work sprite. Its output never reaches the proof pack. Avoid: implementer evidence, implementer demo.
 - warm snapshot: the Kiln snapshot of one repository, taken after the clone and the bootstrap and before any agent runs. A run and its check sprites fork from it. Avoid: golden sprite, cache sprite.

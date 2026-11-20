@@ -1,0 +1,128 @@
+#!/usr/local/bin/node
+// docs/specs/preview-host-and-e2b-egress.md. The preview proxy. It listens on the proxy port and
+// forwards every request to the preview on localhost:<port>, so the app sees each request as a
+// developer's browser sends it after a clone: Host, Origin, Referer and X-Forwarded-Host name
+// localhost:<port>. A response Location and a Set-Cookie Domain that name localhost go back to
+// the public host. Websocket upgrades pass through. The body is never changed.
+//
+// Usage: factoree-preview-proxy <listen port> <preview port>
+// ES module syntax: Node 24 detects it in a file with no extension and no package.json.
+import http from "node:http";
+import net from "node:net";
+
+const listenPort = Number(process.argv[2]);
+const targetPort = Number(process.argv[3]);
+if (!Number.isInteger(listenPort) || !Number.isInteger(targetPort) || listenPort <= 0 || targetPort <= 0) {
+  process.stderr.write("usage: factoree-preview-proxy <listen port> <preview port>\n");
+  process.exit(2);
+}
+
+const local = `localhost:${targetPort}`;
+const localOrigins = [`http://localhost:${targetPort}`, `http://127.0.0.1:${targetPort}`, `https://localhost:${targetPort}`];
+
+/** The public origin the browser used, from the gateway headers. A gateway terminates TLS. */
+const publicOrigin = (headers) => {
+  const host = String(headers["x-forwarded-host"] ?? headers.host ?? "").split(",")[0].trim();
+  if (host === "") return null;
+  const proto = String(headers["x-forwarded-proto"] ?? "").split(",")[0].trim();
+  const scheme = proto === "http" || proto === "https" ? proto : /^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? "http" : "https";
+  return `${scheme}://${host}`;
+};
+
+/** Replaces the origin part of a URL that starts with `from` by `to`. */
+const swapOrigin = (value, from, to) => {
+  if (typeof value !== "string" || from === null) return value;
+  return value === from || value.startsWith(`${from}/`) || value.startsWith(`${from}?`) ? `${to}${value.slice(from.length)}` : value;
+};
+
+/** The request headers the preview receives. */
+const upstreamHeaders = (headers, origin) => {
+  const out = { ...headers };
+  out.host = local;
+  if (out.origin !== undefined && out.origin !== "null") out.origin = swapOrigin(out.origin, origin, `http://${local}`);
+  if (out.referer !== undefined) out.referer = swapOrigin(out.referer, origin, `http://${local}`);
+  out["x-forwarded-host"] = local;
+  out["x-forwarded-proto"] = "http";
+  delete out.forwarded;
+  delete out["x-forwarded-for"];
+  delete out["x-forwarded-port"];
+  delete out["x-real-ip"];
+  return out;
+};
+
+/** The response headers the browser receives. */
+const downstreamHeaders = (headers, origin) => {
+  const out = { ...headers };
+  if (origin !== null && typeof out.location === "string") {
+    for (const from of localOrigins) out.location = swapOrigin(out.location, from, origin);
+  }
+  if (Array.isArray(out["set-cookie"])) {
+    // A cookie for localhost would not reach the public host. A cookie with no Domain belongs to
+    // the host that set it, which the browser sees as the public host.
+    out["set-cookie"] = out["set-cookie"].map((cookie) => cookie.replace(/;\s*domain=(localhost|127\.0\.0\.1)(?=;|$)/gi, ""));
+  }
+  if (origin !== null && typeof out["access-control-allow-origin"] === "string") {
+    for (const from of localOrigins) out["access-control-allow-origin"] = swapOrigin(out["access-control-allow-origin"], from, origin);
+  }
+  return out;
+};
+
+const unavailable = (response, error) => {
+  if (response.headersSent) {
+    response.destroy();
+    return;
+  }
+  response.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
+  response.end(`Factoree preview proxy: nothing answers on ${local} (${error.code ?? error.message}).\n`);
+};
+
+const server = http.createServer((request, response) => {
+  const origin = publicOrigin(request.headers);
+  const upstream = http.request(
+    {
+      host: "localhost",
+      port: targetPort,
+      method: request.method,
+      path: request.url,
+      headers: upstreamHeaders(request.headers, origin),
+      // The preview may listen on 127.0.0.1 or on ::1 only.
+      autoSelectFamily: true,
+    },
+    (answer) => {
+      response.writeHead(answer.statusCode ?? 502, answer.statusMessage, downstreamHeaders(answer.headers, origin));
+      answer.pipe(response);
+    },
+  );
+  upstream.on("error", (error) => unavailable(response, error));
+  request.pipe(upstream);
+});
+
+// A websocket upgrade: the rewritten request head goes to the preview, then both sockets pipe.
+server.on("upgrade", (request, socket, head) => {
+  const origin = publicOrigin(request.headers);
+  const headers = upstreamHeaders(request.headers, origin);
+  const upstream = net.connect({ host: "localhost", port: targetPort, autoSelectFamily: true }, () => {
+    const lines = [`${request.method} ${request.url} HTTP/${request.httpVersion}`];
+    for (const [name, value] of Object.entries(headers)) {
+      for (const item of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${item}`);
+    }
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    if (head.length > 0) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+});
+
+// A long poll, a server-sent event stream or a slow build must not end at a proxy timeout.
+server.requestTimeout = 0;
+server.headersTimeout = 60_000;
+server.keepAliveTimeout = 5_000;
+server.listen(listenPort, "0.0.0.0", () => {
+  process.stdout.write(`factoree-preview-proxy listening on ${listenPort} for ${local}\n`);
+});
+server.on("error", (error) => {
+  process.stderr.write(`factoree-preview-proxy could not listen on ${listenPort}: ${error.message}\n`);
+  process.exit(1);
+});

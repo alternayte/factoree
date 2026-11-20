@@ -143,7 +143,7 @@ describe("startPreview", () => {
   });
 
   // GitHub issue 81. Vite answered 403 on every poll, and the error said only "did not answer".
-  it("names the last poll status and body, and the Vite host check", async () => {
+  it("names the last poll status and body", async () => {
     const sandbox = new FakeSandbox();
     let clock = 0;
     const started = startPreview({
@@ -154,16 +154,33 @@ describe("startPreview", () => {
       },
       now: () => (clock += 1_000),
     });
-    await expect(started).rejects.toThrow(/returned 403: Blocked request\. This host \("x\.e2b\.app"\) is not allowed\.\. Vite refuses a Host/);
+    await expect(started).rejects.toThrow(/returned 403: Blocked request\. This host \("x\.e2b\.app"\) is not allowed\.\./);
   });
 
-  it("gives the preview command the exposed host", async () => {
-    const sandbox = new FakeSandbox();
-    await startPreview({ ...buildBase(sandbox), environment: { __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: "a.test" }, probe: async () => ({ status: 200 }) });
-    const env = sandbox.started[0]?.env ?? {};
-    expect(env["FACTOREE_PREVIEW_URL"]).toBe("http://fake.invalid:8080");
-    expect(env["FACTOREE_PREVIEW_HOST"]).toBe("fake.invalid");
-    expect(env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"]).toBe("a.test,fake.invalid");
+  // docs/specs/preview-host-and-e2b-egress.md. On a provider with the sandbox image, the browser
+  // reaches the preview through the preview proxy on its fixed port.
+  it("starts the preview proxy first and exposes the proxy port", async () => {
+    const sandbox = new FakeSandbox({ ...new FakeSandbox().capabilities, runsPreviewProxy: true });
+    const probed: string[] = [];
+    const handle = await startPreview({ ...buildBase(sandbox), probe: async (url) => (probed.push(url), { status: 200 }) });
+    expect(sandbox.started[0]).toMatchObject({ file: "/opt/factoree/bin/factoree-preview-proxy", args: ["38080", "8080"] });
+    expect(sandbox.started[1]?.file).toBe("sh");
+    expect(probed).toEqual(["http://fake.invalid:38080/health"]);
+    expect(handle.port).toBe(8080);
+    await stopPreview(sandbox, ref, handle);
+    expect(sandbox.calls.filter((call) => call === "cancelProcess")).toHaveLength(2);
+  });
+
+  it("fails the preview with the proxy output when the proxy exits", async () => {
+    const sandbox = new FakeSandbox({ ...new FakeSandbox().capabilities, runsPreviewProxy: true });
+    const started = startPreview({
+      ...buildBase(sandbox),
+      probe: async () => {
+        sandbox.finishProcess("process-1", { exitCode: 1, stderr: "factoree-preview-proxy could not listen on 38080: EADDRINUSE" });
+        return null;
+      },
+    });
+    await expect(started).rejects.toMatchObject({ reason: "exited", message: "The preview proxy on port 38080 exited." });
   });
 
   it("keeps the original error when the cancel of the leaked process fails", async () => {
