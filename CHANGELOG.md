@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-21
+
 ### Added
 
 - The preview proxy: on Kiln and E2B, every preview runs behind a proxy in the sandbox that sends each request as `localhost:<port>`, with Host, Origin, Referer and X-Forwarded-Host rewritten, and redirects and cookies sent back to the public host. Vite, webpack-dev-server, Next.js, Rails, Django and Phoenix need no allowed-hosts setting, and a preview that listens on localhost alone works (`docs/specs/preview-host-and-e2b-egress.md`, GitHub issue 81, `setup@15`).
