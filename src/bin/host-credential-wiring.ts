@@ -1,3 +1,4 @@
+import { derivedHostCoverageOf, type DerivedHostCoverage } from "~/domain/setup/derived-hosts.js";
 import type { Prisma } from "@prisma/client";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import {
@@ -45,6 +46,12 @@ export const createHostCredentialWiring = (dependencies: {
     access,
     hosts: async (tenantId: string, productId: string): Promise<string[]> => credentialHostsOf(await store.list(tenantId, productId)),
     key: async (tenantId: string, productId: string): Promise<string[]> => credentialKeyOf(await store.list(tenantId, productId)),
+    /** docs/specs/private-stack-onboarding.md. What already covers a derived host of the product. */
+    coverage: async (tenantId: string, productId: string): Promise<DerivedHostCoverage> => {
+      const product = await dependencies.prisma.product.findUnique({ where: { id: productId }, select: { allowedDomains: true } });
+      const repositories = await dependencies.prisma.repository.findMany({ where: { tenantId, productId, absentSince: null }, select: { fullName: true } });
+      return derivedHostCoverageOf(product?.allowedDomains ?? [], await store.list(tenantId, productId), repositories.map((row) => row.fullName));
+    },
   };
 };
 

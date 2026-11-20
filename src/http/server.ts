@@ -1,3 +1,4 @@
+import { derivedHostCoverageOf } from "~/domain/setup/derived-hosts.js";
 import {
   registerRepositorySetupRoutes,
   type BuildAheadFailureView,
@@ -90,7 +91,7 @@ export interface ServerDependencies {
    * and starts one setup workflow. Absent in a server that starts no workflow, such as the
    * OpenAPI build, which still documents the routes.
    */
-  repositorySetup?: Pick<RepositorySetupRouteDependencies, "listInstallationRepositories" | "startSetup">;
+  repositorySetup?: Pick<RepositorySetupRouteDependencies, "listInstallationRepositories" | "startSetup" | "derivedHosts">;
   /** docs/specs/run-visibility.md. The Temporal UI inside the stack, or absent for none. */
   temporalUiUrl?: string | undefined;
   /** The Temporal namespace of the install. Absent means `default`. */
@@ -277,6 +278,12 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         listInstallationRepositories:
           dependencies.repositorySetup?.listInstallationRepositories ?? (() => Promise.reject(new Error("this server lists no repository"))),
         startSetup: dependencies.repositorySetup?.startSetup ?? (() => Promise.reject(new Error("this server starts no workflow"))),
+        derivedHosts: dependencies.repositorySetup?.derivedHosts,
+        derivedHostCoverage: async (tenantId, productId) => {
+          const product = await prisma.product.findUnique({ where: { id: productId }, select: { allowedDomains: true } });
+          const registered = await prisma.repository.findMany({ where: { tenantId, productId, absentSince: null }, select: { fullName: true } });
+          return derivedHostCoverageOf(product?.allowedDomains ?? [], await new PrismaHostCredentialStore(prisma).list(tenantId, productId), registered.map((row) => row.fullName));
+        },
         buildAheadFailures: async (tenantId) => {
           const names = new Map((await sandboxProviders.list()).map((provider) => [provider.id, provider.name]));
           const byRepository = new Map<string, BuildAheadFailureView[]>();

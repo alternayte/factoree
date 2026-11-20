@@ -1,4 +1,5 @@
 import { isMap, isSeq, parseDocument } from "yaml";
+import type { DerivedHost } from "./derived-hosts.js";
 
 /**
  * docs/specs/repository-setup-and-services.md. One part of a proposed `.factoree/config.yaml` that
@@ -15,6 +16,11 @@ export interface SetupPartResult {
   reason: string | null;
   /** The last lines of the output of a failed part, already redacted. */
   logTail?: string;
+  /**
+   * docs/specs/private-stack-onboarding.md. Where the setup agent took the part from: a file and a
+   * step, such as `.github/workflows/ci.yml step "Test"`, or "none". Absent in an older report.
+   */
+  source?: string;
 }
 
 /** The setup report: the result of every part, and what the setup sandbox reached. */
@@ -45,6 +51,16 @@ export interface SetupReport {
    * proven config drops. Absent in a report made before it existed.
    */
   agentsBlockRemoved?: boolean;
+  /**
+   * docs/specs/private-stack-onboarding.md. The derived hosts that nothing covered when the proof
+   * ran, so the operator adds each one. Absent in a report made before it existed.
+   */
+  derivedHosts?: DerivedHost[];
+  /**
+   * docs/specs/private-stack-onboarding.md. "passed", "failed", or "skipped" when the provider has
+   * no warm snapshots. Absent when no warm proof was due, such as after a failed cold bootstrap.
+   */
+  warmProof?: "passed" | "failed" | "skipped";
 }
 
 /** Why a part that depends on another part did not run. */
@@ -90,8 +106,34 @@ export const withPreviewDependents = (parts: readonly SetupPartResult[]): SetupP
   );
 };
 
-const partLabel = (part: SetupPartResult): string =>
+const partName = (part: SetupPartResult): string =>
   part.kind === "verify" ? `verify command \`${part.name}\`` : part.kind === "account" ? `account \`${part.name}\`` : part.kind;
+
+const partLabel = (part: SetupPartResult): string =>
+  part.source === undefined ? partName(part) : `${partName(part)} (from ${part.source === "none" ? "no repository file" : part.source})`;
+
+/**
+ * docs/specs/private-stack-onboarding.md. The sources file the setup agent writes: one line per
+ * part, `<kind>[ <name>]: <source>`, such as `verify test: .github/workflows/ci.yml step "Test"`.
+ */
+export const parseSetupSources = (text: string): Map<string, string> => {
+  const sources = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    const match = /^\s*(bootstrap|services|preview|verify|account)(?:\s+([^:]+?))?\s*:\s*(.+?)\s*$/.exec(line);
+    if (match === null) continue;
+    const kind = match[1]!;
+    const name = match[2] ?? kind;
+    sources.set(`${kind}:${name}`, match[3]!.slice(0, 300));
+  }
+  return sources;
+};
+
+/** Each part with the source the setup agent named for it. */
+export const withSources = (parts: readonly SetupPartResult[], sources: ReadonlyMap<string, string>): SetupPartResult[] =>
+  parts.map((part) => {
+    const source = sources.get(`${part.kind}:${part.name}`);
+    return source === undefined ? part : { ...part, source };
+  });
 
 /** The pull request body and the report the product page shows. */
 export const renderSetupReport = (report: SetupReport): string => {
@@ -140,6 +182,23 @@ export const renderSetupReport = (report: SetupReport): string => {
       "### Agents block",
       "",
       "Factoree removed the `agents` block. The product page selects the runner of each role, and Factoree ignores the block.",
+      "",
+    );
+  }
+  if (report.warmProof === "passed") {
+    lines.push("The bootstrap and the services also passed in a sandbox restored from a snapshot, as every run starts.", "");
+  } else if (report.warmProof === "skipped") {
+    lines.push("The sandbox provider takes no snapshots, so Factoree did not prove a warm restore. A run on it starts cold.", "");
+  }
+  if ((report.derivedHosts ?? []).length > 0) {
+    lines.push(
+      "### Hosts the repository names",
+      "",
+      "The committed files name these hosts, and no allow list or host credential covers them. Add each one to the product allow list, or add a host credential for a private feed. Sandboxes reach public-internet hosts only.",
+      "",
+      ...(report.derivedHosts ?? []).map((entry) =>
+        `- \`${entry.host}\`${entry.repository === undefined ? "" : ` (\`${entry.repository}\`)`}, from \`${entry.source}\``,
+      ),
       "",
     );
   }

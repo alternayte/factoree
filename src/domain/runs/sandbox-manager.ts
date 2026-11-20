@@ -398,6 +398,12 @@ type WarmScope = "all" | "first";
  * exits with status 2, so `|| true` never runs. The option is therefore tried in a subshell
  * first, and set only where it exists. Such a shell keeps the old behaviour.
  */
+/**
+ * docs/specs/private-stack-onboarding.md. The longest a bootstrap may run, in a run and in the
+ * setup proof alike. Without it a hung bootstrap holds the prepare activity until it times out.
+ */
+export const BOOTSTRAP_TIMEOUT_MS = 30 * 60_000;
+
 export const bootstrapScript = (command: string): string =>
   `if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi\n${command}`;
 
@@ -1220,9 +1226,12 @@ export class SandboxManager {
       file: "sh",
       args: ["-c", bootstrapScript(command)],
       cwd: target.checkout.path,
+      timeoutMs: BOOTSTRAP_TIMEOUT_MS,
       ...(Object.keys(target.environment).length === 0 ? {} : { env: target.environment }),
     });
-    if (result.exitCode !== 0) {
+    if (result.timedOut || result.exitCode !== 0) {
+      const subject = count > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command";
+      const failure = result.timedOut ? `ran longer than ${String(BOOTSTRAP_TIMEOUT_MS / 60_000)} minutes` : `failed with exit code ${String(result.exitCode)}`;
       await this.recordCommandFailure(input, sandbox, ref, {
         step: "bootstrap",
         command,
@@ -1230,15 +1239,12 @@ export class SandboxManager {
         durationMs: Date.now() - started,
         log: `--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}\n`,
         allowList,
-        sentence: `${count > 1 ? `The bootstrap command of ${target.repository}` : "The bootstrap command"} failed with exit code ${String(result.exitCode)}.`,
+        sentence: `${subject.charAt(0).toUpperCase()}${subject.slice(1)} ${failure}.`,
         ordinal: target.repository,
       });
       // The bootstrap command comes from the repository configuration, so a failure of it is
       // a configuration fault. A retry runs the same command and fails again.
-      throw new RunConfigurationError(
-        `${count > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command"} failed with exit code ${result.exitCode}: ` +
-          withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr)),
-      );
+      throw new RunConfigurationError(`${subject} ${failure}: ${withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr))}`);
     }
   }
 

@@ -26,6 +26,8 @@ const setupOf = (patch: Partial<RepositorySetupRecord>): RepositorySetupRecord =
   temporalRunId: null,
   proofMs: null,
   warm: null,
+  derivedHosts: null,
+  warmProofMs: null,
   createdAt: new Date(0),
   endedAt: new Date(0),
   ...patch,

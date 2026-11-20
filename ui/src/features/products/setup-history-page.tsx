@@ -111,7 +111,12 @@ export function SetupHistoryPage({
                         </td>
                         <td className="t-value text-right">{formatDuration(totalMs(entry))}</td>
                         <td className="t-value text-right">{formatDuration(session?.durationMs ?? null)}</td>
-                        <td className="t-value text-right">{formatDuration(entry.proofMs)}</td>
+                        <td className="t-value text-right">
+                          {formatDuration(entry.proofMs)}
+                          {entry.warmProofMs !== null ? (
+                            <span className="block text-xs text-mute">warm {formatDuration(entry.warmProofMs)}</span>
+                          ) : null}
+                        </td>
                         <td className="t-value text-right">{formatCost(session?.costUsd ?? null)}</td>
                         <td className="t-value text-right">{formatTokens(session?.tokens ?? null)}</td>
                         <td className="t-value text-right">{session?.turns ?? "—"}</td>

@@ -1,3 +1,4 @@
+import type { DerivedHost } from "./derived-hosts.js";
 import type { SetupReport } from "./setup-report.js";
 
 /**
@@ -50,6 +51,10 @@ export interface RepositorySetupRecord {
   proofMs: number | null;
   /** Whether the session sandbox started from the warm snapshot, or null when no session ran. */
   warm: boolean | null;
+  /** docs/specs/private-stack-onboarding.md. The derived hosts read before the session, or null before then. */
+  derivedHosts: DerivedHost[] | null;
+  /** docs/specs/private-stack-onboarding.md. The time of the warm proof, or null when none ran. */
+  warmProofMs: number | null;
   createdAt: Date;
   endedAt: Date | null;
 }
@@ -69,7 +74,7 @@ export interface RepositorySetupStore {
   listForRepository(productId: string, repositoryFullName: string): Promise<RepositorySetupRecord[]>;
   update(
     id: string,
-    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId" | "inputKey" | "skippedFromSetupId" | "temporalRunId" | "proofMs" | "warm">>,
+    patch: Partial<Pick<RepositorySetupRecord, "status" | "pullRequestUrl" | "report" | "failureMessage" | "sessionUsage" | "endedAt" | "followUpSetupId" | "inputKey" | "skippedFromSetupId" | "temporalRunId" | "proofMs" | "warm" | "derivedHosts" | "warmProofMs">>,
   ): Promise<void>;
 }
 

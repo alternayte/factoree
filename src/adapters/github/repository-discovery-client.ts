@@ -47,6 +47,8 @@ export interface RepositoryFileReader {
   readFile(fullName: string, path: string, ref: string, githubInstallationId: string): Promise<string | null>;
   /** The commit SHA the ref points to. */
   headSha(fullName: string, ref: string, githubInstallationId: string): Promise<string>;
+  /** docs/specs/private-stack-onboarding.md. Every file path at the ref, or null when the tree is too large. */
+  listFiles?(fullName: string, ref: string, githubInstallationId: string): Promise<Array<{ path: string }> | null>;
 }
 
 export interface GitHubRepositoryDiscoveryClientOptions {

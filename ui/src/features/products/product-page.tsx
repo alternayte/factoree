@@ -1,4 +1,5 @@
 import { RepositorySetupSection } from "./repository-setup-section";
+import type { CredentialPrefill } from "./derived-hosts";
 import { SandboxProviderChoice } from "./sandbox-provider-choice";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -119,6 +120,8 @@ function ProductEditor({
   const hasRunnerCredential = secrets.data?.some((secret) => secret.kind === "runner_credential");
   // docs/specs/model-picker.md. Add key in the model picker opens the secrets form with the key name.
   const [keyRequest, setKeyRequest] = useState<KeyRequest | null>(null);
+  // docs/specs/private-stack-onboarding.md. A derived host the setup panel sends to the host credential form.
+  const [credentialPrefill, setCredentialPrefill] = useState<(CredentialPrefill & { nonce: number }) | null>(null);
   const secretNames = useMemo(
     () => (secrets.data ? new Set(secrets.data.map((secret) => secret.name)) : null),
     [secrets.data],
@@ -467,6 +470,7 @@ function ProductEditor({
         linearWorkspaceId={linearWorkspaceId}
         allowedDomains={product.allowedDomains}
         canEdit={canEdit}
+        onAddCredential={(prefill) => setCredentialPrefill({ ...prefill, nonce: Date.now() })}
       />
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
@@ -480,7 +484,12 @@ function ProductEditor({
           <RecentSessionsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} />
         </div>
         <div className="flex min-w-0 flex-col gap-4">
-          <HostCredentialsSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+          <HostCredentialsSection
+            productId={product.id}
+            linearWorkspaceId={linearWorkspaceId}
+            canEdit={canEdit}
+            prefill={credentialPrefill}
+          />
           <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
         </div>
       </div>

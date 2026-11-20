@@ -1,3 +1,4 @@
+import type { DerivedHostCoverage } from "~/domain/setup/derived-hosts.js";
 import type { HostCredentialAccess } from "~/domain/products/host-credentials.js";
 import type { CredentialBindingStore } from "~/domain/runs/credential-egress.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -86,6 +87,8 @@ export interface ActivityDependencies {
     hosts: (tenantId: string, productId: string) => Promise<string[]>;
     key: (tenantId: string, productId: string) => Promise<string[]>;
     bindings: CredentialBindingStore;
+    /** docs/specs/private-stack-onboarding.md. What already covers a derived host. Absent means only the ecosystem list. */
+    coverage?: (tenantId: string, productId: string) => Promise<DerivedHostCoverage>;
   };
   runs: RunRepository;
   /** docs/specs/release-0-1-0.md, DI-15.13. The maxConcurrentRuns slots of each Product. */
@@ -544,6 +547,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     hostCredentials: dependencies.hostCredentials?.access,
     credentialBindings: dependencies.hostCredentials?.bindings,
     credentialHosts: dependencies.hostCredentials?.hosts,
+    derivedHostCoverage: dependencies.hostCredentials?.coverage,
     repositories: dependencies.repositories,
   }),
   ...createAppChangeActivities({

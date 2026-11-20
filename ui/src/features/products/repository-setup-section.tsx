@@ -5,13 +5,14 @@ import {
   listRepositorySetupsOptions,
   listRepositorySetupsQueryKey,
 } from "@/api/@tanstack/react-query.gen";
-import { startRepositorySetups, updateProduct } from "@/api/sdk.gen";
+import { listSetupDerivedHosts, startRepositorySetups, updateProduct } from "@/api/sdk.gen";
 import type { ListRepositorySetupsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Input } from "@/components/form";
 import { Link } from "@tanstack/react-router";
 import { Badge, Empty, ErrorAlert, Section, SkeletonRows } from "@/components/layout";
 import { formatDate } from "@/lib/utils";
+import { DerivedHostsPanel, type CredentialPrefill, type DerivedHost } from "./derived-hosts";
 
 type Repository = ListRepositorySetupsResponse[number];
 type Setup = NonNullable<Repository["setup"]>;
@@ -78,11 +79,14 @@ export function RepositorySetupSection({
   linearWorkspaceId,
   allowedDomains,
   canEdit,
+  onAddCredential,
 }: {
   productId: string;
   linearWorkspaceId: string;
   allowedDomains: string[];
   canEdit: boolean;
+  /** docs/specs/private-stack-onboarding.md. Opens the host credential form with the host filled in. */
+  onAddCredential: (prefill: CredentialPrefill) => void;
 }) {
   const client = useQueryClient();
   const options = listRepositorySetupsOptions({ path: { id: productId }, query: { linearWorkspaceId } });
@@ -97,6 +101,8 @@ export function RepositorySetupSection({
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  // docs/specs/private-stack-onboarding.md. The derived hosts a start waits on, before any setup runs.
+  const [pending, setPending] = useState<{ repositories: string[]; hosts: DerivedHost[] } | null>(null);
   const refresh = () =>
     client.invalidateQueries({
       queryKey: listRepositorySetupsQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }),
@@ -112,6 +118,49 @@ export function RepositorySetupSection({
     onSuccess: () => {
       setSelected([]);
       void refresh();
+    },
+  });
+
+  const preflight = useMutation({
+    mutationFn: async (names: string[]) => {
+      const hosts: DerivedHost[] = [];
+      for (const repository of names) {
+        const response = await listSetupDerivedHosts({
+          path: { id: productId },
+          query: { linearWorkspaceId, repository },
+          throwOnError: true,
+        });
+        for (const entry of response.data.hosts) {
+          if (!hosts.some((seen) => seen.host === entry.host && seen.repository === entry.repository)) hosts.push(entry);
+        }
+      }
+      return { repositories: names, hosts };
+    },
+    onSuccess: (result) => {
+      if (result.hosts.length === 0) start.mutate(result.repositories);
+      else setPending(result);
+    },
+  });
+  const requestStart = (names: string[]) => {
+    setPending(null);
+    preflight.mutate(names);
+  };
+
+  const allowHosts = useMutation({
+    mutationFn: async (hosts: string[]) =>
+      updateProduct({
+        path: { id: productId },
+        query: { linearWorkspaceId },
+        body: { allowedDomains: [...new Set([...allowedDomains, ...hosts])] },
+        throwOnError: true,
+      }),
+    onSuccess: async (_result, hosts) => {
+      await client.invalidateQueries({
+        queryKey: getProductQueryKey({ path: { id: productId }, query: { linearWorkspaceId } }),
+      });
+      setPending((current) =>
+        current === null ? null : { ...current, hosts: current.hosts.filter((entry) => !hosts.includes(entry.host)) },
+      );
     },
   });
 
@@ -136,7 +185,9 @@ export function RepositorySetupSection({
   const all = repositories.data ?? [];
   const needle = filter.trim().toLowerCase();
   const rows = needle === "" ? all : all.filter((repository) => repository.fullName.toLowerCase().includes(needle));
-  const starting = (name: string) => start.isPending && (start.variables ?? []).includes(name);
+  const starting = (name: string) =>
+    (start.isPending && (start.variables ?? []).includes(name)) ||
+    (preflight.isPending && (preflight.variables ?? []).includes(name));
   const startable = (repository: Repository) =>
     canEdit && !(repository.setup && ACTIVE.includes(repository.setup.status));
   const toggle = (name: string) =>
@@ -149,7 +200,7 @@ export function RepositorySetupSection({
       flush={all.length > 0}
       actions={
         canEdit && selected.length > 0 ? (
-          <Button onClick={() => start.mutate(selected)} mutation={start}>
+          <Button onClick={() => requestStart(selected)} pending={preflight.isPending || start.isPending}>
             Set up {selected.length} selected
           </Button>
         ) : undefined
@@ -158,7 +209,35 @@ export function RepositorySetupSection({
       {repositories.isPending ? <SkeletonRows label="Loading the repositories" /> : null}
       <ErrorAlert error={repositories.error} title="The repositories did not load" />
       <ErrorAlert error={start.error} title="The setup did not start" />
-      <ErrorAlert error={allowHost.error} title="The host was not added" />
+      <ErrorAlert error={allowHost.error ?? allowHosts.error} title="The host was not added" />
+      <ErrorAlert error={preflight.error} title="The hosts of the repository did not load" />
+      {pending !== null ? (
+        <div className="px-4">
+          <DerivedHostsPanel
+            hosts={pending.hosts}
+            canEdit={canEdit}
+            onAddAll={(hosts) => allowHosts.mutate(hosts)}
+            addingAll={allowHosts.isPending}
+            onAddCredential={onAddCredential}
+            footer={
+              <>
+                <Button
+                  onClick={() => {
+                    start.mutate(pending.repositories);
+                    setPending(null);
+                  }}
+                  disabled={allowHosts.isPending}
+                >
+                  Start setup of {pending.repositories.length === 1 ? pending.repositories[0] : `${String(pending.repositories.length)} repositories`}
+                </Button>
+                <Button variant="ghost" onClick={() => setPending(null)}>
+                  Cancel
+                </Button>
+              </>
+            }
+          />
+        </div>
+      ) : null}
       {repositories.data && all.length === 0 ? (
         <Empty>The GitHub App can read no repository for this product.</Empty>
       ) : null}
@@ -194,11 +273,14 @@ export function RepositorySetupSection({
                   selected={selected.includes(repository.fullName)}
                   onToggle={() => toggle(repository.fullName)}
                   startable={startable(repository)}
-                  onStart={() => start.mutate([repository.fullName])}
+                  onStart={() => requestStart([repository.fullName])}
                   open={open === repository.fullName}
                   onOpen={() => setOpen(open === repository.fullName ? null : repository.fullName)}
                   onAllowHost={(host) => allowHost.mutate({ host, repository: repository.fullName })}
-                  busy={start.isPending || allowHost.isPending}
+                  busy={start.isPending || preflight.isPending || allowHost.isPending || allowHosts.isPending}
+                  onAllowHosts={(hosts) => allowHosts.mutate(hosts)}
+                  addingHosts={allowHosts.isPending}
+                  onAddCredential={onAddCredential}
                   starting={starting(repository.fullName)}
                   addingHost={
                     allowHost.isPending && allowHost.variables?.repository === repository.fullName
@@ -227,6 +309,9 @@ function RepositoryRow(props: {
   open: boolean;
   onOpen: () => void;
   onAllowHost: (host: string) => void;
+  onAllowHosts: (hosts: string[]) => void;
+  addingHosts: boolean;
+  onAddCredential: (prefill: CredentialPrefill) => void;
   busy: boolean;
   /** This row's setup start is in flight, so its button shows the spinner. */
   starting: boolean;
@@ -324,6 +409,15 @@ function RepositoryRow(props: {
                   </Button>
                 ))}
               </div>
+            ) : null}
+            {setup.derivedHosts.length > 0 ? (
+              <DerivedHostsPanel
+                hosts={setup.derivedHosts}
+                canEdit={props.canEdit}
+                onAddAll={props.onAllowHosts}
+                addingAll={props.addingHosts}
+                onAddCredential={props.onAddCredential}
+              />
             ) : null}
             {setup.report ? (
               <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-body">{setup.report}</pre>

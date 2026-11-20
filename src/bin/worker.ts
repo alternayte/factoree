@@ -509,7 +509,7 @@ const worker = await Worker.create({
   workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
   activities: createActivities({
     drainModeOn: () => drainMode.isOn(),
-    hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings },
+    hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings, coverage: hostCredentials.coverage },
     runs,
     runSlots: new PrismaRunSlots(prisma),
     products,

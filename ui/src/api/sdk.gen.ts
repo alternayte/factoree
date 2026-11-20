@@ -108,6 +108,9 @@ import type {
   ListRunsResponses,
   ListSandboxProvidersData,
   ListSandboxProvidersResponses,
+  ListSetupDerivedHostsData,
+  ListSetupDerivedHostsErrors,
+  ListSetupDerivedHostsResponses,
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsErrors,
   ListSetupLinearTeamsResponses,
@@ -901,6 +904,26 @@ export const listRepositorySetupHistory = <ThrowOnError extends boolean = false>
       },
     ],
     url: "/admin/products/{id}/repository-setups/history",
+    ...options,
+  });
+
+export const listSetupDerivedHosts = <ThrowOnError extends boolean = false>(
+  options: Options<ListSetupDerivedHostsData, ThrowOnError>,
+): RequestResult<ListSetupDerivedHostsResponses, ListSetupDerivedHostsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListSetupDerivedHostsResponses, ListSetupDerivedHostsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/repository-setups/derived-hosts",
     ...options,
   });
 
