@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-20
+
 ### Added
 
 - The setup agent lists each stack it finds and leaves out, with the command it ran and its output. The setup report lists each one under "Not proven, so left out" as `stack <name> (not proposed)`, and the next setup tries it again (GitHub issue 82, `setup@14`).
