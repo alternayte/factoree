@@ -5,11 +5,15 @@ import type { DerivedHost } from "./derived-hosts.js";
  * docs/specs/repository-setup-and-services.md. One part of a proposed `.factoree/config.yaml` that
  * the setup proof checks on its own. The pull request holds only the parts that passed.
  */
-export type SetupPartKind = "bootstrap" | "verify" | "services" | "preview" | "account";
+export type SetupPartKind = "bootstrap" | "verify" | "services" | "preview" | "account" | "stack";
 
 export interface SetupPartResult {
   kind: SetupPartKind;
-  /** The verify command name or the account name. The kind for the other parts. */
+  /**
+   * The verify command name, the account name, or the stack name. The kind for the other parts.
+   * GitHub issue 82: a `stack` is a stack the setup agent found and did not propose, so it never
+   * passes and Factoree never proves it.
+   */
   name: string;
   passed: boolean;
   /** Why the part failed, in one line, or null when it passed. */
@@ -107,7 +111,13 @@ export const withPreviewDependents = (parts: readonly SetupPartResult[]): SetupP
 };
 
 const partName = (part: SetupPartResult): string =>
-  part.kind === "verify" ? `verify command \`${part.name}\`` : part.kind === "account" ? `account \`${part.name}\`` : part.kind;
+  part.kind === "verify"
+    ? `verify command \`${part.name}\``
+    : part.kind === "account"
+      ? `account \`${part.name}\``
+      : part.kind === "stack"
+        ? `stack \`${part.name}\` (not proposed)`
+        : part.kind;
 
 const partLabel = (part: SetupPartResult): string =>
   part.source === undefined ? partName(part) : `${partName(part)} (from ${part.source === "none" ? "no repository file" : part.source})`;
@@ -126,6 +136,44 @@ export const parseSetupSources = (text: string): Map<string, string> => {
     sources.set(`${kind}:${name}`, match[3]!.slice(0, 300));
   }
   return sources;
+};
+
+/** The most stacks one left-out file can name, and the longest output kept for one. */
+const LEFT_OUT_LIMIT = 20;
+const LEFT_OUT_LOG_CHARS = 2_000;
+
+/**
+ * GitHub issue 82. The left-out file the setup agent writes: one entry per stack it found and did
+ * not propose, as `<stack>: <reason>`, optionally followed by indented lines of command output.
+ * Each entry becomes a failed `stack` part, so the report and the next setup name it.
+ */
+export const parseLeftOutStacks = (text: string): SetupPartResult[] => {
+  const parts: SetupPartResult[] = [];
+  let current: { name: string; reason: string; log: string[] } | null = null;
+  const flush = (): void => {
+    if (current === null) return;
+    const log = current.log.join("\n").trim();
+    parts.push({
+      kind: "stack",
+      name: current.name,
+      passed: false,
+      reason: current.reason,
+      ...(log === "" ? {} : { logTail: log.slice(-LEFT_OUT_LOG_CHARS) }),
+    });
+    current = null;
+  };
+  for (const line of text.split("\n")) {
+    const entry = /^(\S[^:]{0,60}?)\s*:\s*(\S.*)$/.exec(line);
+    if (entry !== null && !/^\s/.test(line)) {
+      flush();
+      if (parts.length >= LEFT_OUT_LIMIT) break;
+      current = { name: entry[1]!.trim(), reason: entry[2]!.trim().slice(0, 300), log: [] };
+      continue;
+    }
+    if (current !== null && line.trim() !== "") current.log.push(line.replace(/^ {1,4}/, ""));
+  }
+  flush();
+  return parts.slice(0, LEFT_OUT_LIMIT);
 };
 
 /** Each part with the source the setup agent named for it. */
@@ -159,6 +207,10 @@ export const renderSetupReport = (report: SetupReport): string => {
       }
     }
     lines.push("");
+    // GitHub issue 86. An empty list of denied hosts says nothing when the provider records none.
+    if (!report.egressRecorded) {
+      lines.push("The sandbox provider records no blocked requests, so a part that failed on a host outside the allow list names no host here.", "");
+    }
   }
   if (report.fakes.length > 0) {
     lines.push("### Fakes", "", ...report.fakes.map((fake) => `- ${fake.name}, answered by the compose service \`${fake.service}\`. Its data is not real.`), "");

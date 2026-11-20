@@ -327,6 +327,7 @@ describe("resolveContext, a rejected mint of the discovery-read credential", () 
         new RepositoryReadError(`could not resolve the ref: ${authError.message}`, { cause: authError }),
       ),
     listTree: () => Promise.reject(new Error("not used")),
+    blobSizes: () => Promise.reject(new Error("not used")),
     readBlob: () => Promise.reject(new Error("not used")),
   });
 
@@ -395,6 +396,7 @@ describe("resolveContext, a rejected mint of the discovery-read credential", () 
       withCredential: (_credential, work) => work(),
       resolveRef: () => Promise.reject(new Error("not used")),
       listTree: () => Promise.reject(new Error("not used")),
+    blobSizes: () => Promise.reject(new Error("not used")),
       readBlob: () =>
         Promise.reject(
           new RepositoryReadError(`could not read the blob: ${authError.message}`, { cause: authError }),

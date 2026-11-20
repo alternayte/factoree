@@ -121,3 +121,61 @@ describe("ClaudeCodeRunner", () => {
     expect(result.summary).not.toContain("s3cr3t-value");
   });
 });
+
+// GitHub issue 84. A test suite in one Bash call wrote nothing for ten minutes, and Factoree
+// stopped a session that waited on a correct command.
+describe("ClaudeCodeRunner, a silent tool call", () => {
+  const toolUse =
+    '{"type":"assistant","session_id":"s","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"dotnet test"}}]}}';
+
+  it("does not count an open tool call as a hang before the tool call limit", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    let now = 0;
+    const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1, silenceLimitMs: 60_000, clock: () => now });
+    const started = runner.run({ ...runInput(sandbox, ref, "goal"), timeoutMs: 24 * 60 * 60_000 });
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    sandbox.updateProcess("process-2", { running: true, stdout: toolUse });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Twenty minutes of silence on an open call.
+    now = 20 * 60_000;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    sandbox.finishProcess("process-2", { exitCode: 0, stdout: `${toolUse}\n{"type":"result","result":"ok","session_id":"s"}` });
+    const result = await started;
+    expect(result.outcome).toBe("finished");
+  });
+
+  it("stops a session whose open tool call outlasts the tool call limit, and names the call", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    let now = 0;
+    const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1, silenceLimitMs: 60_000, clock: () => now });
+    const started = runner.run({ ...runInput(sandbox, ref, "goal"), timeoutMs: 24 * 60 * 60_000 });
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    sandbox.updateProcess("process-2", { running: true, stdout: toolUse });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    now = 40 * 60_000;
+    const result = await started;
+    expect(result.outcome).toBe("hung");
+    expect(result.openToolCall).toEqual({ name: "Bash", input: "dotnet test", runningMs: 40 * 60_000 });
+    expect(result.summary).toContain("`dotnet test`");
+  });
+
+  it("stops a silent session with no open tool call at the silence limit", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    let now = 0;
+    const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1, silenceLimitMs: 60_000, clock: () => now });
+    const started = runner.run({ ...runInput(sandbox, ref, "goal"), timeoutMs: 24 * 60 * 60_000 });
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    sandbox.updateProcess("process-2", {
+      running: true,
+      stdout: `${toolUse}\n{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    now = 2 * 60_000;
+    const result = await started;
+    expect(result.outcome).toBe("hung");
+    expect(result.openToolCall).toBeUndefined();
+  });
+});

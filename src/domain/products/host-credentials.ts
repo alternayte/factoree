@@ -157,13 +157,17 @@ export const credentialKeyOf = (credentials: readonly HostCredential[]): string[
 
 /**
  * The redirect hosts the form suggests for a GitHub Packages host. They come from GitHub's runner
- * docs and community answers, not from a documented list, so the operator confirms each one.
+ * docs, community answers and observed redirects, not from a documented list, so the operator
+ * confirms each one. GitHub issue 83: in November 2026 a NuGet download redirected to
+ * nugetregistryv2prod.blob.core.windows.net. The older host stays, because GitHub moves them.
+ * The `<ecosystem>registryv2prod` hosts of npm, Maven and RubyGems follow the same pattern.
  */
 export const SUGGESTED_REDIRECT_HOSTS: Readonly<Record<string, readonly string[]>> = {
   "ghcr.io": ["pkg-containers.githubusercontent.com"],
-  "npm.pkg.github.com": ["pkg-npm.githubusercontent.com"],
-  "nuget.pkg.github.com": ["github-registry-files.githubusercontent.com"],
-  "maven.pkg.github.com": ["github-registry-files.githubusercontent.com"],
+  "npm.pkg.github.com": ["pkg-npm.githubusercontent.com", "npmregistryv2prod.blob.core.windows.net"],
+  "nuget.pkg.github.com": ["nugetregistryv2prod.blob.core.windows.net", "github-registry-files.githubusercontent.com"],
+  "maven.pkg.github.com": ["mavenregistryv2prod.blob.core.windows.net", "github-registry-files.githubusercontent.com"],
+  "rubygems.pkg.github.com": ["rubygemsregistryv2prod.blob.core.windows.net"],
 };
 
 const READ_METHODS: CredentialBinding["methods"] = ["GET", "HEAD"];

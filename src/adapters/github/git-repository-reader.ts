@@ -38,7 +38,8 @@ const isMissingObject = (stderr: string): boolean =>
 
 export interface TreeEntry {
   path: string;
-  sizeBytes: number;
+  /** The blob SHA of the entry. `blobSizes` takes it. */
+  objectId: string;
 }
 
 export interface TreeListing {
@@ -53,7 +54,16 @@ export interface TreeListing {
  */
 export interface RepositoryReader {
   resolveRef(url: string, ref: string): Promise<string>;
+  /**
+   * Lists the blobs of a tree with no blob content. GitHub issue 85: a size needs the blob, so the
+   * listing names each blob by its SHA and the caller asks `blobSizes` for the few it keeps.
+   */
   listTree(url: string, sha: string): Promise<TreeListing>;
+  /**
+   * The size of each blob, by blob SHA, read with one batched fetch. A blob the remote does not
+   * send is absent from the map.
+   */
+  blobSizes(url: string, objectIds: readonly string[]): Promise<Map<string, number>>;
   readBlob(url: string, sha: string, path: string): Promise<string | null>;
   /**
    * Runs `work` with a read-only credential source for one origin, so a private repository
@@ -303,15 +313,14 @@ export class GitRepositoryReader implements RepositoryReader {
     // reaches its own byte ceiling first on a very large repository, and that ceiling throws
     // instead of a truncation. SDD section 18 requires the truncation, so the entry ceiling must
     // be the only limit the reader hits.
-    // GitHub issue 38. `-l` prints the size of each blob, so git fetches every blob the
-    // `blob:none` mirror lacks from the promisor remote. A private repository refuses that fetch
-    // without the credential.
-    const credentialEnv = await this.credentialFor(url);
-    const child = spawn("git", ["ls-tree", "-r", "-l", "-z", "--full-tree", sha], {
+    // GitHub issue 85. No `-l`: a size needs the blob, and the `blob:none` mirror fetches each
+    // missing blob with its own request, one round trip per file. The trees are in the mirror, so
+    // this listing reads nothing from the remote. `blobSizes` fetches the kept blobs in one batch.
+    const child = spawn("git", ["ls-tree", "-r", "-z", "--full-tree", sha], {
       cwd: path,
       // A private repository must fail immediately instead of a wait for a password. No
       // interactive helper runs.
-      env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never", ...credentialEnv },
+      env: { ...isolatedGitEnvironment(tmpdir()), GIT_ASKPASS: "true", GCM_INTERACTIVE: "never" },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -327,17 +336,15 @@ export class GitRepositoryReader implements RepositoryReader {
         truncated = true;
         return;
       }
-      // Format: `<mode> <type> <object> <size>\t<path>`. The path itself can hold a tab, so the
-      // split stops at the first tab only, and everything after it is the path.
+      // Format: `<mode> <type> <object>\t<path>`. The path itself can hold a tab, so the split
+      // stops at the first tab only, and everything after it is the path.
       const tab = record.indexOf("\t");
       if (tab < 0) return;
-      const meta = record.slice(0, tab);
+      const [, type, objectId] = record.slice(0, tab).trim().split(/\s+/);
       const entryPath = record.slice(tab + 1);
-      const size = meta.trim().split(/\s+/)[3] ?? "-";
-      // A submodule entry reports its size as `-`, because a submodule has no blob of its own
-      // in this repository. The reader excludes it, because there is no byte count to report.
-      if (entryPath === "" || size === "-") return;
-      entries.push({ path: entryPath, sizeBytes: Number.parseInt(size, 10) });
+      // A submodule entry is a commit, with no blob of its own in this repository.
+      if (entryPath === "" || type !== "blob" || objectId === undefined) return;
+      entries.push({ path: entryPath, objectId });
     };
 
     const outcome = await new Promise<{ ok: boolean; detail: string }>((resolve) => {
@@ -396,6 +403,82 @@ export class GitRepositoryReader implements RepositoryReader {
       throw new RepositoryReadError(withoutUrlCredentials(`${subject}: ${outcome.detail}`));
     }
     return { entries, truncated };
+  }
+
+  async blobSizes(url: string, objectIds: readonly string[]): Promise<Map<string, number>> {
+    const sizes = new Map<string, number>();
+    const wanted = [...new Set(objectIds.filter((id) => SHA.test(id)))];
+    if (wanted.length === 0) return sizes;
+    const mirror = await this.mirror(url);
+    const subject = `the blob sizes of ${withoutUrlCredentials(url)} could not be read`;
+    // GitHub issue 85. One fetch for every wanted blob, the same request git sends for one lazy
+    // blob, so a later size or content read finds the blob in the mirror.
+    // `fetch.negotiationAlgorithm=noop` sends no "have" lines: the mirror holds the commits.
+    await this.gitWithInput(
+      mirror,
+      ["-c", "fetch.negotiationAlgorithm=noop", "fetch", "origin", "--no-tags", "--no-write-fetch-head", "--recurse-submodules=no", "--filter=blob:none", "--stdin"],
+      `${wanted.join("\n")}\n`,
+      subject,
+      url,
+    );
+    const stdout = await this.gitWithInput(
+      mirror,
+      ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
+      `${wanted.join("\n")}\n`,
+      subject,
+      url,
+    );
+    for (const line of stdout.split("\n")) {
+      const [id, type, size] = line.trim().split(" ");
+      if (id === undefined || type !== "blob" || size === undefined) continue;
+      const bytes = Number.parseInt(size, 10);
+      if (Number.isFinite(bytes)) sizes.set(id, bytes);
+    }
+    return sizes;
+  }
+
+  /** Runs git with `input` on stdin, under the credential of `url`, and throws on a nonzero exit. */
+  private async gitWithInput(cwd: string, args: string[], input: string, subject: string, url: string): Promise<string> {
+    const credentialEnv = await this.credentialFor(url);
+    const child = spawn("git", args, {
+      cwd,
+      env: { ...isolatedGitEnvironment(tmpdir()), GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GCM_INTERACTIVE: "never", ...credentialEnv },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (stdout.length < MAX_OUTPUT_BYTES) stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < 8_192) stderr += chunk;
+    });
+    // A closed stdin, for example after git failed early, must not crash the worker.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(input);
+    const outcome = await new Promise<{ ok: boolean; detail: string }>((resolve) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolve({ ok: false, detail: `the read timed out after ${GIT_READ_TIMEOUT_MS} ms` });
+      }, GIT_READ_TIMEOUT_MS);
+      child.on("error", (error: Error) => {
+        clearTimeout(timer);
+        resolve({ ok: false, detail: String(error) });
+      });
+      child.on("close", (code: number | null) => {
+        clearTimeout(timer);
+        resolve(code === 0 ? { ok: true, detail: "" } : { ok: false, detail: `git exited with code ${String(code)}: ${stderr.trim()}` });
+      });
+    });
+    if (!outcome.ok) {
+      // SDD section 60. The removal keeps a URL token out of the message.
+      throw new RepositoryReadError(withoutUrlCredentials(`${subject}: ${outcome.detail}`), {
+        deterministic: isDeterministicRemoteFailure(outcome.detail),
+      });
+    }
+    return stdout;
   }
 
   async readBlob(url: string, sha: string, path: string): Promise<string | null> {

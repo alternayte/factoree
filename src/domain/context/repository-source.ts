@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import type { RepositoryReader } from "~/adapters/github/git-repository-reader.js";
+import type { RepositoryReader, TreeEntry } from "~/adapters/github/git-repository-reader.js";
 import { RepositoryReadError } from "~/adapters/github/git-repository-reader.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { FACTOREE_CONFIG_PATH, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
@@ -230,9 +230,27 @@ export class RepositoryContextSource implements ContextSource {
       },
     ];
 
+    // GitHub issue 85. The listing holds no sizes. The source classifies every path first, and
+    // then reads the sizes of the kept paths in one batch, so a large repository costs one fetch.
+    const kept: Array<{ entry: TreeEntry; classification: PathClassification; topics: string[] }> = [];
     for (const entry of tree.entries) {
-      let classification = classifyPath(entry.path, authority);
+      const classification = classifyPath(entry.path, authority);
       if (classification === null) continue;
+      const topics = topicsIn(entry.path, request.topics);
+      // SDD section 18 disables unbounded retrieval. A source file is offered only from the
+      // primary repository, and only when the path carries a Work Item topic. A large repository
+      // then never floods the contract. AT-02 needs at least one such pattern.
+      if (classification.authority === "source_code") {
+        // docs/specs/change-sets.md. Every target of a change set is changed, so each one offers its source.
+        if (role === "reference" || topics.length === 0) continue;
+      }
+      kept.push({ entry, classification, topics });
+    }
+    const sizes = await this.options.reader.blobSizes(repository.url, kept.map(({ entry }) => entry.objectId));
+
+    for (const item of kept) {
+      const { entry, topics } = item;
+      let classification = item.classification;
 
       // docs/specs/context-authority-and-cited-conflicts.md. A path names no status, so the source
       // reads the record. A superseded, deprecated or rejected ADR is not selected. One that states
@@ -248,16 +266,6 @@ export class RepositoryContextSource implements ContextSource {
             rule: classification.rule,
           };
         }
-      }
-
-      const topics = topicsIn(entry.path, request.topics);
-
-      // SDD section 18 disables unbounded retrieval. A source file is offered only from the
-      // primary repository, and only when the path carries a Work Item topic. A large repository
-      // then never floods the contract. AT-02 needs at least one such pattern.
-      if (classification.authority === "source_code") {
-        // docs/specs/change-sets.md. Every target of a change set is changed, so each one offers its source.
-        if (role === "reference" || topics.length === 0) continue;
       }
 
       // SDD section 21. Every discovered file starts as a reference item. The resolver promotes
@@ -278,7 +286,7 @@ export class RepositoryContextSource implements ContextSource {
         reason: classification.reason,
         priority: DISCOVERY_PRIORITY[classification.rule],
         topics,
-        sizeBytes: entry.sizeBytes,
+        sizeBytes: sizes.get(entry.objectId) ?? null,
         suggestedClassification: suggested,
       });
     }

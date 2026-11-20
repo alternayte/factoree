@@ -11,8 +11,11 @@ import type { Redactor } from "~/telemetry/redaction.js";
 /** The interval between two readiness polls. SDD section 37. */
 const POLL_INTERVAL_MS = 250;
 
-/** Reports the HTTP status of one readiness request, or null when nothing answered. */
-export type ReadinessProbe = (url: string) => Promise<{ status: number } | null>;
+/**
+ * Reports the HTTP status of one readiness request, or null when nothing answered. `body` is the
+ * start of the response body, when the probe read it.
+ */
+export type ReadinessProbe = (url: string) => Promise<{ status: number; body?: string } | null>;
 
 export interface PreviewHandle {
   process: ProcessRef;
@@ -58,7 +61,7 @@ const buildLog = (redactor: Redactor, stdout: string, stderr: string): string =>
   redactor.redactText(`--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
 
 /** Ready means the probe returned a status from 200 to 399. SDD section 37 rule 5. */
-const isReady = (result: { status: number } | null): boolean =>
+const isReady = (result: { status: number; body?: string } | null): boolean =>
   result !== null && result.status >= 200 && result.status < 400;
 
 /**
@@ -82,6 +85,41 @@ const loopbackOnlyHint = async (input: StartPreviewInput, port: number): Promise
   } catch {
     return "";
   }
+};
+
+/** The longest part of a response body that a preview failure quotes. */
+const BODY_EXCERPT_CHARS = 300;
+
+/**
+ * GitHub issue 81. The last poll answer, so a server that answered 403 on every poll does not
+ * read as a server that never listened.
+ */
+const lastPollSentence = (input: StartPreviewInput, probeUrl: string, result: { status: number; body?: string } | null): string => {
+  if (result === null) return ` The last poll of ${probeUrl} got no answer.`;
+  const body = (result.body ?? "").replace(/\s+/g, " ").trim().slice(0, BODY_EXCERPT_CHARS);
+  return ` The last poll of ${probeUrl} returned ${String(result.status)}${body === "" ? "" : `: ${input.redactor.redactText(body)}`}.`;
+};
+
+/** GitHub issue 81. Vite answers 403 to a Host header that `server.allowedHosts` does not name. */
+const viteHostHint = (result: { status: number; body?: string } | null, log: string): string =>
+  result?.status === 403 && /\bVITE v\d/.test(log)
+    ? " Vite refuses a Host it does not allow. Factoree sets __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS for the preview command, so a command that replaces that variable, or a server.allowedHosts that is not true, refuses the preview host."
+    : "";
+
+/**
+ * GitHub issue 81. The environment that lets a dev server accept the exposed host. A dev server
+ * that checks the Host header, as Vite does since 6.0.9, 5.4.12 and 4.5.6, refuses a request through the exposed URL
+ * otherwise. FACTOREE_PREVIEW_URL and FACTOREE_PREVIEW_HOST let a preview script pass the host to
+ * any other server.
+ */
+export const previewHostEnvironment = (exposedUrl: string, environment: Record<string, string>): Record<string, string> => {
+  const host = new URL(exposedUrl).hostname;
+  const vite = environment["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"];
+  return {
+    FACTOREE_PREVIEW_URL: exposedUrl,
+    FACTOREE_PREVIEW_HOST: host,
+    __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: vite === undefined || vite === "" ? host : `${vite},${host}`,
+  };
 };
 
 export const startPreview = async (input: StartPreviewInput): Promise<PreviewHandle> => {
@@ -112,32 +150,34 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
     cwd: "/",
   });
 
+  // Rule 7. The exposed URL is the URL a client outside the sandbox uses. The readiness URL
+  // names an address inside the sandbox, and on the worker `localhost` is the worker itself:
+  // the FAC-46 run polled the local Factoree API for the whole timeout. So the poll requests
+  // the readiness path at the exposed URL. Exposure needs no running server, so it comes before
+  // the start, and the command gets the exposed host (GitHub issue 81). A sandbox adapter that
+  // cannot expose a service fails here the same honest way every preview failure does.
+  let service;
+  try {
+    service = await input.sandbox.exposeService(input.ref, port);
+  } catch (error) {
+    throw new PreviewStartError(
+      `The sandbox could not expose the preview on port ${String(port)}: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      "expose_failed",
+      "",
+    );
+  }
+
   const startedAt = new Date(now()).toISOString();
   // Rule 2. `startProcess` ignores `Command.timeoutMs`, so this function owns the deadline below.
   const processRef = await input.sandbox.startProcess(input.ref, {
     file: "sh",
     args: ["-c", input.preview.command],
     cwd: input.workingDirectory,
-    env: input.environment,
+    env: { ...input.environment, ...previewHostEnvironment(service.url, input.environment) },
   });
 
   const pollUntilReady = async (): Promise<PreviewHandle> => {
-    // Rule 7. The exposed URL is the URL a client outside the sandbox uses. The readiness URL
-    // names an address inside the sandbox, and on the worker `localhost` is the worker itself:
-    // the FAC-46 run polled the local Factoree API for the whole timeout. So the poll requests
-    // the readiness path at the exposed URL. Exposure needs no running server. A sandbox adapter
-    // that cannot expose a service fails here the same honest way every preview failure does.
-    let service;
-    try {
-      service = await input.sandbox.exposeService(input.ref, port);
-    } catch (error) {
-      throw new PreviewStartError(
-        `The sandbox could not expose the preview on port ${String(port)}: ` +
-          `${error instanceof Error ? error.message : String(error)}`,
-        "expose_failed",
-        "",
-      );
-    }
     const ready = new URL(input.preview.readyUrl);
     const probeUrl = new URL(`${ready.pathname}${ready.search}`, service.url).toString();
 
@@ -172,7 +212,8 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
       if (now() >= deadline) {
         throw new PreviewStartError(
           `The preview command "${input.preview.command}" did not answer within ` +
-            `${input.preview.timeoutSeconds} seconds.${await loopbackOnlyHint(input, port)}`,
+            `${input.preview.timeoutSeconds} seconds.${lastPollSentence(input, probeUrl, result)}` +
+            `${viteHostHint(result, snapshot.stdout + snapshot.stderr)}${await loopbackOnlyHint(input, port)}`,
           "not_ready",
           buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
         );

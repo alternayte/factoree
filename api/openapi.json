@@ -7595,6 +7595,31 @@
                                             },
                                             "silenceLimitMs": {
                                               "type": "number"
+                                            },
+                                            "openToolCall": {
+                                              "type": "object",
+                                              "properties": {
+                                                "name": {
+                                                  "type": "string"
+                                                },
+                                                "input": {
+                                                  "type": "string"
+                                                },
+                                                "runningMs": {
+                                                  "type": "number"
+                                                }
+                                              },
+                                              "required": [
+                                                "name",
+                                                "input",
+                                                "runningMs"
+                                              ]
+                                            },
+                                            "log": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
                                             }
                                           },
                                           "required": [
@@ -8904,6 +8929,31 @@
                                   },
                                   "silenceLimitMs": {
                                     "type": "number"
+                                  },
+                                  "openToolCall": {
+                                    "type": "object",
+                                    "properties": {
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "input": {
+                                        "type": "string"
+                                      },
+                                      "runningMs": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "name",
+                                      "input",
+                                      "runningMs"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
                                   }
                                 },
                                 "required": [
@@ -10562,6 +10612,31 @@
                                   },
                                   "silenceLimitMs": {
                                     "type": "number"
+                                  },
+                                  "openToolCall": {
+                                    "type": "object",
+                                    "properties": {
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "input": {
+                                        "type": "string"
+                                      },
+                                      "runningMs": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "name",
+                                      "input",
+                                      "runningMs"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
                                   }
                                 },
                                 "required": [
@@ -11563,6 +11638,31 @@
                                               },
                                               "silenceLimitMs": {
                                                 "type": "number"
+                                              },
+                                              "openToolCall": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "name": {
+                                                    "type": "string"
+                                                  },
+                                                  "input": {
+                                                    "type": "string"
+                                                  },
+                                                  "runningMs": {
+                                                    "type": "number"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "name",
+                                                  "input",
+                                                  "runningMs"
+                                                ]
+                                              },
+                                              "log": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
                                               }
                                             },
                                             "required": [

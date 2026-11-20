@@ -78,6 +78,11 @@ export interface AgentRunResult {
   /** The silence limit the runner applied to this session. A hang report names it. */
   silenceLimitMs: number;
   /**
+   * GitHub issue 84. The tool call that had not returned when a hung session stopped, with how
+   * long it ran, or absent when none was open or the runner cannot tell.
+   */
+  openToolCall?: OpenToolCall;
+  /**
    * The usage of this invocation alone, read from the agent CLI after the process ended. A resume
    * reports only its own model calls. Null when the CLI left no record. Cost is a metric, so a
    * null never fails the Run.
@@ -92,6 +97,15 @@ export interface AgentRunResult {
    * It never leaves the worker: the activity reads it to find which skills the session loaded.
    */
   toolInputs?: string[];
+}
+
+/** GitHub issue 84. One tool call the session started and that has not returned yet. */
+export interface OpenToolCall {
+  name: string;
+  /** The redacted start of the tool input, such as a shell command. */
+  input: string;
+  /** How long the call ran, measured from the last session output. */
+  runningMs: number;
 }
 
 /**

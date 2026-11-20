@@ -123,6 +123,15 @@ export interface CliAgentRunnerOptions {
  */
 export const DEFAULT_SILENCE_LIMIT_MS = 10 * 60 * 1_000;
 
+/**
+ * GitHub issue 84. A tool call writes nothing until it returns, so a test suite that runs for
+ * minutes reads as silence. While a call is open, the session is hung only after this limit. It
+ * is the longest shell command a runner allows (`BASH_MAX_TIMEOUT_MS` for claude), plus a margin
+ * for the runner to report the timeout.
+ */
+export const TOOL_CALL_COMMAND_MAX_MS = 30 * 60 * 1_000;
+export const OPEN_TOOL_CALL_SILENCE_LIMIT_MS = TOOL_CALL_COMMAND_MAX_MS + 5 * 60 * 1_000;
+
 /** The deadline of the usage read after a session. A CLI that does not answer costs no more. */
 export const USAGE_READ_TIMEOUT_MS = 60_000;
 
@@ -199,6 +208,16 @@ export abstract class CliAgentRunner implements AgentRunner {
 
   /** Reads the output of the tool. An implementation must never throw. */
   protected abstract parseOutput(text: string): CliAgentParse;
+
+  /**
+   * GitHub issue 84. The newest tool call the output started and has not returned, or null. A
+   * runner whose output names a tool call only when it returns keeps this default, and its
+   * silence limit applies to every call.
+   */
+  protected openToolCall(stdout: string): { name: string; input: string } | null {
+    void stdout;
+    return null;
+  }
 
   /**
    * docs/specs/agent-session-usage-and-hangs.md. Reads the usage of one invocation from the CLI
@@ -390,6 +409,9 @@ export abstract class CliAgentRunner implements AgentRunner {
     // number of characters, and a length test would read a working agent as a silent one.
     let lastOutput: string | null = null;
     let lastOutputAt = startedAt;
+    // The open tool call of the current output. The output does not change while the session is
+    // silent, so one parse serves the whole silence.
+    let openCall: { name: string; input: string } | null | undefined;
     // docs/specs/provider-unreachable.md. One watch per stream, each with its own run of
     // connectivity events and its own deadline. New stdout model activity also clears the stderr
     // watch, because it proves the CLI is working again after a stderr-only error. Any other
@@ -404,6 +426,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       if (output !== lastOutput) {
         lastOutput = output;
         lastOutputAt = this.clock();
+        openCall = undefined;
       }
       // The watches read the complete lines each poll added, so a blank line or an unfinished
       // line changes nothing.
@@ -446,7 +469,13 @@ export abstract class CliAgentRunner implements AgentRunner {
         });
       }
 
-      if (this.clock() - lastOutputAt >= live.settings.silenceLimitMs) {
+      const silentMs = this.clock() - lastOutputAt;
+      // GitHub issue 84. A long command is silent, and the session waits on it. Only a call that
+      // outlasts the longest command the runner allows makes an open call a hang.
+      if (silentMs >= live.settings.silenceLimitMs && openCall === undefined) openCall = this.safeOpenToolCall(snapshot.stdout);
+      const open = openCall ?? null;
+      const limitMs = open === null ? live.settings.silenceLimitMs : Math.max(live.settings.silenceLimitMs, OPEN_TOOL_CALL_SILENCE_LIMIT_MS);
+      if (silentMs >= limitMs) {
         // The session is hung. Factoree ends it here, so the rest of the Run budget stays
         // available to the one retry of docs/specs/agent-session-usage-and-hangs.md. The
         // evidence it already produced is preserved, the same as on a budget timeout.
@@ -458,11 +487,13 @@ export abstract class CliAgentRunner implements AgentRunner {
           fallbackExitCode: 124,
           hung: true,
         });
+        const running = open === null ? "" : ` It waited on the ${open.name} call \`${open.input}\`.`;
         return {
           ...result,
+          ...(open === null ? {} : { openToolCall: { ...open, runningMs: silentMs } }),
           summary:
-            `The ${this.name} session wrote nothing for ${Math.round(live.settings.silenceLimitMs / 1000)} seconds, so ` +
-            `Factoree ended it. ${result.summary}`.trim(),
+            `The ${this.name} session wrote nothing for ${Math.round(silentMs / 1000)} seconds, so ` +
+            `Factoree ended it.${running} ${result.summary}`.trim(),
         };
       }
 
@@ -549,6 +580,16 @@ export abstract class CliAgentRunner implements AgentRunner {
       effort: live.settings.effort,
       toolInputs: reading.toolInputs ?? [],
     };
+  }
+
+  /** The open tool call, redacted and bounded, and never a throw. */
+  private safeOpenToolCall(stdout: string): { name: string; input: string } | null {
+    try {
+      const open = this.openToolCall(stdout);
+      return open === null ? null : { name: open.name, input: this.cliOptions.redactor.redact(open.input.slice(0, 300)) };
+    } catch {
+      return null;
+    }
   }
 
   /** Reads the usage and never throws. Cost is a metric, so a fault here must not fail the Run. */

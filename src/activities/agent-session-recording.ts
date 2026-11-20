@@ -179,8 +179,16 @@ export const recordSessionFaults = async (
       await recordRunEvent(events, {
         ...base,
         kind: "session_hung",
-        message: `The ${context.role} session wrote no output for ${String(Math.round(result.silenceLimitMs / 1000))} seconds, so Factoree stopped it.`,
-        detail: { runner: result.session.runner, silenceLimitMs: result.silenceLimitMs },
+        message:
+          result.openToolCall === undefined
+            ? `The ${context.role} session wrote no output for ${String(Math.round(result.silenceLimitMs / 1000))} seconds, so Factoree stopped it.`
+            : `The ${context.role} session waited ${String(Math.round(result.openToolCall.runningMs / 60_000))} minutes on the ${result.openToolCall.name} call \`${result.openToolCall.input}\` with no output, so Factoree stopped it.`,
+        detail: {
+          runner: result.session.runner,
+          silenceLimitMs: result.silenceLimitMs,
+          ...(result.openToolCall === undefined ? {} : { openToolCall: result.openToolCall }),
+          log: result.failureLog,
+        },
       });
       continue;
     }

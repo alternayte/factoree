@@ -374,11 +374,15 @@ HEAD only, but E2B cannot narrow by method.
 
 | Host | Kind | Secret | Redirect host |
 | --- | --- | --- | --- |
-| `npm.pkg.github.com` | Header `Authorization`, no path | `Bearer <PAT>` | `pkg-npm.githubusercontent.com` |
-| `nuget.pkg.github.com` | Header `Authorization`, path `/<org>/` | `Basic <base64 of user:PAT>` | `github-registry-files.githubusercontent.com` |
-| `maven.pkg.github.com` | Header `Authorization` | `Basic <base64 of user:PAT>` | `github-registry-files.githubusercontent.com` |
-| `rubygems.pkg.github.com` | Header `Authorization` | `Basic <base64 of user:PAT>` | none known |
+| `npm.pkg.github.com` | Header `Authorization`, no path | `Bearer <PAT>` | `pkg-npm.githubusercontent.com`, `npmregistryv2prod.blob.core.windows.net` |
+| `nuget.pkg.github.com` | Header `Authorization`, path `/<org>/` | `Basic <base64 of user:PAT>` | `nugetregistryv2prod.blob.core.windows.net`, `github-registry-files.githubusercontent.com` |
+| `maven.pkg.github.com` | Header `Authorization` | `Basic <base64 of user:PAT>` | `mavenregistryv2prod.blob.core.windows.net`, `github-registry-files.githubusercontent.com` |
+| `rubygems.pkg.github.com` | Header `Authorization` | `Basic <base64 of user:PAT>` | `rubygemsregistryv2prod.blob.core.windows.net` |
 | `ghcr.io` | Registry login | user and PAT | `pkg-containers.githubusercontent.com` |
+
+GitHub moves its download hosts. To find the current one, request one package
+file with the token and read the `Location` header of the 302 answer:
+`curl -sI -H "Authorization: Basic <...>" https://nuget.pkg.github.com/<org>/download/<id>/<version>/<id>.<version>.nupkg`.
 
 Factoree sends a header secret as entered, with no prefix added. It checks a
 registry login on save and refuses one that the registry does not accept. A

@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@13";
+export const SETUP_PROMPT_VERSION = "setup@14";
 
 export interface SetupPromptFields {
   repository: string;
@@ -29,6 +29,11 @@ export interface SetupPromptFields {
    * Absent in a prompt rendered before it existed.
    */
   sourcesPath?: string;
+  /**
+   * GitHub issue 82. The file the agent writes each stack it finds and leaves out to. Absent in a
+   * prompt rendered before it existed.
+   */
+  leftOutPath?: string;
   /** The text of the existing config, for a setup run that updates one, or null. */
   existingConfig: string | null;
   /**
@@ -177,6 +182,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",
         `preview.timeoutSeconds is at most ${PREVIEW_TIMEOUT_MAX_SECONDS} and services.waitTimeoutSeconds is at most ${SERVICES_WAIT_TIMEOUT_MAX_SECONDS}. Factoree refuses the whole configuration when a value is over its limit. A preview or a stack that needs longer is a part to leave out, not a limit to raise.`,
         "The preview must listen on every interface, 0.0.0.0 or [::], and not on localhost alone: Factoree and its browser reach it through the sandbox's exposed port, from outside the sandbox. Write readyUrl with localhost and the explicit port.",
+        "Factoree and its browser send the exposed host name in the Host header. Factoree sets FACTOREE_PREVIEW_HOST to that name, FACTOREE_PREVIEW_URL to the exposed URL, and __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS to the name for Vite. A dev server that checks the Host header, such as webpack-dev-server or the Angular CLI, must allow FACTOREE_PREVIEW_HOST: pass it in the preview command. Do not replace __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS.",
         "Set preview.readySelector only when the app renders its markup before it attaches its handlers, as Blazor Server, Phoenix LiveView and Hotwire do: a click before then does nothing. Pick a selector that shows only once the page takes input. Before the first click or fill after each page load, Factoree waits for it, as well as for the load event and network idle.",
         "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",
       ].join("\n"),
@@ -201,7 +207,9 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
       "Network",
       `The sandbox reaches only these hosts, the ecosystem host list:\n${list(fields.ecosystemHosts, "None.")}\n\n` +
         "Factoree records the hosts the bootstrap reaches and writes sandbox.allowedDomains itself. " +
-        "When a download fails because a host is denied, leave the part out. Factoree reports each denied host itself, so never name a host in your app changes file." +
+        "When a download fails because a host is denied, leave the part out. Factoree reports each denied host itself, so never name a host in your app changes file.\n\n" +
+        "Only the bootstrap, the services and the seed reach the ecosystem hosts. The verify commands and the preview reach only sandbox.allowedDomains, so a download they make at run time fails in Factoree's sandbox although it passes in yours. " +
+        "A test that starts a container, as Testcontainers does, pulls its image at run time. After you run the tests, run `docker image ls`, and pull every image they pulled in the bootstrap with `docker pull <image>:<tag>`, the Testcontainers Ryuk image included. Set docker to true for them." +
         ((fields.credentialHosts ?? []).length === 0
           ? ""
           : "\n\nThe sandbox also reaches these private hosts, and Factoree adds their credentials to each request outside the sandbox:\n" +
@@ -246,6 +254,13 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         ownRunRule(fields),
         "Factoree proves the configuration in a fresh sandbox that holds only the repository and your `.factoree/` files. Nothing else you do in this session carries over: no `mise use --global`, no `npm install -g`, no file outside the repository. The bootstrap must install everything the verify commands, the seed and the preview need.",
         "The session stops after 60 minutes. Write the configuration as soon as one part works, and improve it after. Factoree proves what the files hold when the session stops.",
+        "A test suite can run for many minutes and print nothing until it ends. Give such a shell command a timeout of up to 30 minutes, or run it in the background with its output in a file and read that file until the command ends.",
+        ...(fields.leftOutPath === undefined
+          ? []
+          : [
+              `When the repository holds a stack, an app or a test suite that you leave out of the configuration, write it to ${fields.leftOutPath}: one line \`<stack>: <what you ran> failed: <the error>\`, then the last lines of its output, each indented by two spaces. ` +
+                'For example: `dotnet: dotnet restore failed: error NU1301: Unable to load the service index for source https://nuget.pkg.github.com/acme/index.json`. The setup report lists each one under "Not proven, so left out".',
+            ]),
       ].join("\n"),
     ),
     section(
