@@ -26,7 +26,7 @@ import { bootstrapAllowListOf, toProjectRuntimeConfig } from "~/domain/runs/proj
 import { allowListCovers, narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { BOOTSTRAP_TIMEOUT_MS, bootstrapScript } from "~/domain/runs/sandbox-manager.js";
 import { readDerivedHosts, uncoveredDerivedHosts, type DerivedHostCoverage } from "~/domain/setup/derived-hosts.js";
-import { ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
+import { dockerLogSize, dockerPullFailures, ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { alreadyRequested, type AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
@@ -40,6 +40,7 @@ import {
 } from "~/domain/setup/repository-setup.js";
 import {
   failureExcerpt,
+  parseLeftOutStacks,
   parseSetupSources,
   provenConfigOf,
   renderSetupReport,
@@ -104,7 +105,7 @@ export interface SetupActivityDependencies {
 }
 
 /** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
-export type SetupPromptInputs = Omit<SetupPromptFields, "primaryRepositoryPath" | "appChangesPath" | "sourcesPath">;
+export type SetupPromptInputs = Omit<SetupPromptFields, "primaryRepositoryPath" | "appChangesPath" | "sourcesPath" | "leftOutPath">;
 
 /** docs/specs/setup-speed-and-history.md. What a setup does after its inputs are read. */
 export type PreparedSetup =
@@ -118,7 +119,7 @@ export type PreparedSetup =
  */
 export const setupInputKeyOf = (headSha: string, prompt: SetupPromptInputs): string =>
   createHash("sha256")
-    .update(JSON.stringify({ headSha, prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>", sourcesPath: "<sources file>" }) }))
+    .update(JSON.stringify({ headSha, prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>", sourcesPath: "<sources file>", leftOutPath: "<left-out file>" }) }))
     .digest("hex");
 
 /** The agent session of one setup, and what it wrote. */
@@ -140,6 +141,8 @@ export type SetupSessionOutput =
       warm: boolean;
       /** docs/specs/private-stack-onboarding.md. The source of each part, keyed `<kind>:<name>`. */
       sources?: Record<string, string>;
+      /** GitHub issue 82. The stacks the agent found and did not propose, as failed `stack` parts. */
+      leftOut?: SetupPartResult[];
     }
   | { kind: "failed"; reason: string };
 
@@ -154,6 +157,8 @@ export interface SetupProofOutput {
 const SETUP_SESSION_TIMEOUT_MS = 60 * 60_000;
 /** The longest one proof command may run. */
 const PROOF_COMMAND_TIMEOUT_MS = 30 * 60_000;
+/** GitHub issue 84. The least session time a retry after a hang needs to write a config. */
+const SETUP_HANG_RETRY_MIN_MS = 10 * 60_000;
 const CONFIG = ".factoree/config.yaml";
 
 const tail = (stdout: string, stderr: string): string => `${stdout}\n${stderr}`.trim().split("\n").slice(-30).join("\n").slice(-3000);
@@ -484,6 +489,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             const value = await dependencies.secrets.get(setup.tenantId, setup.productId, descriptor.name);
             if (value !== null) environment[descriptor.name] = value;
           }
+          const dockerLogStart = runtime.docker === true ? await dockerLogSize(dependencies.sandbox, ref).catch(() => 0) : 0;
           const verification = await runVerification({
             sandbox: dependencies.sandbox,
             ref,
@@ -493,11 +499,28 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             timeoutMs: PROOF_COMMAND_TIMEOUT_MS,
             redactor: dependencies.redactor,
           });
+          // GitHub issue 86. The verify commands reach only the product allow list, so an image a
+          // test starts and the bootstrap did not pull fails to pull. dockerd is the only record.
+          const pullFailures =
+            runtime.docker === true && verification.checks.some((check) => !check.passed)
+              ? await dockerPullFailures(dependencies.sandbox, ref, dockerLogStart)
+              : [];
+          const pullNote =
+            pullFailures.length === 0
+              ? ""
+              : "Docker could not pull an image while the verify commands ran. The verify commands reach only sandbox.allowedDomains, so the bootstrap must pull each image a test starts. The dockerd log:\n" +
+                `${pullFailures.join("\n")}\n\n`;
           for (const check of verification.checks) {
             record(
               check.passed
                 ? { kind: "verify", name: check.name, passed: true, reason: null }
-                : { kind: "verify", name: check.name, passed: false, reason: `it exited with code ${check.exitCode}`, logTail: failureExcerpt(check.log ?? "") },
+                : {
+                    kind: "verify",
+                    name: check.name,
+                    passed: false,
+                    reason: `it exited with code ${check.exitCode}${pullNote === "" ? "" : ", and Docker could not pull an image"}`,
+                    logTail: `${pullNote}${failureExcerpt(check.log ?? "")}`,
+                  },
             );
           }
           if (preview !== null && preview.enabled) {
@@ -556,7 +579,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         await dependencies.setups.update(setup.id, { warmProofMs }).catch(() => undefined);
       }
 
-      const finalParts = withSources(withPreviewDependents(parts), new Map(Object.entries(session.sources ?? {})));
+      const finalParts = [...withSources(withPreviewDependents(parts), new Map(Object.entries(session.sources ?? {}))), ...(session.leftOut ?? [])];
       // docs/specs/private-stack-onboarding.md. The derived hosts that still need the operator.
       const coverage = (await dependencies.derivedHostCoverage?.(setup.tenantId, setup.productId)) ?? {
         allowedDomains: product.allowedDomains,
@@ -757,8 +780,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }
         const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
         const sourcesPath = `${ref.workspacePath}/setup-sources.txt`;
+        const leftOutPath = `${ref.workspacePath}/setup-left-out.txt`;
         const runner = dependencies.runners.get(runnerName);
-        const startSession = () => runner.run({
+        const startSession = (timeoutMs: number) => runner.run({
           runId: setupSandboxRunId(setup.id),
           tenantId: setup.tenantId,
           role: "setup",
@@ -766,15 +790,22 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           ref,
           workingDirectory: primary.path,
           repositoryPath: primary.path,
-          prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: primary.path, appChangesPath, sourcesPath }),
+          prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: primary.path, appChangesPath, sourcesPath, leftOutPath }),
           promptVersion: SETUP_PROMPT_VERSION,
           environment: {},
           actionPolicy: buildActionPolicy({ role: "setup" }),
-          timeoutMs: SETUP_SESSION_TIMEOUT_MS,
+          timeoutMs,
         });
-        let result: Awaited<ReturnType<typeof startSession>>;
+        const results: Array<Awaited<ReturnType<typeof startSession>>> = [];
         try {
-          result = await startSession();
+          results.push(await startSession(SETUP_SESSION_TIMEOUT_MS));
+          // GitHub issue 84, docs/specs/agent-session-usage-and-hangs.md. A hung session gets one
+          // fresh session more, in the same sandbox, with the rest of the session budget.
+          const left = SETUP_SESSION_TIMEOUT_MS - (Date.now() - started);
+          if (results[0]?.outcome === "hung" && left >= SETUP_HANG_RETRY_MIN_MS) {
+            dependencies.logger.warn("the setup agent session hung, so Factoree starts it once more", { setup_id: setup.id });
+            results.push(await startSession(left));
+          }
         } catch (error) {
           // docs/specs/run-diagnostics.md. A runner that cannot start the session names why.
           const message = error instanceof Error ? error.message : String(error);
@@ -791,21 +822,30 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           });
           throw error;
         }
+        const result = results.at(-1)!;
+        /** The sum of one usage field over every session, or null when no session reports it. */
+        const total = (field: (entry: (typeof results)[number]) => number | null | undefined): number | null => {
+          const values = results.map(field).filter((value): value is number => value !== null && value !== undefined);
+          return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
+        };
+        const longest = (field: (entry: (typeof results)[number]) => number | null | undefined): number | null => {
+          const values = results.map(field).filter((value): value is number => value !== null && value !== undefined);
+          return values.length === 0 ? null : Math.max(...values);
+        };
         const usage: SetupSessionUsage = {
           runner: runnerName,
           model: result.model ?? null,
           effort: result.effort ?? null,
           outcome: result.outcome,
           durationMs: Date.now() - started,
-          tokens:
-            result.usage === null
-              ? null
-              : (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0),
-          costUsd: result.usage?.costUsd ?? null,
-          turns: result.usage?.turns ?? null,
-          longestTurnMs: result.usage?.longestTurnMs ?? null,
-          modelMs: result.usage?.modelMs ?? null,
-          toolMs: result.usage?.toolMs ?? null,
+          tokens: total((entry) =>
+            entry.usage === null ? null : (entry.usage.inputTokens ?? 0) + (entry.usage.outputTokens ?? 0) + (entry.usage.reasoningTokens ?? 0),
+          ),
+          costUsd: total((entry) => entry.usage?.costUsd),
+          turns: total((entry) => entry.usage?.turns),
+          longestTurnMs: longest((entry) => entry.usage?.longestTurnMs),
+          modelMs: total((entry) => entry.usage?.modelMs),
+          toolMs: total((entry) => entry.usage?.toolMs),
         };
         await dependencies.setups.update(setup.id, { sessionUsage: usage });
         await recordSessionFaults(
@@ -820,7 +860,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             idempotencyKey: `setup:${setup.id}:session`,
             egress: { sandbox: dependencies.sandbox, ref, allowList: [...sessionHosts, ...egress.access.hosts] },
           },
-          [result],
+          results,
         );
 
         const outside = (await changedPaths(dependencies.sandbox, ref, primary.path)).filter((path) => !path.startsWith(".factoree/"));
@@ -872,6 +912,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           .map((line) => line.trim())
           .filter((line) => line !== "");
         const sources = Object.fromEntries(parseSetupSources(dependencies.redactor.redactText((await readText(dependencies.sandbox, ref, sourcesPath)) ?? "")));
+        const leftOut = parseLeftOutStacks(dependencies.redactor.redactText(withoutUrlCredentials((await readText(dependencies.sandbox, ref, leftOutPath)) ?? "")));
         const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: primary.baseSha });
         return {
           kind: "proposed",
@@ -886,6 +927,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           egressRecorded: log !== null,
           appChanges,
           warm,
+          ...(leftOut.length === 0 ? {} : { leftOut }),
         };
       } finally {
         await dependencies.sandbox.destroy(ref).catch(() => undefined);

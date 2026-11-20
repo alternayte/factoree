@@ -5,8 +5,8 @@ import type {
   CliUsageContext,
   CliUsageReading,
 } from "../cli-agent-runner.js";
-import { CliAgentRunner, type AgentSessionSettings } from "../cli-agent-runner.js";
-import { parseClaudeOutput } from "./output-parser.js";
+import { CliAgentRunner, TOOL_CALL_COMMAND_MAX_MS, type AgentSessionSettings } from "../cli-agent-runner.js";
+import { openClaudeToolCall, parseClaudeOutput } from "./output-parser.js";
 
 export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
   /** The executable inside the sandbox. Bootstrap installs it. */
@@ -54,6 +54,9 @@ const sessionArguments = (settings: AgentSessionSettings, repositoryPath: string
  */
 const sessionEnvironment = (settings: AgentSessionSettings): Record<string, string> => ({
   DISABLE_UPDATES: "1",
+  // GitHub issue 84. A test suite can run longer than the 10 minute Bash maximum of Claude Code.
+  // The runner lets an open call run to this limit before the session counts as hung.
+  BASH_MAX_TIMEOUT_MS: String(TOOL_CALL_COMMAND_MAX_MS),
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   ...(settings.effort === null ? {} : { CLAUDE_CODE_EFFORT_LEVEL: settings.effort }),
 });
@@ -113,6 +116,10 @@ export class ClaudeCodeRunner extends CliAgentRunner {
 
   protected parseOutput(text: string): CliAgentParse {
     return parseClaudeOutput(text);
+  }
+
+  protected override openToolCall(stdout: string): { name: string; input: string } | null {
+    return openClaudeToolCall(stdout);
   }
 
   /**

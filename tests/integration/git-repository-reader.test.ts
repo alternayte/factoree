@@ -56,7 +56,7 @@ describe("GitRepositoryReader", () => {
     );
   });
 
-  it("lists every path of the tree with its size", async () => {
+  it("lists every path of the tree and reads its size", async () => {
     const tree = await reader.listTree(origin, headSha);
     expect(tree.truncated).toBe(false);
     const paths = tree.entries.map((entry) => entry.path).sort();
@@ -67,8 +67,9 @@ describe("GitRepositoryReader", () => {
       "café.txt",
       "docs/ADR-031.md",
     ]);
-    const readme = tree.entries.find((entry) => entry.path === "README.md");
-    expect(readme?.sizeBytes).toBeGreaterThan(0);
+    const readme = tree.entries.find((entry) => entry.path === "README.md")!;
+    const sizes = await reader.blobSizes(origin, [readme.objectId]);
+    expect(sizes.get(readme.objectId)).toBe(Buffer.byteLength("# Service\n\nNotifications are owned here.\n"));
   });
 
   it("lists and reads a path holding a non-ASCII byte without quoting or escaping it", async () => {

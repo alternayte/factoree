@@ -48,7 +48,13 @@ const sessionDetail = z.object({
 
 export const runEventDetailSchemas = {
   session_failed: sessionDetail,
-  session_hung: z.object({ runner: z.string(), silenceLimitMs: z.number() }),
+  session_hung: z.object({
+    runner: z.string(),
+    silenceLimitMs: z.number(),
+    // GitHub issue 84. The call the session waited on, and the end of its output. Absent in older events.
+    openToolCall: z.object({ name: z.string(), input: z.string(), runningMs: z.number() }).optional(),
+    log: z.string().nullable().optional(),
+  }),
   /** docs/specs/provider-unreachable.md. The session could not reach the model provider. */
   provider_unreachable: sessionDetail,
   command_failed: commandDetail,

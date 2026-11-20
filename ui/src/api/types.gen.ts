@@ -1983,6 +1983,12 @@ export type GetRunResponses = {
             detail: {
               runner: string;
               silenceLimitMs: number;
+              openToolCall?: {
+                name: string;
+                input: string;
+                runningMs: number;
+              };
+              log?: string | null;
             };
             createdAt: string;
           }
@@ -2263,6 +2269,12 @@ export type ListRunEventsResponses = {
           detail: {
             runner: string;
             silenceLimitMs: number;
+            openToolCall?: {
+              name: string;
+              input: string;
+              runningMs: number;
+            };
+            log?: string | null;
           };
           createdAt: string;
         }
@@ -2722,6 +2734,12 @@ export type ListRepositorySetupEventsResponses = {
           detail: {
             runner: string;
             silenceLimitMs: number;
+            openToolCall?: {
+              name: string;
+              input: string;
+              runningMs: number;
+            };
+            log?: string | null;
           };
           createdAt: string;
         }
@@ -2947,6 +2965,12 @@ export type ListRepositorySetupHistoryResponses = {
             detail: {
               runner: string;
               silenceLimitMs: number;
+              openToolCall?: {
+                name: string;
+                input: string;
+                runningMs: number;
+              };
+              log?: string | null;
             };
             createdAt: string;
           }

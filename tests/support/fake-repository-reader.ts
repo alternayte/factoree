@@ -48,12 +48,21 @@ export class FakeRepositoryReader implements RepositoryReader {
     this.calls.push(`listTree ${url} ${sha}`);
     const repository = this.repository(url);
     return Promise.resolve({
-      entries: Object.entries(repository.files).map(([path, content]) => ({
-        path,
-        sizeBytes: Buffer.byteLength(content, "utf8"),
-      })),
+      // The fake names each blob by its path.
+      entries: Object.keys(repository.files).map((path) => ({ path, objectId: path })),
       truncated: repository.truncated === true,
     });
+  }
+
+  blobSizes(url: string, objectIds: readonly string[]): Promise<Map<string, number>> {
+    this.calls.push(`blobSizes ${url} ${String(objectIds.length)}`);
+    const files = this.repository(url).files;
+    const sizes = new Map<string, number>();
+    for (const id of objectIds) {
+      const content = files[id];
+      if (content !== undefined) sizes.set(id, Buffer.byteLength(content, "utf8"));
+    }
+    return Promise.resolve(sizes);
   }
 
   readBlob(url: string, sha: string, path: string): Promise<string | null> {

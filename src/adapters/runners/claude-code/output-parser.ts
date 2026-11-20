@@ -146,3 +146,45 @@ export const parseClaudeOutput = (text: string): ClaudeOutput => {
   const failure = errorMessage ?? lastUnreachableLine ?? apiRetry;
   return { sessionId, summary, usage, model, toolInputs, ...(failure === null ? {} : { errorMessage: failure }) };
 };
+
+/** The text of a tool input a hang report names: a shell command, or the input as JSON. */
+const toolInputText = (input: unknown): string => {
+  if (isRecord(input) && typeof input["command"] === "string") return input["command"];
+  try {
+    return JSON.stringify(input) ?? "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * GitHub issue 84. The newest tool use whose tool result the stream does not hold yet. Claude Code
+ * writes the `tool_use` block when a call starts and the `tool_result` when it returns, and
+ * nothing between, so an open call explains a silent session.
+ */
+export const openClaudeToolCall = (text: string): { name: string; input: string } | null => {
+  const open = new Map<string, { name: string; input: string }>();
+  for (const rawLine of text.split(/\r\n|\r|\n/)) {
+    const trimmed = rawLine.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed) || !isRecord(parsed["message"])) continue;
+    const content = parsed["message"]["content"];
+    if (!Array.isArray(content)) continue;
+    for (const block of content as unknown[]) {
+      if (!isRecord(block)) continue;
+      if (parsed["type"] === "assistant" && block["type"] === "tool_use" && typeof block["id"] === "string") {
+        open.set(block["id"], { name: typeof block["name"] === "string" ? block["name"] : "tool", input: toolInputText(block["input"]) });
+      }
+      if (parsed["type"] === "user" && block["type"] === "tool_result" && typeof block["tool_use_id"] === "string") {
+        open.delete(block["tool_use_id"]);
+      }
+    }
+  }
+  return [...open.values()].at(-1) ?? null;
+};

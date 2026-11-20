@@ -1,3 +1,4 @@
+import { readTextWithCap } from "~/adapters/http/capped-response-body.js";
 import { createHostCredentialWiring, rebindGitHubTokens } from "./host-credential-wiring.js";
 import { PrismaCredentialBindingStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
 import { GITHUB_REBIND_INTERVAL_MS } from "~/domain/products/host-credentials.js";
@@ -425,7 +426,14 @@ const previewProbe: ReadinessProbe = async (url) => {
   try {
     // A request that hangs must count as no answer, so the readiness deadline still ends the poll.
     const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    return { status: response.status };
+    // GitHub issue 81. A preview failure quotes the start of a refused answer, such as the Vite
+    // 403 page that names the blocked host. A ready answer needs no body.
+    if (response.status >= 200 && response.status < 400) {
+      await response.body?.cancel().catch(() => undefined);
+      return { status: response.status };
+    }
+    const body = await readTextWithCap(response, 16 * 1024).catch(() => null);
+    return body === null ? { status: response.status } : { status: response.status, body };
   } catch {
     return null;
   }

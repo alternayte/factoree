@@ -104,6 +104,42 @@ export const ensureDocker = async (sandbox: Sandbox, ref: SandboxRef): Promise<v
   }
 };
 
+/** The log of the rootless Docker daemon that DOCKER_START_SCRIPT starts. */
+const DOCKERD_LOG = '"${XDG_RUNTIME_DIR:-$HOME/.docker/run}/dockerd.log"';
+
+/** The dockerd log lines of a failed image pull. */
+const PULL_FAILURE = "images/create returned error|for pull after error|Error getting v2 registry|Not continuing with pull|pull access denied";
+
+/** GitHub issue 86. The size of the dockerd log now, so a later read takes only the new lines. */
+export const dockerLogSize = async (sandbox: Sandbox, ref: SandboxRef): Promise<number> => {
+  const result = await sandbox.exec(ref, { file: "sh", args: ["-c", `wc -c < ${DOCKERD_LOG} 2>/dev/null || echo 0`], cwd: "/" });
+  const size = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isFinite(size) ? size : 0;
+};
+
+/**
+ * GitHub issue 86. The image pulls that dockerd logged as failed after `fromByte`. A provider
+ * that records no egress names no denied host, and a test that starts a container fails with an
+ * error of its own, so the dockerd log is the only record that a pull failed. Never a throw.
+ */
+export const dockerPullFailures = async (sandbox: Sandbox, ref: SandboxRef, fromByte: number): Promise<string[]> => {
+  try {
+    const result = await sandbox.exec(ref, {
+      file: "sh",
+      args: ["-c", `tail -c +${String(fromByte + 1)} ${DOCKERD_LOG} 2>/dev/null | grep -E '${PULL_FAILURE}' | tail -n 40`],
+      cwd: "/",
+    });
+    const lines = result.stdout
+      .split("\n")
+      .map((line) => line.replace(/^time="[^"]*"\s*/, "").trim())
+      .filter((line) => line !== "")
+      .map((line) => withoutUrlCredentials(line).slice(0, 400));
+    return [...new Set(lines)].slice(-8);
+  } catch {
+    return [];
+  }
+};
+
 const composeArguments = async (
   sandbox: Sandbox,
   ref: SandboxRef,

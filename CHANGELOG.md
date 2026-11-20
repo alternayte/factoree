@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The setup agent lists each stack it finds and leaves out, with the command it ran and its output. The setup report lists each one under "Not proven, so left out" as `stack <name> (not proposed)`, and the next setup tries it again (GitHub issue 82, `setup@14`).
+- The preview command gets `FACTOREE_PREVIEW_URL`, `FACTOREE_PREVIEW_HOST` and `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`, so a Vite dev server accepts the exposed host (GitHub issue 81).
+
+### Changed
+
+- A claude session that waits on an open tool call, such as a long test suite, is hung only after 35 minutes of silence. Claude Code runs a shell command for up to 30 minutes. The `session_hung` event names the open call and how long it ran. A hung setup session gets one fresh session (GitHub issue 84).
+- The setup prompt says that the verify commands and the preview reach only `sandbox.allowedDomains`, and tells the agent to pull each image a test starts in the bootstrap (GitHub issue 86).
+- The suggested redirect host of `nuget.pkg.github.com` is `nugetregistryv2prod.blob.core.windows.net`. The npm, Maven and RubyGems hosts get their `registryv2prod` blob host too (GitHub issue 83).
+
+### Fixed
+
+- A repository with thousands of files no longer times out in `RESOLVING_CONTEXT`. The tree listing fetches no blob, and the sizes of the kept files come in one batch (GitHub issue 85).
+- A preview that does not become ready names the status and the start of the body of the last poll (GitHub issue 81).
+- A failed verify command with Docker names the image pulls that dockerd logged as failed. A setup report on a provider that records no egress says that it names no blocked host (GitHub issue 86).
+
 ## [0.18.0] - 2026-11-20
 
 ### Added

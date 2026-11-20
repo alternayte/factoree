@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
-import { failureExcerpt, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult } from "~/domain/setup/setup-report.js";
+import { failureExcerpt, parseLeftOutStacks, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult } from "~/domain/setup/setup-report.js";
 
 const PROPOSAL = `version: 1
 identity:
@@ -76,6 +76,27 @@ describe("renderSetupReport", () => {
     expect(body).toContain("- account `member`: it failed");
     expect(body).toContain("TMDB API, answered by the compose service `tmdb`");
     expect(body).toContain("Denied, because they are outside the ecosystem host list: `npm.company.internal`.");
+  });
+
+  // GitHub issue 82. The agent left out a .NET API, and the report did not say so.
+  it("lists a stack the agent left out, with its output, under Not proven", () => {
+    const leftOut = parseLeftOutStacks(
+      "dotnet: dotnet restore failed: error NU1301: Unable to load the service index\n  Determining projects to restore...\n  error NU1301\n",
+    );
+    expect(leftOut).toEqual([
+      {
+        kind: "stack",
+        name: "dotnet",
+        passed: false,
+        reason: "dotnet restore failed: error NU1301: Unable to load the service index",
+        logTail: "Determining projects to restore...\nerror NU1301",
+      },
+    ]);
+    const body = renderSetupReport({ parts: [pass("bootstrap"), ...leftOut], observedHosts: [], deniedHosts: [], egressRecorded: false, fakes: [], appChanges: [] });
+    expect(body).toContain("### Not proven, so left out");
+    expect(body).toContain("- stack `dotnet` (not proposed): dotnet restore failed");
+    // GitHub issue 86. An empty denied list is not evidence on a provider that records none.
+    expect(body).toContain("The sandbox provider records no blocked requests");
   });
 });
 

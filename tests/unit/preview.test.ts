@@ -131,7 +131,7 @@ describe("startPreview", () => {
     expect((await sandbox.readProcess(ref, { id: "process-1" })).running).toBe(false);
   });
 
-  it("cancels the process it started when the sandbox cannot expose the service", async () => {
+  it("starts no process when the sandbox cannot expose the service", async () => {
     const sandbox = new FakeSandbox();
     sandbox.exposeService = () => Promise.reject(new Error("this adapter cannot expose a port"));
     const base = buildBase(sandbox);
@@ -139,8 +139,31 @@ describe("startPreview", () => {
       { reason: "expose_failed" },
     );
 
-    expect(sandbox.calls).toContain("cancelProcess");
-    expect((await sandbox.readProcess(ref, { id: "process-1" })).running).toBe(false);
+    expect(sandbox.calls).not.toContain("startProcess:sh");
+  });
+
+  // GitHub issue 81. Vite answered 403 on every poll, and the error said only "did not answer".
+  it("names the last poll status and body, and the Vite host check", async () => {
+    const sandbox = new FakeSandbox();
+    let clock = 0;
+    const started = startPreview({
+      ...buildBase(sandbox),
+      probe: async () => {
+        sandbox.updateProcess("process-1", { stdout: "  VITE v6.4.2  ready in 990 ms\n" });
+        return { status: 403, body: 'Blocked request. This host ("x.e2b.app") is not allowed.' };
+      },
+      now: () => (clock += 1_000),
+    });
+    await expect(started).rejects.toThrow(/returned 403: Blocked request\. This host \("x\.e2b\.app"\) is not allowed\.\. Vite refuses a Host/);
+  });
+
+  it("gives the preview command the exposed host", async () => {
+    const sandbox = new FakeSandbox();
+    await startPreview({ ...buildBase(sandbox), environment: { __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: "a.test" }, probe: async () => ({ status: 200 }) });
+    const env = sandbox.started[0]?.env ?? {};
+    expect(env["FACTOREE_PREVIEW_URL"]).toBe("http://fake.invalid:8080");
+    expect(env["FACTOREE_PREVIEW_HOST"]).toBe("fake.invalid");
+    expect(env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"]).toBe("a.test,fake.invalid");
   });
 
   it("keeps the original error when the cancel of the leaked process fails", async () => {
