@@ -47,7 +47,7 @@ import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { BrowserDriver } from "~/domain/validation/browser-driver.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
-import { startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
+import { exposePreview, startPreview, stopPreview, type PreviewHandle, type ReadinessProbe } from "~/domain/runs/preview.js";
 import type { PreviewConfig } from "~/domain/runs/project-runtime-config.js";
 import type { BrowserLimits } from "~/domain/validation/browser-limits.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
@@ -580,7 +580,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         const port = Number(new URL(input.preview.readyUrl).port);
         if (Number.isFinite(port) && port !== 0 && !Number.isNaN(port)) {
           try {
-            const service = await uv.sandbox.exposeService(ref, port);
+            const service = await exposePreview(uv.sandbox, ref, port);
             previewBaseUrl = service.url;
           } catch {
             // The prompt states that no preview exists. `runUserValidation` makes its own
@@ -617,7 +617,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
                 let url: string | null = null;
                 if (port !== null) {
                   try {
-                    url = (await uv.sandbox.exposeService(ref, port)).url;
+                    url = (await exposePreview(uv.sandbox, ref, port)).url;
                   } catch {
                     url = null;
                   }

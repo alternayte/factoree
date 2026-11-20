@@ -133,6 +133,11 @@ export interface SandboxCapabilities {
    * the guest. A product with host credentials fails at preparation on a provider without it.
    */
   bindsCredentials: boolean;
+  /**
+   * docs/specs/preview-host-and-e2b-egress.md. True when the provider runs the sandbox image, so
+   * each preview runs behind the preview proxy. Absent means false.
+   */
+  runsPreviewProxy?: boolean;
 }
 
 /**

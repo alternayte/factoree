@@ -90,6 +90,8 @@ export class KilnSandbox implements Sandbox {
     supportsCustomImage: true,
     supportsDocker: true,
     bindsCredentials: true,
+    // docs/specs/preview-host-and-e2b-egress.md. The sandbox image holds the preview proxy.
+    runsPreviewProxy: true,
   };
   readonly image: string;
   readonly warmSnapshots: WarmSnapshots;

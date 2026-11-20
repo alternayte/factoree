@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@14";
+export const SETUP_PROMPT_VERSION = "setup@15";
 
 export interface SetupPromptFields {
   repository: string;
@@ -182,7 +182,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "A preview command starts every process the app needs, such as an API and a front end, and answers on readyUrl.",
         `preview.timeoutSeconds is at most ${PREVIEW_TIMEOUT_MAX_SECONDS} and services.waitTimeoutSeconds is at most ${SERVICES_WAIT_TIMEOUT_MAX_SECONDS}. Factoree refuses the whole configuration when a value is over its limit. A preview or a stack that needs longer is a part to leave out, not a limit to raise.`,
         "The preview must listen on every interface, 0.0.0.0 or [::], and not on localhost alone: Factoree and its browser reach it through the sandbox's exposed port, from outside the sandbox. Write readyUrl with localhost and the explicit port.",
-        "Factoree and its browser send the exposed host name in the Host header. Factoree sets FACTOREE_PREVIEW_HOST to that name, FACTOREE_PREVIEW_URL to the exposed URL, and __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS to the name for Vite. A dev server that checks the Host header, such as webpack-dev-server or the Angular CLI, must allow FACTOREE_PREVIEW_HOST: pass it in the preview command. Do not replace __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS.",
+        "Factoree sends each browser request to the preview as localhost:<port>, so the app needs no allowed-hosts or trusted-origins setting for Factoree.",
         "Set preview.readySelector only when the app renders its markup before it attaches its handlers, as Blazor Server, Phoenix LiveView and Hotwire do: a click before then does nothing. Pick a selector that shows only once the page takes input. Before the first click or fill after each page load, Factoree waits for it, as well as for the load event and network idle.",
         "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",
       ].join("\n"),

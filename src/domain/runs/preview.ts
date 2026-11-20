@@ -1,4 +1,4 @@
-import type { ProcessRef, Sandbox, SandboxRef } from "./sandbox.js";
+import type { ProcessRef, Sandbox, SandboxRef, ServiceRef } from "./sandbox.js";
 import type { PreviewConfig } from "./project-runtime-config.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 
@@ -19,6 +19,8 @@ export type ReadinessProbe = (url: string) => Promise<{ status: number; body?: s
 
 export interface PreviewHandle {
   process: ProcessRef;
+  /** docs/specs/preview-host-and-e2b-egress.md. The preview proxy, where the provider runs one. */
+  proxyProcess?: ProcessRef;
   /** The URL a client outside the sandbox uses. SDD section 37 step 3. */
   baseUrl: string;
   port: number;
@@ -65,12 +67,12 @@ const isReady = (result: { status: number; body?: string } | null): boolean =>
   result !== null && result.status >= 200 && result.status < 400;
 
 /**
- * DI-21.14. A server that listens on loopback alone answers inside the sandbox, and never through
- * the exposed port that the readiness poll and the browser use. The anthology setup of
- * 2026-11-05 lost its preview so: ASP.NET listened on 127.0.0.1:3000 and [::1]:3000 only. The
- * failure names the cause, so the next attempt binds every interface.
+ * DI-21.14. Without the preview proxy, a server that listens on loopback alone answers inside
+ * the sandbox, and never through the exposed port that the readiness poll and the browser use.
+ * The anthology setup of 2026-11-05 lost its preview so: ASP.NET listened on 127.0.0.1:3000 and
+ * [::1]:3000 only. With the proxy, loopback works, so only a port where nothing listens is named.
  */
-const loopbackOnlyHint = async (input: StartPreviewInput, port: number): Promise<string> => {
+const listenHint = async (input: StartPreviewInput, port: number, proxied: boolean): Promise<string> => {
   try {
     const result = await input.sandbox.exec(input.ref, { file: "sh", args: ["-c", `ss -ltnH "sport = :${port}"`], cwd: "/" });
     const addresses = result.stdout
@@ -78,6 +80,7 @@ const loopbackOnlyHint = async (input: StartPreviewInput, port: number): Promise
       .map((line) => line.trim().split(/\s+/)[3])
       .filter((address): address is string => address !== undefined && address.length > 0);
     if (addresses.length === 0) return ` Nothing listens on port ${String(port)} in the sandbox.`;
+    if (proxied) return "";
     const loopback = (address: string) => address.startsWith("127.") || address.startsWith("[::1]") || address.startsWith("[::ffff:127.");
     return addresses.every(loopback)
       ? ` The preview listens on ${addresses.join(" and ")} only. Factoree reaches it through the exposed port, so it must listen on 0.0.0.0 or [::].`
@@ -100,27 +103,30 @@ const lastPollSentence = (input: StartPreviewInput, probeUrl: string, result: { 
   return ` The last poll of ${probeUrl} returned ${String(result.status)}${body === "" ? "" : `: ${input.redactor.redactText(body)}`}.`;
 };
 
-/** GitHub issue 81. Vite answers 403 to a Host header that `server.allowedHosts` does not name. */
-const viteHostHint = (result: { status: number; body?: string } | null, log: string): string =>
-  result?.status === 403 && /\bVITE v\d/.test(log)
-    ? " Vite refuses a Host it does not allow. Factoree sets __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS for the preview command, so a command that replaces that variable, or a server.allowedHosts that is not true, refuses the preview host."
-    : "";
+/** docs/specs/preview-host-and-e2b-egress.md. The root-owned preview proxy in the sandbox image. */
+export const PREVIEW_PROXY = "/opt/factoree/bin/factoree-preview-proxy";
 
 /**
- * GitHub issue 81. The environment that lets a dev server accept the exposed host. A dev server
- * that checks the Host header, as Vite does since 6.0.9, 5.4.12 and 4.5.6, refuses a request through the exposed URL
- * otherwise. FACTOREE_PREVIEW_URL and FACTOREE_PREVIEW_HOST let a preview script pass the host to
- * any other server.
+ * docs/specs/preview-host-and-e2b-egress.md. The port the preview proxy of one preview port
+ * listens on. It is fixed, so the validator prompt names the URL before the preview starts.
  */
-export const previewHostEnvironment = (exposedUrl: string, environment: Record<string, string>): Record<string, string> => {
-  const host = new URL(exposedUrl).hostname;
-  const vite = environment["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"];
-  return {
-    FACTOREE_PREVIEW_URL: exposedUrl,
-    FACTOREE_PREVIEW_HOST: host,
-    __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: vite === undefined || vite === "" ? host : `${vite},${host}`,
-  };
-};
+export const previewProxyPort = (port: number): number => (port <= 35_535 ? port + 30_000 : port - 30_000);
+
+/** The sandbox that owns the ref, so a provider list answers with the capabilities of its provider. */
+const ownerOf = async (sandbox: Sandbox, ref: SandboxRef): Promise<Sandbox> =>
+  sandbox.forProvider === undefined ? sandbox : await sandbox.forProvider(ref.adapter);
+
+/** True when the provider of the ref runs the sandbox image, and so the preview proxy. */
+export const usesPreviewProxy = async (sandbox: Sandbox, ref: SandboxRef): Promise<boolean> =>
+  (await ownerOf(sandbox, ref)).capabilities.runsPreviewProxy === true;
+
+/**
+ * docs/specs/preview-host-and-e2b-egress.md. The URL a client outside the sandbox uses for the
+ * preview on `port`: the proxy port where the provider runs the proxy, else the port itself.
+ * Exposure needs no running server.
+ */
+export const exposePreview = async (sandbox: Sandbox, ref: SandboxRef, port: number): Promise<ServiceRef> =>
+  sandbox.exposeService(ref, (await usesPreviewProxy(sandbox, ref)) ? previewProxyPort(port) : port);
 
 export const startPreview = async (input: StartPreviewInput): Promise<PreviewHandle> => {
   const sleep = input.sleep ?? defaultSleep;
@@ -137,15 +143,21 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
       "",
     );
   }
+  const proxied = await usesPreviewProxy(input.sandbox, input.ref);
+  const proxyPort = previewProxyPort(port);
 
   // The preview port belongs to Factoree's preview. An agent can leave a server of its own on
   // it, and on the FAC-44 run one made `next start` fail with EADDRINUSE. The stray server would
-  // also answer the readiness poll for a change Factoree did not start.
+  // also answer the readiness poll for a change Factoree did not start. The proxy port is
+  // Factoree's too, so a proxy an earlier preview left goes the same way.
+  const ports = proxied ? [port, proxyPort] : [port];
   await input.sandbox.exec(input.ref, {
     file: "sh",
     args: [
       "-c",
-      `for pid in $(ss -ltnpH "sport = :${port}" | grep -o "pid=[0-9]*" | cut -d= -f2 | sort -u); do kill "$pid"; done; true`,
+      ports
+        .map((each) => `for pid in $(ss -ltnpH "sport = :${each}" | grep -o "pid=[0-9]*" | cut -d= -f2 | sort -u); do kill "$pid"; done`)
+        .join("; ") + "; true",
     ],
     cwd: "/",
   });
@@ -154,14 +166,14 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
   // names an address inside the sandbox, and on the worker `localhost` is the worker itself:
   // the FAC-46 run polled the local Factoree API for the whole timeout. So the poll requests
   // the readiness path at the exposed URL. Exposure needs no running server, so it comes before
-  // the start, and the command gets the exposed host (GitHub issue 81). A sandbox adapter that
-  // cannot expose a service fails here the same honest way every preview failure does.
+  // the start. A sandbox adapter that cannot expose a service fails here the same honest way
+  // every preview failure does.
   let service;
   try {
-    service = await input.sandbox.exposeService(input.ref, port);
+    service = await exposePreview(input.sandbox, input.ref, port);
   } catch (error) {
     throw new PreviewStartError(
-      `The sandbox could not expose the preview on port ${String(port)}: ` +
+      `The sandbox could not expose the preview on port ${String(proxied ? proxyPort : port)}: ` +
         `${error instanceof Error ? error.message : String(error)}`,
       "expose_failed",
       "",
@@ -169,13 +181,24 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
   }
 
   const startedAt = new Date(now()).toISOString();
+  // docs/specs/preview-host-and-e2b-egress.md. The proxy starts first and answers 502 until the
+  // preview listens, so the poll below needs no second wait.
+  const proxyRef: ProcessRef | null = proxied
+    ? await input.sandbox.startProcess(input.ref, { file: PREVIEW_PROXY, args: [String(proxyPort), String(port)], cwd: "/", isolated: true })
+    : null;
   // Rule 2. `startProcess` ignores `Command.timeoutMs`, so this function owns the deadline below.
-  const processRef = await input.sandbox.startProcess(input.ref, {
-    file: "sh",
-    args: ["-c", input.preview.command],
-    cwd: input.workingDirectory,
-    env: { ...input.environment, ...previewHostEnvironment(service.url, input.environment) },
-  });
+  let processRef: ProcessRef;
+  try {
+    processRef = await input.sandbox.startProcess(input.ref, {
+      file: "sh",
+      args: ["-c", input.preview.command],
+      cwd: input.workingDirectory,
+      env: input.environment,
+    });
+  } catch (error) {
+    if (proxyRef !== null) await input.sandbox.cancelProcess(input.ref, proxyRef).catch(() => undefined);
+    throw error;
+  }
 
   const pollUntilReady = async (): Promise<PreviewHandle> => {
     const ready = new URL(input.preview.readyUrl);
@@ -194,12 +217,23 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
           buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
         );
       }
+      if (proxyRef !== null) {
+        const proxy = await input.sandbox.readProcess(input.ref, proxyRef);
+        if (!proxy.running) {
+          throw new PreviewStartError(
+            `The preview proxy on port ${String(proxyPort)} exited.`,
+            "exited",
+            buildLog(input.redactor, proxy.stdout, proxy.stderr),
+          );
+        }
+      }
 
       // Rule 5. Any status outside 200 to 399, and a null answer, means keep polling.
       const result = await input.probe(probeUrl);
       if (isReady(result)) {
         return {
           process: processRef,
+          ...(proxyRef === null ? {} : { proxyProcess: proxyRef }),
           baseUrl: service.url,
           port,
           readyUrl: input.preview.readyUrl,
@@ -213,7 +247,7 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
         throw new PreviewStartError(
           `The preview command "${input.preview.command}" did not answer within ` +
             `${input.preview.timeoutSeconds} seconds.${lastPollSentence(input, probeUrl, result)}` +
-            `${viteHostHint(result, snapshot.stdout + snapshot.stderr)}${await loopbackOnlyHint(input, port)}`,
+            `${await listenHint(input, port, proxied)}`,
           "not_ready",
           buildLog(input.redactor, snapshot.stdout, snapshot.stderr),
         );
@@ -223,24 +257,26 @@ export const startPreview = async (input: StartPreviewInput): Promise<PreviewHan
     }
   };
 
-  // Rule 10. The process is already running. Every failure below must cancel it, or the
+  // Rule 10. The processes are already running. Every failure below must cancel them, or the
   // preview leaks until the sandbox reaper removes the whole sandbox. A failure to cancel
   // must not replace the original error, because the operator needs the original error.
   try {
     return await pollUntilReady();
   } catch (error) {
-    try {
-      await input.sandbox.cancelProcess(input.ref, processRef);
-    } catch {
-      // The original error stands.
+    for (const each of proxyRef === null ? [processRef] : [processRef, proxyRef]) {
+      try {
+        await input.sandbox.cancelProcess(input.ref, each);
+      } catch {
+        // The original error stands.
+      }
     }
     throw error;
   }
 };
 
 /**
- * Rule 9. Stops the preview process. The caller runs this in a `finally`, so it must not throw
- * when the process already exited; `Sandbox.cancelProcess` is idempotent by contract.
+ * Rule 9. Stops the preview process and its proxy. The caller runs this in a `finally`, so it
+ * must not throw when a process already exited; `Sandbox.cancelProcess` is idempotent by contract.
  */
 export const stopPreview = async (
   sandbox: Sandbox,
@@ -248,4 +284,5 @@ export const stopPreview = async (
   handle: PreviewHandle,
 ): Promise<void> => {
   await sandbox.cancelProcess(ref, handle.process);
+  if (handle.proxyProcess !== undefined) await sandbox.cancelProcess(ref, handle.proxyProcess);
 };

@@ -5,6 +5,7 @@ import type {
   CheckpointRef,
   Command,
   CommandResult,
+  EgressRecord,
   NetworkPolicy,
   ProcessRef,
   ProcessSnapshot,
@@ -15,7 +16,7 @@ import type {
   ServiceRef,
   WarmSnapshots,
 } from "~/domain/runs/sandbox.js";
-import { normalizeNetworkPolicy, SandboxError } from "~/domain/runs/sandbox.js";
+import { allowListCovers, normalizeNetworkPolicy, SandboxError } from "~/domain/runs/sandbox.js";
 import { DEFAULT_KILN_SANDBOX_SIZE, type KilnSandboxSize } from "~/domain/settings/install-settings.js";
 import { KILN_RUNNER_BIN, templateName } from "../kiln/kiln-sandbox.js";
 import type { E2BGateway } from "./e2b-client.js";
@@ -54,6 +55,20 @@ const SANDBOX_USER = "agent";
 /** Only the device chmod after a create runs as root (DI-21.29). */
 const ROOT_USER = "root";
 const DEVICE_CHMOD_TIMEOUT_MS = 30_000;
+/** docs/specs/preview-host-and-e2b-egress.md. The root DNS log of an E2B sandbox. */
+const DNS_START = "/opt/factoree/bin/factoree-dns-start";
+const DNS_LOG = "/var/log/factoree/dns.log";
+const DNS_TIMEOUT_MS = 30_000;
+/** The marker line that names the allowed names from this line on. */
+const POLICY_MARKER = "#factoree-policy ";
+/**
+ * Reads the DNS log in the sandbox: each policy marker, and each name once per policy, so the
+ * output stays small on a long run. A missing log prints `missing`.
+ */
+const DNS_READ_SCRIPT =
+  `test -r ${DNS_LOG} || { echo missing; exit 0; }; ` +
+  `awk '/^${POLICY_MARKER.trim()} /{print; delete seen; next} ` +
+  `/ query\[(A|AAAA|HTTPS|SVCB|CNAME)\] /{for(i=1;i<=NF;i++) if($i ~ /^query\[/){name=$(i+1); if(!(name in seen)){seen[name]=1; print "Q " name}}}' ${DNS_LOG}`;
 const DEFAULT_WORKSPACE = "/home/agent/workspace";
 /** Outside the workspace, so no checkout and no diff ever holds a process file. */
 const PROCESS_ROOT = "/home/agent/.factoree/proc";
@@ -89,6 +104,8 @@ export class E2BSandbox implements Sandbox {
     supportsCustomImage: true,
     supportsDocker: true,
     bindsCredentials: true,
+    // docs/specs/preview-host-and-e2b-egress.md. The sandbox image holds the preview proxy.
+    runsPreviewProxy: true,
   };
   readonly image: string;
   readonly warmSnapshots: WarmSnapshots;
@@ -133,6 +150,16 @@ export class E2BSandbox implements Sandbox {
     for (const binding of normalized.credentials ?? []) {
       headers[binding.host] = { ...(headers[binding.host] ?? {}), [binding.header]: binding.value };
     }
+    // docs/specs/preview-host-and-e2b-egress.md. The marker comes first, so no lookup under the
+    // new rules sits before it. Only root can write the log.
+    await this.options.gateway
+      .run(ref.id, `test -f ${DNS_LOG} && printf '%s\\n' ${shellQuote(`${POLICY_MARKER}${normalized.allowedDomains.join(",")}`)} >> ${DNS_LOG}; true`, {
+        cwd: "/",
+        envs: {},
+        user: ROOT_USER,
+        timeoutMs: DNS_TIMEOUT_MS,
+      })
+      .catch(() => undefined);
     await this.options.gateway.setEgress(ref.id, normalized.allowedDomains, headers);
 
     // A wildcard entry names no host to connect to, so it cannot be confirmed this way.
@@ -285,7 +312,40 @@ export class E2BSandbox implements Sandbox {
     this.attached.set(id, { ...(input.environment ?? {}) });
     this.lastKeepAlive.set(id, this.now());
     await this.openDevices(id);
+    await this.startDnsLog(id);
     return { id, adapter: this.name, workspacePath: DEFAULT_WORKSPACE };
+  }
+
+  /**
+   * docs/specs/preview-host-and-e2b-egress.md. E2B keeps no egress log, so a root dnsmasq logs
+   * each lookup in the guest. A create and a restore both start it, and the start is idempotent.
+   * A failed start is no fault: `egressLog` then finds no log and returns null.
+   */
+  private async startDnsLog(id: string): Promise<void> {
+    await this.options.gateway
+      .run(id, `${DNS_START} >/dev/null 2>&1 || true`, { cwd: "/", envs: {}, user: ROOT_USER, timeoutMs: DNS_TIMEOUT_MS })
+      .catch(() => undefined);
+  }
+
+  /**
+   * docs/specs/preview-host-and-e2b-egress.md. The lookups of the DNS log, each judged against the
+   * policy in force at its line: a name the allowed names cover is allowed, any other is denied.
+   * A lookup before the first marker met the create policy, which denies all. Null when the log is
+   * missing or unreadable, because no record is better than a wrong one.
+   */
+  async egressLog(ref: SandboxRef): Promise<EgressRecord[] | null> {
+    try {
+      await this.keepAlive(ref);
+      const result = await this.options.gateway.run(ref.id, commandLine(["sh", "-c", DNS_READ_SCRIPT], { PATH: E2B_PATH }), {
+        cwd: "/",
+        envs: { PATH: E2B_PATH },
+        user: SANDBOX_USER,
+        timeoutMs: DNS_TIMEOUT_MS,
+      });
+      return result.timedOut || result.exitCode !== 0 ? null : egressRecordsOfDnsLog(result.stdout);
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -385,3 +445,29 @@ export const processWrapperScript = (dir: string): string => {
 };
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A single-quoted shell word. */
+const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * docs/specs/preview-host-and-e2b-egress.md. Judges the read of the DNS log. Each `#factoree-policy`
+ * line sets the allowed names; each `Q <name>` line is one lookup. A name in reverse lookup form or
+ * with no dot names no host the allow list could name, so it is left out.
+ */
+export const egressRecordsOfDnsLog = (text: string): EgressRecord[] | null => {
+  if (text.trim() === "missing") return null;
+  let allowed: string[] = [];
+  const records = new Map<string, EgressRecord>();
+  for (const line of text.split("\n")) {
+    if (line.startsWith(POLICY_MARKER)) {
+      allowed = line.slice(POLICY_MARKER.length).split(",").map((name) => name.trim()).filter((name) => name !== "");
+      continue;
+    }
+    if (!line.startsWith("Q ")) continue;
+    const host = line.slice(2).trim().toLowerCase().replace(/\.$/, "");
+    if (host === "" || !host.includes(".") || host.endsWith(".arpa") || /^[0-9.:]+$/.test(host)) continue;
+    const decision = allowListCovers(allowed, host) ? "allowed" : "denied";
+    records.set(`${decision} ${host}`, { host, decision });
+  }
+  return [...records.values()];
+};
