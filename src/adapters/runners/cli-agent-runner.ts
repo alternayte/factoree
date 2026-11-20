@@ -114,6 +114,10 @@ export interface CliAgentRunnerOptions {
    * errors before the runner ends the session. A test lowers it.
    */
   providerUnreachableGraceMs?: number;
+  /**
+   * GitHub issue 84. The window between two CPU samples of a silent session. A test lowers it.
+   */
+  cpuSampleWindowMs?: number;
 }
 
 /**
@@ -131,6 +135,39 @@ export const DEFAULT_SILENCE_LIMIT_MS = 10 * 60 * 1_000;
  */
 export const TOOL_CALL_COMMAND_MAX_MS = 30 * 60 * 1_000;
 export const OPEN_TOOL_CALL_SILENCE_LIMIT_MS = TOOL_CALL_COMMAND_MAX_MS + 5 * 60 * 1_000;
+
+/**
+ * GitHub issue 84. The environment variable that marks every process of one agent invocation, so
+ * Factoree can find the processes of a session, its tool calls included, in any runner.
+ */
+export const AGENT_SESSION_MARKER = "FACTOREE_AGENT_SESSION";
+
+/** GitHub issue 84. The window between two CPU samples of a silent session. */
+export const CPU_SAMPLE_WINDOW_MS = 30_000;
+
+/**
+ * GitHub issue 84. The CPU time, in clock ticks of 10 ms, that the session processes must use in
+ * one sample window to count as working: 0.5 s in 30 s. An idle CLI that waits on a dropped
+ * connection uses almost none.
+ */
+export const CPU_ACTIVE_TICKS = 50;
+
+/**
+ * Sums utime and stime of every process whose environment holds the marker. The command name in
+ * `stat` can hold spaces, so the fields are read after the last ") ". A process that ends during
+ * the read is skipped.
+ */
+const CPU_SAMPLE_SCRIPT = `marker="$1"; total=0
+for dir in /proc/[0-9]*; do
+  tr '\\0' '\\n' < "$dir/environ" 2>/dev/null | grep -qx "${AGENT_SESSION_MARKER}=$marker" || continue
+  stat=$(cat "$dir/stat" 2>/dev/null) || continue
+  set -- \${stat##*) }
+  total=$((total + \${12:-0} + \${13:-0}))
+done
+echo "cpu=$total"`;
+
+/** GitHub issue 84. What the CPU samples of a silent session showed. */
+export type SessionProcessActivity = "active" | "idle" | "unreadable";
 
 /** The deadline of the usage read after a session. A CLI that does not answer costs no more. */
 export const USAGE_READ_TIMEOUT_MS = 60_000;
@@ -153,6 +190,8 @@ interface LiveSession {
    * read and the result still need the identifier.
    */
   cliSessionId: string | null;
+  /** GitHub issue 84. The value of AGENT_SESSION_MARKER in the processes of this invocation. */
+  marker: string;
 }
 
 /**
@@ -171,6 +210,7 @@ export abstract class CliAgentRunner implements AgentRunner {
   private readonly silenceLimitMs: number;
   private readonly providerUnreachableGraceMs: number;
   private readonly clock: () => number;
+  private readonly cpuSampleWindowMs: number;
   // Every session of one Run, by process id. A Temporal activity retry can present an old
   // `AgentSessionRef`, so an entry must live until the Run itself ends. `releaseRun` disposes
   // every entry of one Run, which bounds the map by the number of Runs in flight.
@@ -184,6 +224,7 @@ export abstract class CliAgentRunner implements AgentRunner {
     this.silenceLimitMs = cliOptions.silenceLimitMs ?? DEFAULT_SILENCE_LIMIT_MS;
     this.providerUnreachableGraceMs = cliOptions.providerUnreachableGraceMs ?? PROVIDER_UNREACHABLE_GRACE_MS;
     this.clock = cliOptions.clock ?? Date.now;
+    this.cpuSampleWindowMs = cliOptions.cpuSampleWindowMs ?? CPU_SAMPLE_WINDOW_MS;
   }
 
   /** The command that starts a new session with the given prompt. */
@@ -256,11 +297,12 @@ export abstract class CliAgentRunner implements AgentRunner {
     const settings = await this.settingsOf(input);
     const promptFile = await this.writePrompt(input.sandbox, input.ref, input.prompt);
     const command = await this.withSessionFiles(input.sandbox, input.ref, settings, this.startCommand(promptFile, input.repositoryPath, settings));
+    const marker = randomUUID();
     const process = await input.sandbox.startProcess(input.ref, {
       file: command.file,
       args: command.args,
       cwd: input.workingDirectory,
-      env: { ...input.environment, ...command.env },
+      env: { ...input.environment, ...command.env, [AGENT_SESSION_MARKER]: marker },
     });
 
     const live: LiveSession = {
@@ -275,6 +317,7 @@ export abstract class CliAgentRunner implements AgentRunner {
       cancelled: false,
       counted: new Set<string>(),
       cliSessionId: null,
+      marker,
     };
     this.sessions.set(process.id, live);
     this.activeByRun.set(input.runId, process.id);
@@ -300,15 +343,17 @@ export abstract class CliAgentRunner implements AgentRunner {
       previous.settings,
       this.resumeCommand(session.sessionId, promptFile, previous.repositoryPath, previous.settings),
     );
+    const marker = randomUUID();
     const process = await previous.sandbox.startProcess(previous.ref, {
       file: command.file,
       args: command.args,
       cwd: previous.workingDirectory,
-      env: { ...previous.environment, ...command.env },
+      env: { ...previous.environment, ...command.env, [AGENT_SESSION_MARKER]: marker },
     });
 
     const live: LiveSession = {
       ...previous,
+      marker,
       process,
       cancelled: false,
       cliSessionId: session.sessionId === session.processId ? previous.cliSessionId : session.sessionId,
@@ -412,6 +457,11 @@ export abstract class CliAgentRunner implements AgentRunner {
     // The open tool call of the current output. The output does not change while the session is
     // silent, so one parse serves the whole silence.
     let openCall: { name: string; input: string } | null | undefined;
+    // GitHub issue 84. The CPU samples of the current silence. A runner that names no tool call
+    // until it returns, such as opencode, still shows a long command through the CPU time of
+    // the processes of the session.
+    let cpuSample: { ticks: number; at: number } | null = null;
+    let cpuState: SessionProcessActivity | "unknown" = "unknown";
     // docs/specs/provider-unreachable.md. One watch per stream, each with its own run of
     // connectivity events and its own deadline. New stdout model activity also clears the stderr
     // watch, because it proves the CLI is working again after a stderr-only error. Any other
@@ -427,6 +477,8 @@ export abstract class CliAgentRunner implements AgentRunner {
         lastOutput = output;
         lastOutputAt = this.clock();
         openCall = undefined;
+        cpuSample = null;
+        cpuState = "unknown";
       }
       // The watches read the complete lines each poll added, so a blank line or an unfinished
       // line changes nothing.
@@ -474,8 +526,19 @@ export abstract class CliAgentRunner implements AgentRunner {
       // outlasts the longest command the runner allows makes an open call a hang.
       if (silentMs >= live.settings.silenceLimitMs && openCall === undefined) openCall = this.safeOpenToolCall(snapshot.stdout);
       const open = openCall ?? null;
-      const limitMs = open === null ? live.settings.silenceLimitMs : Math.max(live.settings.silenceLimitMs, OPEN_TOOL_CALL_SILENCE_LIMIT_MS);
-      if (silentMs >= limitMs) {
+      if (silentMs >= live.settings.silenceLimitMs && cpuState !== "unreadable" && (cpuSample === null || this.clock() - cpuSample.at >= this.cpuSampleWindowMs)) {
+        const ticks = await this.sessionCpuTicks(live);
+        if (ticks === null) cpuState = "unreadable";
+        else {
+          if (cpuSample !== null) cpuState = ticks - cpuSample.ticks >= CPU_ACTIVE_TICKS ? "active" : "idle";
+          cpuSample = { ticks, at: this.clock() };
+        }
+      }
+      const working = open !== null || cpuState === "active";
+      // The first sample has no window to compare with yet, so the session waits one window.
+      const deciding = cpuState === "unknown" && cpuSample !== null;
+      const limitMs = working ? Math.max(live.settings.silenceLimitMs, OPEN_TOOL_CALL_SILENCE_LIMIT_MS) : live.settings.silenceLimitMs;
+      if (silentMs >= limitMs && !(deciding && !working)) {
         // The session is hung. Factoree ends it here, so the rest of the Run budget stays
         // available to the one retry of docs/specs/agent-session-usage-and-hangs.md. The
         // evidence it already produced is preserved, the same as on a budget timeout.
@@ -488,12 +551,20 @@ export abstract class CliAgentRunner implements AgentRunner {
           hung: true,
         });
         const running = open === null ? "" : ` It waited on the ${open.name} call \`${open.input}\`.`;
+        const activity: SessionProcessActivity = cpuState === "unknown" ? "unreadable" : cpuState;
+        const cpu =
+          activity === "idle"
+            ? ` Its processes used less than ${String(CPU_ACTIVE_TICKS / 100)} s of CPU time in the last ${String(Math.round(this.cpuSampleWindowMs / 1000))} seconds.`
+            : activity === "active"
+              ? " Its processes still used CPU time."
+              : "";
         return {
           ...result,
+          processActivity: activity,
           ...(open === null ? {} : { openToolCall: { ...open, runningMs: silentMs } }),
           summary:
             `The ${this.name} session wrote nothing for ${Math.round(silentMs / 1000)} seconds, so ` +
-            `Factoree ended it.${running} ${result.summary}`.trim(),
+            `Factoree ended it.${running}${cpu} ${result.summary}`.trim(),
         };
       }
 
@@ -580,6 +651,20 @@ export abstract class CliAgentRunner implements AgentRunner {
       effort: live.settings.effort,
       toolInputs: reading.toolInputs ?? [],
     };
+  }
+
+  /**
+   * GitHub issue 84. The CPU ticks of every process of the invocation, or null when the sandbox
+   * cannot tell. Never a throw: a failed read is no evidence, and the plain silence limit applies.
+   */
+  private async sessionCpuTicks(live: LiveSession): Promise<number | null> {
+    try {
+      const result = await live.sandbox.exec(live.ref, { file: "sh", args: ["-c", CPU_SAMPLE_SCRIPT, "sh", live.marker], cwd: "/", timeoutMs: 20_000 });
+      const match = /cpu=(\d+)/.exec(result.stdout);
+      return result.exitCode === 0 && match !== null ? Number.parseInt(match[1]!, 10) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The open tool call, redacted and bounded, and never a throw. */

@@ -180,13 +180,16 @@ export const recordSessionFaults = async (
         ...base,
         kind: "session_hung",
         message:
-          result.openToolCall === undefined
+          (result.openToolCall === undefined
             ? `The ${context.role} session wrote no output for ${String(Math.round(result.silenceLimitMs / 1000))} seconds, so Factoree stopped it.`
-            : `The ${context.role} session waited ${String(Math.round(result.openToolCall.runningMs / 60_000))} minutes on the ${result.openToolCall.name} call \`${result.openToolCall.input}\` with no output, so Factoree stopped it.`,
+            : `The ${context.role} session waited ${String(Math.round(result.openToolCall.runningMs / 60_000))} minutes on the ${result.openToolCall.name} call \`${result.openToolCall.input}\` with no output, so Factoree stopped it.`) +
+          // GitHub issue 84. The CPU samples say whether the session processes still worked.
+          (result.processActivity === "idle" ? " Its processes used no CPU time." : result.processActivity === "active" ? " Its processes still used CPU time." : ""),
         detail: {
           runner: result.session.runner,
           silenceLimitMs: result.silenceLimitMs,
           ...(result.openToolCall === undefined ? {} : { openToolCall: result.openToolCall }),
+          ...(result.processActivity === undefined ? {} : { processActivity: result.processActivity }),
           log: result.failureLog,
         },
       });

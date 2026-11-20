@@ -54,6 +54,7 @@ export const runEventDetailSchemas = {
     // GitHub issue 84. The call the session waited on, and the end of its output. Absent in older events.
     openToolCall: z.object({ name: z.string(), input: z.string(), runningMs: z.number() }).optional(),
     log: z.string().nullable().optional(),
+    processActivity: z.enum(["active", "idle", "unreadable"]).optional(),
   }),
   /** docs/specs/provider-unreachable.md. The session could not reach the model provider. */
   provider_unreachable: sessionDetail,

@@ -7620,6 +7620,14 @@
                                                 "string",
                                                 "null"
                                               ]
+                                            },
+                                            "processActivity": {
+                                              "type": "string",
+                                              "enum": [
+                                                "active",
+                                                "idle",
+                                                "unreadable"
+                                              ]
                                             }
                                           },
                                           "required": [
@@ -8953,6 +8961,14 @@
                                     "type": [
                                       "string",
                                       "null"
+                                    ]
+                                  },
+                                  "processActivity": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "idle",
+                                      "unreadable"
                                     ]
                                   }
                                 },
@@ -10637,6 +10653,14 @@
                                       "string",
                                       "null"
                                     ]
+                                  },
+                                  "processActivity": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "idle",
+                                      "unreadable"
+                                    ]
                                   }
                                 },
                                 "required": [
@@ -11662,6 +11686,14 @@
                                                 "type": [
                                                   "string",
                                                   "null"
+                                                ]
+                                              },
+                                              "processActivity": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "active",
+                                                  "idle",
+                                                  "unreadable"
                                                 ]
                                               }
                                             },

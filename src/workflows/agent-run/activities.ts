@@ -13,6 +13,13 @@ const retry = (maximumAttempts: number, initialInterval: string, nonRetryableErr
   ...(nonRetryableErrorTypes === undefined ? {} : { nonRetryableErrorTypes }),
 });
 
+/**
+ * GitHub issue 54. The heartbeat timeout of context resolution, preparation and verify. Each
+ * heartbeats every 30 seconds (src/activities/heartbeat.ts), so a dead worker costs two minutes,
+ * not the whole start-to-close timeout.
+ */
+const LONG_ACTIVITY_HEARTBEAT_TIMEOUT = "2 minutes";
+
 export const activities = proxyActivities<Activities>({ startToCloseTimeout: "1 minute", retry: retry(5, "1 second") });
 
 /** Refinement is a pure computation, so it is fast, and a retry costs nothing. */
@@ -33,6 +40,7 @@ export const buildContextActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${Math.min(RESOLVE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
+    heartbeatTimeout: LONG_ACTIVITY_HEARTBEAT_TIMEOUT,
     retry: retry(3, "5 seconds", [RUN_CONFIGURATION_ERROR_TYPE]),
   });
 
@@ -51,6 +59,7 @@ export const buildSandboxActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${Math.min(PREPARE_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
+    heartbeatTimeout: LONG_ACTIVITY_HEARTBEAT_TIMEOUT,
     retry: retry(3, "5 seconds", [RUN_CONFIGURATION_ERROR_TYPE, SANDBOX_SLOT_UNAVAILABLE_TYPE, SANDBOX_PROVIDER_DOWN_TYPE]),
   });
 
@@ -80,6 +89,7 @@ export const buildVerifyActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${Math.min(VERIFY_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
+    heartbeatTimeout: LONG_ACTIVITY_HEARTBEAT_TIMEOUT,
     retry: retry(3, "5 seconds"),
   });
 

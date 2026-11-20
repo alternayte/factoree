@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A silent session whose processes still use CPU time is not hung before 35 minutes, on every runner. opencode, the default runner, no longer stops a long test suite at the silence limit. The `session_hung` event says whether the processes used CPU time (GitHub issue 84).
+- Context resolution, preparation, verify and the setup session and proof heartbeat, so a dead worker is found in 2 minutes, not after up to 2 hours (GitHub issue 54).
+- The worker waits 8 seconds for short activities to end before a shutdown cancels them (GitHub issue 13).
+
 ## [0.19.0] - 2026-11-20
 
 ### Added
