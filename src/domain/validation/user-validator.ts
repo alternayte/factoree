@@ -670,6 +670,8 @@ const validate = async (
         outcome = await executeHttpAssertion({
           assertion,
           request: entry.request,
+          setup: entry.setup,
+          poll: entry.poll,
           baseUrl: handle!.baseUrl,
           fetchImpl: dependencies.fetchImpl,
           redactor: dependencies.redactor,

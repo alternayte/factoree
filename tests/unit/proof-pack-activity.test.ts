@@ -101,6 +101,7 @@ const results: ValidationAssertionResultRecord[] = [
     result: "FAIL",
     reason: "The endpoint answered 500.",
     attempt: 1,
+    planEntrySha256: null,
     createdAt: new Date("2026-01-01T01:00:00.000Z"),
   },
   {
@@ -112,6 +113,7 @@ const results: ValidationAssertionResultRecord[] = [
     result: "PASS",
     reason: "The endpoint answered 200 with the secret sk-fixture-value-123.",
     attempt: 2,
+    planEntrySha256: null,
     createdAt: new Date("2026-01-01T02:00:00.000Z"),
   },
 ];

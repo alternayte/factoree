@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Derived hosts: before a setup starts, Factoree reads the hosts that the repository's committed files name, from the registry config files (`.npmrc`, `.yarnrc.yml`, `NuGet.config`, `pip.conf`, `pyproject.toml`, Maven, Gradle and Cargo), the lockfiles, the git dependencies and the CI workflows. The setup start lists each host that no allow list or host credential covers, with "Add all to product allow list" and "Add host credential", which opens the form with the host filled in. The setup report lists the hosts still uncovered (`docs/specs/private-stack-onboarding.md`).
+- The warm proof: after the cold proof of the bootstrap, setup takes a snapshot of its proof sandbox, restores it, and runs the bootstrap, the services and the rest of the proof there, as every work sprite starts. A bootstrap that fails only after a restore fails the setup with "The bootstrap failed after a warm restore". The setup history shows the warm proof time (GitHub issue 59).
+- An `http` check can send up to 4 setup requests before its check request, and can poll the check request for up to 120 seconds (`docs/specs/check-faults.md`, GitHub issue 48).
+- A browser or http check that passed in an earlier attempt with the same plan entry, and fails now while the reviewer passes the change, is UNSTABLE: it spends no repair, and the run publishes a draft pull request that lists it first (GitHub issue 49).
+
+### Changed
+
+- The setup agent takes the bootstrap and verify commands from the CI workflows first, then the devcontainer, the Dockerfile and the task runner, and the setup report cites the source of each part (`setup@13`).
+- The setup proof runs the bootstrap exactly as a run does, with the same script and the same timeout. A run bootstrap now stops after 30 minutes (GitHub pull request 63).
+- An unreachable host credential host or derived host fails with a message that sandboxes reach public-internet hosts only, and names the registries a sandbox can reach.
+- The refiner gives `browser` to a criterion that a page action starts, and `http` to one that needs earlier requests or a wait (`refiner@13`). The validator prompt states that `expectText` and `expectVisible` wait, and that an expect step asserts only the state its criterion names (`user-validator@12`).
+
+### Fixed
+
+- `expectText` waits for the text up to the step limit, as Playwright's `toContainText` does, and its failure names the last text seen and the time waited (GitHub issue 47).
+
 ## [0.17.0] - 2026-11-19
 
 ### Added

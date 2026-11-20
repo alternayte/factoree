@@ -474,6 +474,9 @@ model ValidationAssertionResult {
   result                String
   reason                String
   attempt               Int
+  // docs/specs/check-faults.md. The SHA-256 of the plan entry that ran, so a later attempt can
+  // tell that the same check passed before. Null in a row written before it existed.
+  planEntrySha256       String?
   createdAt             DateTime            @default(now())
 
   @@unique([runId, validationAssertionId, attempt])

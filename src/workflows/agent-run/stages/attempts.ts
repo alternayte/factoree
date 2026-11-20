@@ -1,4 +1,4 @@
-import { ActivityFailure, ApplicationFailure, deprecatePatch, isCancellation } from "@temporalio/workflow";
+import { ActivityFailure, ApplicationFailure, deprecatePatch, isCancellation, patched } from "@temporalio/workflow";
 import type { PrepareCheckSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
@@ -8,7 +8,7 @@ import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 // The workflow bundler resolves a relative path only, so value imports do not use the `~/` alias.
 import { describeSpentRepairBudget } from "../../../domain/runs/repair-budget.js";
 import { targetResultsSentence } from "../../../domain/publishing/change-set.js";
-import { buildVerifyActivities, cancelActivities } from "../activities.js";
+import { buildVerifyActivities, cancelActivities, validationActivities } from "../activities.js";
 import { causeOf } from "../failures.js";
 import { PATCH } from "../patches.js";
 import type { Run } from "../run.js";
@@ -29,6 +29,35 @@ import type { ResolvedContext } from "./context.js";
 import type { Workspace } from "./preparation.js";
 import { awaitReview, startReview, type CheckBrief } from "./review.js";
 import type { ValidationContract } from "./validation-contract.js";
+
+/**
+ * docs/specs/check-faults.md. True when every FAIL of the pass is a flip, and nothing else keeps the
+ * pass from an unstable-only result: no blocked or manual assertion and no failed in-between check.
+ */
+const flipsCoverFailures = (validation: UserValidateActivityOutput): boolean => {
+  const flipped = new Set((validation.flipped ?? []).map((flip) => flip.assertionId));
+  const failed = validation.results.filter((result) => result.result === "FAIL");
+  return (
+    flipped.size > 0 &&
+    failed.length > 0 &&
+    failed.every((result) => flipped.has(result.assertionId)) &&
+    !validation.hasBlocked &&
+    !validation.hasManual &&
+    (validation.inBetweenFailedConsumers ?? []).length === 0
+  );
+};
+
+/** The pass with its flipped FAIL results as UNSTABLE, as the result rows now hold them. */
+const withFlipsUnstable = (validation: UserValidateActivityOutput): UserValidateActivityOutput => {
+  const flipped = new Set((validation.flipped ?? []).map((flip) => flip.assertionId));
+  return {
+    ...validation,
+    results: validation.results.map((result) => (flipped.has(result.assertionId) ? { ...result, result: "UNSTABLE" } : result)),
+    hasFailure: false,
+    hasUnstable: true,
+    failures: [],
+  };
+};
 
 /** What the passing attempt proved. Publication and the Proof Pack read it. */
 export interface Verified {
@@ -379,7 +408,7 @@ export const runAttempts = async (run: Run, plan: AttemptPlan): Promise<Verified
     if (run.stopped) await run.cancel();
     // docs/specs/run-recovery.md. When every assertion that did not pass is unstable, no repair can
     // help and nothing failed. The run continues to the review and a draft pull request.
-    const unstableOnly =
+    let unstableOnly =
       !userValidation.passed && userValidation.hasUnstable === true && !userValidation.hasFailure && !userValidation.hasBlocked && !userValidation.hasManual;
     if (unstableOnly) deprecatePatch(PATCH.unstableAssertion);
     if (!userValidation.passed && !unstableOnly) {
@@ -400,18 +429,36 @@ export const runAttempts = async (run: Run, plan: AttemptPlan): Promise<Verified
         const reviewFindings =
           parallel.kind === "review" && hangOf(parallel.review) === null && parallel.review.reportUsable && !parallel.review.passed ? parallel.review.failures : [];
         const inBetweenFailed = userValidation.inBetweenFailedConsumers;
-        await state.repair(
-          {
-            reason: "VALIDATION_FAILED",
-            sentence: "User validation did not pass",
-            detail: `${userValidation.summary} ${state.setResults({ validation: userValidation.results, ...(inBetweenFailed === undefined ? {} : { inBetweenFailed }) })}`,
-          },
-          "VALIDATION",
-          reviewFindings.length === 0 ? "user validation did not pass" : "user validation did not pass and the review found blocking findings",
-          [...userValidation.failures, ...reviewFindings],
-        );
-        continue;
+        // docs/specs/check-faults.md, GitHub issue 49. Every failure is a check that passed in an
+        // earlier attempt with the same plan entry, and the reviewer passed this change: no repair
+        // can fix it, so the failures are UNSTABLE and the run goes on to a draft pull request.
+        const reviewerPassed =
+          parallel.kind === "review" && hangOf(parallel.review) === null && parallel.review.reportUsable && parallel.review.passed;
+        if (reviewerPassed && flipsCoverFailures(userValidation) && patched(PATCH.crossAttemptUnstable)) {
+          const flipped = userValidation.flipped ?? [];
+          await validationActivities.markFlippedUnstable({ tenantId: run.input.tenantId, runId: run.id, attempt: state.attempt, flipped });
+          userValidation = withFlipsUnstable(userValidation);
+          unstableOnly = true;
+          await run.progress(
+            `${flipped.map((flip) => flip.assertionId).join(", ")} passed in an earlier attempt with the same check and failed now, while the reviewer passed the change. ` +
+              "Factoree counts them as unstable, starts no repair, and offers the change as a draft pull request.",
+          );
+        } else {
+          await state.repair(
+            {
+              reason: "VALIDATION_FAILED",
+              sentence: "User validation did not pass",
+              detail: `${userValidation.summary} ${state.setResults({ validation: userValidation.results, ...(inBetweenFailed === undefined ? {} : { inBetweenFailed }) })}`,
+            },
+            "VALIDATION",
+            reviewFindings.length === 0 ? "user validation did not pass" : "user validation did not pass and the review found blocking findings",
+            [...userValidation.failures, ...reviewFindings],
+          );
+          continue;
+        }
       }
+    }
+    if (!userValidation.passed && !unstableOnly) {
       if (userValidation.hasBlocked) {
         return await run.fail(
           "VALIDATION_BLOCKED",

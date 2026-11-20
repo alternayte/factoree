@@ -14,6 +14,19 @@ export interface HttpPlanRequest {
   expectBodyContains: string | null;
 }
 
+/**
+ * docs/specs/check-faults.md, GitHub issue 48. The poll of the check request: Factoree sends it
+ * again until its status and body match, or the timeout ends.
+ */
+export interface HttpPoll {
+  timeoutSeconds: number;
+  intervalSeconds: number;
+}
+
+/** docs/specs/check-faults.md. The most requests one http entry holds, setup requests included. */
+export const HTTP_ENTRY_MAX_REQUESTS = 5;
+export const HTTP_POLL_MAX_SECONDS = 120;
+
 export type BrowserStep =
   | { action: "goto"; path: string }
   | { action: "click"; selector: string }
@@ -171,7 +184,15 @@ export interface CommandPlanEntry {
 type EntryTarget = { target?: string | undefined };
 
 export type ValidationPlanEntry =
-  | ({ assertionId: string; kind: "http"; request: HttpPlanRequest } & EntryTarget)
+  | ({
+      assertionId: string;
+      kind: "http";
+      /** The check request: the last request of the entry. */
+      request: HttpPlanRequest;
+      /** docs/specs/check-faults.md. The setup requests, in order, before the check. Absent when none. */
+      setup?: HttpPlanRequest[] | undefined;
+      poll?: HttpPoll | undefined;
+    } & EntryTarget)
   | ({
       assertionId: string;
       kind: "browser";
@@ -294,8 +315,52 @@ const commandPlanEntrySchema = z
   .object({ run: z.string().min(1), expectExitCode: z.number().int() })
   .strict();
 
+const httpPollSchema = z
+  .object({ timeoutSeconds: z.number().int().min(1).max(HTTP_POLL_MAX_SECONDS), intervalSeconds: z.number().int().min(1).max(HTTP_POLL_MAX_SECONDS) })
+  .strict();
+
+/**
+ * docs/specs/check-faults.md. An http entry with `requests`, 1 to 5 of them, of which the last is
+ * the check; or the older shape with one `request`. Both parse to the check request and its setup.
+ */
+const httpPlanEntrySchema = z
+  .object({
+    assertionId: z.string().min(1),
+    kind: z.literal("http"),
+    request: httpRequestSchema.optional(),
+    requests: z.array(httpRequestSchema).min(1).max(HTTP_ENTRY_MAX_REQUESTS).optional(),
+    // The parsed shape keeps the setup requests here, so a stored plan parses again.
+    setup: z.array(httpRequestSchema).max(HTTP_ENTRY_MAX_REQUESTS - 1).optional(),
+    poll: httpPollSchema.optional(),
+    target: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((entry, context) => {
+    if ((entry.request === undefined) === (entry.requests === undefined)) {
+      context.addIssue({ code: "custom", message: 'an http entry holds exactly one of "request" or "requests"' });
+    }
+    if (entry.requests !== undefined && entry.setup !== undefined) {
+      context.addIssue({ code: "custom", message: 'an http entry with "requests" holds no "setup"' });
+    }
+  })
+;
+
+type ParsedHttpEntry = z.infer<typeof httpPlanEntrySchema>;
+
+/** docs/specs/check-faults.md. The check request is the last request; the ones before it are the setup. */
+const normalizeHttpEntry = ({ request, requests, setup: stored, poll, ...rest }: ParsedHttpEntry): ValidationPlanEntry => {
+  const all = requests ?? [...(stored ?? []), request!];
+  const setup = all.slice(0, -1);
+  return {
+    ...rest,
+    request: all.at(-1)!,
+    ...(setup.length === 0 ? {} : { setup }),
+    ...(poll === undefined ? {} : { poll }),
+  };
+};
+
 const planEntrySchema = z.discriminatedUnion("kind", [
-  z.object({ assertionId: z.string().min(1), kind: z.literal("http"), request: httpRequestSchema, target: z.string().min(1).optional() }).strict(),
+  httpPlanEntrySchema,
   z
     .object({
       assertionId: z.string().min(1),
@@ -360,7 +425,10 @@ export const parseValidationPlan = (
     return fail(`The Validation Plan does not match the plan schema: ${detail}`);
   }
 
-  const plan = parsed.data;
+  const plan: ValidationPlan = {
+    ...parsed.data,
+    entries: parsed.data.entries.map((entry) => (entry.kind === "http" ? normalizeHttpEntry(entry) : entry)),
+  };
   const assertionsById = new Map(contract.assertions.map((assertion) => [assertion.id, assertion]));
   const seen = new Set<string>();
   // DI-15.23. Every entry is checked, and every reason is kept, so the validator learns all of
@@ -493,10 +561,11 @@ export const parseValidationPlan = (
       }
     }
 
-    if (entry.kind === "http" && !isPreviewRelativePath(entry.request.path)) {
+    for (const request of entry.kind === "http" ? [...(entry.setup ?? []), entry.request] : []) {
+      if (isPreviewRelativePath(request.path)) continue;
       reasons.push(
         `The Validation Plan http entry for "${entry.assertionId}" holds the path ` +
-          `"${entry.request.path}", which is not a relative preview path. A path must begin ` +
+          `"${request.path}", which is not a relative preview path. A path must begin ` +
           "with a single slash, and the character after that slash must be neither a slash nor " +
           "a backslash.",
       );

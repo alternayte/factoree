@@ -158,6 +158,40 @@ describe("AT-20 — a behaviorally wrong implementation fails validation, repair
     expect(publishCalls.find((call) => call.runId === runId)?.draft).toBe(true);
   });
 
+  // docs/specs/check-faults.md, GitHub issue 49. VAL-UI-002 passed in attempt 1 and failed in
+  // attempt 2 with the same check, while the reviewer passed the change. The implementer cannot fix
+  // a check, so the second repair is not spent and the change reaches a human as a draft.
+  it("makes a check that passed in an earlier attempt UNSTABLE when the reviewer passes, and spends no repair on it", async () => {
+    const runId = "run-ses-flip";
+    runtimeOverrides.set(runId, { repairMaxAttempts: 2 });
+    verifyOutcomes.set(runId, () => true);
+    userValidationOutcomes.set(runId, (attempt) =>
+      attempt === 1
+        ? failing
+        : {
+            ...failing,
+            results: [{ assertionId: "VAL-UI-002", result: "FAIL", reason: "Expected the row to read processed." }],
+            failures: ["VAL-UI-002: expected the row to read processed."],
+            flipped: [{ assertionId: "VAL-UI-002", passedAttempt: 1, reason: "Expected the row to read processed." }],
+          },
+    );
+
+    const result = await runWorker(async () =>
+      (
+        await environment.client.workflow.start(agentRunWorkflow, {
+          taskQueue: "test",
+          workflowId: buildWorkflowId("workspace-123", "ses-flip"),
+          args: [{ ...input("ses-flip"), product: { ...input("ses-flip").product, defaultAutonomy: "L3" } }],
+        })
+      ).result(),
+    );
+
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    expect(statusCalls.filter((entry) => entry.runId === runId && entry.status === "REPAIRING")).toHaveLength(1);
+    expect(harness.flippedMarks).toEqual([{ runId, attempt: 2, assertionIds: ["VAL-UI-002"] }]);
+    expect(publishCalls.find((call) => call.runId === runId)?.draft).toBe(true);
+  });
+
   it("builds the failure post of a run that spent its repairs from the run facts", async () => {
     const runId = "run-ses-failure-post";
     runtimeOverrides.set(runId, { repairMaxAttempts: 0, repairBudgetSource: "product" });

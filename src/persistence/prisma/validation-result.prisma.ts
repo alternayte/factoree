@@ -17,6 +17,7 @@ const toRecord = (row: Row): ValidationAssertionResultRecord => ({
   result: row.result as AssertionResult,
   reason: row.reason,
   attempt: row.attempt,
+  planEntrySha256: row.planEntrySha256,
   createdAt: row.createdAt,
 });
 
@@ -59,6 +60,7 @@ export class PrismaValidationResultStore implements ValidationResultStore {
           result: input.result,
           reason: input.reason,
           attempt: input.attempt,
+          planEntrySha256: input.planEntrySha256 ?? null,
         },
       });
       return toRecord(created);
@@ -68,6 +70,15 @@ export class PrismaValidationResultStore implements ValidationResultStore {
       const row = await this.prisma.validationAssertionResult.findUnique({ where: key });
       if (row) return toRecord(this.assertOwnedByTenant(row, input.tenantId));
       throw error;
+    }
+  }
+
+  async markUnstable(tenantId: string, runId: string, attempt: number, rows: ReadonlyArray<{ assertionKey: string; reason: string }>): Promise<void> {
+    for (const row of rows) {
+      await this.prisma.validationAssertionResult.updateMany({
+        where: { tenantId, runId, attempt, assertionKey: row.assertionKey, result: "FAIL" },
+        data: { result: "UNSTABLE", reason: row.reason },
+      });
     }
   }
 

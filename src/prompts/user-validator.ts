@@ -3,7 +3,7 @@ import { imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@11";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@12";
 
 export interface UserValidatorPromptFields {
   goal: string;

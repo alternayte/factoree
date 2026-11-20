@@ -53,6 +53,8 @@ export interface PersistAssertionOutcomeInput {
   validationAssertionId: string;
   outcome: AssertionOutcome;
   attempt: number;
+  /** docs/specs/check-faults.md. The SHA-256 of the plan entry that ran, when the plan is known. */
+  planEntrySha256?: string | null;
 }
 
 /** docs/specs/by-eye-criteria-and-selector-recheck.md. One for-your-eye capture of one attempt. */
@@ -152,6 +154,7 @@ export const createEvidencePersistence = (
       result: input.outcome.result,
       reason: input.outcome.reason,
       attempt: input.attempt,
+      planEntrySha256: input.planEntrySha256 ?? null,
     });
 
     dependencies.logger.info("assertion outcome persisted", {

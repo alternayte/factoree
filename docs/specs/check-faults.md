@@ -11,7 +11,7 @@ A correct change no longer fails validation because a check is wrong. A browser 
 - The refiner prompt says that a criterion triggered by a page action, such as a click, a fill or a page load, freezes as `browser`. A criterion that needs earlier requests or a wait, with no page action, freezes as `http` or `command` — the method freezes before implementation, so a wrong one leaves no valid plan (#48).
 - An `http` plan entry holds `requests`, an ordered list of 1 to 5 requests. Every request except the last is a setup request and must answer with its `expectStatus`. The last request is the check — API-only criteria get HTTP evidence and no hidden curl script.
 - The check request can hold `poll: { timeoutSeconds, intervalSeconds }`. Factoree sends it again until the status and the body match, or the timeout ends. `timeoutSeconds` is at most 120 and `intervalSeconds` at least 1 — "once the round trip completes" needs a wait with a fixed end.
-- An entry with one request and no poll is the existing `http` entry. A plan of an older run still parses.
+- An entry with one request and no poll is the existing `http` entry. A plan of an older run still parses. The parsed plan holds the check as `request` and the earlier requests as `setup`, and a stored plan parses again to the same plan — a bring-current check replays the stored plan.
 - The HTTP evidence records each request, its status, the number of polls and the time waited. The proof pack shows them in order.
 - An assertion is UNSTABLE when all of these are true:
   - it passed in an earlier attempt of the same run
@@ -20,6 +20,8 @@ A correct change no longer fails validation because a check is wrong. A browser 
   - the reviewer of the current attempt reports no blocking finding
 
   This is a deterministic rule on recorded results, so no agent decides the verdict (#49).
+- Each result row stores the SHA-256 of the plan entry that ran. The validation pass names each FAIL whose unchanged entry passed before. The workflow makes it UNSTABLE only after the reviewer of the attempt passes, behind the `patched` gate `cross-attempt-unstable` — open runs replay as before.
+- The change from FAIL to UNSTABLE is the only update of a written result row — the reviewer result arrives after the pass wrote its rows, and the proof pack reads the rows.
 - The reason of such an assertion names the attempt where it passed and both failure reasons. It spends no repair, and the proof pack lists it first under Needs your attention — as for an unstable assertion in `run-recovery.md`.
 - When every assertion that did not pass is UNSTABLE, the run publishes a draft pull request, as `run-recovery.md` already does. When a FAIL remains, the repair goes to the implementer with the FAIL findings only.
 - The validator prompt says that each expect step asserts only the state that its criterion names — VAL-UI-007 asserted "sent" in a criterion about filters.

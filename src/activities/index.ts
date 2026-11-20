@@ -420,6 +420,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     runs: dependencies.runs,
     logger: dependencies.logger,
     plans: dependencies.validationPlans,
+    results: dependencies.validationResults,
     userValidation: {
       sandbox: dependencies.sandbox,
       runners: dependencies.runners,

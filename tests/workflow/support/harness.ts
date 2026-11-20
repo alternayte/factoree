@@ -285,6 +285,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
    * A run id in this map replaces the `userValidate` result. The function reads the attempt
    * number of the call, so a test can answer `FAIL` first and `PASS` next.
    */
+  /** docs/specs/check-faults.md. The flips the workflow made UNSTABLE, per run and attempt. */
+  const flippedMarks: Array<{ runId: string; attempt: number; assertionIds: string[] }> = [];
   const userValidationOutcomes = new Map<
     string,
     (attempt: number) => UserValidateActivityOutput
@@ -628,6 +630,10 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     planPullRequestFollowUp: async () => ({ kind: "none", reason: "no review event" }),
     // docs/specs/drain-mode.md. Drain mode is off.
     isDrainModeOn: async () => false,
+    markFlippedUnstable: async (activityInput: { runId: string; attempt: number; flipped: Array<{ assertionId: string }> }) => {
+      activityOrder.push("markFlippedUnstable");
+      flippedMarks.push({ runId: activityInput.runId, attempt: activityInput.attempt, assertionIds: activityInput.flipped.map((flip) => flip.assertionId) });
+    },
     // docs/specs/work-item-images-and-links.md. The issue holds no comment, no image and no link.
     readWorkItemContent: async (activityInput: { runId?: string }): Promise<ReadWorkItemContentActivityOutput> =>
       workItemContents.get(activityInput.runId ?? "") ?? {
@@ -1291,6 +1297,7 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     heldValidations,
     userValidateCalls,
     userValidationOutcomes,
+    flippedMarks,
     userValidateDelegates,
     heldUserValidations,
     cancelledLiveValidations,

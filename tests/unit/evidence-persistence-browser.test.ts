@@ -83,8 +83,13 @@ class FakeResultStore implements ValidationResultStore {
       result: input.result,
       reason: input.reason,
       attempt: input.attempt,
+      planEntrySha256: input.planEntrySha256 ?? null,
       createdAt: new Date(0),
     });
+  }
+
+  markUnstable(): Promise<void> {
+    return Promise.resolve();
   }
 
   listForRun(): Promise<ValidationAssertionResultRecord[]> {
