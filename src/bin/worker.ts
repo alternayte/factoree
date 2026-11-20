@@ -515,6 +515,11 @@ const worker = await Worker.create({
   // A second workflow, `syncInstallationWorkflow`, joined `agentRunWorkflow` on this taskQueue.
   // The worker bundles one file per `workflowsPath`, so the barrel re-exports both.
   workflowsPath: new URL("../workflows/index.js", import.meta.url).pathname,
+  // GitHub issue 13. The default grace time is 0, so a shutdown cancelled every activity at once,
+  // a one-minute database write included. 8 seconds lets a short activity end, and stays below
+  // the 10-second stop timeout of Docker and the 30 seconds of a Kubernetes pod. An agent
+  // session still ends at the shutdown: only a reattach (GitHub issue 13) can keep it.
+  shutdownGraceTime: "8 seconds",
   activities: createActivities({
     drainModeOn: () => drainMode.isOn(),
     hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings, coverage: hostCredentials.coverage },

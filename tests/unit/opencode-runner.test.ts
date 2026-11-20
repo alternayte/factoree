@@ -584,3 +584,64 @@ describe("OpenCodeRunner, the usage of a session", () => {
     expect(result.completed).toBe(true);
   });
 });
+
+// GitHub issue 84. opencode writes a tool event only when the call returns, so a test suite that
+// runs for minutes reads as silence. The CPU time of the session processes tells the two apart.
+describe("CliAgentRunner, the CPU time of a silent session", () => {
+  const silentSession = async (ticksPerSample: number) => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    let now = 0;
+    let ticks = 0;
+    const samples: number[] = [];
+    sandbox.onExec = (command) => {
+      if (command.args.some((arg) => arg.includes("FACTOREE_AGENT_SESSION="))) {
+        ticks += ticksPerSample;
+        samples.push(now);
+        return { exitCode: 0, stdout: `cpu=${String(ticks)}\n`, stderr: "" };
+      }
+      return { exitCode: 1, stdout: "", stderr: "" };
+    };
+    const runner = new OpenCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1, silenceLimitMs: 60_000, cpuSampleWindowMs: 30_000, clock: () => now });
+    const started = runner.run({ ...runInput(sandbox, ref), timeoutMs: 24 * 60 * 60_000 });
+    await waitUntil(() => sandbox.started.some((command) => command.env?.["FACTOREE_AGENT_SESSION"] !== undefined));
+    sandbox.updateProcess("process-2", { running: true, stdout: '{"type":"step_start","sessionID":"ses_1"}' });
+    await new Promise((resolve) => setTimeout(resolve, 3));
+    return {
+      sandbox,
+      started,
+      samples,
+      advance: (ms: number) => {
+        now += ms;
+      },
+    };
+  };
+
+  it("keeps a silent session alive while its processes use CPU time", async () => {
+    const session = await silentSession(1_000);
+    let settled = false;
+    void session.started.then(() => {
+      settled = true;
+    });
+    for (let minute = 1; minute <= 20; minute += 1) {
+      session.advance(60_000);
+      await new Promise((resolve) => setTimeout(resolve, 3));
+    }
+    expect(settled).toBe(false);
+    expect(session.samples.length).toBeGreaterThan(1);
+    session.sandbox.finishProcess("process-2", { exitCode: 0, stdout: '{"type":"message","text":"done"}' });
+    const result = await session.started;
+    expect(result.outcome).toBe("finished");
+  });
+
+  it("stops a silent session whose processes use no CPU time, one sample window after the silence limit", async () => {
+    const session = await silentSession(0);
+    session.advance(60_000);
+    await new Promise((resolve) => setTimeout(resolve, 3));
+    session.advance(30_000);
+    const result = await session.started;
+    expect(result.outcome).toBe("hung");
+    expect(result.processActivity).toBe("idle");
+    expect(result.summary).toContain("CPU time");
+  });
+});

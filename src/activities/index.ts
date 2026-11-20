@@ -55,6 +55,7 @@ import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
 import { createBuildAheadActivities } from "./build-ahead.activities.js";
 import { createSetupActivities } from "./setup.activities.js";
+import { withHeartbeats } from "./heartbeat.js";
 import { createAppChangeActivities } from "./app-change.activities.js";
 import type { AppChangeIssuePort, AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import type { RepositorySetupMarks, RepositorySetupStore } from "~/domain/setup/repository-setup.js";
@@ -331,7 +332,21 @@ const NO_SETUP_STORE: RepositorySetupStore = {
   update: () => Promise.reject(new Error("this worker holds no setup store")),
 };
 
-export const createActivities = (dependencies: ActivityDependencies) => ({
+/**
+ * GitHub issue 54. The long activities whose options set a heartbeat timeout. Each one heartbeats
+ * every 30 seconds, so Temporal finds a dead worker in two minutes.
+ */
+export const HEARTBEAT_ACTIVITIES = [
+  "resolveContext",
+  "selectSandboxProvider",
+  "prepareSandbox",
+  "prepareCheckSandbox",
+  "verify",
+  "runSetupSession",
+  "proveAndPublishSetup",
+] as const;
+
+const createActivityTable = (dependencies: ActivityDependencies) => ({
   ...createRunActivities({
     events: dependencies.events,
     runs: dependencies.runs,
@@ -606,5 +621,7 @@ export const createActivities = (dependencies: ActivityDependencies) => ({
     return (await dependencies.drainModeOn?.()) ?? false;
   },
 });
+
+export const createActivities = (dependencies: ActivityDependencies) => withHeartbeats(createActivityTable(dependencies), HEARTBEAT_ACTIVITIES);
 
 export type Activities = ReturnType<typeof createActivities>;

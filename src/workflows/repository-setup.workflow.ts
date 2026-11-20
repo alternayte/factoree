@@ -8,6 +8,9 @@ import { SANDBOX_SLOT_UNAVAILABLE_TYPE } from "../domain/runs/sandbox-slot-error
  */
 const activities = proxyActivities<Activities>({
   startToCloseTimeout: "2 hours",
+  // GitHub issue 54. The session and the proof heartbeat every 30 seconds, so a dead worker
+  // fails the setup in two minutes, not after two hours. One attempt stays until GitHub issue 13.
+  heartbeatTimeout: "2 minutes",
   retry: { maximumAttempts: 1 },
 });
 

@@ -1989,6 +1989,7 @@ export type GetRunResponses = {
                 runningMs: number;
               };
               log?: string | null;
+              processActivity?: "active" | "idle" | "unreadable";
             };
             createdAt: string;
           }
@@ -2275,6 +2276,7 @@ export type ListRunEventsResponses = {
               runningMs: number;
             };
             log?: string | null;
+            processActivity?: "active" | "idle" | "unreadable";
           };
           createdAt: string;
         }
@@ -2740,6 +2742,7 @@ export type ListRepositorySetupEventsResponses = {
               runningMs: number;
             };
             log?: string | null;
+            processActivity?: "active" | "idle" | "unreadable";
           };
           createdAt: string;
         }
@@ -2971,6 +2974,7 @@ export type ListRepositorySetupHistoryResponses = {
                 runningMs: number;
               };
               log?: string | null;
+              processActivity?: "active" | "idle" | "unreadable";
             };
             createdAt: string;
           }

@@ -83,6 +83,12 @@ export interface AgentRunResult {
    */
   openToolCall?: OpenToolCall;
   /**
+   * GitHub issue 84. What the CPU samples of the session processes showed when a hung session
+   * stopped: `idle`, `active` (it used CPU time and still wrote nothing for the tool call limit),
+   * or `unreadable` when the sandbox could not tell. Absent for a session that did not hang.
+   */
+  processActivity?: "active" | "idle" | "unreadable";
+  /**
    * The usage of this invocation alone, read from the agent CLI after the process ended. A resume
    * reports only its own model calls. Null when the CLI left no record. Cost is a metric, so a
    * null never fails the Run.
