@@ -23,6 +23,7 @@ Factoree detects a check that the kernel killed out of memory, or that hit a ful
 - The setup agent (`setup@17`) first caps each service that takes a share of all memory by default: `MSSQL_MEMORY_LIMIT_MB` for SQL Server, `ES_JAVA_OPTS` for Elasticsearch and OpenSearch, the heap of Keycloak and Kafka — those fill any size, and a compose `mem_limit` has no effect without cgroups.
 - The setup agent then writes `sandbox.memoryMb` or `sandbox.diskMb` when the peak is above 80% of the size: peak × 1.25, rounded up to 512 MB — a size at the peak fails on the next spike.
 - `.factoree/config.yaml` gets an optional `sandbox: { vcpus, memoryMb, diskMb }`, each a minimum — the Codespaces `hostRequirements` precedent, and setup writes it from a measurement.
+- Discovery stores the `sandbox` minimum on the repository row, as it stores the requested secret names — a run picks its provider and creates its work sprite before it reads `.factoree/config.yaml` in the sandbox.
 - A run's size is the larger of the repository minimum and the provider size, per field. A change set uses the largest minimum of its targets — a set snapshot holds every target in one sandbox.
 - Each provider gets an optional maximum: Kiln 32 vCPUs and its memory budget, E2B 8 vCPUs and 8192 MB unless the operator sets more — provider selection skips a provider below the minimum.
 - No provider fits: the run ends FAILED_CONFIGURATION and names the minimum and each provider maximum.
