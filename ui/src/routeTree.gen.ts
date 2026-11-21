@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppApiKeysRouteImport } from './routes/_app/api-keys'
+import { Route as AppFloorRouteImport } from './routes/_app/floor'
 import { Route as AppWorkspacesRouteImport } from './routes/_app/workspaces'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as AppProductsIndexRouteImport } from './routes/_app/products/index'
@@ -41,6 +42,11 @@ const SignInRoute = SignInRouteImport.update({
 const AppApiKeysRoute = AppApiKeysRouteImport.update({
   id: '/api-keys',
   path: '/api-keys',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppFloorRoute = AppFloorRouteImport.update({
+  id: '/floor',
+  path: '/floor',
   getParentRoute: () => AppRoute,
 } as any)
 const AppWorkspacesRoute = AppWorkspacesRouteImport.update({
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/api-keys': typeof AppApiKeysRoute
+  '/floor': typeof AppFloorRoute
   '/workspaces': typeof AppWorkspacesRoute
   '/setup/': typeof SetupIndexRoute
   '/products/$productId': typeof AppProductsProductIdRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/api-keys': typeof AppApiKeysRoute
+  '/floor': typeof AppFloorRoute
   '/workspaces': typeof AppWorkspacesRoute
   '/setup': typeof SetupIndexRoute
   '/products/$productId': typeof AppProductsProductIdRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/_app/api-keys': typeof AppApiKeysRoute
+  '/_app/floor': typeof AppFloorRoute
   '/_app/workspaces': typeof AppWorkspacesRoute
   '/setup/': typeof SetupIndexRoute
   '/_app/products/$productId': typeof AppProductsProductIdRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/api-keys'
+    | '/floor'
     | '/workspaces'
     | '/setup/'
     | '/products/$productId'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/api-keys'
+    | '/floor'
     | '/workspaces'
     | '/setup'
     | '/products/$productId'
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/sign-in'
     | '/_app/api-keys'
+    | '/_app/floor'
     | '/_app/workspaces'
     | '/setup/'
     | '/_app/products/$productId'
@@ -228,6 +240,13 @@ declare module '@tanstack/react-router' {
       path: '/api-keys'
       fullPath: '/api-keys'
       preLoaderRoute: typeof AppApiKeysRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/floor': {
+      id: '/_app/floor'
+      path: '/floor'
+      fullPath: '/floor'
+      preLoaderRoute: typeof AppFloorRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/workspaces': {
@@ -305,6 +324,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppApiKeysRoute: typeof AppApiKeysRoute
+  AppFloorRoute: typeof AppFloorRoute
   AppWorkspacesRoute: typeof AppWorkspacesRoute
   AppProductsProductIdRoute: typeof AppProductsProductIdRoute
   AppRunsRunIdRoute: typeof AppRunsRunIdRoute
@@ -316,6 +336,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppApiKeysRoute: AppApiKeysRoute,
+  AppFloorRoute: AppFloorRoute,
   AppWorkspacesRoute: AppWorkspacesRoute,
   AppProductsProductIdRoute: AppProductsProductIdRoute,
   AppRunsRunIdRoute: AppRunsRunIdRoute,

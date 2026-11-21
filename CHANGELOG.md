@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - A Factoree check that the kernel killed out of memory, or that hit a full disk, is a sandbox fault. It spends no repair, ends the run FAILED_CONFIGURATION, and starts a setup run of the repository with the fault as input (docs/specs/sandbox-memory-and-size.md, DI-21.195). Kiln needs the console route of alternayte/kiln issue 33; without it Factoree reports "kernel log not available" and keeps the old behaviour on Kiln. E2B reads the kernel log as root.
 - The sandbox image samples peak memory and disk. The setup report states the proof peaks next to the sandbox size, and `setup@17` caps SQL Server, Elasticsearch, OpenSearch, Keycloak and Kafka memory and proposes a sandbox size above 80% use.
+- The Floor page shows a workspace as an isometric factory: one line per product, each run a crate that moves from intake through the stage machines, the shipping dock, the PR yard and the deploy gate, agents at their machines with what they do now, setup crews, a needs-a-human counter and a throughput graph. A click opens a bubble, then a read-only panel with the run page sections. Replay plays any window of up to 7 days at 1x to 120x (docs/specs/factory-floor.md, DI-21.196).
+- The claude-code and opencode runners write a session pulse every 5 s: the role, the kind of the newest tool call and the last output time, never a tool input.
+- Migration `add_factory_floor` adds triggers that record each run and setup status change. A run from before it replays with approximate times.
 
 ## [0.20.1] - 2026-11-21
 

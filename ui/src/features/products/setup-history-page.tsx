@@ -170,7 +170,7 @@ function SetupEvents({ setupId, linearWorkspaceId }: { setupId: string; linearWo
   return <EventList events={events.data.items} />;
 }
 
-function SetupDetail({ entry, entries, linearWorkspaceId }: { entry: Entry; entries: Entry[]; linearWorkspaceId: string }) {
+export function SetupDetail({ entry, entries, linearWorkspaceId }: { entry: Entry; entries: Entry[]; linearWorkspaceId: string }) {
   const source =
     entry.skippedFromSetupId === null ? null : entries.find((other) => other.id === entry.skippedFromSetupId);
   return (

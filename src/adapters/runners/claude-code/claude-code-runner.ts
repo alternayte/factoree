@@ -6,7 +6,8 @@ import type {
   CliUsageReading,
 } from "../cli-agent-runner.js";
 import { CliAgentRunner, TOOL_CALL_COMMAND_MAX_MS, type AgentSessionSettings } from "../cli-agent-runner.js";
-import { openClaudeToolCall, parseClaudeOutput } from "./output-parser.js";
+import { latestClaudeToolKind, openClaudeToolCall, parseClaudeOutput } from "./output-parser.js";
+import type { ToolKind } from "~/domain/runs/session-pulse.js";
 
 export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
   /** The executable inside the sandbox. Bootstrap installs it. */
@@ -120,6 +121,10 @@ export class ClaudeCodeRunner extends CliAgentRunner {
 
   protected override openToolCall(stdout: string): { name: string; input: string } | null {
     return openClaudeToolCall(stdout);
+  }
+
+  protected override latestToolKind(stdout: string): ToolKind | null {
+    return latestClaudeToolKind(stdout);
   }
 
   /**

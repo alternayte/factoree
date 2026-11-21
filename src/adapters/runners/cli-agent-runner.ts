@@ -14,6 +14,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { buildRetainedLog } from "~/domain/runs/retained-log.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentSessionOutcome, AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import { PULSE_INTERVAL_MS, type SessionPulseRecorder, type ToolKind } from "~/domain/runs/session-pulse.js";
 import {
   PROVIDER_UNREACHABLE_GRACE_MS,
   ProviderOutageWatch,
@@ -118,6 +119,11 @@ export interface CliAgentRunnerOptions {
    * GitHub issue 84. The window between two CPU samples of a silent session. A test lowers it.
    */
   cpuSampleWindowMs?: number;
+  /**
+   * docs/specs/factory-floor.md. The writer of session pulses. Absent in a test that records none.
+   * A failed write never touches the session: a pulse is a picture, not evidence.
+   */
+  pulses?: SessionPulseRecorder;
 }
 
 /**
@@ -192,6 +198,9 @@ interface LiveSession {
   cliSessionId: string | null;
   /** GitHub issue 84. The value of AGENT_SESSION_MARKER in the processes of this invocation. */
   marker: string;
+  /** docs/specs/factory-floor.md. The tenant and the run id the pulses of this session name. */
+  tenantId: string;
+  owner: string;
 }
 
 /**
@@ -261,6 +270,16 @@ export abstract class CliAgentRunner implements AgentRunner {
   }
 
   /**
+   * docs/specs/factory-floor.md. The kind of what the session does now, read from its stdout, or
+   * null when the runner cannot tell. A runner that keeps this default writes no pulse, and the
+   * factory floor shows its session as working.
+   */
+  protected latestToolKind(stdout: string): ToolKind | null {
+    void stdout;
+    return null;
+  }
+
+  /**
    * docs/specs/agent-session-usage-and-hangs.md. Reads the usage of one invocation from the CLI
    * after its process ended, on every outcome, because a failed or hung session costs money too.
    * A throw is caught and read as a missing record.
@@ -318,6 +337,8 @@ export abstract class CliAgentRunner implements AgentRunner {
       counted: new Set<string>(),
       cliSessionId: null,
       marker,
+      tenantId: input.tenantId,
+      owner: input.runId,
     };
     this.sessions.set(process.id, live);
     this.activeByRun.set(input.runId, process.id);
@@ -462,6 +483,8 @@ export abstract class CliAgentRunner implements AgentRunner {
     // the processes of the session.
     let cpuSample: { ticks: number; at: number } | null = null;
     let cpuState: SessionProcessActivity | "unknown" = "unknown";
+    // docs/specs/factory-floor.md. The time of the last pulse. The first poll writes one.
+    let lastPulseAt: number | null = null;
     // docs/specs/provider-unreachable.md. One watch per stream, each with its own run of
     // connectivity events and its own deadline. New stdout model activity also clears the stderr
     // watch, because it proves the CLI is working again after a stderr-only error. Any other
@@ -485,6 +508,11 @@ export abstract class CliAgentRunner implements AgentRunner {
       const now = this.clock();
       if (stdoutWatch.feed(snapshot.stdout, now).modelActivity) stderrWatch.clear();
       stderrWatch.feed(snapshot.stderr, now);
+
+      if (snapshot.running && (lastPulseAt === null || now - lastPulseAt >= PULSE_INTERVAL_MS)) {
+        lastPulseAt = now;
+        this.pulse(live, snapshot.stdout, lastOutputAt, now);
+      }
 
       if (!snapshot.running) {
         return await this.buildResult(live, snapshot, startedAt, {
@@ -665,6 +693,25 @@ export abstract class CliAgentRunner implements AgentRunner {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * docs/specs/factory-floor.md. Writes one pulse and never waits for it or throws: the write runs
+   * beside the poll loop, and a failed write is dropped.
+   */
+  private pulse(live: LiveSession, stdout: string, lastOutputAt: number, now: number): void {
+    const recorder = this.cliOptions.pulses;
+    if (recorder === undefined) return;
+    let toolKind: ToolKind | null;
+    try {
+      toolKind = this.latestToolKind(stdout);
+    } catch {
+      return;
+    }
+    if (toolKind === null) return;
+    void recorder
+      .record({ tenantId: live.tenantId, owner: live.owner, role: live.role, toolKind, lastOutputAt: new Date(lastOutputAt), at: new Date(now) })
+      .catch(() => undefined);
   }
 
   /** The open tool call, redacted and bounded, and never a throw. */

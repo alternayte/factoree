@@ -1,3 +1,4 @@
+import { PrismaSessionPulseStore } from "~/persistence/prisma/session-pulse.prisma.js";
 import { readTextWithCap } from "~/adapters/http/capped-response-body.js";
 import { createHostCredentialWiring, rebindGitHubTokens } from "./host-credential-wiring.js";
 import { PrismaCredentialBindingStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
@@ -262,7 +263,8 @@ const sessionSettings = async (input: AgentRunInput, runner: string): Promise<Ag
 
 // SDD section 33 names two required adapters. docs/specs/claude-code-runner.md: the Product
 // selects one of them for each role.
-const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings });
+// docs/specs/factory-floor.md. Each running session writes a pulse for the factory floor.
+const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings, pulses: new PrismaSessionPulseStore(prisma) });
 const reaper = new SpriteReaper({
   // docs/specs/sandbox-provider-spillover.md. The view of the provider each ref names.
   sandboxes: (providerId) => sandbox.forProvider(providerId),

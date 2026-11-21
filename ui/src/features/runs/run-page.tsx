@@ -378,7 +378,7 @@ function RunDetail({
 }
 
 /** docs/specs/change-sets.md. Each repository of the run with its base, its pull request and its status. */
-function Targets({ run }: { run: Run }) {
+export function Targets({ run }: { run: Run }) {
   if (run.targets.length === 0) return null;
   const pullRequestName = run.status === "DRAFT_PUBLISHED" ? "Draft pull request" : "Pull request";
   return (
@@ -409,14 +409,14 @@ function Targets({ run }: { run: Run }) {
 }
 
 /** docs/specs/run-diagnostics.md. The run events, one page of up to 200. */
-function RunEvents({ runId, workspaceId }: { runId: string; workspaceId: string }) {
+export function RunEvents({ runId, workspaceId }: { runId: string; workspaceId: string }) {
   const events = useQuery(listRunEventsOptions({ path: { id: runId }, query: { linearWorkspaceId: workspaceId, limit: 200 } }));
   if (events.isPending) return <Skeleton className="h-16" />;
   if (events.isError) return <ErrorAlert error={events.error} title="The events could not be read" />;
   return <EventList events={events.data.items} />;
 }
 
-function StageTimeline({ run }: { run: Run }) {
+export function StageTimeline({ run }: { run: Run }) {
   if (run.stages.length === 0) return <Empty>No stage was recorded.</Empty>;
   const start = Math.min(...run.stages.map((stage) => Date.parse(stage.startedAt)));
   const end = Math.max(...run.stages.map((stage) => Date.parse(stage.endedAt)));
@@ -449,7 +449,7 @@ function StageTimeline({ run }: { run: Run }) {
   );
 }
 
-function Sessions({ run }: { run: Run }) {
+export function Sessions({ run }: { run: Run }) {
   if (run.sessions.length === 0) return <Empty>No agent session was recorded.</Empty>;
   const showReasoning = run.sessions.some((session) => (session.reasoningTokens ?? 0) > 0);
   return (

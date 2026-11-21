@@ -33,6 +33,7 @@ A retro agent runs on a schedule, outside any run, and reads the runs that ended
 - The install settings take an optional S3-compatible bucket (endpoint, bucket, region, access key, secret key). When set, new transcripts go there and the row keeps the object key. `FACTOREE_TRANSCRIPT_S3_*` env vars win and lock the fields — the owner's env-over-UI rule.
 - A kept transcript is deleted after the product's run retention period — §51.
 - The model picker gets a retro row on the tenant's Retro settings, with the same runner, model and effort rules — no second model form.
+- A running retro shows on the factory floor (`docs/specs/factory-floor.md`) as one consultant who walks the lines of the products it reads. The retro session writes session pulses with its retro id, and the floor read model returns the running retros — every workflow that does work is visible on the floor.
 
 ## Out
 - Shaping agent roles: free-text mandates, per-product prompt overrides, or review rules. No repeated review comment exists yet to justify them.
@@ -57,3 +58,4 @@ A retro agent runs on a schedule, outside any run, and reads the runs that ended
 - With the S3 fields set, the transcript lands in the bucket and the row holds the object key. With `FACTOREE_TRANSCRIPT_S3_BUCKET` set, the field shows locked.
 - With "Keep transcripts" off, no transcript row exists for a new run.
 - The Retro page at 390 px shows the numbers and the findings without horizontal scroll.
+- While a retro runs, the factory floor shows the consultant on the lines of its products, and a click on it opens the retro with its status.

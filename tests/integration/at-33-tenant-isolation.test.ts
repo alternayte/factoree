@@ -142,6 +142,11 @@ describe("AT-33 tenant isolation", () => {
         "pull_request_event",
         // Slice 5, DI-21.122. One row per deploy result of a merged pull request of one tenant.
         "pull_request_deploy",
+        // docs/specs/factory-floor.md. The status history of a run and of a setup run, and the
+        // session pulses, of one tenant.
+        "run_status_change",
+        "setup_status_change",
+        "session_pulse",
       ].sort(),
     );
   });

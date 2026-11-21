@@ -1,0 +1,764 @@
+import * as THREE from "three";
+import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ROLE_STATION, SILENT_MS, STATIONS, stationIndex, type CrateState, type FloorMoment, type Place, type StationKey, type Tone } from "./model";
+import { MODEL_BASE, MODELS, type ModelName } from "./models";
+
+/**
+ * docs/specs/factory-floor.md. The Night shift scene: matte machines in the DESIGN.md tokens on the
+ * canvas floor, and light only from state: accent where a session runs, warning where a human is
+ * needed, danger on a failed check, success at shipping and deploy.
+ */
+const TOKENS = {
+  canvas: 0x0b0d0e,
+  panel: 0x0f1315,
+  raised: 0x131a1d,
+  hairline: 0x1a2427,
+  hairlineStrong: 0x24343a,
+  mute: 0x6f878d,
+  accent: 0x00e5ff,
+  warning: 0xffd84d,
+  danger: 0xff5d73,
+  success: 0x3dffa8,
+  idleGlow: 0x14363c,
+  crate: 0x7d8f95,
+} as const;
+
+const TONE_COLOR: Record<Tone, number> = {
+  accent: TOKENS.accent,
+  warning: TOKENS.warning,
+  danger: TOKENS.danger,
+  success: TOKENS.success,
+  idle: TOKENS.mute,
+};
+
+/** The distance between two stations, and between two lines. */
+const STEP = 6.5;
+const LINE_GAP = 12;
+const BELT_OFFSET = 0;
+const REPAIR_OFFSET = 1.6;
+const MACHINE_OFFSET = -2.9;
+const BIN_OFFSET = 3.5;
+const MOVE_SPEED = 3.2;
+/** The footprint each machine model is scaled to, by station. */
+const FOOTPRINT: Record<StationKey, { w: number; d: number; h: number }> = {
+  intake: { w: 3, d: 3, h: 2 },
+  refinery: { w: 3.4, d: 3, h: 2.8 },
+  prep: { w: 2.6, d: 2.6, h: 2 },
+  workshop: { w: 4, d: 3.4, h: 3.2 },
+  test: { w: 3.2, d: 2.8, h: 1.8 },
+  lab: { w: 3.2, d: 3, h: 2.4 },
+  inspect: { w: 3, d: 3, h: 2.4 },
+  dock: { w: 3.6, d: 3.4, h: 1 },
+  yard: { w: 5, d: 4.4, h: 0.3 },
+  gate: { w: 3, d: 3.4, h: 3.4 },
+};
+
+export type Pick =
+  | { kind: "run"; id: string }
+  | { kind: "station"; productId: string; station: StationKey }
+  | { kind: "line"; productId: string }
+  | { kind: "setup"; id: string };
+
+export interface SceneLine {
+  productId: string;
+  name: string;
+  teamKey: string;
+  repositories: string[];
+}
+
+interface Machine {
+  glow: THREE.MeshBasicMaterial;
+  x: number;
+  z: number;
+  top: number;
+  label: HTMLDivElement;
+}
+
+interface CrateView {
+  group: THREE.Group;
+  body: THREE.MeshStandardMaterial;
+  band: THREE.MeshBasicMaterial;
+  /** The path the crate walks now, and when it started. */
+  path: THREE.Vector3[];
+  pathLength: number;
+  startedAt: number;
+  place: Place;
+}
+
+interface Figure {
+  group: THREE.Group;
+  head: THREE.Mesh;
+  pill: HTMLDivElement;
+}
+
+const formatSilence = (ms: number): string => {
+  const minutes = Math.floor(ms / 60_000);
+  return minutes > 0 ? `silent ${minutes}m` : `silent ${Math.round(ms / 1000)}s`;
+};
+
+const disposeTree = (object: THREE.Object3D): void => {
+  object.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    mesh.geometry?.dispose();
+    const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+    else material?.dispose();
+  });
+};
+
+/** Loads every model of the scene once, so a line is built without waiting. */
+export const loadModels = async (): Promise<Record<ModelName, THREE.Group>> => {
+  const loader = new GLTFLoader();
+  const entries = await Promise.all(
+    (Object.keys(MODELS) as ModelName[]).map(async (name) => {
+      const gltf: GLTF = await loader.loadAsync(`${MODEL_BASE}${MODELS[name]}`);
+      return [name, gltf.scene] as const;
+    }),
+  );
+  return Object.fromEntries(entries) as Record<ModelName, THREE.Group>;
+};
+
+/**
+ * One copy of a model, scaled to a footprint and standing on the floor at the origin, with the
+ * Night shift materials: a matte body, and hairline edges that keep its shape readable.
+ */
+const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number }, body: THREE.Material, edge: THREE.LineBasicMaterial): THREE.Group => {
+  const model = source.clone(true);
+  const box = new THREE.Box3().setFromObject(model);
+  const dimensions = box.getSize(new THREE.Vector3());
+  const scale = Math.min(size.w / Math.max(dimensions.x, 0.001), size.d / Math.max(dimensions.z, 0.001), size.h / Math.max(dimensions.y, 0.001));
+  model.scale.setScalar(scale);
+  const scaled = new THREE.Box3().setFromObject(model);
+  const center = scaled.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -scaled.min.y, -center.z);
+  const edges: THREE.LineSegments[] = [];
+  model.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.material = body;
+    edges.push(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30), edge));
+    edges.at(-1)!.matrixAutoUpdate = false;
+    mesh.add(edges.at(-1)!);
+  });
+  const group = new THREE.Group();
+  group.add(model);
+  return group;
+};
+
+export class FloorScene {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 600);
+  private readonly composer: EffectComposer;
+  private readonly bloom: UnrealBloomPass;
+  private readonly overlay: HTMLDivElement;
+  private readonly world = new THREE.Group();
+  private readonly target = new THREE.Vector3();
+  private zoom = 1;
+  private fitSize = 40;
+  private lines: SceneLine[] = [];
+  private machines = new Map<string, Machine>();
+  private signs = new Map<string, HTMLDivElement>();
+  private crates = new Map<string, CrateView>();
+  private figures = new Map<string, Figure>();
+  private crews = new Map<string, { group: THREE.Group; pill: HTMLDivElement }>();
+  private badges: HTMLDivElement[] = [];
+  private belts: THREE.Texture[] = [];
+  private moment: FloorMoment | null = null;
+  private selected: Pick | null = null;
+  private frame = 0;
+  private lastFrame = performance.now();
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly resizeObserver: ResizeObserver;
+  private readonly materials = {
+    body: new THREE.MeshStandardMaterial({ color: 0x1c262a, roughness: 0.9, metalness: 0.05 }),
+    top: new THREE.MeshStandardMaterial({ color: TOKENS.hairline, roughness: 0.85, metalness: 0.05 }),
+    pad: new THREE.MeshStandardMaterial({ color: TOKENS.panel, roughness: 1 }),
+    edge: new THREE.LineBasicMaterial({ color: 0x35525a }),
+    padEdge: new THREE.LineBasicMaterial({ color: TOKENS.hairlineStrong }),
+    figure: new THREE.MeshStandardMaterial({ color: 0x56656b, roughness: 0.7 }),
+  };
+  private down: { x: number; y: number; target: THREE.Vector3; moved: boolean } | null = null;
+
+  constructor(
+    private readonly container: HTMLElement,
+    private readonly models: Record<ModelName, THREE.Group>,
+    private readonly options: {
+      reducedMotion: boolean;
+      onPick: (pick: Pick | null) => void;
+      /** Called each frame with the screen position of the selected object, or null. */
+      onAnchor: (point: { x: number; y: number } | null) => void;
+    },
+  ) {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.domElement.className = "floor-canvas";
+    container.prepend(this.renderer.domElement);
+    this.overlay = document.createElement("div");
+    this.overlay.className = "floor-overlay";
+    container.append(this.overlay);
+
+    this.scene.background = new THREE.Color(TOKENS.canvas);
+    this.scene.add(this.world);
+    this.scene.add(new THREE.HemisphereLight(0xdff6ff, TOKENS.canvas, 1.1));
+    const key = new THREE.DirectionalLight(0xdff6ff, 0.55);
+    key.position.set(-22, 40, 18);
+    this.scene.add(key);
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.85, 0.45, 0.32);
+    this.composer.addPass(this.bloom);
+    this.composer.addPass(new OutputPass());
+
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(container);
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    this.resize();
+    this.frame = requestAnimationFrame(this.tick);
+  }
+
+  dispose(): void {
+    cancelAnimationFrame(this.frame);
+    this.resizeObserver.disconnect();
+    const canvas = this.renderer.domElement;
+    canvas.removeEventListener("pointerdown", this.onPointerDown);
+    canvas.removeEventListener("pointermove", this.onPointerMove);
+    canvas.removeEventListener("pointerup", this.onPointerUp);
+    canvas.removeEventListener("wheel", this.onWheel);
+    disposeTree(this.scene);
+    this.belts.forEach((texture) => texture.dispose());
+    this.composer.dispose();
+    this.renderer.dispose();
+    canvas.remove();
+    this.overlay.remove();
+  }
+
+  /** Builds the lines. It runs again only when the products change. */
+  setLines(lines: SceneLine[]): void {
+    const same = lines.length === this.lines.length && lines.every((line, index) => line.productId === this.lines[index]?.productId && line.name === this.lines[index]?.name);
+    if (same) return;
+    this.lines = lines;
+    disposeTree(this.world);
+    this.world.clear();
+    this.belts.forEach((texture) => texture.dispose());
+    this.belts = [];
+    this.machines.forEach((machine) => machine.label.remove());
+    this.machines.clear();
+    this.signs.forEach((sign) => sign.remove());
+    this.signs.clear();
+    this.crates.forEach((crate) => disposeTree(crate.group));
+    this.crates.clear();
+    this.figures.forEach((figure) => figure.pill.remove());
+    this.figures.clear();
+    this.crews.forEach((crew) => crew.pill.remove());
+    this.crews.clear();
+
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: TOKENS.canvas, roughness: 1 }));
+    floor.rotation.x = -Math.PI / 2;
+    this.world.add(floor);
+    const grid = new THREE.GridHelper(400, 200, 0x162024, 0x162024);
+    grid.position.y = 0.01;
+    this.world.add(grid);
+
+    lines.forEach((line, index) => this.buildLine(line, index));
+    this.resize();
+    this.fit();
+  }
+
+  /** Shows the floor at one moment. */
+  setMoment(moment: FloorMoment): void {
+    this.moment = moment;
+  }
+
+  select(pick: Pick | null): void {
+    this.selected = pick;
+  }
+
+  /** Pans the camera to a run's crate. */
+  focusRun(id: string): void {
+    const crate = this.crates.get(id);
+    if (crate === undefined) return;
+    this.target.set(crate.group.position.x, 0, crate.group.position.z);
+  }
+
+  zoomBy(factor: number): void {
+    this.zoom = Math.min(3.5, Math.max(0.35, this.zoom * factor));
+    this.resize();
+  }
+
+  private x(station: number): number {
+    return station * STEP;
+  }
+
+  private lineZ(productId: string): number {
+    return Math.max(0, this.lines.findIndex((line) => line.productId === productId)) * LINE_GAP;
+  }
+
+  private stationPoint(productId: string, place: Place, slot: number): THREE.Vector3 {
+    const z = this.lineZ(productId);
+    if (place === "bin") return new THREE.Vector3(this.x(stationIndex("inspect")) + (slot % 3) * 0.7 - 0.7, 0, z + BIN_OFFSET + Math.floor(slot / 3) * 0.7);
+    if (place === "gone") return new THREE.Vector3(this.x(stationIndex("gate")) + 7, 0, z);
+    const index = stationIndex(place);
+    if (place === "intake") return new THREE.Vector3(this.x(index) - 1 + (slot % 3) * 1.1, 0, z - 0.4 + Math.floor(slot / 3) * 1.1);
+    if (place === "yard") return new THREE.Vector3(this.x(index) - 1.4 + (slot % 3) * 1.3, 0, z - 1.3 + Math.floor(slot / 3) * 1.3);
+    if (place === "gate" || place === "dock") return new THREE.Vector3(this.x(index) + (slot % 2) * 1.1 - 0.5, 0, z + Math.floor(slot / 2) * 1.1);
+    return new THREE.Vector3(this.x(index) + (slot % 2) * 1.1 - 0.5, 0, z + BELT_OFFSET + Math.floor(slot / 2) * 1.1);
+  }
+
+  private stripeTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 16;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#141b1e";
+    context.fillRect(0, 0, 64, 16);
+    context.fillStyle = "#1d2a2e";
+    for (let x = 0; x < 64; x += 16) context.fillRect(x, 0, 6, 16);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    this.belts.push(texture);
+    return texture;
+  }
+
+  private belt(x0: number, x1: number, z: number, width: number): void {
+    // The conveyor model, repeated along the belt, carries a moving stripe so the belt runs.
+    const length = x1 - x0;
+    const source = this.models.conveyor;
+    const size = new THREE.Box3().setFromObject(source).getSize(new THREE.Vector3());
+    const pieces = Math.max(1, Math.round(length / Math.max(width, 0.5)));
+    const piece = length / pieces;
+    for (let index = 0; index < pieces; index += 1) {
+      // A conveyor model runs along its longer side. One that runs along z is fitted turned, then
+      // turned to run along x.
+      const alongZ = size.z > size.x;
+      const model = placeModel(source, alongZ ? { w: width, d: piece, h: 0.5 } : { w: piece, d: width, h: 0.5 }, this.materials.body, this.materials.edge);
+      if (alongZ) model.rotation.y = Math.PI / 2;
+      model.position.set(x0 + piece * (index + 0.5), 0, z);
+      this.world.add(model);
+    }
+    const texture = this.stripeTexture();
+    texture.repeat.set(length / 1.4, 1);
+    const surface = new THREE.Mesh(new THREE.PlaneGeometry(length, width * 0.8), new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9 }));
+    surface.rotation.x = -Math.PI / 2;
+    surface.position.set((x0 + x1) / 2, 0.52, z);
+    this.world.add(surface);
+  }
+
+  private label(text: string, className: string): HTMLDivElement {
+    const element = document.createElement("div");
+    element.className = className;
+    element.textContent = text;
+    this.overlay.append(element);
+    return element;
+  }
+
+  private buildLine(line: SceneLine, index: number): void {
+    const z = index * LINE_GAP;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(this.x(9) + 14, 0.08, 10.6), this.materials.pad);
+    pad.position.set(this.x(4.5) + 1.5, 0.04, z - 0.4);
+    this.world.add(pad);
+    const padEdge = new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), this.materials.padEdge);
+    padEdge.position.copy(pad.position);
+    this.world.add(padEdge);
+    this.belt(this.x(0) - 1.5, this.x(9) + 7, z + BELT_OFFSET, 1.2);
+    this.belt(this.x(3), this.x(6), z + REPAIR_OFFSET, 0.8);
+
+    const bin = placeModel(this.models.bin, { w: 2.4, d: 1.9, h: 1 }, this.materials.body, new THREE.LineBasicMaterial({ color: TOKENS.danger, transparent: true, opacity: 0.55 }));
+    bin.position.set(this.x(stationIndex("inspect")), 0, z + BIN_OFFSET);
+    this.world.add(bin);
+
+    STATIONS.forEach((station, stationAt) => {
+      const size = FOOTPRINT[station.key];
+      const model = placeModel(this.models[station.key], size, this.materials.body, this.materials.edge);
+      const mx = this.x(stationAt);
+      const mz = station.key === "yard" ? z - 0.4 : station.key === "gate" ? z : z + MACHINE_OFFSET;
+      model.position.set(mx, 0, mz);
+      model.userData.pick = { kind: "station", productId: line.productId, station: station.key } satisfies Pick;
+      model.traverse((node) => (node.userData.pick = model.userData.pick));
+      this.world.add(model);
+      const height = new THREE.Box3().setFromObject(model).max.y;
+      const glow = new THREE.MeshBasicMaterial({ color: TOKENS.idleGlow });
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(size.w * 0.8, 0.12, 0.08), glow);
+      strip.position.set(mx, station.key === "yard" ? 0.32 : Math.max(0.4, height * 0.8), mz + size.d / 2 + 0.06);
+      strip.userData.pick = model.userData.pick;
+      this.world.add(strip);
+      this.machines.set(`${line.productId}:${station.key}`, {
+        glow,
+        x: mx,
+        z: mz,
+        top: height,
+        label: this.label(station.name, "floor-label"),
+      });
+    });
+
+    const sign = document.createElement("button");
+    sign.type = "button";
+    sign.className = "floor-sign";
+    const name = document.createElement("span");
+    name.className = "floor-sign-name";
+    name.textContent = line.name;
+    const team = document.createElement("span");
+    team.className = "floor-team";
+    team.textContent = line.teamKey;
+    name.append(" ", team);
+    const repositories = document.createElement("span");
+    repositories.className = "floor-sign-meta";
+    repositories.textContent = line.repositories.length === 0 ? "no repository" : line.repositories.slice(0, 2).join(", ") + (line.repositories.length > 2 ? ` +${line.repositories.length - 2}` : "");
+    sign.append(name, repositories);
+    sign.addEventListener("click", () => this.options.onPick({ kind: "line", productId: line.productId }));
+    this.overlay.append(sign);
+    this.signs.set(line.productId, sign as unknown as HTMLDivElement);
+  }
+
+  private crateView(crate: CrateState): CrateView {
+    const existing = this.crates.get(crate.run.id);
+    if (existing !== undefined) return existing;
+    const body = new THREE.MeshStandardMaterial({ color: TOKENS.crate, roughness: 0.75 });
+    const band = new THREE.MeshBasicMaterial({ color: TOKENS.accent });
+    const group = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.05, 1.2), body);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.26, 0.2, 1.26), band);
+    stripe.position.y = 0.15;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: TOKENS.canvas, transparent: true, opacity: 0.5 }));
+    group.add(box, stripe, edges);
+    const pick: Pick = { kind: "run", id: crate.run.id };
+    box.userData.pick = pick;
+    stripe.userData.pick = pick;
+    this.world.add(group);
+    const start = this.stationPoint(crate.run.productId, crate.from ?? crate.place, 0);
+    group.position.copy(start);
+    const view: CrateView = { group, body, band, path: [start], pathLength: 0, startedAt: performance.now(), place: crate.from ?? crate.place };
+    this.crates.set(crate.run.id, view);
+    return view;
+  }
+
+  /** The path from one place to the next: along the belt, back on the repair belt, or into the bin. */
+  private pathOf(productId: string, from: THREE.Vector3, to: THREE.Vector3, place: Place, repair: boolean): THREE.Vector3[] {
+    const z = this.lineZ(productId);
+    if (repair) return [from, new THREE.Vector3(from.x, 0, z + REPAIR_OFFSET), new THREE.Vector3(to.x, 0, z + REPAIR_OFFSET), to];
+    if (place === "bin") return [from, new THREE.Vector3(from.x, 0, z + BELT_OFFSET), new THREE.Vector3(to.x, 0, z + BELT_OFFSET), to];
+    return [from, new THREE.Vector3(from.x, 0, z + BELT_OFFSET), new THREE.Vector3(to.x, 0, z + BELT_OFFSET), to];
+  }
+
+  private figure(key: string, head: number): Figure {
+    const existing = this.figures.get(key);
+    if (existing !== undefined) return existing;
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 10), this.materials.figure);
+    body.position.y = 0.45;
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10), new THREE.MeshBasicMaterial({ color: head }));
+    headMesh.position.y = 1.15;
+    group.add(body, headMesh);
+    this.world.add(group);
+    const figure = { group, head: headMesh, pill: this.label("", "floor-pill") };
+    this.figures.set(key, figure);
+    return figure;
+  }
+
+  private toScreen(point: THREE.Vector3): { x: number; y: number } {
+    const projected = point.clone().project(this.camera);
+    return { x: ((projected.x + 1) / 2) * this.container.clientWidth, y: ((1 - projected.y) / 2) * this.container.clientHeight };
+  }
+
+  private place(element: HTMLElement, point: THREE.Vector3): void {
+    const screen = this.toScreen(point);
+    element.style.transform = `translate(${screen.x.toFixed(1)}px, ${screen.y.toFixed(1)}px)`;
+  }
+
+  private badge(index: number, text: string, tone: "danger" | "warn"): HTMLDivElement {
+    while (this.badges.length <= index) this.badges.push(this.label("", "floor-badge"));
+    const badge = this.badges[index]!;
+    badge.textContent = text;
+    badge.dataset.tone = tone;
+    badge.hidden = false;
+    return badge;
+  }
+
+  private readonly tick = (now: number): void => {
+    const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
+    const motion = !this.options.reducedMotion;
+    if (motion) this.belts.forEach((texture) => (texture.offset.x -= dt * 0.6));
+    const moment = this.moment;
+    const active = new Map<string, Tone>();
+    let badges = 0;
+
+    if (moment !== null) {
+      // Crates: one per run on the floor, each walking its path to its place.
+      const seen = new Set<string>();
+      const slots = new Map<string, number>();
+      for (const crate of moment.crates) {
+        seen.add(crate.run.id);
+        const slotKey = `${crate.run.productId}:${crate.place}`;
+        const slot = slots.get(slotKey) ?? 0;
+        slots.set(slotKey, slot + 1);
+        const view = this.crateView(crate);
+        const goal = this.stationPoint(crate.run.productId, crate.place, slot);
+        const end = view.path.at(-1)!;
+        if (view.place !== crate.place || end.distanceTo(goal) > 0.01) {
+          const from = view.group.position.clone();
+          view.path = view.place !== crate.place ? this.pathOf(crate.run.productId, from, goal, crate.place, crate.repair) : [from, goal];
+          view.pathLength = view.path.reduce((sum, point, index) => (index === 0 ? 0 : sum + point.distanceTo(view.path[index - 1]!)), 0);
+          view.startedAt = now;
+          view.place = crate.place;
+        }
+        // The crate walks its path at a fixed speed. With reduced motion it is at the end at once.
+        let remaining = motion ? ((now - view.startedAt) / 1000) * MOVE_SPEED : view.pathLength;
+        const position = view.path.at(-1)!.clone();
+        let moving = false;
+        for (let index = 1; index < view.path.length; index += 1) {
+          const segment = view.path[index]!.distanceTo(view.path[index - 1]!);
+          if (remaining < segment) {
+            position.copy(view.path[index - 1]!).lerp(view.path[index]!, remaining / segment);
+            moving = true;
+            break;
+          }
+          remaining -= segment;
+        }
+        view.group.position.set(position.x, 1.05 + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
+        view.group.visible = crate.place !== "gone" || moving;
+        const color = TONE_COLOR[crate.tone];
+        view.band.color.setHex(color);
+        if (crate.tone === "danger" && crate.place !== "bin" && motion) view.body.emissive.setHex(TOKENS.danger).multiplyScalar(0.25 + 0.2 * Math.sin(now / 120));
+        else view.body.emissive.setHex(0x000000);
+        if (crate.place !== "gone" && crate.place !== "bin") {
+          const machineKey = `${crate.run.productId}:${crate.place}`;
+          const tone = crate.place === "intake" ? "idle" : crate.tone;
+          const known = active.get(machineKey);
+          if (known === undefined || tone === "warning") active.set(machineKey, tone);
+        }
+        if (crate.status === "WAITING_FOR_INPUT" || crate.status === "BLOCKED_TARGET") {
+          this.place(this.badge(badges++, "?", "warn"), view.group.position.clone().setY(2));
+        }
+      }
+      for (const [id, view] of this.crates) {
+        if (seen.has(id)) continue;
+        this.world.remove(view.group);
+        disposeTree(view.group);
+        this.crates.delete(id);
+      }
+
+      for (const alert of moment.alerts) {
+        active.set(`${alert.productId}:${alert.station}`, "danger");
+        const machine = this.machines.get(`${alert.productId}:${alert.station}`);
+        if (machine !== undefined) this.place(this.badge(badges++, "!", "danger"), new THREE.Vector3(machine.x, machine.top + 1.2, machine.z));
+      }
+
+      // Operators: one figure per running session, at the machine of its role.
+      const figuresSeen = new Set<string>();
+      const perMachine = new Map<string, number>();
+      for (const operator of moment.operators) {
+        const station = ROLE_STATION[operator.role];
+        if (station === undefined || station === "setup") continue;
+        const machine = this.machines.get(`${operator.productId}:${station}`);
+        if (machine === undefined) continue;
+        const key = `${operator.owner}:${operator.role}`;
+        figuresSeen.add(key);
+        const count = perMachine.get(`${operator.productId}:${station}`) ?? 0;
+        perMachine.set(`${operator.productId}:${station}`, count + 1);
+        const silent = moment.at - operator.lastOutputAt;
+        const figure = this.figure(key, silent > SILENT_MS ? TOKENS.warning : TOKENS.accent);
+        (figure.head.material as THREE.MeshBasicMaterial).color.setHex(silent > SILENT_MS ? TOKENS.warning : TOKENS.accent);
+        figure.group.position.set(machine.x + 1.6 + count * 0.9, 0.1, this.lineZ(operator.productId) - 1.3);
+        const speed = operator.toolKind === "edit" ? 9 : operator.toolKind === "shell" ? 5 : operator.toolKind === "browser" ? 3 : 1.6;
+        figure.head.position.y = 1.15 + (motion ? Math.abs(Math.sin((now / 1000) * speed)) * 0.06 : 0);
+        figure.group.rotation.y = motion && operator.toolKind === "browser" ? Math.sin(now / 800) * 0.6 : operator.toolKind === "read" ? -0.5 : 0;
+        figure.pill.textContent = `${operator.role} · ${silent > SILENT_MS ? formatSilence(silent) : operator.toolKind}`;
+        figure.pill.dataset.tone = silent > SILENT_MS ? "warn" : "accent";
+        figure.pill.hidden = false;
+        this.place(figure.pill, figure.group.position.clone().setY(2.2));
+        if ((active.get(`${operator.productId}:${station}`) ?? "idle") === "idle") active.set(`${operator.productId}:${station}`, "accent");
+      }
+      for (const [key, figure] of this.figures) {
+        if (figuresSeen.has(key)) continue;
+        this.world.remove(figure.group);
+        disposeTree(figure.group);
+        figure.pill.remove();
+        this.figures.delete(key);
+      }
+
+      // Setup crews: at the entrance of the line of their product.
+      const crewsSeen = new Set<string>();
+      const perLine = new Map<string, number>();
+      for (const setup of moment.setups) {
+        crewsSeen.add(setup.setup.id);
+        let crew = this.crews.get(setup.setup.id);
+        if (crew === undefined) {
+          const group = placeModel(this.models.scaffold, { w: 2.4, d: 2.4, h: 3 }, this.materials.body, new THREE.LineBasicMaterial({ color: TOKENS.warning, transparent: true, opacity: 0.7 }));
+          const pick: Pick = { kind: "setup", id: setup.setup.id };
+          group.traverse((node) => (node.userData.pick = pick));
+          this.world.add(group);
+          crew = { group, pill: this.label("", "floor-pill") };
+          crew.pill.dataset.tone = "warn";
+          this.crews.set(setup.setup.id, crew);
+        }
+        const count = perLine.get(setup.setup.productId) ?? 0;
+        perLine.set(setup.setup.productId, count + 1);
+        crew.group.position.set(this.x(0) - 6 - count * 3, 0, this.lineZ(setup.setup.productId) - 0.4);
+        const pulse = moment.operators.find((operator) => operator.owner === `setup:${setup.setup.id}`);
+        crew.pill.textContent = `Setup · ${setup.setup.repository.split("/").at(-1) ?? setup.setup.repository}${pulse === undefined ? ` · ${setup.status}` : ` · ${pulse.toolKind}`}`;
+        this.place(crew.pill, crew.group.position.clone().setY(3.6));
+        if (motion) crew.group.rotation.y = Math.sin(now / 1500) * 0.05;
+      }
+      for (const [id, crew] of this.crews) {
+        if (crewsSeen.has(id)) continue;
+        this.world.remove(crew.group);
+        disposeTree(crew.group);
+        crew.pill.remove();
+        this.crews.delete(id);
+      }
+    }
+    for (let index = badges; index < this.badges.length; index += 1) this.badges[index]!.hidden = true;
+
+    // Machines: light only from state.
+    for (const [key, machine] of this.machines) {
+      const tone = active.get(key);
+      const station = key.split(":").at(-1) as StationKey;
+      let color: number = TOKENS.idleGlow;
+      if (tone === "danger") color = TOKENS.danger;
+      else if (tone === "warning") color = TOKENS.warning;
+      else if (tone === "success" || ((station === "dock" || station === "gate") && tone !== undefined)) color = TOKENS.success;
+      else if (tone === "accent") color = TOKENS.accent;
+      machine.glow.color.setHex(color);
+      this.place(machine.label, new THREE.Vector3(machine.x, 0.1, machine.z + (station === "yard" ? 3 : station === "gate" ? 2.6 : 2)));
+      machine.label.dataset.on = tone !== undefined && tone !== "idle" ? "true" : "false";
+    }
+    for (const [productId, sign] of this.signs) this.place(sign, new THREE.Vector3(this.x(0) - 3.6, 0.2, this.lineZ(productId) - 0.6));
+
+    this.options.onAnchor(this.anchorOf(this.selected));
+    this.composer.render();
+    this.frame = requestAnimationFrame(this.tick);
+  };
+
+  /** The screen point of the selected object, where the bubble points. */
+  private anchorOf(pick: Pick | null): { x: number; y: number } | null {
+    if (pick === null) return null;
+    if (pick.kind === "run") {
+      const crate = this.crates.get(pick.id);
+      return crate === undefined || !crate.group.visible ? null : this.toScreen(crate.group.position.clone().setY(1.3));
+    }
+    if (pick.kind === "station") {
+      const machine = this.machines.get(`${pick.productId}:${pick.station}`);
+      return machine === undefined ? null : this.toScreen(new THREE.Vector3(machine.x, machine.top + 0.4, machine.z));
+    }
+    if (pick.kind === "setup") {
+      const crew = this.crews.get(pick.id);
+      return crew === undefined ? null : this.toScreen(crew.group.position.clone().setY(3.2));
+    }
+    return this.toScreen(new THREE.Vector3(this.x(0) - 3.6, 0.2, this.lineZ(pick.productId) - 2));
+  }
+
+  private resize(): void {
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    if (width === 0 || height === 0) return;
+    const aspect = width / height;
+    const view = this.fitSize / this.zoom;
+    this.camera.left = (-view * aspect) / 2;
+    this.camera.right = (view * aspect) / 2;
+    this.camera.top = view / 2;
+    this.camera.bottom = -view / 2;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(width, height, false);
+    this.composer.setSize(width, height);
+    this.bloom.resolution.set(width, height);
+    this.placeCamera();
+  }
+
+  /**
+   * Centres the camera on every line, from the setup crews before the intake to the exit after
+   * the deploy gate, and sets the view so all of it fits the stage.
+   */
+  private fit(): void {
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    if (width === 0 || height === 0 || this.lines.length === 0) return;
+    const last = (this.lines.length - 1) * LINE_GAP;
+    const corners = [
+      new THREE.Vector3(this.x(0) - 12, 0, -4),
+      new THREE.Vector3(this.x(9) + 8, 0, -4),
+      new THREE.Vector3(this.x(0) - 12, 0, last + 5),
+      new THREE.Vector3(this.x(9) + 8, 0, last + 5),
+      new THREE.Vector3(this.x(0) - 12, 4, -4),
+    ];
+    this.target.set(0, 0, 0);
+    this.placeCamera();
+    const inverse = this.camera.matrixWorldInverse;
+    const local = corners.map((corner) => corner.clone().applyMatrix4(inverse));
+    const minX = Math.min(...local.map((point) => point.x));
+    const maxX = Math.max(...local.map((point) => point.x));
+    const minY = Math.min(...local.map((point) => point.y));
+    const maxY = Math.max(...local.map((point) => point.y));
+    const aspect = width / height;
+    this.fitSize = Math.max(maxY - minY, (maxX - minX) / aspect) * 1.08;
+    const centre = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, local[0]!.z).applyMatrix4(this.camera.matrixWorld);
+    // Move the target along the view direction to the floor, so the centre stays on screen.
+    const direction = this.camera.getWorldDirection(new THREE.Vector3());
+    const t = -centre.y / direction.y;
+    this.target.copy(centre.addScaledVector(direction, t)).setY(0);
+    // A narrow stage shows the front of the lines at a readable size, and the viewer pans along.
+    if (aspect < 1) {
+      this.fitSize = Math.max(26, (maxY - minY) * 1.08);
+      this.target.x = this.x(2);
+    }
+    this.zoom = 1;
+    this.resize();
+  }
+
+  private placeCamera(): void {
+    this.camera.position.set(this.target.x + 9, 40, this.target.z + 46);
+    this.camera.lookAt(this.target);
+    this.camera.updateMatrixWorld();
+  }
+
+  private readonly onWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    this.zoomBy(event.deltaY < 0 ? 1.1 : 1 / 1.1);
+  };
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    this.down = { x: event.clientX, y: event.clientY, target: this.target.clone(), moved: false };
+    this.renderer.domElement.setPointerCapture(event.pointerId);
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    const down = this.down;
+    if (down === null) return;
+    const dx = event.clientX - down.x;
+    const dy = event.clientY - down.y;
+    if (!down.moved && Math.hypot(dx, dy) > 5) {
+      down.moved = true;
+      this.renderer.domElement.dataset.dragging = "true";
+    }
+    if (!down.moved) return;
+    const perPixel = (this.camera.top - this.camera.bottom) / this.container.clientHeight;
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).setY(0).normalize();
+    const direction = this.camera.getWorldDirection(new THREE.Vector3());
+    const forward = new THREE.Vector3(direction.x, 0, direction.z).normalize();
+    const pitch = Math.max(0.3, -direction.y);
+    this.target.copy(down.target).addScaledVector(right, -dx * perPixel).addScaledVector(forward, (dy * perPixel) / pitch);
+    this.placeCamera();
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    const down = this.down;
+    this.down = null;
+    delete this.renderer.domElement.dataset.dragging;
+    if (down === null || down.moved) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const point = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(point, this.camera);
+    const hit = this.raycaster.intersectObjects(this.world.children, true).find((entry) => entry.object.userData.pick !== undefined && entry.object.visible);
+    this.options.onPick(hit === undefined ? null : (hit.object.userData.pick as Pick));
+  };
+}

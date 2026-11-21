@@ -29,6 +29,8 @@ import { registerHostCredentialRoutes } from "./admin/host-credentials.routes.js
 import { checkRegistryLogin } from "~/adapters/registry/registry-login-check.js";
 import { PrismaHostCredentialStore } from "~/persistence/prisma/host-credential.prisma.js";
 import { registerRunRoutes } from "./admin/runs.routes.js";
+import { registerFloorRoutes } from "./admin/floor.routes.js";
+import { PrismaFloorReader } from "~/persistence/prisma/floor.prisma.js";
 import { registerTemporalUi } from "./admin/temporal-ui.routes.js";
 import { PrismaRunViewReader } from "~/persistence/prisma/run-view.prisma.js";
 import { PrismaRunEventStore } from "~/persistence/prisma/run-event.prisma.js";
@@ -242,6 +244,8 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       const sessions = new PrismaAgentSessionStore(dependencies.prisma);
       // docs/specs/run-diagnostics.md.
       const runEvents = new PrismaRunEventStore(dependencies.prisma);
+      // docs/specs/factory-floor.md.
+      registerFloorRoutes(admin, { tenants: dependencies.tenants, floor: new PrismaFloorReader(dependencies.prisma) });
       registerRunRoutes(admin, {
         tenants: dependencies.tenants,
         runViews: new PrismaRunViewReader(dependencies.prisma),
