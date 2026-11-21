@@ -1,3 +1,4 @@
+import { RESOURCE_SAMPLER } from "~/domain/runs/sandbox-fault.js";
 import { describe, expect, it } from "vitest";
 import { SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import { DEFAULT_PROJECT_DEFAULTS } from "~/domain/runs/project-runtime-config.js";
@@ -182,7 +183,8 @@ describe("SandboxManager warm snapshots (docs/specs/kiln-sandbox-provider.md)", 
     expect(git).toContain("-C /workspace/primary checkout --force --detach FETCH_HEAD");
     expect(sandbox.commands.some((command) => command.file === "sh" && command.args[1]?.includes("npm ci"))).toBe(true);
     // The image holds the browser tools, so nothing installs them, and the self-check is ready.
-    expect(sandbox.calls.some((call) => call.startsWith("startProcess"))).toBe(false);
+    // The only process it starts is the resource sampler (docs/specs/sandbox-memory-and-size.md).
+    expect(sandbox.calls.filter((call) => call.startsWith("startProcess"))).toEqual([`startProcess:${RESOURCE_SAMPLER}`]);
     expect(prepared.selfCheckReady).toBe(true);
   });
 

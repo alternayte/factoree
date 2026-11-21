@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A Factoree check that the kernel killed out of memory, or that hit a full disk, is a sandbox fault. It spends no repair, ends the run FAILED_CONFIGURATION, and starts a setup run of the repository with the fault as input (docs/specs/sandbox-memory-and-size.md, DI-21.195). Kiln needs the console route of alternayte/kiln issue 33; without it Factoree reports "kernel log not available" and keeps the old behaviour on Kiln. E2B reads the kernel log as root.
+- The sandbox image samples peak memory and disk. The setup report states the proof peaks next to the sandbox size, and `setup@17` caps SQL Server, Elasticsearch, OpenSearch, Keycloak and Kafka memory and proposes a sandbox size above 80% use.
+
 ## [0.20.1] - 2026-11-21
 
 ### Fixed

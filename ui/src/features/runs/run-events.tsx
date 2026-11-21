@@ -5,13 +5,15 @@ import { formatDate } from "@/lib/utils";
 export type RunEventItem = ListRunEventsResponse["items"][number];
 export type DiagnosisView = NonNullable<GetRunResponse["diagnosis"]>;
 
-const FAULT_KINDS = new Set(["session_failed", "session_hung", "provider_unreachable", "command_failed", "plan_rejected", "proposal_rejected"]);
+const FAULT_KINDS = new Set(["session_failed", "session_hung", "provider_unreachable", "command_failed", "sandbox_out_of_memory", "sandbox_disk_full", "plan_rejected", "proposal_rejected"]);
 
 const kindLabel: Record<RunEventItem["kind"], string> = {
   session_failed: "session failed",
   session_hung: "session hung",
   provider_unreachable: "provider unreachable",
   command_failed: "command failed",
+  sandbox_out_of_memory: "out of memory",
+  sandbox_disk_full: "disk full",
   plan_rejected: "plan rejected",
   proposal_rejected: "proposal rejected",
   selector_recheck: "selector re-check",
@@ -20,6 +22,48 @@ const kindLabel: Record<RunEventItem["kind"], string> = {
   repair_started: "repair",
   run_ended: "ended",
 };
+
+/** docs/specs/sandbox-memory-and-size.md. The check, the kernel proof and the peaks of a sandbox fault. */
+function SandboxFaultFacts({ event }: { event: RunEventItem }) {
+  if (event.kind !== "sandbox_out_of_memory" && event.kind !== "sandbox_disk_full") return null;
+  const detail = event.detail;
+  const peak =
+    event.kind === "sandbox_out_of_memory"
+      ? detail.peakMemoryMb === null
+        ? null
+        : `Peak memory ${detail.peakMemoryMb} MB of ${detail.totalMemoryMb ?? "?"} MB`
+      : detail.peakDiskMb === null
+        ? null
+        : `Peak disk ${detail.peakDiskMb} MB of ${detail.totalDiskMb ?? "?"} MB`;
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 text-sm">
+      <p>
+        <span className="text-mute">Command </span>
+        <code className="break-all">{detail.command}</code>
+        {detail.exitCode === null ? null : <span className="text-mute"> exited {detail.exitCode}</span>}
+      </p>
+      {detail.killed.length > 0 ? (
+        <p>
+          <span className="text-mute">Killed by the kernel: </span>
+          <code className="break-all">{detail.killed.join(", ")}</code>
+        </p>
+      ) : null}
+      {peak ? <p className="text-mute">{peak}</p> : null}
+      {detail.kernelLines.length > 0 ? (
+        <details>
+          <summary className="cursor-pointer text-mute">Kernel log</summary>
+          <pre className="mt-1 max-h-96 overflow-auto whitespace-pre-wrap rounded bg-hairline/40 p-2 font-mono text-xs">{detail.kernelLines.join("\n")}</pre>
+        </details>
+      ) : null}
+      {detail.log ? (
+        <details>
+          <summary className="cursor-pointer text-mute">Output tail</summary>
+          <pre className="mt-1 max-h-96 overflow-auto whitespace-pre-wrap rounded bg-hairline/40 p-2 font-mono text-xs">{detail.log}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 /** The egress facts and the log of a session or command fault, or nothing for any other kind. */
 function FaultFacts({ event }: { event: RunEventItem }) {
@@ -85,6 +129,7 @@ export function Diagnosis({ diagnosis, className }: { diagnosis: DiagnosisView; 
           </p>
           <p className="whitespace-pre-wrap">{diagnosis.cause.message}</p>
           <FaultFacts event={diagnosis.cause} />
+          <SandboxFaultFacts event={diagnosis.cause} />
         </div>
       ) : (
         <p className="mt-2 text-mute">Factoree recorded no fault event for this end.</p>
@@ -113,6 +158,7 @@ export function EventList({ events }: { events: RunEventItem[] }) {
           </div>
           <p className="mt-1 whitespace-pre-wrap text-sm">{event.message}</p>
           <FaultFacts event={event} />
+          <SandboxFaultFacts event={event} />
         </li>
       ))}
     </ol>

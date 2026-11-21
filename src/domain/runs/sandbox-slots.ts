@@ -16,7 +16,25 @@ export type SandboxReservation =
   /** The provider is at its limit. This retained sandbox is marked for deletion by this caller. */
   | { kind: "evict"; victim: RetainedSandbox }
   /** The provider is at its limit, and no retained sandbox can go. */
-  | { kind: "full"; live: number };
+  | { kind: "full"; live: number; memoryMb: number };
+
+/**
+ * docs/specs/sandbox-provider-spillover.md and docs/specs/sandbox-memory-and-size.md. The limits a
+ * create or a hold counts against: the live sandbox limit, and the memory budget of the provider.
+ * `memoryMb` is the memory of each sandbox or slot asked for. A lease from before the memory budget
+ * holds no memory, and counts as `fallbackMemoryMb`, the provider size.
+ */
+export interface SlotLimits {
+  maxLive: number | null;
+  memoryBudgetMb: number | null;
+  memoryMb: number;
+  fallbackMemoryMb: number;
+}
+
+/** True when `count` more sandboxes of `limits.memoryMb` fit the limits, next to what is live. */
+export const slotsFit = (limits: SlotLimits, live: number, usedMemoryMb: number, count: number): boolean =>
+  (limits.maxLive === null || live + count <= limits.maxLive) &&
+  (limits.memoryBudgetMb === null || usedMemoryMb + count * limits.memoryMb <= limits.memoryBudgetMb);
 
 /**
  * docs/specs/release-0-1-0.md, DI-15.14. One lease per live sandbox of a provider, from the
@@ -28,12 +46,12 @@ export interface SandboxLeaseStore {
    * `maxLive` null records the lease and enforces no limit. docs/specs/sandbox-provider-spillover.md:
    * a run that holds an unused slot on the provider takes that slot, and counts nothing.
    */
-  reserve(input: { adapter: string; runId: string; maxLive: number | null }): Promise<SandboxReservation>;
+  reserve(input: { adapter: string; runId: string } & SlotLimits): Promise<SandboxReservation>;
   /**
    * docs/specs/sandbox-provider-spillover.md. Holds `count` slots of the provider for the run, the
    * slots it already holds or uses included. Granted answers an empty lease id.
    */
-  hold(input: { adapter: string; runId: string; count: number; maxLive: number | null }): Promise<SandboxReservation>;
+  hold(input: { adapter: string; runId: string; count: number } & SlotLimits): Promise<SandboxReservation>;
   /** The provider where the run holds slots, or null. */
   heldProviderOf(runId: string): Promise<string | null>;
   /** Gives back the held slots of the run that no sandbox uses. */
@@ -86,19 +104,19 @@ export class SandboxSlots {
   constructor(private readonly options: SandboxSlotsOptions) {}
 
   /** Answers the lease id of the reserved slot. */
-  async acquire(adapter: string, runId: string, maxLive: number | null): Promise<string> {
+  async acquire(adapter: string, runId: string, limits: SlotLimits): Promise<string> {
     const waitMs = this.options.waitMs ?? DEFAULT_WAIT_MS;
     const pollMs = this.options.pollMs ?? DEFAULT_POLL_MS;
     const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     const deadline = Date.now() + waitMs;
     for (;;) {
-      const reservation = await this.options.store.reserve({ adapter, runId, maxLive });
+      const reservation = await this.options.store.reserve({ adapter, runId, ...limits });
       if (reservation.kind === "granted") return reservation.leaseId;
       if (reservation.kind === "evict") {
         if (await this.evict(reservation.victim, runId)) continue;
       } else if (Date.now() >= deadline) {
         throw new SandboxSlotUnavailableError(
-          `the ${adapter} provider runs ${reservation.live} sandboxes of Factoree, its limit is ${maxLive ?? "none"}, and none is retained`,
+          `the ${adapter} provider runs ${reservation.live} sandboxes of Factoree with ${reservation.memoryMb} MB, its limit is ${limits.maxLive ?? "none"} and its memory budget ${limits.memoryBudgetMb === null ? "none" : `${limits.memoryBudgetMb} MB`}, and none is retained`,
         );
       }
       await sleep(pollMs);
@@ -136,9 +154,9 @@ export class SandboxSlots {
    * limit it deletes retained sandboxes of that provider, one at a time. False when the provider
    * has no room: the caller then tries the next provider.
    */
-  async hold(adapter: string, runId: string, count: number, maxLive: number | null): Promise<boolean> {
+  async hold(adapter: string, runId: string, count: number, limits: SlotLimits): Promise<boolean> {
     for (;;) {
-      const reservation = await this.options.store.hold({ adapter, runId, count, maxLive });
+      const reservation = await this.options.store.hold({ adapter, runId, count, ...limits });
       if (reservation.kind === "granted") return true;
       if (reservation.kind === "full") return false;
       if (!(await this.evict(reservation.victim, runId))) return false;

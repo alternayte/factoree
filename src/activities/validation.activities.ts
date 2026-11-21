@@ -42,6 +42,7 @@ import {
 } from "./agent-session-recording.js";
 import { UnknownAgentRunnerError } from "~/domain/runs/agent-runner.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
+import { readSandboxPeak, reportSandboxFault, SandboxFaultError, type SandboxFaultSink } from "~/domain/runs/sandbox-fault.js";
 import type { AgentExecutionRepository } from "~/domain/runs/agent-execution.js";
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -133,6 +134,8 @@ export interface ValidationActivityDependencies {
   plans?: ValidationPlanStore | undefined;
   /** docs/specs/check-faults.md. The results of earlier attempts, and the one FAIL-to-UNSTABLE change. */
   results?: Pick<ValidationResultStore, "listForRun" | "markUnstable"> | undefined;
+  /** docs/specs/sandbox-memory-and-size.md. Starts the setup run after a sandbox fault. */
+  onSandboxFault?: SandboxFaultSink | undefined;
 }
 
 export interface UserValidateActivityInput {
@@ -1269,6 +1272,26 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         redactor: uv.redactor,
         logger: dependencies.logger,
       };
+      // docs/specs/sandbox-memory-and-size.md. A check the kernel killed out of memory, or that hit a
+      // full disk, ends the run with no repair and starts a setup run of the repository.
+      const sandboxFaultOf = async (error: unknown): Promise<never> => {
+        if (!(error instanceof SandboxFaultError)) throw error;
+        const message = await reportSandboxFault({
+          recorder: dependencies.events,
+          sink: dependencies.onSandboxFault,
+          tenantId: input.tenantId,
+          productId: input.productId,
+          repositoryFullName: null,
+          subject: { runId: input.runId },
+          stage: "VALIDATING",
+          attempt: input.attempt,
+          ...error.check,
+          fault: error.fault,
+          peak: await readSandboxPeak(uv.sandbox, ref),
+          idempotencyKey: `run:${input.runId}:validate:${input.attempt}:sandbox-fault`,
+        });
+        throw new RunConfigurationError(message);
+      };
       // docs/specs/change-sets.md, slice 6. A change set runs each group in turn, then the in-between check.
       const setOutcome =
         setCheck === undefined
@@ -1295,7 +1318,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
                   edges: input.edges ?? [],
                   changed: input.changedTargets ?? setCheck.targets.map((target) => target.repository),
                 }),
-            );
+            ).catch(sandboxFaultOf);
       const outcome = setOutcome ?? await timeStage(
         uv.stages,
         dependencies.logger,
@@ -1332,7 +1355,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               verifyCommands,
             },
           ),
-      );
+      ).catch(sandboxFaultOf);
 
       // docs/specs/provider-unreachable.md. The selector re-check could not reach the provider, so
       // the stood-down failure is not evidence. The pass reports the outage and persists no bogus

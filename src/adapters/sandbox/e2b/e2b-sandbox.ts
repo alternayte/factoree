@@ -112,7 +112,8 @@ export class E2BSandbox implements Sandbox {
 
   private readonly template: string;
   private readonly size: KilnSandboxSize;
-  private templateReady: Promise<void> | null = null;
+  /** docs/specs/sandbox-memory-and-size.md. One build per template, so one per vCPU and memory size. */
+  private readonly templatesReady = new Map<string, Promise<void>>();
   private readonly attached = new Map<string, Record<string, string>>();
   private readonly lastKeepAlive = new Map<string, number>();
 
@@ -122,6 +123,8 @@ export class E2BSandbox implements Sandbox {
     this.template = templateName(options.image, this.size);
     this.warmSnapshots = {
       template: this.template,
+      // docs/specs/sandbox-memory-and-size.md. E2B sets the disk per plan, so the name leaves it out.
+      templateFor: (size) => templateName(options.image, { vcpus: size.vcpus, memoryMb: size.memoryMb }),
       take: (ref) => this.options.gateway.snapshot(ref.id),
       restore: (input, snapshotId) => this.start(input, snapshotId),
       // A snapshot that E2B does not find is removed.
@@ -133,8 +136,11 @@ export class E2BSandbox implements Sandbox {
   }
 
   async create(input: SandboxCreateInput): Promise<SandboxRef> {
-    await this.ensureTemplate();
-    return this.start(input, this.template);
+    // docs/specs/sandbox-memory-and-size.md. Factoree sets no disk on E2B: the plan sets it.
+    const size: KilnSandboxSize = input.size === undefined ? this.size : { vcpus: input.size.vcpus, memoryMb: input.size.memoryMb };
+    const template = templateName(this.image, size);
+    await this.ensureTemplate(template, size);
+    return this.start(input, template);
   }
 
   attachEnvironment(ref: SandboxRef, environment: Record<string, string>): void {
@@ -349,6 +355,26 @@ export class E2BSandbox implements Sandbox {
   }
 
   /**
+   * docs/specs/sandbox-memory-and-size.md. The guest kernel log through the root exec, because
+   * /dev/kmsg is root-only. The agent runs as the sandbox user and cannot write it. Null when the
+   * read fails.
+   */
+  async kernelLog(ref: SandboxRef): Promise<string[] | null> {
+    try {
+      await this.keepAlive(ref);
+      const result = await this.options.gateway.run(ref.id, "dmesg | tail -n 400", {
+        cwd: "/",
+        envs: { PATH: E2B_PATH },
+        user: ROOT_USER,
+        timeoutMs: DNS_TIMEOUT_MS,
+      });
+      return result.timedOut || result.exitCode !== 0 ? null : result.stdout.split("\n").filter((line) => line.length > 0);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * DI-21.29. The E2B guest kernel makes /dev/net/tun and /dev/fuse root-only at boot, and no udev
    * opens them, so rootless Docker cannot create the TAP device of slirp4netns. Kiln opens both in
    * its guest init (DI-21.12). A guest without a device still serves a run without Docker, so a
@@ -376,21 +402,25 @@ export class E2BSandbox implements Sandbox {
    * step, so a later build of the same image finishes fast. A template whose last build failed
    * builds again, because no state outlives the worker.
    */
-  private ensureTemplate(): Promise<void> {
-    this.templateReady ??= this.options.gateway
-      .buildTemplate({
-        name: this.template,
-        image: this.image,
-        user: SANDBOX_USER,
-        cpuCount: this.size.vcpus,
-        memoryMb: this.size.memoryMb,
-        ...(this.options.registryCredential === undefined ? {} : { credential: this.options.registryCredential }),
-      })
-      .catch((error: unknown) => {
-        this.templateReady = null;
-        throw new SandboxError(`the E2B template ${this.template} for ${this.image} failed: ${String(error)}`, this.name);
-      });
-    return this.templateReady;
+  private ensureTemplate(template: string, size: KilnSandboxSize): Promise<void> {
+    let ready = this.templatesReady.get(template);
+    if (ready === undefined) {
+      ready = this.options.gateway
+        .buildTemplate({
+          name: template,
+          image: this.image,
+          user: SANDBOX_USER,
+          cpuCount: size.vcpus,
+          memoryMb: size.memoryMb,
+          ...(this.options.registryCredential === undefined ? {} : { credential: this.options.registryCredential }),
+        })
+        .catch((error: unknown) => {
+          this.templatesReady.delete(template);
+          throw new SandboxError(`the E2B template ${template} for ${this.image} failed: ${String(error)}`, this.name);
+        });
+      this.templatesReady.set(template, ready);
+    }
+    return ready;
   }
 
   private environmentFor(

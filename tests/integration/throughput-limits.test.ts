@@ -5,7 +5,7 @@ import { PrismaRunSlots } from "~/persistence/prisma/run-slots.prisma.js";
 import { PrismaSandboxLeaseStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
 import { PrismaRunRepository } from "~/persistence/prisma/run-repository.prisma.js";
 import { TERMINAL_RUN_STATUSES } from "~/domain/runs/run-status.js";
-import { SandboxSlots } from "~/domain/runs/sandbox-slots.js";
+import { SandboxSlots, type SlotLimits } from "~/domain/runs/sandbox-slots.js";
 import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { SandboxRef } from "~/domain/runs/sandbox.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -20,6 +20,9 @@ let prisma: FactoreePrismaClient;
 let stop: () => Promise<void>;
 let tenantId = "";
 let sequence = 0;
+
+/** A live sandbox limit, with no memory budget. */
+const live = (maxLive: number | null): SlotLimits => ({ maxLive, memoryBudgetMb: null, memoryMb: 4096, fallbackMemoryMb: 4096 });
 
 beforeAll(async () => {
   const database = await startDatabase();
@@ -169,7 +172,7 @@ describe("sandboxMaxLive", () => {
     await liveSandbox(provider, newer, "sbx-newer", 100);
 
     const deleted: SandboxRef[] = [];
-    const leaseId = await slotsWith(deleted).acquire(provider, next, 3);
+    const leaseId = await slotsWith(deleted).acquire(provider, next, live(3));
 
     // The working sandbox is older, and it is not retained, so it stays.
     expect(deleted.map((ref) => ref.id)).toEqual(["sbx-older"]);
@@ -191,7 +194,7 @@ describe("sandboxMaxLive", () => {
     const deleted: SandboxRef[] = [];
     const slots = slotsWith(deleted, 30_000);
     let granted = false;
-    const acquiring = slots.acquire(provider, next, 2).then((leaseId) => {
+    const acquiring = slots.acquire(provider, next, live(2)).then((leaseId) => {
       granted = true;
       return leaseId;
     });
@@ -211,7 +214,7 @@ describe("sandboxMaxLive", () => {
     const next = await run(productId, 10, "PREPARING");
     await liveSandbox(provider, working, "sbx-working", 60);
 
-    await expect(slotsWith([], 100).acquire(provider, next, 1)).rejects.toBeInstanceOf(SandboxSlotUnavailableError);
+    await expect(slotsWith([], 100).acquire(provider, next, live(1))).rejects.toBeInstanceOf(SandboxSlotUnavailableError);
     expect(await prisma.sandboxLease.count({ where: { adapter: provider } })).toBe(1);
   });
 
@@ -219,7 +222,7 @@ describe("sandboxMaxLive", () => {
     const provider = adapter();
     const productId = await product(5);
     const runs = await Promise.all([1, 2, 3, 4, 5, 6].map((index) => run(productId, 60 - index, "PREPARING")));
-    const results = await Promise.allSettled(runs.map((runId) => slotsWith([], 100).acquire(provider, runId, 3)));
+    const results = await Promise.allSettled(runs.map((runId) => slotsWith([], 100).acquire(provider, runId, live(3))));
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(3);
     expect(await prisma.sandboxLease.count({ where: { adapter: provider } })).toBe(3);
   });
@@ -253,32 +256,56 @@ describe("held slots", () => {
     const first = await run(productId, 30, "PREPARING");
     const second = await run(productId, 20, "PREPARING");
 
-    expect(await slots().hold(id, first, 3, 4)).toBe(true);
+    expect(await slots().hold(id, first, 3, live(4))).toBe(true);
     // A retry of the hold holds nothing more.
-    expect(await slots().hold(id, first, 3, 4)).toBe(true);
+    expect(await slots().hold(id, first, 3, live(4))).toBe(true);
     expect(await prisma.sandboxLease.count({ where: { adapter: id } })).toBe(3);
-    expect(await slots().hold(id, second, 3, 4)).toBe(false);
+    expect(await slots().hold(id, second, 3, live(4))).toBe(false);
     expect(await store().heldProviderOf(first)).toBe(id);
 
     // The create of the run takes a held slot and counts nothing new, even at the limit.
-    const leaseId = await slots().acquire(id, first, 3);
+    const leaseId = await slots().acquire(id, first, live(3));
     await slots().bind(leaseId, "sbx-work");
     expect(await prisma.sandboxLease.count({ where: { adapter: id } })).toBe(3);
     // Another run takes the fourth slot, and a fifth create waits.
-    const other = await slots().acquire(id, second, 4);
+    const other = await slots().acquire(id, second, live(4));
     await slots().bind(other, "sbx-other");
-    await expect(slots().acquire(id, second, 4)).rejects.toBeInstanceOf(SandboxSlotUnavailableError);
+    await expect(slots().acquire(id, second, live(4))).rejects.toBeInstanceOf(SandboxSlotUnavailableError);
+  });
+
+  it("holds the memory of each slot against the memory budget, and counts a lease with no memory as the provider size", async () => {
+    // docs/specs/sandbox-memory-and-size.md. A 24576 MB budget takes one run of 8192 MB sandboxes.
+    const id = provider();
+    const productId = await product(5);
+    const first = await run(productId, 30, "PREPARING");
+    const second = await run(productId, 20, "PREPARING");
+    const large: SlotLimits = { maxLive: null, memoryBudgetMb: 24_576, memoryMb: 8192, fallbackMemoryMb: 4096 };
+    expect(await slots().hold(id, first, 3, large)).toBe(true);
+    expect(await slots().hold(id, second, 3, large)).toBe(false);
+    // A run of the provider size still fits nothing: the budget is spent.
+    expect(await slots().hold(id, second, 3, { ...large, memoryMb: 4096 })).toBe(false);
+
+    // A lease from before the budget holds no memory and counts as the provider size.
+    const other = provider();
+    await prisma.sandboxLease.create({ data: { adapter: other, runId: first, held: true } });
+    const budget: SlotLimits = { maxLive: null, memoryBudgetMb: 12_288, memoryMb: 4096, fallbackMemoryMb: 4096 };
+    expect(await slots().hold(other, second, 2, budget)).toBe(true);
+    await expect(slots().acquire(other, second, budget)).resolves.toBeTypeOf("string");
+    const third = await run(productId, 10, "PREPARING");
+    await expect(new SandboxSlots({ store: store(), destroy: () => Promise.resolve(), workspacePath: "/w", waitMs: 0, pollMs: 0 }).acquire(other, third, budget)).rejects.toBeInstanceOf(
+      SandboxSlotUnavailableError,
+    );
   });
 
   it("keeps a slot held after a delete while the run works, and gives back the unused ones when it ends", async () => {
     const id = provider();
     const productId = await product(5);
     const runId = await run(productId, 30, "VERIFYING");
-    expect(await slots().hold(id, runId, 3, 3)).toBe(true);
-    const work = await slots().acquire(id, runId, 3);
+    expect(await slots().hold(id, runId, 3, live(3))).toBe(true);
+    const work = await slots().acquire(id, runId, live(3));
     await slots().bind(work, "sbx-work");
     await prisma.run.update({ where: { id: runId }, data: { spriteId: "sbx-work", spriteAdapter: id } });
-    const check = await slots().acquire(id, runId, 3);
+    const check = await slots().acquire(id, runId, live(3));
     await slots().bind(check, "sbx-check");
 
     // The check sprite of a superseded attempt goes, and its slot stays with the run.
@@ -304,7 +331,7 @@ describe("held slots", () => {
     await prisma.run.update({ where: { id: ended }, data: { spriteId: "sbx-retained", spriteAdapter: id } });
 
     const deleted: SandboxRef[] = [];
-    expect(await slots(deleted).hold(id, next, 3, 3)).toBe(true);
+    expect(await slots(deleted).hold(id, next, 3, live(3))).toBe(true);
     expect(deleted.map((ref) => ref.id)).toEqual(["sbx-retained"]);
     expect(await store().usage()).toMatchObject({ [id]: { live: 3, retained: 0 } });
   });
@@ -335,6 +362,9 @@ describe("a failed sandbox delete", () => {
                 maxLive: 5,
                 vcpus: null,
                 memoryMb: null,
+                memoryBudgetMb: null,
+                maxVcpus: null,
+                maxMemoryMb: null,
                 priority: 1,
                 enabled: true,
                 downUntil: null,

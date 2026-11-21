@@ -34,6 +34,21 @@ const commandDetail = z.object({
   hostHints,
 });
 
+/** docs/specs/sandbox-memory-and-size.md. The check, the kernel proof and the sampled peaks in MB. */
+const sandboxFaultDetail = z.object({
+  step: z.string(),
+  command: z.string(),
+  exitCode: z.number().nullable(),
+  /** The processes the kernel killed, as "name (pid N)". Empty for a full disk. */
+  killed: z.array(z.string()),
+  kernelLines: z.array(z.string()),
+  peakMemoryMb: z.number().nullable(),
+  peakDiskMb: z.number().nullable(),
+  totalMemoryMb: z.number().nullable(),
+  totalDiskMb: z.number().nullable(),
+  log: z.string().nullable(),
+});
+
 const sessionDetail = z.object({
   runner: z.string(),
   model: z.string().nullable(),
@@ -59,6 +74,10 @@ export const runEventDetailSchemas = {
   /** docs/specs/provider-unreachable.md. The session could not reach the model provider. */
   provider_unreachable: sessionDetail,
   command_failed: commandDetail,
+  /** docs/specs/sandbox-memory-and-size.md. A Factoree check the kernel killed out of memory. */
+  sandbox_out_of_memory: sandboxFaultDetail,
+  /** docs/specs/sandbox-memory-and-size.md. A Factoree check that hit a full disk. */
+  sandbox_disk_full: sandboxFaultDetail,
   plan_rejected: z.object({ problems: z.array(z.string()), round: z.enum(["first", "correction"]) }),
   proposal_rejected: z.object({ problem: z.string() }),
   selector_recheck: z.object({ assertionKeys: z.array(z.string()) }),
@@ -85,6 +104,8 @@ export const FAULT_KINDS: readonly RunEventKind[] = [
   "session_hung",
   "provider_unreachable",
   "command_failed",
+  "sandbox_out_of_memory",
+  "sandbox_disk_full",
   "plan_rejected",
   "proposal_rejected",
 ];

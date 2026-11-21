@@ -90,6 +90,9 @@ export const registerSandboxProviderRoutes = (app: FastifyInstance, dependencies
         maxLive: body.data.maxLive ?? null,
         vcpus: body.data.vcpus ?? null,
         memoryMb: body.data.memoryMb ?? null,
+        memoryBudgetMb: body.data.memoryBudgetMb ?? null,
+        maxVcpus: body.data.maxVcpus ?? null,
+        maxMemoryMb: body.data.maxMemoryMb ?? null,
         priority: body.data.priority ?? 1,
         enabled: body.data.enabled ?? true,
       };

@@ -41,6 +41,7 @@ import {
 } from "~/domain/validation/browser-limits.js";
 import type { ValidationAssertion, ValidationContract } from "~/domain/validation/validation-contract.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import { throwOnSandboxFault } from "~/domain/runs/sandbox-fault.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import type { Logger } from "~/telemetry/logger.js";
 
@@ -271,7 +272,19 @@ const executeCommandAssertion = async (
     contractCheck !== null && normalizedCommand(contractCheck) !== normalizedCommand(entry.command.run)
       ? ` The validator ran this command in place of the contract check "${dependencies.redactor.redactText(contractCheck)}".`
       : "";
-  const tail = passed ? "" : outputTail(redactedStdout, redactedStderr);
+  // docs/specs/sandbox-memory-and-size.md. A command the kernel killed out of memory, or that hit a
+  // full disk, proves nothing about the change: the pass stops on the sandbox fault.
+  const note = passed
+    ? null
+    : await throwOnSandboxFault(dependencies.sandbox, input.ref, {
+        exitCode: result.exitCode,
+        stoppedByFactoree: result.timedOut,
+        output: metadata.log,
+        step: "validate",
+        checkName: `the command check of ${assertion.id}`,
+        command: redactedRun,
+      });
+  const tail = passed ? "" : `${outputTail(redactedStdout, redactedStderr)}${note === null ? "" : ` ${note}`}`;
   return {
     assertionId: assertion.id,
     method: assertion.method,
@@ -661,6 +674,15 @@ const validate = async (
         });
       } catch (error) {
         if (!(error instanceof PreviewStartError)) throw error;
+        // docs/specs/sandbox-memory-and-size.md. A preview the kernel killed is a sandbox fault.
+        await throwOnSandboxFault(dependencies.sandbox, input.ref, {
+          exitCode: null,
+          stoppedByFactoree: false,
+          output: dependencies.redactor.redactText(error.log),
+          step: "preview",
+          checkName: "the preview",
+          command: input.preview?.command ?? "preview",
+        });
         const redactedReason = dependencies.redactor.redactText(error.message);
         const redactedLog = dependencies.redactor.redactText(error.log);
         previewProblem = redactedReason;
@@ -785,6 +807,19 @@ const validate = async (
       } else {
         // Rule 9.
         outcome = await executeCommandAssertion(dependencies, input, assertion, entry);
+      }
+
+      // docs/specs/sandbox-memory-and-size.md. A browser or http check also fails when the kernel
+      // killed the preview or the browser. The kernel log tells it from a failure of the change.
+      if (entry.kind !== "command" && (outcome.result === "FAIL" || outcome.result === "BLOCKED")) {
+        await throwOnSandboxFault(dependencies.sandbox, input.ref, {
+          exitCode: null,
+          stoppedByFactoree: false,
+          output: outcome.reason,
+          step: "validate",
+          checkName: `the ${entry.kind} check of ${assertion.id}`,
+          command: entry.kind,
+        });
       }
 
       dependencies.logger.info("assertion executed", {

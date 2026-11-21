@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { TERMINAL_RUN_STATUSES } from "~/domain/runs/run-status.js";
-import type { RetainedSandbox, SandboxLeaseStore, SandboxReservation } from "~/domain/runs/sandbox-slots.js";
+import { slotsFit, type RetainedSandbox, type SandboxLeaseStore, type SandboxReservation, type SlotLimits } from "~/domain/runs/sandbox-slots.js";
 import type { FactoreePrismaClient } from "./client.js";
 import type { CredentialBindingRecord, CredentialBindingStore } from "~/domain/runs/credential-egress.js";
 
@@ -43,8 +43,19 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
         AND r."id" = l."runId" AND r."status" IN (${TERMINAL})`;
   }
 
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The live leases of the provider and their memory. A lease
+   * from before the memory budget counts as the provider size.
+   */
+  private async used(tx: Transaction, adapter: string, fallbackMemoryMb: number): Promise<{ live: number; memoryMb: number }> {
+    const rows = await tx.$queryRaw<Array<{ live: bigint; memory: bigint | null }>>`
+      SELECT count(*) AS "live", sum(coalesce("memory_mb", ${fallbackMemoryMb})) AS "memory"
+      FROM "SandboxLease" WHERE "adapter" = ${adapter}`;
+    return { live: Number(rows[0]?.live ?? 0), memoryMb: Number(rows[0]?.memory ?? 0) };
+  }
+
   /** Marks the oldest retained sandbox of the provider for deletion by this caller, or answers full. */
-  private async victim(tx: Transaction, adapter: string, now: number, live: number): Promise<SandboxReservation> {
+  private async victim(tx: Transaction, adapter: string, now: number, used: { live: number; memoryMb: number }): Promise<SandboxReservation> {
     const victims = await tx.$queryRaw<Array<{ leaseId: string; sandboxId: string; runId: string; tenantId: string }>>`
       SELECT l."id" AS "leaseId", l."sandboxId", r."id" AS "runId", r."tenantId"
       FROM "SandboxLease" l
@@ -55,12 +66,12 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
       ORDER BY l."createdAt" ASC, l."id" ASC
       LIMIT 1`;
     const victim = victims[0];
-    if (victim === undefined) return { kind: "full", live };
+    if (victim === undefined) return { kind: "full", live: used.live, memoryMb: used.memoryMb };
     await tx.sandboxLease.update({ where: { id: victim.leaseId }, data: { evictingSince: new Date(now) } });
     return { kind: "evict", victim: { ...victim, adapter } };
   }
 
-  async reserve(input: { adapter: string; runId: string; maxLive: number | null }): Promise<SandboxReservation> {
+  async reserve(input: { adapter: string; runId: string } & SlotLimits): Promise<SandboxReservation> {
     return await this.prisma.$transaction(async (tx) => {
       await this.lock(tx, input.adapter);
       const now = Date.now();
@@ -71,16 +82,16 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
         orderBy: { createdAt: "asc" },
       });
       if (held !== null) return { kind: "granted", leaseId: held.id };
-      const live = await tx.sandboxLease.count({ where: { adapter: input.adapter } });
-      if (input.maxLive === null || live < input.maxLive) {
-        const lease = await tx.sandboxLease.create({ data: { adapter: input.adapter, runId: input.runId } });
+      const used = await this.used(tx, input.adapter, input.fallbackMemoryMb);
+      if (slotsFit(input, used.live, used.memoryMb, 1)) {
+        const lease = await tx.sandboxLease.create({ data: { adapter: input.adapter, runId: input.runId, memoryMb: input.memoryMb } });
         return { kind: "granted", leaseId: lease.id };
       }
-      return await this.victim(tx, input.adapter, now, live);
+      return await this.victim(tx, input.adapter, now, used);
     });
   }
 
-  async hold(input: { adapter: string; runId: string; count: number; maxLive: number | null }): Promise<SandboxReservation> {
+  async hold(input: { adapter: string; runId: string; count: number } & SlotLimits): Promise<SandboxReservation> {
     return await this.prisma.$transaction(async (tx) => {
       await this.lock(tx, input.adapter);
       const now = Date.now();
@@ -88,14 +99,14 @@ export class PrismaSandboxLeaseStore implements SandboxLeaseStore {
       const owned = await tx.sandboxLease.count({ where: { adapter: input.adapter, runId: input.runId } });
       const missing = input.count - owned;
       if (missing <= 0) return { kind: "granted", leaseId: "" };
-      const live = await tx.sandboxLease.count({ where: { adapter: input.adapter } });
-      if (input.maxLive === null || live + missing <= input.maxLive) {
+      const used = await this.used(tx, input.adapter, input.fallbackMemoryMb);
+      if (slotsFit(input, used.live, used.memoryMb, missing)) {
         await tx.sandboxLease.createMany({
-          data: Array.from({ length: missing }, () => ({ adapter: input.adapter, runId: input.runId, held: true })),
+          data: Array.from({ length: missing }, () => ({ adapter: input.adapter, runId: input.runId, held: true, memoryMb: input.memoryMb })),
         });
         return { kind: "granted", leaseId: "" };
       }
-      return await this.victim(tx, input.adapter, now, live);
+      return await this.victim(tx, input.adapter, now, used);
     });
   }
 

@@ -1,6 +1,7 @@
 import type { RepositorySetupMarks } from "~/domain/setup/repository-setup.js";
 import { Prisma } from "@prisma/client";
 import { toMembership } from "~/domain/products/membership.js";
+import type { SandboxMinimum } from "~/domain/settings/install-settings.js";
 import { isAgentRunnerName, type AgentRunnerName } from "~/domain/products/agent-settings.js";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
@@ -184,9 +185,25 @@ type RepositoryRow = {
   membership: string;
   membershipDecidedBy: string | null;
   membershipDecidedAt: Date | null;
+  sandboxVcpus: number | null;
+  sandboxMemoryMb: number | null;
+  sandboxDiskMb: number | null;
 };
 
-const toRepository = (row: RepositoryRow): RepositoryRecord => ({ ...row, membership: toMembership(row.membership) });
+const toRepository = ({ sandboxVcpus, sandboxMemoryMb, sandboxDiskMb, ...row }: RepositoryRow): RepositoryRecord => ({
+  ...row,
+  membership: toMembership(row.membership),
+  sandboxMinimum:
+    sandboxVcpus === null && sandboxMemoryMb === null && sandboxDiskMb === null
+      ? null
+      : { vcpus: sandboxVcpus, memoryMb: sandboxMemoryMb, diskMb: sandboxDiskMb },
+});
+
+/** docs/specs/sandbox-memory-and-size.md. The columns of a `sandbox` minimum. Absent keeps the row's. */
+const sandboxColumns = (minimum: SandboxMinimum | null | undefined) =>
+  minimum === undefined
+    ? {}
+    : { sandboxVcpus: minimum?.vcpus ?? null, sandboxMemoryMb: minimum?.memoryMb ?? null, sandboxDiskMb: minimum?.diskMb ?? null };
 
 export class PrismaProductRegistry implements ProductRegistry {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -413,6 +430,7 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry, RepositoryS
         linearProjects: input.linearProjects,
         githubInstallationId: input.githubInstallationId,
         membership: input.membership ?? "pending",
+        ...sandboxColumns(input.sandboxMinimum),
       },
       update: {
         productId: input.productId,
@@ -420,6 +438,7 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry, RepositoryS
         configSha: input.configSha,
         requestedSecretNames: input.requestedSecretNames,
         githubInstallationId: input.githubInstallationId,
+        ...sandboxColumns(input.sandboxMinimum),
         lastSeenAt: new Date(),
         absentSince: null,
         // docs/specs/repository-membership.md. A claim new to the product starts a new decision.

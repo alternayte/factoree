@@ -20,6 +20,7 @@ import { RunConfigurationError } from "./run-configuration-error.js";
 import type { PreviewConfig, ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "./project-runtime-config.js";
 import { toProjectRuntimeConfig } from "./project-runtime-config.js";
 import { readRepositoryConfig, readRepositoryInstructions } from "./repository-config-source.js";
+import type { SandboxMinimum } from "~/domain/settings/install-settings.js";
 import type { CheckpointRef, ProcessRef, Sandbox, SandboxRef } from "./sandbox.js";
 import { BROWSER_TOOL_HOSTS, BROWSER_TOOLS_INSTALL_SCRIPT, BROWSER_TOOLS_POLL_MS, BROWSER_TOOLS_WAIT_MS } from "./browser-tools.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
@@ -58,6 +59,7 @@ import {
   type UnwiredPair,
 } from "./set-check.js";
 import type { ReadinessProbe } from "./preview.js";
+import { readSandboxFault, readSandboxPeak, reportSandboxFault, startResourceSampler, type SandboxFaultSink } from "./sandbox-fault.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -326,6 +328,11 @@ export const deliveredSkillsOf = (set: SkillSet, resolution: SkillResolution | n
 export interface SandboxManagerOptions {
   sandbox: Sandbox;
   /**
+   * docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum of the repositories a sandbox holds,
+   * the largest of them for a change set, as discovery stored it. Absent asks for nothing.
+   */
+  sandboxMinimum?: (tenantId: string, repositoryUrls: readonly string[]) => Promise<SandboxMinimum | null>;
+  /**
    * docs/specs/proof-pack-and-visual-evidence.md. True when the sandbox runs the Sprite image
    * that `BROWSER_TOOLS_INSTALL_SCRIPT` was proven on. The local adapter runs on the worker host,
    * where the script must not touch the system packages. A function decides by adapter name,
@@ -371,6 +378,8 @@ export interface SandboxManagerOptions {
    */
   previewProbe?: ReadinessProbe;
   redactor?: Redactor;
+  /** docs/specs/sandbox-memory-and-size.md. Starts the setup run after a sandbox fault of a run. */
+  onSandboxFault?: SandboxFaultSink;
 }
 
 /**
@@ -439,6 +448,10 @@ const checkoutHosts = (specs: RepositorySpec[]): string[] => {
  * time. `SandboxManager` creates the directory itself, so both adapters get a workspace that
  * exists before the first checkout.
  */
+/** docs/specs/sandbox-memory-and-size.md. The repositories whose minimum sizes a sandbox: every target of a set, else the primary. */
+const repositoryUrlsOf = (input: Pick<PrepareSandboxInput, "primary" | "targets">): string[] =>
+  input.targets !== undefined && input.targets.length > 1 ? input.targets.map((target) => target.url) : [input.primary.url];
+
 export class SandboxManager {
   constructor(private readonly options: SandboxManagerOptions) {}
 
@@ -453,11 +466,15 @@ export class SandboxManager {
     }
   }
 
-  /** docs/specs/sandbox-provider-spillover.md. The sandbox of one provider, or the default one. */
-  private async sandboxOf(provider: string | undefined): Promise<Sandbox> {
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The sandbox of one provider, or the default one.
+   * docs/specs/sandbox-memory-and-size.md: on a provider, the view of the size the repositories need.
+   */
+  private async sandboxOf(provider: string | undefined, tenantId: string, repositoryUrls: readonly string[]): Promise<Sandbox> {
     const sandbox = this.options.sandbox;
     if (provider === undefined || sandbox.forProvider === undefined) return sandbox;
-    return sandbox.forProvider(provider);
+    const minimum = this.options.sandboxMinimum === undefined ? null : await this.options.sandboxMinimum(tenantId, repositoryUrls);
+    return sandbox.forProvider(provider, minimum);
   }
 
   private installsBrowserTools(sandboxName: string): boolean {
@@ -477,7 +494,7 @@ export class SandboxManager {
   ): Promise<PreparedSandbox> {
     // docs/specs/release-0-1-0.md. The install settings choose the provider of each new sandbox.
     await this.options.sandbox.refresh?.();
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     if (!sandbox.capabilities.enforcesNetworkPolicy && this.options.allowUnenforcedNetwork !== true) {
       throw new NetworkPolicyNotEnforcedError(sandbox.name);
     }
@@ -562,7 +579,7 @@ export class SandboxManager {
     provider?: string;
   }): Promise<boolean> {
     await this.options.sandbox.refresh?.();
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, input.repositoryUrl.split(" "));
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return false;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.repositoryUrl });
@@ -575,7 +592,7 @@ export class SandboxManager {
    */
   async buildAhead(input: PrepareSandboxInput): Promise<BuildAheadOutcome> {
     await this.options.sandbox.refresh?.();
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     if (this.options.warmSnapshots === undefined || sandbox.warmSnapshots === undefined) {
       return { kind: "skipped", reason: `the ${sandbox.name} adapter takes no warm snapshot` };
     }
@@ -593,7 +610,7 @@ export class SandboxManager {
 
   /** The warm snapshot of a repository or a set this Run can start from, or null when it starts cold. */
   private async warmSnapshotFor(input: PrepareSandboxInput, subject: string): Promise<WarmSnapshot | null> {
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: subject });
@@ -614,7 +631,7 @@ export class SandboxManager {
     /** docs/specs/change-sets.md, DI-21.136. What `warm` restores of a change set. */
     scope: WarmScope = "all",
   ): Promise<PreparedSandbox | null> {
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     // docs/specs/host-credentials.md. The credentials are read before the create, so a provider
     // that cannot bind them fails the preparation before it costs a sandbox.
     const setTargets = isChangeSet(input) ? input.targets : null;
@@ -694,6 +711,8 @@ export class SandboxManager {
       }
 
       await probeCredentialHosts(sandbox, ref, access);
+      // docs/specs/sandbox-memory-and-size.md. The peaks of this sandbox, for a fault and for setup.
+      await startResourceSampler(sandbox, ref);
 
       let primary: CheckedOutRepository;
       let targets: PreparedTarget[];
@@ -828,16 +847,20 @@ export class SandboxManager {
       // The credential hosts join every phase, so a host hint never names one.
       const phaseTwoHosts = [...bootstrapAllowList, ...egress.access.hosts];
       const stackFailed = async (error: unknown, ordinal: string): Promise<never> => {
-        await this.recordCommandFailure(input, sandbox, ref, {
+        const sandboxFault = await this.recordCommandFailure(input, sandbox, ref, {
           step: "services",
           command: "docker compose",
           exitCode: null,
+          timedOut: false,
           durationMs: null,
           log: error instanceof Error ? error.message : String(error),
           allowList: phaseTwoHosts,
           sentence: "The compose stack or its seed did not start.",
           ordinal,
+          repository: ordinal.slice(ordinal.indexOf(":") + 1),
+          checkName: "the compose stack or its seed",
         });
+        if (sandboxFault !== null) throw new RunConfigurationError(sandboxFault);
         throw error;
       };
       const install = browserTools
@@ -1120,7 +1143,11 @@ export class SandboxManager {
     unwiredPairs: UnwiredPair[] = [],
   ): Promise<string | null> {
     // The ref names the provider that created the sandbox, and its snapshot belongs to that provider.
-    const sandbox = await this.sandboxOf(input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter));
+    const sandbox = await this.sandboxOf(
+      input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter),
+      input.tenantId,
+      repositoryUrlsOf(input),
+    );
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const startedAt = new Date();
@@ -1186,16 +1213,55 @@ export class SandboxManager {
     input: PrepareSandboxInput,
     sandbox: Sandbox,
     ref: SandboxRef,
-    fault: { step: string; command: string; exitCode: number | null; durationMs: number | null; log: string; allowList: readonly string[]; sentence: string; ordinal: string },
-  ): Promise<void> {
+    fault: {
+      step: string;
+      command: string;
+      exitCode: number | null;
+      /** True when Factoree stopped the step at its timeout. */
+      timedOut: boolean;
+      durationMs: number | null;
+      log: string;
+      allowList: readonly string[];
+      sentence: string;
+      ordinal: string;
+      /** The `owner/repo` of the failed step, and its words in a sentence. */
+      repository: string;
+      checkName: string;
+    },
+  ): Promise<string | null> {
     const subject: RunEventSubject | null = input.runId.startsWith("setup:")
       ? { setupId: input.runId.slice("setup:".length) }
       : input.runId.includes(":")
         ? null
         : { runId: input.runId };
-    if (subject === null || this.options.events === undefined) return;
+    if (subject === null) return null;
     const log = withoutUrlCredentials(fault.log);
+    // docs/specs/sandbox-memory-and-size.md. A step the kernel killed out of memory, or that hit a
+    // full disk, is a sandbox fault: the run ends with it and starts a setup run.
+    const reading = await readSandboxFault(sandbox, ref, { exitCode: fault.exitCode, stoppedByFactoree: fault.timedOut, output: log });
+    if (reading.fault !== null) {
+      return reportSandboxFault({
+        recorder: this.options.events,
+        sink: this.options.onSandboxFault,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        repositoryFullName: fault.repository,
+        subject,
+        stage: "PREPARING",
+        attempt: 0,
+        step: fault.step,
+        checkName: fault.checkName,
+        command: fault.command,
+        exitCode: fault.exitCode,
+        log,
+        fault: reading.fault,
+        peak: await readSandboxPeak(sandbox, ref),
+        idempotencyKey: `prepare:${ref.id}:${fault.step}:${fault.ordinal}`,
+      });
+    }
+    if (this.options.events === undefined) return null;
     const facts = await faultEgressFacts({ sandbox, ref, allowList: fault.allowList }, log);
+    const sentence = reading.note === null ? fault.sentence : `${fault.sentence} ${reading.note}`;
     await recordRunEvent(this.options.events, {
       tenantId: input.tenantId,
       subject,
@@ -1204,10 +1270,11 @@ export class SandboxManager {
       attempt: 0,
       role: null,
       kind: "command_failed",
-      message: withDeniedHosts(fault.sentence, facts),
+      message: withDeniedHosts(sentence, facts),
       detail: { step: fault.step, command: fault.command, exitCode: fault.exitCode, durationMs: fault.durationMs, log, ...facts },
       idempotencyKey: `prepare:${ref.id}:${fault.step}:${fault.ordinal}`,
     });
+    return null;
   }
 
   /** Runs the bootstrap of one target in its own folder. A failure is a configuration fault. */
@@ -1232,16 +1299,20 @@ export class SandboxManager {
     if (result.timedOut || result.exitCode !== 0) {
       const subject = count > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command";
       const failure = result.timedOut ? `ran longer than ${String(BOOTSTRAP_TIMEOUT_MS / 60_000)} minutes` : `failed with exit code ${String(result.exitCode)}`;
-      await this.recordCommandFailure(input, sandbox, ref, {
+      const sandboxFault = await this.recordCommandFailure(input, sandbox, ref, {
         step: "bootstrap",
         command,
         exitCode: result.exitCode,
+        timedOut: result.timedOut,
         durationMs: Date.now() - started,
         log: `--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}\n`,
         allowList,
         sentence: `${subject.charAt(0).toUpperCase()}${subject.slice(1)} ${failure}.`,
         ordinal: target.repository,
+        repository: target.repository,
+        checkName: subject,
       });
+      if (sandboxFault !== null) throw new RunConfigurationError(sandboxFault);
       // The bootstrap command comes from the repository configuration, so a failure of it is
       // a configuration fault. A retry runs the same command and fails again.
       throw new RunConfigurationError(`${subject} ${failure}: ${withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr))}`);

@@ -1,3 +1,5 @@
+import type { SandboxMinimum, SandboxSize } from "~/domain/settings/install-settings.js";
+
 /** SDD section 31. A reference to one live sandbox. One Run uses one unique sandbox. */
 export interface SandboxRef {
   /** Adapter-scoped identifier. This value is stored as `Run.spriteId`. */
@@ -20,6 +22,11 @@ export interface SandboxCreateInput {
   /** Memory in megabytes. The adapter chooses a default when this is absent. */
   memoryMb?: number;
   cpus?: number;
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The size of the sandbox: a Kiln or E2B create uses the
+   * template of this size. Absent means the provider size.
+   */
+  size?: SandboxSize;
   region?: string;
   /**
    * Environment values available to every command. `SandboxManager.prepare` also attaches them
@@ -150,6 +157,11 @@ export interface WarmSnapshots {
    * the size. A snapshot of another template holds another toolchain or size, and is not used.
    */
   readonly template: string;
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The template of one size, when the adapter builds one
+   * template per size. `template` is the template of the provider size.
+   */
+  templateFor?(size: SandboxSize): string;
   /** Saves the sandbox as it is now, and returns the snapshot id. The sandbox keeps running. */
   take(ref: SandboxRef): Promise<string>;
   /** Starts a new sandbox from a snapshot, with the egress policy the snapshot recorded. */
@@ -187,13 +199,19 @@ export interface Sandbox {
    * docs/specs/sandbox-provider-spillover.md. The view of one sandbox provider, when this sandbox
    * routes to several. A create through the view goes to that provider only.
    */
-  forProvider?(providerId: string): Promise<Sandbox>;
+  forProvider?(providerId: string, minimum?: SandboxMinimum | null): Promise<Sandbox>;
   create(input: SandboxCreateInput): Promise<SandboxRef>;
   /**
    * docs/specs/repository-setup-and-services.md. The hosts the sandbox reached and the hosts its
    * allow list denied. Present only when the provider records egress.
    */
   egressLog?(ref: SandboxRef): Promise<EgressRecord[] | null>;
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The last lines of the guest kernel log, read where the
+   * agent cannot change them. Null when the provider cannot read it, so Factoree proves no
+   * out-of-memory kill. Absent on a provider that never can.
+   */
+  kernelLog?(ref: SandboxRef): Promise<string[] | null>;
   /**
    * Holds an environment that every later `exec` and `startProcess` on this sandbox receives.
    *

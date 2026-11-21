@@ -13,6 +13,7 @@ import { Alert, Badge, Empty, ErrorAlert, Section, SkeletonRows } from "@/compon
 import { ApiError } from "@/lib/api";
 import {
   emptySandboxForm,
+  parseLimits,
   parseMaxLive,
   parseSize,
   PROVIDER_LABELS,
@@ -36,6 +37,9 @@ function formOf(provider: Provider): ProviderForm {
     maxLive: provider.maxLive === null ? "" : String(provider.maxLive),
     vcpus: provider.vcpus === null ? "" : String(provider.vcpus),
     memoryMb: provider.memoryMb === null ? "" : String(provider.memoryMb),
+    memoryBudgetMb: provider.memoryBudgetMb === null ? "" : String(provider.memoryBudgetMb),
+    maxVcpus: provider.maxVcpus === null ? "" : String(provider.maxVcpus),
+    maxMemoryMb: provider.maxMemoryMb === null ? "" : String(provider.maxMemoryMb),
     name: provider.name,
     priority: String(provider.priority),
     enabled: provider.enabled,
@@ -54,6 +58,8 @@ function bodyOf(form: ProviderForm, current?: Provider): Body | string {
   if (maxLive === undefined) return "The live sandbox limit must be a whole number above 0.";
   const size = parseSize(form);
   if (typeof size === "string") return size;
+  const limits = parseLimits(form);
+  if (typeof limits === "string") return limits;
   const local = form.provider === "local";
   const sized = form.provider === "kiln" || form.provider === "e2b";
   const url = local || !form.url.trim() ? null : form.url.trim();
@@ -64,6 +70,9 @@ function bodyOf(form: ProviderForm, current?: Provider): Body | string {
     maxLive,
     vcpus: sized ? size.vcpus : null,
     memoryMb: sized ? size.memoryMb : null,
+    memoryBudgetMb: sized ? limits.memoryBudgetMb : null,
+    maxVcpus: sized ? limits.maxVcpus : null,
+    maxMemoryMb: sized ? limits.maxMemoryMb : null,
     priority,
     enabled: form.enabled,
   };
@@ -76,6 +85,9 @@ function bodyOf(form: ProviderForm, current?: Provider): Body | string {
   if (next.maxLive !== current.maxLive) patch.maxLive = next.maxLive;
   if (next.vcpus !== current.vcpus) patch.vcpus = next.vcpus;
   if (next.memoryMb !== current.memoryMb) patch.memoryMb = next.memoryMb;
+  if (next.memoryBudgetMb !== current.memoryBudgetMb) patch.memoryBudgetMb = next.memoryBudgetMb;
+  if (next.maxVcpus !== current.maxVcpus) patch.maxVcpus = next.maxVcpus;
+  if (next.maxMemoryMb !== current.maxMemoryMb) patch.maxMemoryMb = next.maxMemoryMb;
   if (next.priority !== current.priority) patch.priority = next.priority;
   if (next.enabled !== current.enabled) patch.enabled = next.enabled;
   if (next.apiKey !== undefined) patch.apiKey = next.apiKey;
@@ -84,7 +96,8 @@ function bodyOf(form: ProviderForm, current?: Provider): Body | string {
 
 function sizeOf(provider: Provider, defaults: SandboxSize): string | null {
   if (provider.type !== "kiln" && provider.type !== "e2b") return null;
-  return `${provider.vcpus ?? defaults.vcpus} vCPU · ${provider.memoryMb ?? defaults.memoryMb} MB`;
+  const budget = provider.memoryBudgetMb === null ? "" : ` · budget ${provider.memoryBudgetMb} MB`;
+  return `${provider.vcpus ?? defaults.vcpus} vCPU · ${provider.memoryMb ?? defaults.memoryMb} MB${budget}`;
 }
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -312,6 +325,7 @@ function ProviderEditor({
       </div>
       <SandboxFields
         parts="provider"
+        limits
         value={form}
         onChange={(next) => setForm((f) => ({ ...f, ...next }))}
         localAllowed={localAllowed}

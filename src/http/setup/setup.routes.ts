@@ -582,6 +582,10 @@ export const registerSetupRoutes = (app: FastifyInstance, dependencies: SetupRou
           maxLive: maxLive === undefined ? (same?.maxLive ?? null) : maxLive,
           vcpus: vcpus === undefined ? (same?.vcpus ?? null) : vcpus,
           memoryMb: memoryMb === undefined ? (same?.memoryMb ?? null) : memoryMb,
+          // docs/specs/sandbox-memory-and-size.md. Settings > Install sets the budget and the maximum.
+          memoryBudgetMb: same?.memoryBudgetMb ?? null,
+          maxVcpus: same?.maxVcpus ?? null,
+          maxMemoryMb: same?.maxMemoryMb ?? null,
           priority: first?.priority ?? 1,
           enabled: true,
         };

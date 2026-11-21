@@ -1,6 +1,6 @@
 import type { RepositoryDiscoveryClient } from "~/adapters/github/repository-discovery-client.js";
 import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
-import { FactoreeConfigPrivilegeError, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { FactoreeConfigPrivilegeError, parseFactoreeConfig, sandboxMinimumOf } from "~/domain/products/factoree-config.js";
 import type { ProductRecord, ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import { membershipOfClaim, type RepositoryMembership } from "~/domain/products/membership.js";
@@ -142,6 +142,7 @@ export class DiscoveryService {
       requestedSecretNames: config.secrets.require,
       linearProjects: config.identity.linear.projects,
       githubInstallationId,
+      sandboxMinimum: sandboxMinimumOf(config),
       ...(claim.changed ? { membership: claim.membership } : {}),
     });
 

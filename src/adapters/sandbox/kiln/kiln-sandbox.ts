@@ -16,7 +16,7 @@ import type {
 } from "~/domain/runs/sandbox.js";
 import { normalizeNetworkPolicy, SandboxError, type EgressRecord } from "~/domain/runs/sandbox.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
-import { DEFAULT_KILN_SANDBOX_SIZE, type KilnSandboxSize } from "~/domain/settings/install-settings.js";
+import { DEFAULT_KILN_SANDBOX_SIZE, DEFAULT_SANDBOX_DISK_MB, type KilnSandboxSize, type SandboxSize } from "~/domain/settings/install-settings.js";
 import type { KilnClient, KilnTemplateRequest } from "./kiln-client.js";
 import { isKilnConflict, isKilnNotFound } from "./kiln-client.js";
 
@@ -57,7 +57,8 @@ const KILN_BASE_ENVIRONMENT: Record<string, string> = {
 // The prepare attempt is thirty minutes, and a retry keeps polling the same build.
 const TEMPLATE_WAIT_MS = 20 * 60_000;
 const TEMPLATE_POLL_MS = 5_000;
-const TEMPLATE_DISK_MB = 16_384;
+/** docs/specs/sandbox-memory-and-size.md. Enough console lines to hold the kill lines of one check. */
+const KERNEL_LOG_LINES = 400;
 
 
 // A work sprite waits for check sprites and repairs between agent sessions. A persistent sandbox
@@ -98,7 +99,8 @@ export class KilnSandbox implements Sandbox {
 
   private readonly template: string;
   private readonly size: KilnSandboxSize;
-  private templateReady: Promise<void> | null = null;
+  /** docs/specs/sandbox-memory-and-size.md. One build per template, so one per size. */
+  private readonly templatesReady = new Map<string, Promise<void>>();
   private readonly attached = new Map<string, Record<string, string>>();
   /** The output read so far, by sandbox and process. A process this worker never read starts at zero. */
   private readonly outputs = new Map<string, ProcessOutput>();
@@ -109,6 +111,7 @@ export class KilnSandbox implements Sandbox {
     this.template = templateName(options.image, this.size);
     this.warmSnapshots = {
       template: this.template,
+      templateFor: (size) => templateName(options.image, size),
       take: (ref) => this.options.client.snapshot(ref.id),
       restore: async (input, snapshotId) => {
         // The copy names this run, not the run whose sandbox took the snapshot (issue #5).
@@ -132,11 +135,13 @@ export class KilnSandbox implements Sandbox {
   }
 
   async create(input: SandboxCreateInput): Promise<SandboxRef> {
-    await this.ensureTemplate();
+    const size = this.sizeOf(input);
+    const template = templateName(this.image, size);
+    await this.ensureTemplate(template, size);
     // The environment never goes to Kiln at create time. A sandbox created with one is secret
     // bearing, and its warm snapshot would then refuse a plain restore. It reaches each command.
     const sandbox = await this.options.client.createSandbox({
-      template: this.template,
+      template,
       lifecycle: "persistent",
       idle_seconds: IDLE_SECONDS,
       metadata: sandboxMetadata(input),
@@ -184,6 +189,11 @@ export class KilnSandbox implements Sandbox {
           "credential injection. Rebuild the template on the Kiln host, or remove the host credentials.",
       );
     }
+  }
+
+  /** docs/specs/sandbox-memory-and-size.md. The guest console that Kiln writes on the host. */
+  kernelLog(ref: SandboxRef): Promise<string[] | null> {
+    return this.options.client.console(ref.id, KERNEL_LOG_LINES);
   }
 
   async egressLog(ref: SandboxRef): Promise<EgressRecord[]> {
@@ -321,51 +331,60 @@ export class KilnSandbox implements Sandbox {
   }
 
   /** Builds the template of the image digest once, and waits while another worker builds it. */
-  private ensureTemplate(): Promise<void> {
-    this.templateReady ??= this.buildTemplate().catch((error: unknown) => {
-      this.templateReady = null;
-      throw error;
-    });
-    return this.templateReady;
+  /** docs/specs/sandbox-memory-and-size.md. The size a create asks for, else the provider size. */
+  private sizeOf(input: SandboxCreateInput): SandboxSize {
+    return input.size ?? { ...this.size, diskMb: DEFAULT_SANDBOX_DISK_MB };
   }
 
-  private async buildTemplate(): Promise<void> {
+  private ensureTemplate(template: string, size: SandboxSize): Promise<void> {
+    let ready = this.templatesReady.get(template);
+    if (ready === undefined) {
+      ready = this.buildTemplate(template, size).catch((error: unknown) => {
+        this.templatesReady.delete(template);
+        throw error;
+      });
+      this.templatesReady.set(template, ready);
+    }
+    return ready;
+  }
+
+  private async buildTemplate(template: string, size: SandboxSize): Promise<void> {
     const client = this.options.client;
     const deadline = Date.now() + (this.options.templateWaitMs ?? TEMPLATE_WAIT_MS);
     for (;;) {
       let state: string;
       try {
-        const template = await client.template(this.template);
-        if (template.state === "failed") {
+        const stored = await client.template(template);
+        if (stored.state === "failed") {
           // A failed template stays on Kiln and would fail every later run, even after the cause
           // is fixed. It goes now, so the next attempt builds it again.
-          await client.deleteTemplate(this.template).catch(() => undefined);
+          await client.deleteTemplate(template).catch(() => undefined);
           throw new SandboxError(
-            `the Kiln template ${this.template} for ${this.image} failed: ${template.error ?? "no reason given"}`,
+            `the Kiln template ${template} for ${this.image} failed: ${stored.error ?? "no reason given"}`,
             this.name,
           );
         }
-        state = template.state;
+        state = stored.state;
       } catch (error) {
         if (!isKilnNotFound(error)) throw error;
-        await this.requestTemplate();
+        await this.requestTemplate(template, size);
         state = "building";
       }
       if (state === "ready") return;
       if (Date.now() >= deadline) {
-        throw new SandboxError(`the Kiln template ${this.template} is still building`, this.name);
+        throw new SandboxError(`the Kiln template ${template} is still building`, this.name);
       }
       await delay(this.options.pollMs === 0 ? 0 : TEMPLATE_POLL_MS);
     }
   }
 
-  private async requestTemplate(): Promise<void> {
+  private async requestTemplate(template: string, size: SandboxSize): Promise<void> {
     const request: KilnTemplateRequest = {
-      name: this.template,
+      name: template,
       image: this.image,
-      vcpus: this.size.vcpus,
-      memory_mb: this.size.memoryMb,
-      disk_mb: TEMPLATE_DISK_MB,
+      vcpus: size.vcpus,
+      memory_mb: size.memoryMb,
+      disk_mb: size.diskMb,
       setup: [],
       // Factoree replaces the list on each sandbox before the first command.
       egress_allow: [],
@@ -400,10 +419,25 @@ export class KilnSandbox implements Sandbox {
  * a new template and leaves the old one to the runs that still use it. A Kiln name allows
  * lower-case letters, digits and dashes.
  */
-export const templateName = (image: string, size: KilnSandboxSize): string => {
+export const templateName = (image: string, size: KilnSandboxSize & { diskMb?: number }): string => {
   const digest = /@sha256:([0-9a-f]{64})$/.exec(image)?.[1];
   if (digest === undefined) throw new Error(`the Kiln image must name a digest, received "${image}"`);
-  return `factoree-${digest.slice(0, 16)}-${size.vcpus}c-${size.memoryMb}m`;
+  // docs/specs/sandbox-memory-and-size.md. The default disk keeps the name it had before, so the
+  // upgrade starts no repository cold. Another disk builds its own template.
+  const disk = size.diskMb === undefined || size.diskMb === DEFAULT_SANDBOX_DISK_MB ? "" : `-${size.diskMb}d`;
+  return `factoree-${digest.slice(0, 16)}-${size.vcpus}c-${size.memoryMb}m${disk}`;
+};
+
+/**
+ * docs/specs/sandbox-memory-and-size.md. True when a stored template can still serve a run: it holds
+ * the current image, and no field of its size is below the provider size, since a run's size is
+ * never below it. A name of another form serves nothing.
+ */
+export const templateServes = (stored: string, image: string, providerSize: KilnSandboxSize): boolean => {
+  const digest = /@sha256:([0-9a-f]{64})$/.exec(image)?.[1];
+  const match = /^factoree-([0-9a-f]{16})-(\d+)c-(\d+)m(?:-(\d+)d)?$/.exec(stored);
+  if (digest === undefined || match === null || match[1] !== digest.slice(0, 16)) return false;
+  return Number(match[2]) >= providerSize.vcpus && Number(match[3]) >= providerSize.memoryMb;
 };
 
 const outputKey = (ref: SandboxRef, process: ProcessRef): string => `${ref.id}/${process.id}`;

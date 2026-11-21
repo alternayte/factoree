@@ -70,6 +70,9 @@ COPY factoree-preview-proxy /opt/factoree/bin/factoree-preview-proxy
 COPY factoree-dns-start /opt/factoree/bin/factoree-dns-start
 RUN chown root:root /opt/factoree/bin/factoree-preview-proxy /opt/factoree/bin/factoree-dns-start \
  && chmod 755 /opt/factoree/bin/factoree-preview-proxy /opt/factoree/bin/factoree-dns-start
+# docs/specs/sandbox-memory-and-size.md. The peak memory and disk of a sandbox.
+COPY factoree-resource-sampler /opt/factoree/bin/factoree-resource-sampler
+RUN chown root:root /opt/factoree/bin/factoree-resource-sampler && chmod 755 /opt/factoree/bin/factoree-resource-sampler
 
 # Kiln runs every command as this user. Its home holds the workspace and the agent state. Rootless
 # Docker maps the container users onto its subordinate ids.

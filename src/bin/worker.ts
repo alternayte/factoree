@@ -38,12 +38,14 @@ import { createEvidenceStorage } from "~/adapters/evidence/evidence-storage-fact
 import { createLinearFileUploadApi } from "~/adapters/linear/linear-evidence-storage.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
-import { KILN_RUNNER_BIN } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { KILN_RUNNER_BIN, templateServes } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { kilnSandboxSize } from "~/domain/settings/install-settings.js";
 import { SettingsSandbox } from "~/adapters/sandbox/settings-sandbox.js";
 import { PrismaSandboxLeaseStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
 import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
 import { PrismaBuildAheadFailureStore } from "~/persistence/prisma/build-ahead-failure.prisma.js";
 import { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
+import { sandboxMinimumOfRepositories } from "~/domain/runs/sandbox-minimum.js";
 import { PrismaRunSlots } from "~/persistence/prisma/run-slots.prisma.js";
 import { PrismaInstallSettingsStore } from "~/persistence/prisma/install-settings.prisma.js";
 import type { AgentSessionSettings } from "~/adapters/runners/cli-agent-runner.js";
@@ -81,7 +83,8 @@ import { PrismaContextContractStore } from "~/persistence/prisma/context-contrac
 import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
-import { createBuildAheadRequester, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
+import { createBuildAheadRequester, createRepositorySetupStarter, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
+import { createSetupAfterFault } from "~/domain/setup/setup-after-fault.js";
 import { BuildAheadTrigger, setBuildAheadRequest } from "~/domain/runs/build-ahead.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
@@ -159,7 +162,7 @@ const providerSelector = new SandboxProviderSelector({
   providers: () => sandbox.providerSettings(),
   capabilities: (providerId) => sandbox.adapterOf(providerId)?.capabilities ?? null,
   usage: () => leases.usage(),
-  hold: (providerId, runId, count) => sandbox.hold(providerId, runId, count),
+  hold: (providerId, runId, count, minimum) => sandbox.hold(providerId, runId, count, minimum),
   heldProviderOf: (runId) => leases.heldProviderOf(runId),
   failedBuildAheads: (tenantId, repositoryUrl) => buildAheadFailures.failedProviders(tenantId, repositoryUrl),
 });
@@ -187,8 +190,24 @@ const events = { store: new PrismaRunEventStore(prisma), redactor, logger };
 // a credential is read only when a sandbox is prepared.
 const hostCredentials = createHostCredentialWiring({ prisma, secrets: () => secrets, tokens: () => githubTokens });
 const credentialBindings = new PrismaCredentialBindingStore(prisma);
+// docs/specs/sandbox-memory-and-size.md. A sandbox fault of a run starts a setup run of the
+// repository. The Temporal client is built further down, before the first run prepares a sandbox.
+const onSandboxFault = createSetupAfterFault({
+  setups: new PrismaRepositorySetupStore(prisma),
+  repository: async (tenantId, fullName) => {
+    const row = await repositories.findByFullName(tenantId, fullName);
+    return row === null ? null : { productId: row.productId, githubInstallationId: row.githubInstallationId };
+  },
+  primaryRepositoryOf: async (runId) =>
+    (await prisma.runTarget.findFirst({ where: { runId }, orderBy: { createdAt: "asc" }, select: { repository: { select: { fullName: true } } } }))?.repository
+      .fullName ?? null,
+  startSetup: (input) => createRepositorySetupStarter(blockerClient, env.FACTOREE_TEMPORAL_TASK_QUEUE)(input),
+  logger,
+});
 const sandboxManager = new SandboxManager({
   sandbox,
+  // docs/specs/sandbox-memory-and-size.md. The size each sandbox of a repository needs.
+  sandboxMinimum: (tenantId, repositoryUrls) => sandboxMinimumOfRepositories(repositories, tenantId, repositoryUrls),
   logger,
   warmSnapshots,
   stages,
@@ -207,6 +226,7 @@ const sandboxManager = new SandboxManager({
   // The probe is defined below, and the manager reads it only when a sandbox is prepared.
   previewProbe: (url) => previewProbe(url),
   redactor,
+  onSandboxFault,
 });
 
 // docs/specs/claude-code-runner.md. The Product of the Run holds the runner, the model and the
@@ -521,6 +541,7 @@ const worker = await Worker.create({
   // session still ends at the shutdown: only a reattach (GitHub issue 13) can keep it.
   shutdownGraceTime: "8 seconds",
   activities: createActivities({
+    onSandboxFault,
     drainModeOn: () => drainMode.isOn(),
     hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings, coverage: hostCredentials.coverage },
     runs,
@@ -701,9 +722,14 @@ try {
   // docs/specs/sandbox-provider-spillover.md. Each provider has its own template.
   let stale = false;
   for (const providerId of await usableProviderIds()) {
-    const template = (await sandbox.forProvider(providerId)).warmSnapshots?.template;
-    if (template === undefined) continue;
-    if ((await warmSnapshots.templatesOf(providerId)).some((stored) => stored !== template)) stale = true;
+    const view = await sandbox.forProvider(providerId);
+    const provider = sandbox.providerSettings().find((entry) => entry.id === providerId);
+    if (view.warmSnapshots === undefined || view.image === undefined || provider === undefined) continue;
+    // docs/specs/sandbox-memory-and-size.md. A repository with a `sandbox` minimum keeps a snapshot
+    // of a larger template. Only a template of another image, or below the provider size, is stale.
+    const image = view.image;
+    const size = kilnSandboxSize(provider);
+    if ((await warmSnapshots.templatesOf(providerId)).some((stored) => !templateServes(stored, image, size))) stale = true;
   }
   if (stale) {
     const temporal = await createTemporalClient(env);

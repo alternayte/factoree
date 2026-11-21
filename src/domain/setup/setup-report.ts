@@ -65,6 +65,11 @@ export interface SetupReport {
    * no warm snapshots. Absent when no warm proof was due, such as after a failed cold bootstrap.
    */
   warmProof?: "passed" | "failed" | "skipped";
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The peak memory and disk of the proof sandboxes, next to
+   * the memory and the disk the guest had, in MB. Absent when no sampler ran.
+   */
+  resources?: { peakMemoryMb: number; peakDiskMb: number; memoryMb: number; diskMb: number };
 }
 
 /** Why a part that depends on another part did not run. */
@@ -241,6 +246,17 @@ export const renderSetupReport = (report: SetupReport): string => {
     lines.push("The bootstrap and the services also passed in a sandbox restored from a snapshot, as every run starts.", "");
   } else if (report.warmProof === "skipped") {
     lines.push("The sandbox provider takes no snapshots, so Factoree did not prove a warm restore. A run on it starts cold.", "");
+  }
+  // docs/specs/sandbox-memory-and-size.md. The peaks of the proof next to the sandbox size.
+  if (report.resources !== undefined) {
+    const { peakMemoryMb, peakDiskMb, memoryMb, diskMb } = report.resources;
+    const share = (peak: number, total: number): string => (total > 0 ? ` (${Math.round((peak / total) * 100)}%)` : "");
+    lines.push(
+      "### Sandbox resources",
+      "",
+      `The proof used at most ${peakMemoryMb} MB of ${memoryMb} MB memory${share(peakMemoryMb, memoryMb)} and ${peakDiskMb} MB of ${diskMb} MB disk${share(peakDiskMb, diskMb)}.`,
+      "",
+    );
   }
   if ((report.derivedHosts ?? []).length > 0) {
     lines.push(

@@ -28,6 +28,7 @@ const setupOf = (patch: Partial<RepositorySetupRecord>): RepositorySetupRecord =
   warm: null,
   derivedHosts: null,
   warmProofMs: null,
+  sandboxFault: null,
   createdAt: new Date(0),
   endedAt: new Date(0),
   ...patch,

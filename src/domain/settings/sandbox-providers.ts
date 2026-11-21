@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { SANDBOX_PROVIDERS, type SandboxProvider } from "./install-settings.js";
+import { SANDBOX_PROVIDERS, type SandboxProvider, type SandboxSize } from "./install-settings.js";
 
 /**
  * docs/specs/sandbox-provider-spillover.md. One sandbox provider of the install: a Kiln host, an
@@ -21,6 +21,14 @@ export interface SandboxProviderSettings {
   /** docs/specs/kiln-sandbox-size.md. Null means the default size. */
   vcpus: number | null;
   memoryMb: number | null;
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The memory budget: the memory this provider may give its
+   * live sandboxes in total. A run holds 3 times its size against it. Null means no limit.
+   */
+  memoryBudgetMb: number | null;
+  /** docs/specs/sandbox-memory-and-size.md. The largest sandbox the provider takes. Null means the type default. */
+  maxVcpus: number | null;
+  maxMemoryMb: number | null;
   /** A lower number is a better priority. */
   priority: number;
   enabled: boolean;
@@ -82,3 +90,45 @@ export const newSandboxProviderId = (type: SandboxProvider, taken: readonly stri
 /** True while selection must skip the provider after a failed create. */
 export const isProviderDown = (provider: Pick<SandboxProviderSettings, "downUntil">, now: Date): boolean =>
   provider.downUntil !== null && provider.downUntil.getTime() > now.getTime();
+
+/** docs/specs/sandbox-memory-and-size.md. The largest sandbox of each type when the operator sets none. */
+const TYPE_MAXIMUM: Record<SandboxProvider, { vcpus: number; memoryMb: number }> = {
+  // Kiln accepts 1 to 32 vCPUs. Its memory is bounded by the memory budget.
+  kiln: { vcpus: 32, memoryMb: Number.POSITIVE_INFINITY },
+  // The E2B Hobby plan allows 8 vCPUs and 8 GiB. A Pro account asks E2B for more.
+  e2b: { vcpus: 8, memoryMb: 8192 },
+  // Sprites and the local adapter take no size.
+  "fly-sprites": { vcpus: Number.POSITIVE_INFINITY, memoryMb: Number.POSITIVE_INFINITY },
+  local: { vcpus: Number.POSITIVE_INFINITY, memoryMb: Number.POSITIVE_INFINITY },
+};
+
+/** The largest sandbox a provider takes: the operator maximum, else the type default, within the budget. */
+export const providerMaximum = (
+  provider: Pick<SandboxProviderSettings, "type" | "maxVcpus" | "maxMemoryMb" | "memoryBudgetMb">,
+): { vcpus: number; memoryMb: number } => {
+  const fallback = TYPE_MAXIMUM[provider.type];
+  const memoryMb = provider.maxMemoryMb ?? fallback.memoryMb;
+  return {
+    vcpus: provider.maxVcpus ?? fallback.vcpus,
+    memoryMb: provider.memoryBudgetMb === null ? memoryMb : Math.min(memoryMb, provider.memoryBudgetMb),
+  };
+};
+
+/** True when the provider takes a sandbox of this size. Sprites and local ignore the size. */
+export const providerFits = (
+  provider: Pick<SandboxProviderSettings, "type" | "maxVcpus" | "maxMemoryMb" | "memoryBudgetMb">,
+  size: Pick<SandboxSize, "vcpus" | "memoryMb">,
+): boolean => {
+  const maximum = providerMaximum(provider);
+  return size.vcpus <= maximum.vcpus && size.memoryMb <= maximum.memoryMb;
+};
+
+const shown = (value: number, unit: string): string => (Number.isFinite(value) ? `${value}${unit}` : "no limit");
+
+/** The maximum of a provider, for a message: "kiln: 32 vCPUs, 24576 MB". */
+export const describeMaximum = (
+  provider: Pick<SandboxProviderSettings, "name" | "type" | "maxVcpus" | "maxMemoryMb" | "memoryBudgetMb">,
+): string => {
+  const maximum = providerMaximum(provider);
+  return `${provider.name}: ${shown(maximum.vcpus, " vCPUs")}, ${shown(maximum.memoryMb, " MB")}`;
+};

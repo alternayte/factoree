@@ -153,6 +153,21 @@ export class KilnClient {
     return this.json("GET", `/v1/sandboxes/${encodeURIComponent(id)}/egress/log`);
   }
 
+  /**
+   * docs/specs/sandbox-memory-and-size.md, alternayte/kiln issue 33. The last lines of the guest
+   * console of a sandbox, which holds its kernel log. Null when this Kiln has no console route.
+   * Factoree asks only for a sandbox it holds, so a 404 names the missing route.
+   */
+  async console(id: string, lines: number): Promise<string[] | null> {
+    try {
+      const body = await this.json<{ lines?: unknown }>("GET", `/v1/sandboxes/${encodeURIComponent(id)}/console?lines=${lines}`);
+      return Array.isArray(body?.lines) ? body.lines.filter((line): line is string => typeof line === "string") : [];
+    } catch (error) {
+      if (error instanceof KilnApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
   async startProcess(id: string, request: KilnProcessRequest): Promise<string> {
     const created = await this.json<{ id: string }>("POST", `/v1/sandboxes/${encodeURIComponent(id)}/processes`, request);
     return created.id;

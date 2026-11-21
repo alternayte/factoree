@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { KilnClient } from "~/adapters/sandbox/kiln/kiln-client.js";
-import { KilnSandbox, templateName } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { KilnSandbox, templateName, templateServes } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
 import { SandboxError } from "~/domain/runs/sandbox.js";
 
 const IMAGE = `ghcr.io/alternayte/factoree-sandbox@sha256:${"c".repeat(64)}`;
@@ -173,6 +173,18 @@ describe("KilnSandbox (docs/specs/kiln-sandbox-provider.md)", () => {
     );
   });
 
+  it("keeps the name of the default disk, so the upgrade starts no repository cold (docs/specs/sandbox-memory-and-size.md)", () => {
+    const image = `ghcr.io/alternayte/factoree-sandbox@sha256:${"a".repeat(64)}`;
+    const prefix = `factoree-${"a".repeat(16)}`;
+    expect(templateName(image, { vcpus: 4, memoryMb: 4096, diskMb: 16_384 })).toBe(`${prefix}-4c-4096m`);
+    expect(templateName(image, { vcpus: 8, memoryMb: 8192, diskMb: 32_768 })).toBe(`${prefix}-8c-8192m-32768d`);
+    // A larger template of a repository minimum still serves; another image or a smaller size does not.
+    expect(templateServes(`${prefix}-8c-8192m-32768d`, image, { vcpus: 4, memoryMb: 4096 })).toBe(true);
+    expect(templateServes(`${prefix}-4c-4096m`, image, { vcpus: 4, memoryMb: 4096 })).toBe(true);
+    expect(templateServes(`${prefix}-2c-4096m`, image, { vcpus: 4, memoryMb: 4096 })).toBe(false);
+    expect(templateServes(`factoree-${"b".repeat(16)}-4c-4096m`, image, { vcpus: 4, memoryMb: 4096 })).toBe(false);
+  });
+
   it("builds the template of the size it was given, under a name that holds the size (docs/specs/kiln-sandbox-size.md)", async () => {
     const sized = `factoree-${"c".repeat(16)}-4c-6144m`;
     let built = false;
@@ -265,5 +277,16 @@ describe("KilnSandbox warm snapshot restore (issue #5)", () => {
       path: "/v1/snapshots/snap-1/restore",
       body: { count: 1, allow_secret_fork: false, metadata: { factoree_run_id: "run-2", factoree_tenant_id: "t1" } },
     });
+  });
+});
+
+// docs/specs/sandbox-memory-and-size.md. A Kiln without the console route must read as "not
+// available", never as an empty log, so Factoree does not guess an out-of-memory kill.
+describe("KilnClient.console", () => {
+  it("returns the console lines, and null on a Kiln without the route", async () => {
+    const withRoute = fakeKiln((call) => (call.path === "/v1/sandboxes/s1/console?lines=400" ? { status: 200, body: { lines: ["a", "b"] } } : undefined));
+    expect(await withRoute.client.console("s1", 400)).toEqual(["a", "b"]);
+    const without = fakeKiln(() => undefined);
+    expect(await without.client.console("s1", 400)).toBeNull();
   });
 });

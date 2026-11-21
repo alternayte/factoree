@@ -9,7 +9,7 @@ import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import { describeSpentRepairBudget } from "../../../domain/runs/repair-budget.js";
 import { targetResultsSentence } from "../../../domain/publishing/change-set.js";
 import { buildVerifyActivities, cancelActivities, validationActivities } from "../activities.js";
-import { causeOf } from "../failures.js";
+import { causeOf, SANDBOX_FAULT_SENTENCE } from "../failures.js";
 import { PATCH } from "../patches.js";
 import type { Run } from "../run.js";
 import {
@@ -342,7 +342,8 @@ export const runAttempts = async (run: Run, plan: AttemptPlan): Promise<Verified
           : { stacks: checked.setCheck.targets.map((target) => ({ repository: target.repository, path: target.path, services: target.services })) }),
       });
     } catch (error) {
-      return await run.timeoutFrom(error);
+      // docs/specs/sandbox-memory-and-size.md. A sandbox fault ends the run FAILED_CONFIGURATION.
+      return await run.failFrom(error, SANDBOX_FAULT_SENTENCE);
     }
     await run.progress(verification.summary);
     if (!verification.passed) dropReviewSpriteBuild(run, reviewSprite.build);

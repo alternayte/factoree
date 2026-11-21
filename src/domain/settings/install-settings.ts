@@ -59,6 +59,54 @@ export const kilnSandboxSize = (settings: { vcpus: number | null; memoryMb: numb
   memoryMb: settings.memoryMb ?? DEFAULT_KILN_SANDBOX_SIZE.memoryMb,
 });
 
+/** docs/specs/sandbox-memory-and-size.md. The disk of a sandbox when no repository asks for more. */
+export const DEFAULT_SANDBOX_DISK_MB = 16_384;
+
+/** docs/specs/sandbox-memory-and-size.md. The vCPUs, memory and disk of one sandbox. */
+export interface SandboxSize extends KilnSandboxSize {
+  diskMb: number;
+}
+
+/**
+ * docs/specs/sandbox-memory-and-size.md. The `sandbox` block of `.factoree/config.yaml`: the least
+ * size a repository needs. A null field asks for nothing.
+ */
+export interface SandboxMinimum {
+  vcpus: number | null;
+  memoryMb: number | null;
+  diskMb: number | null;
+}
+
+const larger = (left: number | null, right: number | null): number | null =>
+  left === null ? right : right === null ? left : Math.max(left, right);
+
+/** The size of a sandbox: per field the larger of the repository minimum and the provider size. */
+export const sandboxSizeOf = (provider: KilnSandboxSize, minimum: SandboxMinimum | null): SandboxSize => ({
+  vcpus: Math.max(provider.vcpus, minimum?.vcpus ?? 0),
+  memoryMb: Math.max(provider.memoryMb, minimum?.memoryMb ?? 0),
+  diskMb: Math.max(DEFAULT_SANDBOX_DISK_MB, minimum?.diskMb ?? 0),
+});
+
+/**
+ * docs/specs/sandbox-memory-and-size.md. A change set holds every target in one sandbox, so it
+ * needs the largest minimum of its targets, per field. Null when no target asks for anything.
+ */
+export const largestMinimum = (minimums: ReadonlyArray<SandboxMinimum | null>): SandboxMinimum | null => {
+  let result: SandboxMinimum | null = null;
+  for (const minimum of minimums) {
+    if (minimum === null) continue;
+    result =
+      result === null
+        ? { ...minimum }
+        : {
+            vcpus: larger(result.vcpus, minimum.vcpus),
+            memoryMb: larger(result.memoryMb, minimum.memoryMb),
+            diskMb: larger(result.diskMb, minimum.diskMb),
+          };
+  }
+  return result;
+};
+
 export interface GitAuthorSettings {
   name: string;
   email: string;
