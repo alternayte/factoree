@@ -179,7 +179,9 @@ describe("runVerification", () => {
     // The hash covers the raw, unredacted output. Redaction must never change what the hash
     // identifies as the command that really ran.
     expect(outcome.checks[0]?.stdoutSha256).toBe(sha(stdout));
-  });
+    // The redaction of a log over MAX_RETAINED_LOG_BYTES takes about 2 s alone, and longer in the
+    // full parallel unit run, past the 5 s default.
+  }, 15_000);
 
   it("records a command the sandbox could not run as a failure", async () => {
     const sandbox = new FakeSandbox();
