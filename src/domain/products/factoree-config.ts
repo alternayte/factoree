@@ -3,6 +3,7 @@ import { z } from "zod";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
 import { ECOSYSTEM_HOSTS } from "~/domain/setup/ecosystem-hosts.js";
+import type { SandboxMinimum } from "~/domain/settings/install-settings.js";
 import { signedInCheckSchema, signInStepSchema } from "~/domain/validation/validation-plan.js";
 import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 import { BROWSER_SCENARIO_TIMEOUT_SECONDS, BROWSER_STEP_TIMEOUT_SECONDS } from "~/domain/validation/browser-limits.js";
@@ -212,6 +213,11 @@ const schema = z
     sandbox: z
       .object({
         allowedDomains: z.array(z.string().min(1).regex(HOST_NAME, "must be a host name")).default([]),
+        // docs/specs/sandbox-memory-and-size.md. The least size each sandbox of the repository
+        // needs. The setup agent writes it from the peak of its proof. A field left out asks for nothing.
+        vcpus: z.number().int().min(1).max(32).optional(),
+        memoryMb: z.number().int().min(1024).max(1_048_576).optional(),
+        diskMb: z.number().int().min(16_384).max(1_048_576).optional(),
       })
       .strict()
       .default({ allowedDomains: [] }),
@@ -242,6 +248,13 @@ const schema = z
   .strict();
 
 export type FactoreeConfig = z.infer<typeof schema>;
+
+/** docs/specs/sandbox-memory-and-size.md. The `sandbox` block as a minimum, or null when it asks for nothing. */
+export const sandboxMinimumOf = (config: Pick<FactoreeConfig, "sandbox">): SandboxMinimum | null => {
+  const block = config.sandbox;
+  if ((block.vcpus === undefined && block.memoryMb === undefined && block.diskMb === undefined)) return null;
+  return { vcpus: block.vcpus ?? null, memoryMb: block.memoryMb ?? null, diskMb: block.diskMb ?? null };
+};
 
 /** The path of the file inside the primary repository. SDD section 15 fixes it. */
 export const FACTOREE_CONFIG_PATH = ".factoree/config.yaml";

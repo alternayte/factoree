@@ -1,4 +1,5 @@
-import { isProviderDown, type SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
+import { kilnSandboxSize, sandboxSizeOf, type SandboxMinimum } from "~/domain/settings/install-settings.js";
+import { describeMaximum, isProviderDown, providerFits, type SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { RunConfigurationError } from "./run-configuration-error.js";
 import type { SandboxCapabilities } from "./sandbox.js";
 import { SandboxSlotUnavailableError } from "./sandbox-slot-error.js";
@@ -23,8 +24,11 @@ export interface ProviderSelectionPorts {
   /** The capabilities of a provider, or null when its settings do not let its adapter build. */
   capabilities(providerId: string): SandboxCapabilities | null;
   usage(): Promise<Record<string, ProviderUsage>>;
-  /** Holds slots of the provider for the run. False when it has no room. */
-  hold(providerId: string, runId: string, count: number): Promise<boolean>;
+  /**
+   * Holds slots of the provider for the run. False when it has no room. docs/specs/sandbox-memory-and-size.md:
+   * each slot holds the memory of the run's size on that provider.
+   */
+  hold(providerId: string, runId: string, count: number, minimum: SandboxMinimum | null): Promise<boolean>;
   /** The provider where the run already holds slots, or null. */
   heldProviderOf(runId: string): Promise<string | null>;
   /** The providers where the last build-ahead of the repository failed. */
@@ -41,7 +45,22 @@ export interface ProviderSelectionRequest {
   repositoryUrl: string | null;
   /** True when the repository config starts Docker or compose services. */
   needsDocker: boolean;
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum of the repository, or the largest
+   * of the targets of a change set. Null asks for nothing.
+   */
+  minimum?: SandboxMinimum | null;
 }
+
+/** "4 vCPUs, 8192 MB": the fields of a minimum that ask for something. */
+const describeMinimum = (minimum: SandboxMinimum): string =>
+  [
+    minimum.vcpus === null ? null : `${minimum.vcpus} vCPUs`,
+    minimum.memoryMb === null ? null : `${minimum.memoryMb} MB`,
+    minimum.diskMb === null ? null : `${minimum.diskMb} MB disk`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(", ");
 
 /** The free slots of a provider. A provider with no limit has no end of room. */
 export const roomOf = (provider: Pick<SandboxProviderSettings, "maxLive">, usage: ProviderUsage | undefined): number =>
@@ -100,6 +119,19 @@ export class SandboxProviderSelector {
           : `The product allows the sandbox providers ${request.allowedProviderIds.join(", ")}, and none of them is enabled and complete. Change the product's sandbox providers, or the providers in Settings > Install.`,
       );
     }
+    // docs/specs/sandbox-memory-and-size.md. A provider below the size the repository needs cannot
+    // serve it. With none left the repository cannot run, which is a configuration fault.
+    const minimum = request.minimum ?? null;
+    if (minimum !== null) {
+      const fitting = candidates.filter((provider) => providerFits(provider, sandboxSizeOf(kilnSandboxSize(provider), minimum)));
+      if (fitting.length === 0) {
+        throw new RunConfigurationError(
+          `The repository needs sandboxes of at least ${describeMinimum(minimum)} (the sandbox block of .factoree/config.yaml), and no sandbox provider it may use takes that size. ` +
+            `Provider maximum: ${candidates.map(describeMaximum).join("; ")}. Raise the maximum or the memory budget of a provider in Settings > Install, or lower the sandbox block.`,
+        );
+      }
+      candidates = fitting;
+    }
     if (request.needsDocker) {
       candidates = preferring(candidates, (provider) => this.ports.capabilities(provider.id)?.supportsDocker === true);
     }
@@ -121,7 +153,7 @@ export class SandboxProviderSelector {
     const candidates = await this.candidates(request, now);
     const usage = await this.ports.usage();
     for (const provider of selectionOrder(candidates, usage)) {
-      if (await this.ports.hold(provider.id, request.runId, RUN_HELD_SLOTS)) return provider.id;
+      if (await this.ports.hold(provider.id, request.runId, RUN_HELD_SLOTS, request.minimum ?? null)) return provider.id;
     }
     throw new SandboxSlotUnavailableError(
       candidates.length === 0

@@ -6,6 +6,7 @@ import type { RepositoryRegistry } from "~/domain/products/repository-registry.j
 import { projectDefaultsOf } from "~/domain/runs/build-ahead.js";
 import { toProjectRuntimeConfig } from "~/domain/runs/project-runtime-config.js";
 import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
+import { sandboxMinimumOfRepositories } from "~/domain/runs/sandbox-minimum.js";
 import type { RunRepository } from "~/domain/runs/run-repository.js";
 import type { Logger } from "~/telemetry/logger.js";
 
@@ -88,6 +89,11 @@ export const createProviderSelectionActivities = (dependencies: ProviderSelectio
       repositoryUrl: input.repositoryUrl,
       // docs/specs/change-sets.md. A change set needs Docker when any target does.
       needsDocker: await anyNeedsDocker(dependencies, input),
+      // docs/specs/sandbox-memory-and-size.md. A change set holds every target in one sandbox.
+      minimum: await sandboxMinimumOfRepositories(dependencies.repositories, input.tenantId, [
+        input.repositoryUrl,
+        ...(input.targetRepositoryUrls ?? []),
+      ]),
     });
     await dependencies.runs.setSandboxProvider(input.tenantId, input.runId, providerId);
     dependencies.logger.info("the run is pinned to a sandbox provider", {

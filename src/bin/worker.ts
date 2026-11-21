@@ -38,12 +38,14 @@ import { createEvidenceStorage } from "~/adapters/evidence/evidence-storage-fact
 import { createLinearFileUploadApi } from "~/adapters/linear/linear-evidence-storage.js";
 import type { HttpValidationFetch } from "~/domain/validation/http-validation.js";
 import type { ReadinessProbe } from "~/domain/runs/preview.js";
-import { KILN_RUNNER_BIN } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { KILN_RUNNER_BIN, templateServes } from "~/adapters/sandbox/kiln/kiln-sandbox.js";
+import { kilnSandboxSize } from "~/domain/settings/install-settings.js";
 import { SettingsSandbox } from "~/adapters/sandbox/settings-sandbox.js";
 import { PrismaSandboxLeaseStore } from "~/persistence/prisma/sandbox-lease.prisma.js";
 import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
 import { PrismaBuildAheadFailureStore } from "~/persistence/prisma/build-ahead-failure.prisma.js";
 import { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
+import { sandboxMinimumOfRepositories } from "~/domain/runs/sandbox-minimum.js";
 import { PrismaRunSlots } from "~/persistence/prisma/run-slots.prisma.js";
 import { PrismaInstallSettingsStore } from "~/persistence/prisma/install-settings.prisma.js";
 import type { AgentSessionSettings } from "~/adapters/runners/cli-agent-runner.js";
@@ -160,7 +162,7 @@ const providerSelector = new SandboxProviderSelector({
   providers: () => sandbox.providerSettings(),
   capabilities: (providerId) => sandbox.adapterOf(providerId)?.capabilities ?? null,
   usage: () => leases.usage(),
-  hold: (providerId, runId, count) => sandbox.hold(providerId, runId, count),
+  hold: (providerId, runId, count, minimum) => sandbox.hold(providerId, runId, count, minimum),
   heldProviderOf: (runId) => leases.heldProviderOf(runId),
   failedBuildAheads: (tenantId, repositoryUrl) => buildAheadFailures.failedProviders(tenantId, repositoryUrl),
 });
@@ -204,6 +206,8 @@ const onSandboxFault = createSetupAfterFault({
 });
 const sandboxManager = new SandboxManager({
   sandbox,
+  // docs/specs/sandbox-memory-and-size.md. The size each sandbox of a repository needs.
+  sandboxMinimum: (tenantId, repositoryUrls) => sandboxMinimumOfRepositories(repositories, tenantId, repositoryUrls),
   logger,
   warmSnapshots,
   stages,
@@ -718,9 +722,14 @@ try {
   // docs/specs/sandbox-provider-spillover.md. Each provider has its own template.
   let stale = false;
   for (const providerId of await usableProviderIds()) {
-    const template = (await sandbox.forProvider(providerId)).warmSnapshots?.template;
-    if (template === undefined) continue;
-    if ((await warmSnapshots.templatesOf(providerId)).some((stored) => stored !== template)) stale = true;
+    const view = await sandbox.forProvider(providerId);
+    const provider = sandbox.providerSettings().find((entry) => entry.id === providerId);
+    if (view.warmSnapshots === undefined || view.image === undefined || provider === undefined) continue;
+    // docs/specs/sandbox-memory-and-size.md. A repository with a `sandbox` minimum keeps a snapshot
+    // of a larger template. Only a template of another image, or below the provider size, is stale.
+    const image = view.image;
+    const size = kilnSandboxSize(provider);
+    if ((await warmSnapshots.templatesOf(providerId)).some((stored) => !templateServes(stored, image, size))) stale = true;
   }
   if (stale) {
     const temporal = await createTemporalClient(env);

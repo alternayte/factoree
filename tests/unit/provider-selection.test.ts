@@ -9,6 +9,7 @@ import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js"
 import type { SandboxCapabilities } from "~/domain/runs/sandbox.js";
 import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
+import { largestMinimum, sandboxSizeOf, type SandboxMinimum } from "~/domain/settings/install-settings.js";
 
 // docs/specs/sandbox-provider-spillover.md. The rule that picks the sandbox provider of a run.
 
@@ -23,6 +24,9 @@ const provider = (id: string, overrides: Partial<SandboxProviderSettings> = {}):
   maxLive: 6,
   vcpus: null,
   memoryMb: null,
+  memoryBudgetMb: null,
+  maxVcpus: null,
+  maxMemoryMb: null,
   priority: 1,
   enabled: true,
   downUntil: null,
@@ -135,6 +139,43 @@ describe("SandboxProviderSelector.selectForRun", () => {
     const { value } = ports([provider("sprites"), provider("e2b", { priority: 2 })], {}, { noDocker: ["sprites"] });
     expect(await new SandboxProviderSelector(value).selectForRun(request({ needsDocker: true }), NOW)).toBe("e2b");
     expect(await new SandboxProviderSelector(value).selectForRun(request({ needsDocker: false }), NOW)).toBe("sprites");
+  });
+});
+
+describe("the sandbox minimum of a repository (docs/specs/sandbox-memory-and-size.md)", () => {
+  it("skips a provider below the minimum, holds the minimum, and is a configuration fault when none fits", async () => {
+    const holds: Array<SandboxMinimum | null> = [];
+    const { value } = ports([provider("e2b", { priority: 1 }), provider("kiln", { priority: 2 })]);
+    const selector = new SandboxProviderSelector({
+      ...value,
+      hold: (id, runId, count, minimum) => {
+        holds.push(minimum);
+        return value.hold(id, runId, count, minimum);
+      },
+    });
+    const minimum = { vcpus: null, memoryMb: 16_384, diskMb: null };
+    // E2B takes 8192 MB unless the operator sets more, so the run goes to Kiln.
+    expect(await selector.selectForRun(request({ minimum }), NOW)).toBe("kiln");
+    expect(holds).toEqual([minimum]);
+
+    const { value: budgeted } = ports([provider("e2b"), provider("kiln", { memoryBudgetMb: 12_288 })]);
+    await expect(new SandboxProviderSelector(budgeted).selectForRun(request({ minimum }), NOW)).rejects.toThrow(
+      /16384 MB.*e2b: 8 vCPUs, 8192 MB; kiln: 32 vCPUs, 12288 MB/,
+    );
+    await expect(new SandboxProviderSelector(budgeted).selectForRun(request({ minimum }), NOW)).rejects.toBeInstanceOf(RunConfigurationError);
+  });
+
+  it("sizes a sandbox by the larger of the minimum and the provider size, and a change set by its largest target", () => {
+    expect(sandboxSizeOf({ vcpus: 4, memoryMb: 4096 }, { vcpus: 2, memoryMb: 8192, diskMb: null })).toEqual({ vcpus: 4, memoryMb: 8192, diskMb: 16_384 });
+    expect(sandboxSizeOf({ vcpus: 4, memoryMb: 4096 }, null)).toEqual({ vcpus: 4, memoryMb: 4096, diskMb: 16_384 });
+    expect(
+      largestMinimum([
+        { vcpus: 8, memoryMb: null, diskMb: null },
+        null,
+        { vcpus: 2, memoryMb: 6144, diskMb: 32_768 },
+      ]),
+    ).toEqual({ vcpus: 8, memoryMb: 6144, diskMb: 32_768 });
+    expect(largestMinimum([null, null])).toBeNull();
   });
 });
 
