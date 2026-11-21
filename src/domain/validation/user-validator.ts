@@ -1,4 +1,5 @@
 import type { AccountConfig, PreviewConfig } from "~/domain/runs/project-runtime-config.js";
+import type { VerifyCommandText } from "~/domain/validation/verify-command-rule.js";
 import {
   startPreview,
   stopPreview,
@@ -107,6 +108,8 @@ export interface UserValidationInput {
    * a run with one target.
    */
   planRules?: PlanTargetRules;
+  /** GitHub issue 93, DI-21.190. The verify commands a command entry must keep the variables of. */
+  verifyCommands?: readonly VerifyCommandText[];
   /**
    * docs/specs/change-sets.md, DI-21.146. A preview the caller started and stops itself: the
    * preview of a provider that stays up while its wired group runs. The pass never stops it.
@@ -260,15 +263,52 @@ const executeCommandAssertion = async (
   };
 
   const passed = result.exitCode === entry.command.expectExitCode;
+  // GitHub issue 93, DI-21.190. A reader must see which command earned the result when the plan
+  // ran another one than the contract names, and why a failed one failed, without a download.
+  // A `test` criterion names a test file as its check, not a command, so only `command` compares.
+  const contractCheck = assertion.method === "command" ? contractCheckOf(assertion.statement) : null;
+  const swapped =
+    contractCheck !== null && normalizedCommand(contractCheck) !== normalizedCommand(entry.command.run)
+      ? ` The validator ran this command in place of the contract check "${dependencies.redactor.redactText(contractCheck)}".`
+      : "";
+  const tail = passed ? "" : outputTail(redactedStdout, redactedStderr);
   return {
     assertionId: assertion.id,
     method: assertion.method,
     result: passed ? "PASS" : "FAIL",
     reason: passed
-      ? `"${redactedRun}" exited with the expected code ${String(entry.command.expectExitCode)}.`
-      : `"${redactedRun}" exited with code ${String(result.exitCode)}, expected ${String(entry.command.expectExitCode)}.`,
+      ? `"${redactedRun}" exited with the expected code ${String(entry.command.expectExitCode)}.${swapped}`
+      : `"${redactedRun}" exited with code ${String(result.exitCode)}, expected ${String(entry.command.expectExitCode)}.${swapped}${tail}`,
     artifacts: [artifact],
   };
+};
+
+/** The check the contract statement names after " Check: ", as the contract builder writes it. */
+const contractCheckOf = (statement: string): string | null => {
+  const at = statement.lastIndexOf(" Check: ");
+  if (at < 0) return null;
+  const check = statement.slice(at + " Check: ".length).trim();
+  return check === "" ? null : check;
+};
+
+const normalizedCommand = (command: string): string => command.replace(/\s+/g, " ").trim();
+
+// The Proof Pack caps a reason at 500 characters; the run page shows it whole.
+const TAIL_LINES = 8;
+const TAIL_CHARACTERS = 300;
+
+/** The last lines of stderr, then of stdout, on one line each, so a failure names its cause. */
+const outputTail = (stdout: string, stderr: string): string => {
+  const last = (text: string): string => {
+    const lines = text.split(/\r?\n/).map((entry) => entry.trimEnd()).filter((entry) => entry.trim() !== "");
+    const kept = lines.slice(-TAIL_LINES).join(" ⏎ ");
+    return kept.length <= TAIL_CHARACTERS ? kept : `…${kept.slice(-TAIL_CHARACTERS)}`;
+  };
+  const parts = [
+    ...(stderr.trim() === "" ? [] : [`stderr: ${last(stderr)}`]),
+    ...(stdout.trim() === "" ? [] : [`stdout: ${last(stdout)}`]),
+  ];
+  return parts.length === 0 ? " The command wrote no output." : ` Last output, ${parts.join("; ")}`;
 };
 
 /** Runs a `browser` assertion against the exposed preview. Rule 8. */
@@ -509,6 +549,7 @@ const validate = async (
         contract,
         (input.accounts ?? []).map((account) => account.name),
         input.planRules,
+        input.verifyCommands ?? [],
       );
     } catch (error) {
       if (error instanceof ValidationPlanInvalidError) {

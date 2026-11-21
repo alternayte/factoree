@@ -628,11 +628,30 @@ const formatDuration = (milliseconds: number): string => {
  * model time. A session with no usage record is named, so a reader never takes a partial total
  * for the whole cost.
  */
+/**
+ * GitHub issue 90. The total with each token kind, by the labels of the run page. A cache read is
+ * cheap and an uncached input is not, so a total alone hides what a run spent.
+ */
+const tokenLine = (usage: AgentUsageTotals): string => {
+  const sum = (pick: (role: AgentUsageTotals["roles"][number]) => number): number =>
+    usage.roles.reduce((total, role) => total + pick(role), 0);
+  const count = (value: number): string => value.toLocaleString("en-US");
+  const reasoning = sum((role) => role.reasoningTokens);
+  const kinds = [
+    `${count(sum((role) => role.inputTokens))} uncached input`,
+    `${count(sum((role) => role.cacheReadTokens))} cache read`,
+    `${count(sum((role) => role.cacheWriteTokens))} cache write`,
+    `${count(sum((role) => role.outputTokens))} output`,
+    ...(reasoning > 0 ? [`${count(reasoning)} reasoning`] : []),
+  ];
+  return `${count(usage.tokens)} tokens (${kinds.join(", ")})`;
+};
+
 export const agentUsageLine = (usage: AgentUsageTotals, waitedMs = 0): string => {
   const missing = usage.sessionsWithoutUsage;
   return [
     `**Agent usage:** $${usage.costUsd.toFixed(2)}`,
-    `${usage.tokens.toLocaleString("en-US")} tokens`,
+    tokenLine(usage),
     `${formatDuration(usage.modelTimeMs)} model time`,
     // DI-21.56. A wait for a run slot or a sandbox slot is not work, so it stands apart.
     ...(waitedMs >= 1_000 ? [`waited ${formatDuration(waitedMs)} for a free slot`] : []),

@@ -62,6 +62,10 @@ const propose = async (run: Run, source: ContextSource & { description: string }
           skills: work.skills,
           previewConfigured: work.preview !== null && work.preview.enabled,
           egress: egressOf(work),
+          // GitHub issue 93, DI-21.190. The refiner builds test checks from the proven verify commands.
+          ...(work.verifyCommands.length === 0
+            ? {}
+            : { verifyCommands: work.verifyCommands.map((command) => ({ name: command.name, run: command.run })) }),
           timeoutMs: run.remainingMs(),
           ...(afterHang ? { afterHang: true } : {}),
           ...(unreachableRetry > 0 ? { unreachableRetry } : {}),

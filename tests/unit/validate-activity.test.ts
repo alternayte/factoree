@@ -45,7 +45,7 @@ describe("the userValidate activity", () => {
     );
 
     expect(runner.runs[0]?.role).toBe("validator");
-    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@12" });
+    expect(executions.rows[0]).toMatchObject({ role: "validator", promptVersion: "user-validator@13" });
     expect(output.sessionId).toBe("ses_fake");
   });
 
@@ -392,7 +392,7 @@ describe("the userValidate activity, a rejected Validation Plan (DI-15.23)", () 
     expect(fresh.prompt).toContain(commandReason);
     expect(fresh.prompt).toContain("/workspace/validation/plan-corrected.json");
     expect(fresh.prompt).not.toContain("/workspace/validation/plan.json");
-    expect(fresh.promptVersion).toBe("user-validator@12+user-validator-plan-correction@1");
+    expect(fresh.promptVersion).toBe("user-validator@13+user-validator-plan-correction@1");
     expect(output.passed).toBe(true);
     expect(results.rows.map((row) => row.result)).toEqual(["PASS", "PASS"]);
     expect(executions.rows.map((row) => row.idempotencyKey)).toEqual([

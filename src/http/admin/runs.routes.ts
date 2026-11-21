@@ -131,6 +131,7 @@ export const runDetailSchema = runListItemSchema.extend({
       outputTokens: z.number().nullable(),
       reasoningTokens: z.number().nullable(),
       cacheReadTokens: z.number().nullable(),
+      cacheWriteTokens: z.number().nullable(),
       costUsd: z.number().nullable(),
       turns: z.number().nullable(),
       modelMs: z.number().nullable(),

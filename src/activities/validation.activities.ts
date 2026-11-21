@@ -194,6 +194,8 @@ export interface UserValidateActivityInput {
   edges?: Array<{ provider: string; consumer: string }>;
   /** DI-21.149. The targets whose patch changes a file. Absent for one target. */
   changedTargets?: string[];
+  /** GitHub issue 93, DI-21.190. The proven verify commands. Absent in an old history. */
+  verifyCommands?: Array<{ name: string; run: string }>;
 }
 
 export interface UserValidateActivityOutput {
@@ -311,9 +313,10 @@ const planRejectionOf = (
   contract: ValidationContract,
   accounts: readonly string[],
   rules?: PlanTargetRules,
+  verifyCommands: ReadonlyArray<{ name: string; run: string }> = [],
 ): string[] | null => {
   try {
-    parseValidationPlan(planText, contract, accounts, rules);
+    parseValidationPlan(planText, contract, accounts, rules, verifyCommands);
     return null;
   } catch (error) {
     if (error instanceof ValidationPlanInvalidError) return error.reasons;
@@ -575,6 +578,11 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // docs/specs/change-sets.md, DI-21.147. A change set names each target's own preview instead.
       const setCheck = input.setCheck;
       const planRules = setCheck === undefined ? undefined : planTargetRulesOf(setCheck);
+      // GitHub issue 93, DI-21.190. A replayed plan passed once and keeps the rules it passed under.
+      const verifyCommands =
+        setCheck !== undefined || input.replay === true
+          ? []
+          : (input.verifyCommands ?? []).map((command) => ({ name: command.name, run: command.run }));
       let previewBaseUrl: string | null = null;
       if (setCheck === undefined && needsPreview && input.preview !== null && input.preview.enabled) {
         const port = Number(new URL(input.preview.readyUrl).port);
@@ -660,6 +668,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         imageFiles: input.imageFiles ?? [],
         egress: input.egress ?? null,
         ...(targetLines === undefined ? {} : { targets: targetLines, setServer: planRules?.setServer ?? null }),
+        verifyCommands,
       });
 
       // Step 6. The fresh validator session. It never receives the Implementer transcript, the
@@ -956,6 +965,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
             imageFiles: input.imageFiles ?? [],
             egress: input.egress ?? null,
             ...(targetLines === undefined ? {} : { targets: targetLines, setServer: planRules?.setServer ?? null }),
+            verifyCommands,
           });
           const promptVersion = `${freshInput.promptVersion}+${round.message.promptVersion}`;
           const fresh = await runner.run({
@@ -1015,7 +1025,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // change may be correct (FAC-63). Factoree asks the validator once for a corrected plan, with
       // the exact reasons, inside this pass. The frozen contract and the plan rules stay as they
       // are, and the repair budget is not touched. A stop gets no correction round.
-      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules);
+      const firstRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules, verifyCommands);
       const stopped = context.cancellationSignal.aborted || invocations.some((result) => result.cancelled);
       // A replayed plan passed once, so it gets no correction round: a rejection blocks the pass.
       if (firstRejection !== null && !stopped && !replay) {
@@ -1121,7 +1131,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
         }
 
         planText = correctedResult.exitCode === 0 ? correctedResult.stdout : null;
-        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules);
+        const secondRejection = planText === null ? null : planRejectionOf(planText, frozenContract, accountNames, planRules, verifyCommands);
         liveSession = correctionInvocations.at(-1)?.session ?? liveSession;
         if (planText === null || secondRejection !== null) {
           const problems = secondRejection === null ? ["The validator wrote no corrected Validation Plan."] : secondRejection;
@@ -1319,6 +1329,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
               signal: context.cancellationSignal,
               forYourEye,
               selectorRecheck,
+              verifyCommands,
             },
           ),
       );

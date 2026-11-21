@@ -8476,6 +8476,12 @@
                               "null"
                             ]
                           },
+                          "cacheWriteTokens": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "costUsd": {
                             "type": [
                               "number",
@@ -8516,6 +8522,7 @@
                           "outputTokens",
                           "reasoningTokens",
                           "cacheReadTokens",
+                          "cacheWriteTokens",
                           "costUsd",
                           "turns",
                           "modelMs",

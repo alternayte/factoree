@@ -451,6 +451,7 @@ function StageTimeline({ run }: { run: Run }) {
 
 function Sessions({ run }: { run: Run }) {
   if (run.sessions.length === 0) return <Empty>No agent session was recorded.</Empty>;
+  const showReasoning = run.sessions.some((session) => (session.reasoningTokens ?? 0) > 0);
   return (
     <TableCard>
       <table className="table">
@@ -471,12 +472,24 @@ function Sessions({ run }: { run: Run }) {
             <th scope="col" className="text-right">
               Tool time
             </th>
+            {/* GitHub issue 90. The same token kinds and labels as the Proof Pack. */}
             <th scope="col" className="text-right">
-              Input tokens
+              Uncached input
             </th>
             <th scope="col" className="text-right">
-              Output tokens
+              Cache read
             </th>
+            <th scope="col" className="text-right">
+              Cache write
+            </th>
+            <th scope="col" className="text-right">
+              Output
+            </th>
+            {showReasoning ? (
+              <th scope="col" className="text-right">
+                Reasoning
+              </th>
+            ) : null}
             <th scope="col" className="text-right">
               Cost
             </th>
@@ -498,7 +511,10 @@ function Sessions({ run }: { run: Run }) {
               <td className="t-value text-right">{formatDuration(session.modelMs)}</td>
               <td className="t-value text-right">{formatDuration(session.toolMs)}</td>
               <td className="t-value text-right">{formatTokens(session.inputTokens)}</td>
+              <td className="t-value text-right">{formatTokens(session.cacheReadTokens)}</td>
+              <td className="t-value text-right">{formatTokens(session.cacheWriteTokens)}</td>
               <td className="t-value text-right">{formatTokens(session.outputTokens)}</td>
+              {showReasoning ? <td className="t-value text-right">{formatTokens(session.reasoningTokens)}</td> : null}
               <td className="t-value text-right">{formatCost(session.costUsd)}</td>
             </tr>
           ))}

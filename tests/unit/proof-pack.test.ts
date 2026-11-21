@@ -297,7 +297,7 @@ describe("agent usage (agent-session-usage-and-hangs.md)", () => {
   it("shows one line with the cost, the tokens and the model time, and keeps the totals in proof-pack.json", () => {
     const agentUsage = summarizeAgentSessions([row("implementer"), row("reviewer", { usage: null })]);
     const body = renderProofPack(input({ agentUsage }), null);
-    expect(body).toContain("**Agent usage:** $0.50 · 13,500 tokens · 3m 0s model time · 1 session without a usage record");
+    expect(body).toContain("**Agent usage:** $0.50 · 13,500 tokens (1,000 uncached input, 10,000 cache read, 0 cache write, 2,000 output, 500 reasoning) · 3m 0s model time · 1 session without a usage record");
     expect(body.indexOf("**Agent usage:**")).toBeGreaterThan(body.indexOf("### Checks"));
     expect(buildProofPackDocument(input({ agentUsage })).agentUsage?.roles).toHaveLength(2);
   });
