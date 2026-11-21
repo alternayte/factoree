@@ -572,6 +572,10 @@ model SandboxLease {
   adapter             String
   runId               String
   held                Boolean   @default(false)
+  // docs/specs/sandbox-memory-and-size.md. The memory of the sandbox or held slot, counted against
+  // the memory budget of the provider. Null on a lease from before the budget: it counts as the
+  // provider size.
+  memoryMb            Int?      @map("memory_mb")
   // Null between the reservation and the end of the create.
   sandboxId           String?
   createdAt           DateTime  @default(now())
@@ -599,25 +603,30 @@ model SandboxLease {
 // account, a Sprites account or the local adapter. The id is stable: leases, warm snapshots and
 // runs name it. The first provider of a type takes the type name as its id.
 model SandboxProvider {
-  id           String    @id
-  name         String
+  id             String    @id
+  name           String
   // kiln, e2b, fly-sprites or local.
-  type         String
+  type           String
   // The Kiln host, the Sprites API base URL, or a self-hosted E2B URL. Null means the type default.
-  url          String?
-  apiKeyCipher String?
+  url            String?
+  apiKeyCipher   String?
   // The limit of live sandboxes on this provider. Null means no limit.
-  maxLive      Int?
-  vcpus        Int?
-  memoryMb     Int?
+  maxLive        Int?
+  vcpus          Int?
+  memoryMb       Int?
+  // docs/specs/sandbox-memory-and-size.md. The memory budget of the live sandboxes, and the largest
+  // sandbox the provider takes. Null means no budget, or the type default maximum.
+  memoryBudgetMb Int?      @map("memory_budget_mb")
+  maxVcpus       Int?      @map("max_vcpus")
+  maxMemoryMb    Int?      @map("max_memory_mb")
   // A lower number is a better priority.
-  priority     Int       @default(1)
-  enabled      Boolean   @default(true)
+  priority       Int       @default(1)
+  enabled        Boolean   @default(true)
   // Set when a work sprite create failed. Selection skips the provider until then.
-  downUntil    DateTime?
-  downReason   String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  downUntil      DateTime?
+  downReason     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 // docs/specs/sandbox-provider-spillover.md. The last failed build-ahead of one repository on one
@@ -752,6 +761,11 @@ model Repository {
   // The display name of the admin who decided, or null for an acceptance no person made.
   membershipDecidedBy  String?       @map("membership_decided_by")
   membershipDecidedAt  DateTime?     @map("membership_decided_at")
+  // docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum of `.factoree/config.yaml` that
+  // discovery last read. Null asks for nothing.
+  sandboxVcpus         Int?          @map("sandbox_vcpus")
+  sandboxMemoryMb      Int?          @map("sandbox_memory_mb")
+  sandboxDiskMb        Int?          @map("sandbox_disk_mb")
   runTargets           RunTarget[]
   pullRequests         PullRequest[]
 

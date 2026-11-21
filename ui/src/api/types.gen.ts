@@ -3682,6 +3682,9 @@ export type ListSandboxProvidersResponses = {
     maxLive: number | null;
     vcpus: number | null;
     memoryMb: number | null;
+    memoryBudgetMb: number | null;
+    maxVcpus: number | null;
+    maxMemoryMb: number | null;
     priority: number;
     enabled: boolean;
     downUntil: string | null;
@@ -3702,6 +3705,9 @@ export type CreateSandboxProviderData = {
     maxLive?: number | null;
     vcpus?: number | null;
     memoryMb?: number | null;
+    memoryBudgetMb?: number | null;
+    maxVcpus?: number | null;
+    maxMemoryMb?: number | null;
     priority?: number;
     enabled?: boolean;
   };
@@ -3740,6 +3746,9 @@ export type CreateSandboxProviderResponses = {
     maxLive: number | null;
     vcpus: number | null;
     memoryMb: number | null;
+    memoryBudgetMb: number | null;
+    maxVcpus: number | null;
+    maxMemoryMb: number | null;
     priority: number;
     enabled: boolean;
     downUntil: string | null;
@@ -3801,6 +3810,9 @@ export type UpdateSandboxProviderData = {
     maxLive?: number | null;
     vcpus?: number | null;
     memoryMb?: number | null;
+    memoryBudgetMb?: number | null;
+    maxVcpus?: number | null;
+    maxMemoryMb?: number | null;
     priority?: number;
     enabled?: boolean;
   };
@@ -3847,6 +3859,9 @@ export type UpdateSandboxProviderResponses = {
     maxLive: number | null;
     vcpus: number | null;
     memoryMb: number | null;
+    memoryBudgetMb: number | null;
+    maxVcpus: number | null;
+    maxMemoryMb: number | null;
     priority: number;
     enabled: boolean;
     downUntil: string | null;

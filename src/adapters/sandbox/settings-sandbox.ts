@@ -15,9 +15,16 @@ import type {
   WarmSnapshots,
 } from "~/domain/runs/sandbox.js";
 import { SandboxCreateError } from "~/domain/runs/sandbox.js";
-import { kilnSandboxSize, requireSetting, type SandboxSettings } from "~/domain/settings/install-settings.js";
+import {
+  kilnSandboxSize,
+  requireSetting,
+  sandboxSizeOf,
+  type SandboxMinimum,
+  type SandboxSettings,
+  type SandboxSize,
+} from "~/domain/settings/install-settings.js";
 import { isProviderDown, type SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
-import { SandboxSlots, type RetainedSandbox, type SandboxLeaseStore } from "~/domain/runs/sandbox-slots.js";
+import { SandboxSlots, type RetainedSandbox, type SandboxLeaseStore, type SlotLimits } from "~/domain/runs/sandbox-slots.js";
 import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import { DEFAULT_WORKSPACE_PATH } from "~/domain/runs/sprite-reaper.js";
@@ -186,30 +193,53 @@ export class SettingsSandbox implements Sandbox {
     return this.problems.get(providerId) ?? null;
   }
 
-  /** The view of one provider. Every create through it takes a slot of that provider. */
-  async forProvider(providerId: string): Promise<Sandbox> {
+  /**
+   * The view of one provider. Every create through it takes a slot of that provider.
+   * docs/specs/sandbox-memory-and-size.md: with a repository minimum, every create and restore
+   * through the view gets the size of that minimum on this provider, and its warm snapshot template
+   * is the template of that size.
+   */
+  async forProvider(providerId: string, minimum: SandboxMinimum | null = null): Promise<Sandbox> {
     if (!this.entries.has(providerId)) await this.refresh();
     if (!this.entries.has(providerId)) {
       const problem = this.problems.get(providerId);
       if (problem !== undefined) throw new Error(problem);
       throw new Error(`the install settings hold no sandbox provider ${providerId}`);
     }
-    let view = this.views.get(providerId);
+    const key = minimum === null ? providerId : `${providerId}:${minimum.vcpus}:${minimum.memoryMb}:${minimum.diskMb}`;
+    let view = this.views.get(key);
     if (view === undefined) {
-      view = new ProviderSandbox(this, providerId);
-      this.views.set(providerId, view);
+      view = new ProviderSandbox(this, providerId, minimum);
+      this.views.set(key, view);
     }
     return view;
+  }
+
+  /** docs/specs/sandbox-memory-and-size.md. The size of a sandbox of a repository minimum on one provider. */
+  sizeOn(providerId: string, minimum: SandboxMinimum | null): SandboxSize {
+    const provider = this.providers.find((entry) => entry.id === providerId);
+    return sandboxSizeOf(kilnSandboxSize(provider ?? { vcpus: null, memoryMb: null }), minimum);
+  }
+
+  /** The limits one create or hold of this size counts against on the provider. */
+  private limitsOf(providerId: string, minimum: SandboxMinimum | null): SlotLimits {
+    const provider = this.providers.find((entry) => entry.id === providerId);
+    return {
+      maxLive: provider?.maxLive ?? null,
+      memoryBudgetMb: provider?.memoryBudgetMb ?? null,
+      memoryMb: this.sizeOn(providerId, minimum).memoryMb,
+      fallbackMemoryMb: kilnSandboxSize(provider ?? { vcpus: null, memoryMb: null }).memoryMb,
+    };
   }
 
   /**
    * docs/specs/sandbox-provider-spillover.md. Holds `count` slots of one provider for a run. False
    * when the provider has no room, even after it deleted its retained sandboxes.
+   * docs/specs/sandbox-memory-and-size.md: each slot also holds the memory of the run's size.
    */
-  async hold(providerId: string, runId: string, count: number): Promise<boolean> {
+  async hold(providerId: string, runId: string, count: number, minimum: SandboxMinimum | null = null): Promise<boolean> {
     if (this.slots === null) return true;
-    const provider = this.providers.find((entry) => entry.id === providerId);
-    return this.slots.hold(providerId, runId, count, provider?.maxLive ?? null);
+    return this.slots.hold(providerId, runId, count, this.limitsOf(providerId, minimum));
   }
 
   /** The provider a create with no named provider uses. */
@@ -280,7 +310,12 @@ export class SettingsSandbox implements Sandbox {
    * takes that one. docs/specs/sandbox-provider-spillover.md: a failure of the provider call
    * becomes `SandboxCreateError`, and the ref names the provider id.
    */
-  async createOn(providerId: string, runId: string, create: (adapter: Sandbox) => Promise<SandboxRef>): Promise<SandboxRef> {
+  async createOn(
+    providerId: string,
+    runId: string,
+    create: (adapter: Sandbox) => Promise<SandboxRef>,
+    minimum: SandboxMinimum | null = null,
+  ): Promise<SandboxRef> {
     const adapter = this.entries.get(providerId)?.sandbox;
     if (adapter === undefined) throw new Error(`the install settings hold no sandbox provider ${providerId}`);
     const call = async (): Promise<SandboxRef> => {
@@ -293,11 +328,12 @@ export class SettingsSandbox implements Sandbox {
     };
     const slots = this.slots;
     if (slots === null) return call();
-    const maxLive = this.providers.find((provider) => provider.id === providerId)?.maxLive ?? null;
+    const limits = this.limitsOf(providerId, minimum);
+    const maxLive = limits.maxLive;
     // docs/specs/repository-setup-and-services.md. A setup waits behind runs: it never takes the
     // last free slot of a provider that has more than one, so a Linear run always finds one.
     const limit = runId.startsWith("setup:") && maxLive !== null && maxLive > 1 ? maxLive - 1 : maxLive;
-    const leaseId = await slots.acquire(providerId, runId, limit);
+    const leaseId = await slots.acquire(providerId, runId, { ...limits, maxLive: limit });
     let ref: SandboxRef;
     try {
       ref = await call();
@@ -413,7 +449,14 @@ class ProviderSandbox implements Sandbox {
   constructor(
     private readonly parent: SettingsSandbox,
     readonly name: string,
+    /** docs/specs/sandbox-memory-and-size.md. The repository minimum of every sandbox of this view. */
+    private readonly minimum: SandboxMinimum | null = null,
   ) {}
+
+  /** The input with the size of this view on its provider. */
+  private sized(input: SandboxCreateInput): SandboxCreateInput {
+    return { ...input, size: this.parent.sizeOn(this.name, this.minimum) };
+  }
 
   private adapter(): Sandbox {
     const adapter = this.parent.adapterOf(this.name);
@@ -435,18 +478,23 @@ class ProviderSandbox implements Sandbox {
     const snapshots = this.adapter().warmSnapshots;
     if (snapshots === undefined) return undefined;
     return {
-      template: snapshots.template,
+      template: snapshots.templateFor?.(this.parent.sizeOn(this.name, this.minimum)) ?? snapshots.template,
       take: async (ref) => {
         const owner = (await this.parent.forRef(ref)).warmSnapshots;
         if (owner === undefined) throw new Error(`the ${ref.adapter} sandbox provider takes no warm snapshot`);
         return owner.take(ref);
       },
       restore: (input, snapshotId) =>
-        this.parent.createOn(this.name, input.runId, (adapter) => {
-          const own = adapter.warmSnapshots;
-          if (own === undefined) throw new Error(`the ${this.name} sandbox provider takes no warm snapshot`);
-          return own.restore(input, snapshotId);
-        }),
+        this.parent.createOn(
+          this.name,
+          input.runId,
+          (adapter) => {
+            const own = adapter.warmSnapshots;
+            if (own === undefined) throw new Error(`the ${this.name} sandbox provider takes no warm snapshot`);
+            return own.restore(this.sized(input), snapshotId);
+          },
+          this.minimum,
+        ),
       remove: (snapshotId) => snapshots.remove(snapshotId),
     };
   }
@@ -456,7 +504,7 @@ class ProviderSandbox implements Sandbox {
   }
 
   create(input: SandboxCreateInput): Promise<SandboxRef> {
-    return this.parent.createOn(this.name, input.runId, (adapter) => adapter.create(input));
+    return this.parent.createOn(this.name, input.runId, (adapter) => adapter.create(this.sized(input)), this.minimum);
   }
 
   egressLog(ref: SandboxRef): Promise<EgressRecord[] | null> {

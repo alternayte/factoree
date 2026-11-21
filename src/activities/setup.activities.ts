@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { parseDocument } from "yaml";
 import type { RepositoryDiscoveryClient, RepositoryFileReader } from "~/adapters/github/repository-discovery-client.js";
-import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import { parseFactoreeConfig, sandboxMinimumOf } from "~/domain/products/factoree-config.js";
+import type { SandboxMinimum } from "~/domain/settings/install-settings.js";
 import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
@@ -102,7 +103,7 @@ export interface SetupActivityDependencies {
    * docs/specs/change-sets.md, DI-21.145. The repositories of the product, so the setup agent can
    * name the one that serves a fake. Absent means the prompt names none.
    */
-  repositories?: Pick<RepositoryRegistry, "listByProduct"> | undefined;
+  repositories?: Pick<RepositoryRegistry, "listByProduct" | "findByFullName"> | undefined;
 }
 
 /** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
@@ -225,6 +226,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     setup: { id: string; tenantId: string },
     product: { sandboxProviderIds: string[] },
     url: string,
+    /** docs/specs/sandbox-memory-and-size.md. The size the sandbox must have. */
+    minimum: SandboxMinimum | null,
   ): Promise<Sandbox> => {
     if (dependencies.providerSelector === undefined || dependencies.sandbox.forProvider === undefined) return dependencies.sandbox;
     const providerId = await dependencies.providerSelector.selectForSetup({
@@ -233,9 +236,14 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       allowedProviderIds: product.sandboxProviderIds,
       repositoryUrl: url,
       needsDocker: true,
+      minimum,
     });
-    return dependencies.sandbox.forProvider(providerId);
+    return dependencies.sandbox.forProvider(providerId, minimum);
   };
+
+  /** docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum discovery stored for the repository. */
+  const storedMinimumOf = async (setup: { tenantId: string; repositoryFullName: string }): Promise<SandboxMinimum | null> =>
+    (await dependencies.repositories?.findByFullName(setup.tenantId, setup.repositoryFullName))?.sandboxMinimum ?? null;
 
   /**
    * docs/specs/host-credentials.md. The credentials of the product apply in every setup phase, as in
@@ -275,7 +283,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     url: string,
     allowedDomains: string[],
   ): Promise<{ ref: SandboxRef; warm: boolean; egress: CredentialEgress }> => {
-    const sandbox = await sandboxOf(setup, product, url);
+    const sandbox = await sandboxOf(setup, product, url, await storedMinimumOf(setup));
     const egress = await credentialEgressOf(sandbox, setup.tenantId, setup.productId, setup.repositoryFullName);
     const provider = sandbox.warmSnapshots;
     const snapshot =
@@ -315,7 +323,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       const readToken = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
       dependencies.redactor.addSecret(readToken);
       const repositoryHosts = hostsOf(url);
-      const proofSandbox = await sandboxOf(setup, product, url);
+      // docs/specs/sandbox-memory-and-size.md. The proof runs at the size the proposal asks for, so
+      // the size it proves is the size the merge gives every later run.
+      const proofSandbox = await sandboxOf(setup, product, url, sandboxMinimumOf(config));
       const egress = await credentialEgressOf(proofSandbox, setup.tenantId, setup.productId, setup.repositoryFullName);
       let ref = await createSandbox(proofSandbox, setup.id, egress, repositoryHosts);
       const parts: SetupPartResult[] = [];

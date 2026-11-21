@@ -20,6 +20,7 @@ import { RunConfigurationError } from "./run-configuration-error.js";
 import type { PreviewConfig, ProjectDefaults, ProjectRuntimeConfig, VerificationCommand } from "./project-runtime-config.js";
 import { toProjectRuntimeConfig } from "./project-runtime-config.js";
 import { readRepositoryConfig, readRepositoryInstructions } from "./repository-config-source.js";
+import type { SandboxMinimum } from "~/domain/settings/install-settings.js";
 import type { CheckpointRef, ProcessRef, Sandbox, SandboxRef } from "./sandbox.js";
 import { BROWSER_TOOL_HOSTS, BROWSER_TOOLS_INSTALL_SCRIPT, BROWSER_TOOLS_POLL_MS, BROWSER_TOOLS_WAIT_MS } from "./browser-tools.js";
 import { NetworkPolicyNotEnforcedError } from "./sandbox.js";
@@ -326,6 +327,11 @@ export const deliveredSkillsOf = (set: SkillSet, resolution: SkillResolution | n
 export interface SandboxManagerOptions {
   sandbox: Sandbox;
   /**
+   * docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum of the repositories a sandbox holds,
+   * the largest of them for a change set, as discovery stored it. Absent asks for nothing.
+   */
+  sandboxMinimum?: (tenantId: string, repositoryUrls: readonly string[]) => Promise<SandboxMinimum | null>;
+  /**
    * docs/specs/proof-pack-and-visual-evidence.md. True when the sandbox runs the Sprite image
    * that `BROWSER_TOOLS_INSTALL_SCRIPT` was proven on. The local adapter runs on the worker host,
    * where the script must not touch the system packages. A function decides by adapter name,
@@ -439,6 +445,10 @@ const checkoutHosts = (specs: RepositorySpec[]): string[] => {
  * time. `SandboxManager` creates the directory itself, so both adapters get a workspace that
  * exists before the first checkout.
  */
+/** docs/specs/sandbox-memory-and-size.md. The repositories whose minimum sizes a sandbox: every target of a set, else the primary. */
+const repositoryUrlsOf = (input: Pick<PrepareSandboxInput, "primary" | "targets">): string[] =>
+  input.targets !== undefined && input.targets.length > 1 ? input.targets.map((target) => target.url) : [input.primary.url];
+
 export class SandboxManager {
   constructor(private readonly options: SandboxManagerOptions) {}
 
@@ -453,11 +463,15 @@ export class SandboxManager {
     }
   }
 
-  /** docs/specs/sandbox-provider-spillover.md. The sandbox of one provider, or the default one. */
-  private async sandboxOf(provider: string | undefined): Promise<Sandbox> {
+  /**
+   * docs/specs/sandbox-provider-spillover.md. The sandbox of one provider, or the default one.
+   * docs/specs/sandbox-memory-and-size.md: on a provider, the view of the size the repositories need.
+   */
+  private async sandboxOf(provider: string | undefined, tenantId: string, repositoryUrls: readonly string[]): Promise<Sandbox> {
     const sandbox = this.options.sandbox;
     if (provider === undefined || sandbox.forProvider === undefined) return sandbox;
-    return sandbox.forProvider(provider);
+    const minimum = this.options.sandboxMinimum === undefined ? null : await this.options.sandboxMinimum(tenantId, repositoryUrls);
+    return sandbox.forProvider(provider, minimum);
   }
 
   private installsBrowserTools(sandboxName: string): boolean {
@@ -477,7 +491,7 @@ export class SandboxManager {
   ): Promise<PreparedSandbox> {
     // docs/specs/release-0-1-0.md. The install settings choose the provider of each new sandbox.
     await this.options.sandbox.refresh?.();
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     if (!sandbox.capabilities.enforcesNetworkPolicy && this.options.allowUnenforcedNetwork !== true) {
       throw new NetworkPolicyNotEnforcedError(sandbox.name);
     }
@@ -562,7 +576,7 @@ export class SandboxManager {
     provider?: string;
   }): Promise<boolean> {
     await this.options.sandbox.refresh?.();
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, input.repositoryUrl.split(" "));
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return false;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: input.repositoryUrl });
@@ -575,7 +589,7 @@ export class SandboxManager {
    */
   async buildAhead(input: PrepareSandboxInput): Promise<BuildAheadOutcome> {
     await this.options.sandbox.refresh?.();
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     if (this.options.warmSnapshots === undefined || sandbox.warmSnapshots === undefined) {
       return { kind: "skipped", reason: `the ${sandbox.name} adapter takes no warm snapshot` };
     }
@@ -593,7 +607,7 @@ export class SandboxManager {
 
   /** The warm snapshot of a repository or a set this Run can start from, or null when it starts cold. */
   private async warmSnapshotFor(input: PrepareSandboxInput, subject: string): Promise<WarmSnapshot | null> {
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const warm = await store.find({ tenantId: input.tenantId, adapter: sandbox.name, repositoryUrl: subject });
@@ -614,7 +628,7 @@ export class SandboxManager {
     /** docs/specs/change-sets.md, DI-21.136. What `warm` restores of a change set. */
     scope: WarmScope = "all",
   ): Promise<PreparedSandbox | null> {
-    const sandbox = await this.sandboxOf(input.provider);
+    const sandbox = await this.sandboxOf(input.provider, input.tenantId, repositoryUrlsOf(input));
     // docs/specs/host-credentials.md. The credentials are read before the create, so a provider
     // that cannot bind them fails the preparation before it costs a sandbox.
     const setTargets = isChangeSet(input) ? input.targets : null;
@@ -1120,7 +1134,11 @@ export class SandboxManager {
     unwiredPairs: UnwiredPair[] = [],
   ): Promise<string | null> {
     // The ref names the provider that created the sandbox, and its snapshot belongs to that provider.
-    const sandbox = await this.sandboxOf(input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter));
+    const sandbox = await this.sandboxOf(
+      input.provider ?? (this.options.sandbox.forProvider === undefined ? undefined : ref.adapter),
+      input.tenantId,
+      repositoryUrlsOf(input),
+    );
     const store = this.options.warmSnapshots;
     if (store === undefined || sandbox.warmSnapshots === undefined) return null;
     const startedAt = new Date();

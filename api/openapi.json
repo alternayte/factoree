@@ -14152,6 +14152,24 @@
                           "null"
                         ]
                       },
+                      "memoryBudgetMb": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "maxVcpus": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "maxMemoryMb": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
                       "priority": {
                         "type": "number"
                       },
@@ -14189,6 +14207,9 @@
                       "maxLive",
                       "vcpus",
                       "memoryMb",
+                      "memoryBudgetMb",
+                      "maxVcpus",
+                      "maxMemoryMb",
                       "priority",
                       "enabled",
                       "downUntil",
@@ -14287,6 +14308,42 @@
                       }
                     ]
                   },
+                  "memoryBudgetMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 16777216
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxVcpus": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxMemoryMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 1048576
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "priority": {
                     "type": "integer",
                     "minimum": 1,
@@ -14363,6 +14420,24 @@
                         "null"
                       ]
                     },
+                    "memoryBudgetMb": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "maxVcpus": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "maxMemoryMb": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "priority": {
                       "type": "number"
                     },
@@ -14400,6 +14475,9 @@
                     "maxLive",
                     "vcpus",
                     "memoryMb",
+                    "memoryBudgetMb",
+                    "maxVcpus",
+                    "maxMemoryMb",
                     "priority",
                     "enabled",
                     "downUntil",
@@ -14531,6 +14609,42 @@
                       }
                     ]
                   },
+                  "memoryBudgetMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 16777216
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxVcpus": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxMemoryMb": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 1048576
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "priority": {
                     "type": "integer",
                     "minimum": 1,
@@ -14614,6 +14728,24 @@
                         "null"
                       ]
                     },
+                    "memoryBudgetMb": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "maxVcpus": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "maxMemoryMb": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "priority": {
                       "type": "number"
                     },
@@ -14651,6 +14783,9 @@
                     "maxLive",
                     "vcpus",
                     "memoryMb",
+                    "memoryBudgetMb",
+                    "maxVcpus",
+                    "maxMemoryMb",
                     "priority",
                     "enabled",
                     "downUntil",

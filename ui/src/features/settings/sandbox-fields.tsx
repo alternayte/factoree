@@ -13,6 +13,9 @@ export type SandboxForm = {
   maxLive: string;
   vcpus: string;
   memoryMb: string;
+  memoryBudgetMb: string;
+  maxVcpus: string;
+  maxMemoryMb: string;
 };
 
 /** The Kiln sandbox size an empty field keeps. */
@@ -28,6 +31,9 @@ export const emptySandboxForm: SandboxForm = {
   maxLive: "",
   vcpus: "",
   memoryMb: "",
+  memoryBudgetMb: "",
+  maxVcpus: "",
+  maxMemoryMb: "",
 };
 
 export const PROVIDER_LABELS: Record<SandboxProvider, string> = {
@@ -54,8 +60,11 @@ export function SandboxFields({
   defaultSize,
   fieldErrors = {},
   parts = "all",
+  limits = false,
 }: {
   parts?: "all" | "provider" | "image";
+  /** docs/specs/sandbox-memory-and-size.md. Shows the memory budget and the largest sandbox. */
+  limits?: boolean;
   value: SandboxForm;
   onChange: (next: SandboxForm) => void;
   localAllowed: boolean;
@@ -210,6 +219,67 @@ export function SandboxFields({
                   />
                 )}
               </Field>
+              {limits ? (
+                <>
+                  <Field
+                    label="Memory budget in MB (optional)"
+                    hint={
+                      value.provider === "kiln"
+                        ? "The memory of the Kiln host that its sandboxes may use in total, for example 24576 on a 32 GB host. Kiln does not report its host memory. A run holds 3 times its sandbox memory. Empty means no budget."
+                        : "The memory all live sandboxes may use in total. A run holds 3 times its sandbox memory. Empty means no budget: E2B limits a sandbox count, so the live sandbox limit is the usual limit."
+                    }
+                    errors={fieldErrors.memoryBudgetMb}
+                  >
+                    {(props) => (
+                      <Input
+                        {...props}
+                        type="number"
+                        min={1024}
+                        step={1}
+                        disabled={disabled}
+                        value={value.memoryBudgetMb}
+                        onChange={(e) => set("memoryBudgetMb", e.target.value)}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label="Largest sandbox: vCPUs (optional)"
+                    hint={`A repository whose sandbox block asks for more runs on another provider. Empty uses ${value.provider === "kiln" ? "32" : "8, the E2B Hobby limit"}.`}
+                    errors={fieldErrors.maxVcpus}
+                  >
+                    {(props) => (
+                      <Input
+                        {...props}
+                        type="number"
+                        min={1}
+                        max={32}
+                        step={1}
+                        disabled={disabled}
+                        value={value.maxVcpus}
+                        onChange={(e) => set("maxVcpus", e.target.value)}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label="Largest sandbox: memory in MB (optional)"
+                    hint={`Empty uses ${value.provider === "kiln" ? "the memory budget" : "8192, the E2B Hobby limit"}.`}
+                    errors={fieldErrors.maxMemoryMb}
+                  >
+                    {(props) => (
+                      <Input
+                        {...props}
+                        type="number"
+                        min={1024}
+                        max={1048576}
+                        step={1}
+                        disabled={disabled}
+                        value={value.maxMemoryMb}
+                        onChange={(e) => set("maxMemoryMb", e.target.value)}
+                      />
+                    )}
+                  </Field>
+                </>
+              ) : null}
             </>
           ) : null}
         </>
@@ -298,6 +368,19 @@ export function parseSize(form: SandboxForm): { vcpus: number | null; memoryMb: 
   const memoryMb = parseWhole(form.memoryMb, 1024, 1048576);
   if (memoryMb === undefined) return "The memory must be a whole number of MB from 1024 to 1048576.";
   return { vcpus, memoryMb };
+}
+
+/** parseLimits reads the memory budget and the largest sandbox: null for empty, or a string that names the bad field. */
+export function parseLimits(
+  form: SandboxForm,
+): { memoryBudgetMb: number | null; maxVcpus: number | null; maxMemoryMb: number | null } | string {
+  const memoryBudgetMb = parseWhole(form.memoryBudgetMb, 1024, 16777216);
+  if (memoryBudgetMb === undefined) return "The memory budget must be a whole number of MB from 1024.";
+  const maxVcpus = parseWhole(form.maxVcpus, 1, 32);
+  if (maxVcpus === undefined) return "The largest vCPUs must be a whole number from 1 to 32.";
+  const maxMemoryMb = parseWhole(form.maxMemoryMb, 1024, 1048576);
+  if (maxMemoryMb === undefined) return "The largest memory must be a whole number of MB from 1024 to 1048576.";
+  return { memoryBudgetMb, maxVcpus, maxMemoryMb };
 }
 
 function parseWhole(input: string, min: number, max: number): number | null | undefined {

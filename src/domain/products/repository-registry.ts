@@ -1,3 +1,4 @@
+import type { SandboxMinimum } from "~/domain/settings/install-settings.js";
 import type { RepositoryMembership } from "./membership.js";
 
 export interface RepositoryRecord {
@@ -23,6 +24,8 @@ export interface RepositoryRecord {
   /** The display name of the admin who decided, or null for an acceptance no person made. */
   membershipDecidedBy: string | null;
   membershipDecidedAt: Date | null;
+  /** docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum discovery last read, or null. */
+  sandboxMinimum?: SandboxMinimum | null;
 }
 
 export interface UpsertRepositoryInput {
@@ -34,6 +37,8 @@ export interface UpsertRepositoryInput {
   requestedSecretNames: string[];
   linearProjects: string[];
   githubInstallationId: string;
+  /** docs/specs/sandbox-memory-and-size.md. The `sandbox` minimum of the config, or null. */
+  sandboxMinimum?: SandboxMinimum | null;
   /**
    * docs/specs/repository-membership.md. Set only when the claim is new to the product. Absent, the
    * row keeps its decision.

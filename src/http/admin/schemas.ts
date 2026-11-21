@@ -342,6 +342,11 @@ const sandboxProviderFields = {
   // 1 to 8 vCPUs and 8 GiB.
   vcpus: z.number().int().min(1).max(32).nullable(),
   memoryMb: z.number().int().min(1024).max(1_048_576).nullable(),
+  // docs/specs/sandbox-memory-and-size.md. The memory budget of the live sandboxes, and the largest
+  // sandbox a repository minimum may ask of this provider.
+  memoryBudgetMb: z.number().int().min(1024).max(16_777_216).nullable(),
+  maxVcpus: z.number().int().min(1).max(32).nullable(),
+  maxMemoryMb: z.number().int().min(1024).max(1_048_576).nullable(),
   priority: z.number().int().min(1).max(100),
   enabled: z.boolean(),
 };
@@ -363,6 +368,9 @@ export const sandboxProviderViewSchema = z.object({
   maxLive: z.number().nullable(),
   vcpus: z.number().nullable(),
   memoryMb: z.number().nullable(),
+  memoryBudgetMb: z.number().nullable(),
+  maxVcpus: z.number().nullable(),
+  maxMemoryMb: z.number().nullable(),
   priority: z.number(),
   enabled: z.boolean(),
   /** Set while selection skips the provider after a failed create. */
@@ -390,6 +398,9 @@ export const viewSandboxProvider = (
   maxLive: provider.maxLive,
   vcpus: provider.vcpus,
   memoryMb: provider.memoryMb,
+  memoryBudgetMb: provider.memoryBudgetMb,
+  maxVcpus: provider.maxVcpus,
+  maxMemoryMb: provider.maxMemoryMb,
   priority: provider.priority,
   enabled: provider.enabled,
   downUntil: provider.downUntil !== null && provider.downUntil > now ? provider.downUntil.toISOString() : null,
