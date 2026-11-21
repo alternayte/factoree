@@ -219,7 +219,16 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const tenant = await resolveTenant(parsed.data.linearWorkspaceId);
     if (!tenant) return reply.code(404).send({ error: "tenant not found" });
-    return dependencies.products.list(tenant.id);
+    // docs/specs/repository-membership.md. The list shows how many claims wait for an admin.
+    const products = await dependencies.products.list(tenant.id);
+    return Promise.all(
+      products.map(async (product) => ({
+        ...product,
+        pendingRepositories: (await dependencies.repositories.listByProduct(product.id)).filter(
+          (repository) => repository.absentSince === null && repository.membership === "pending",
+        ).length,
+      })),
+    );
   },
   );
 

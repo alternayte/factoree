@@ -12,8 +12,16 @@ import {
   getProductQueryKey,
   listProductSecretsOptions,
   listProductsQueryKey,
+  listRepositorySetupsOptions,
+  listRepositorySetupsQueryKey,
 } from "@/api/@tanstack/react-query.gen";
-import { activateProduct, deleteProduct, putProductSecret, updateProduct } from "@/api/sdk.gen";
+import {
+  activateProduct,
+  decideRepositoryMembership,
+  deleteProduct,
+  putProductSecret,
+  updateProduct,
+} from "@/api/sdk.gen";
 import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
 import { Field, Input, SavedNote, Select, Textarea } from "@/components/form";
@@ -623,6 +631,20 @@ function ActivateProduct({
 }) {
   const qc = useQueryClient();
   const [level, setLevel] = useState<AutonomyLevel>("L2");
+  // docs/specs/repository-membership.md. Activation keeps every accepted repository as a member, so
+  // the admin sees them first and can reject one that does not belong here.
+  const repositoriesQuery = { path: { id: product.id }, query: { linearWorkspaceId } };
+  const repositories = useQuery(listRepositorySetupsOptions(repositoriesQuery));
+  const members = (repositories.data ?? []).filter((repository) => repository.membership?.state === "accepted");
+  const reject = useMutation({
+    mutationFn: async (repositoryId: string) =>
+      decideRepositoryMembership({
+        path: { id: product.id, repositoryId },
+        body: { linearWorkspaceId, decision: "reject" },
+        throwOnError: true,
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: listRepositorySetupsQueryKey(repositoriesQuery) }),
+  });
   const activate = useMutation({
     mutationFn: async () =>
       (
@@ -641,6 +663,30 @@ function ActivateProduct({
   return (
     <Alert tone="warning" title="This product is pending" className="mb-4">
       <p>Factoree takes no work from the team until the product is active.</p>
+      {members.length > 0 ? (
+        <div className="mt-2">
+          <p>Activation keeps these repositories as members. Each one gets the product secrets in its runs.</p>
+          <ul className="mt-1 flex flex-col gap-1">
+            {members.map((repository) => (
+              <li key={repository.fullName} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs">{repository.fullName}</span>
+                {canEdit && repository.membership ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    pending={reject.isPending && reject.variables === repository.membership.repositoryId}
+                    disabled={reject.isPending}
+                    onClick={() => repository.membership && reject.mutate(repository.membership.repositoryId)}
+                  >
+                    Reject
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <ErrorAlert error={reject.error} className="mt-2" />
+        </div>
+      ) : null}
       {canEdit ? (
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <Field label="Default autonomy" help={<AutonomyHelp />} className="min-w-0 flex-1 basis-64">

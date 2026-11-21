@@ -73,6 +73,8 @@ export const productSchema = z.object({
   prReviewer: z.object({ appSlug: z.string(), checkName: z.string() }).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** docs/specs/repository-membership.md. The products list only: the claims no admin decided yet. */
+  pendingRepositories: z.number().optional(),
 });
 
 export const secretDescriptorSchema = z.object({

@@ -57,6 +57,7 @@ import { resolveProduct } from "~/domain/routing/resolve-product.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
 import { ignoresImages } from "~/domain/products/model-vision.js";
+import { awaitsAcceptance, isMember } from "~/domain/products/membership.js";
 
 export interface WorkflowStarter {
   start(input: { workflowId: string; args: [AgentRunWorkflowInput] }): Promise<void>;
@@ -300,11 +301,16 @@ export class DelegationService {
 
     // docs/specs/repository-setup-and-services.md. A product with no repository can change none,
     // so the reply links the page where an operator sets one up, instead of an empty question.
-    if (!repositories.some((repository) => repository.absentSince === null) && this.dependencies.productPageUrl !== undefined) {
+    if (!repositories.some(isMember) && this.dependencies.productPageUrl !== undefined) {
       await this.dependencies.webhookLog.remove(deliveryId);
+      // docs/specs/repository-membership.md. A claim no admin accepted is no member, and the reply says so.
+      const waiting = repositories.filter(awaitsAcceptance).map((repository) => repository.fullName);
       const reason =
-        `The product ${product.slug} has no repository yet, so Factoree can change nothing. ` +
-        `Set one up on ${this.dependencies.productPageUrl(product.id)}, under Repositories, then delegate the issue again.`;
+        waiting.length > 0
+          ? `The product ${product.slug} has no accepted repository, so Factoree can change nothing. ` +
+            `${waiting.join(", ")} ${waiting.length === 1 ? "claims" : "claim"} it and ${waiting.length === 1 ? "waits" : "wait"} for a Linear workspace admin to accept ${waiting.length === 1 ? "it" : "them"} on ${this.dependencies.productPageUrl(product.id)}, under Repositories. Then delegate the issue again.`
+          : `The product ${product.slug} has no repository yet, so Factoree can change nothing. ` +
+            `Set one up on ${this.dependencies.productPageUrl(product.id)}, under Repositories, then delegate the issue again.`;
       await this.dependencies.refusalNotifier.postFailure(event.organizationId, event.agentSession.id, reason);
       return { kind: "blocked_routing", reason };
     }

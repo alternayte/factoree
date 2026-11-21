@@ -97,7 +97,15 @@ function ProductList({ workspace }: { workspace: Membership }) {
               </td>
               <td className="t-value">{p.linearTeamKey}</td>
               <td>
-                {p.status === "active" ? <Badge tone="success">active</Badge> : <Badge tone="warning">pending</Badge>}
+                <span className="flex flex-wrap items-center gap-1">
+                  {p.status === "active" ? <Badge tone="success">active</Badge> : <Badge tone="warning">pending</Badge>}
+                  {/* docs/specs/repository-membership.md. Claims that wait for an admin. */}
+                  {p.pendingRepositories ? (
+                    <Badge tone="warning">
+                      {p.pendingRepositories} {p.pendingRepositories === 1 ? "repository waits" : "repositories wait"}
+                    </Badge>
+                  ) : null}
+                </span>
               </td>
               <td className="t-value">{p.defaultAutonomy}</td>
               <td className="t-value">{p.model ?? <span className="font-sans text-mute">Default</span>}</td>

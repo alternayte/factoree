@@ -2570,6 +2570,9 @@
                     },
                     "updatedAt": {
                       "type": "string"
+                    },
+                    "pendingRepositories": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -3345,6 +3348,9 @@
                     },
                     "updatedAt": {
                       "type": "string"
+                    },
+                    "pendingRepositories": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -3796,6 +3802,9 @@
                       },
                       "updatedAt": {
                         "type": "string"
+                      },
+                      "pendingRepositories": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4240,6 +4249,9 @@
                     },
                     "updatedAt": {
                       "type": "string"
+                    },
+                    "pendingRepositories": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -5080,6 +5092,9 @@
                     },
                     "updatedAt": {
                       "type": "string"
+                    },
+                    "pendingRepositories": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -5651,6 +5666,9 @@
                     },
                     "updatedAt": {
                       "type": "string"
+                    },
+                    "pendingRepositories": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -10119,6 +10137,58 @@
                           "null"
                         ]
                       },
+                      "membership": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "repositoryId": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "accepted",
+                                  "rejected"
+                                ]
+                              },
+                              "decidedBy": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "decidedAt": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "requestedSecretNames": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "configSha": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "repositoryId",
+                              "state",
+                              "decidedBy",
+                              "decidedAt",
+                              "requestedSecretNames",
+                              "configSha"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "buildAheadFailures": {
                         "type": "array",
                         "items": {
@@ -10254,6 +10324,7 @@
                       "githubInstallationId",
                       "registered",
                       "needsSetupReason",
+                      "membership",
                       "buildAheadFailures",
                       "setup"
                     ]
@@ -10408,6 +10479,154 @@
             }
           },
           "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/repositories/{repositoryId}/membership": {
+      "post": {
+        "operationId": "decideRepositoryMembership",
+        "summary": "Accept or reject the claim of a repository on this product",
+        "tags": [
+          "products"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "accept",
+                      "reject"
+                    ]
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId",
+                  "decision"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "repositoryId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repositoryId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "accepted",
+                        "rejected"
+                      ]
+                    },
+                    "decidedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "decidedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "requestedSecretNames": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "configSha": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "repositoryId",
+                    "state",
+                    "decidedBy",
+                    "decidedAt",
+                    "requestedSecretNames",
+                    "configSha"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
             "description": "Default Response",
             "content": {
               "application/json": {

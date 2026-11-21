@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchReplyToCandidates, proposeTarget, proposeTargets, selectTargets } from "~/domain/routing/select-targets.js";
+import { matchReplyToCandidates, namedNonMembers, proposeTarget, proposeTargets, selectTargets } from "~/domain/routing/select-targets.js";
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
 
 const repository = (fullName: string, linearProjects: string[] = []): RepositoryRecord => ({
@@ -14,6 +14,9 @@ const repository = (fullName: string, linearProjects: string[] = []): Repository
   discoveredAt: new Date(0),
   lastSeenAt: new Date(0),
   absentSince: null,
+  membership: "accepted",
+  membershipDecidedBy: null,
+  membershipDecidedAt: null,
   githubInstallationId: "install-1",
 });
 
@@ -102,3 +105,19 @@ describe("proposeTargets (docs/specs/change-sets.md, DI-21.130)", () => {
     expect(matchReplyToCandidates("c-dash", [DASH, repository("someone/c-dash")])).toEqual([]);
   });
 });
+
+// docs/specs/repository-membership.md. A claim no admin accepted is never a target, and an issue
+// that names it is told so.
+describe("repository membership in target selection", () => {
+  const PENDING = { ...repository("alternayte/anthology"), membership: "pending" as const };
+
+  it("selects the sole member and ignores a pending claim", () => {
+    expect(selectTargets([DASH, PENDING], null)).toMatchObject({ kind: "selected", repositories: [DASH], reason: "sole member" });
+  });
+
+  it("names a pending repository the issue names, and no member", () => {
+    expect(namedNonMembers([DASH, PENDING], "Fix the anthology header and the c-dash footer.").map((r) => r.fullName)).toEqual(["alternayte/anthology"]);
+    expect(namedNonMembers([DASH, PENDING], "Fix the c-dash footer.")).toEqual([]);
+  });
+});
+

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { RepositorySetupRecord } from "~/domain/setup/repository-setup.js";
+import { membershipOfClaim } from "~/domain/products/membership.js";
 import { DiscoveryService } from "~/domain/products/discovery-service.js";
 import type { CreateProductInput, ProductRecord, ProductRegistry } from "~/domain/products/product-registry.js";
 import type {
@@ -133,6 +135,11 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       existing.githubInstallationId = input.githubInstallationId;
       existing.lastSeenAt = new Date();
       existing.absentSince = null;
+      if (input.membership !== undefined) {
+        existing.membership = input.membership;
+        existing.membershipDecidedBy = null;
+        existing.membershipDecidedAt = null;
+      }
       return Promise.resolve(existing);
     }
     this.counter += 1;
@@ -149,6 +156,9 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,
+      membership: input.membership ?? "pending",
+      membershipDecidedBy: null,
+      membershipDecidedAt: null,
     };
     this.rows.push(record);
     return Promise.resolve(record);
@@ -166,6 +176,15 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
     const row = this.rows.find((r) => r.tenantId === tenantId && r.fullName === fullName);
     if (row !== undefined) row.absentSince = at;
     return Promise.resolve();
+  }
+
+  decideMembership(input: { tenantId: string; productId: string; repositoryId: string; membership: "accepted" | "rejected"; decidedBy: string | null; at: Date }): Promise<RepositoryRecord | null> {
+    const row = this.rows.find((r) => r.id === input.repositoryId && r.tenantId === input.tenantId && r.productId === input.productId);
+    if (row === undefined) return Promise.resolve(null);
+    row.membership = input.membership;
+    row.membershipDecidedBy = input.decidedBy;
+    row.membershipDecidedAt = input.at;
+    return Promise.resolve(row);
   }
 }
 
@@ -223,6 +242,8 @@ class FakeLinearTeamLookup implements LinearTeamLookup {
 interface BuildOptions {
   config?: string | null;
   configByRepository?: Record<string, string | null>;
+  /** The repositories an admin started a setup of, per product id. */
+  setupsByProduct?: Record<string, string[]>;
 }
 
 const build = (options: BuildOptions) => {
@@ -232,7 +253,13 @@ const build = (options: BuildOptions) => {
   const logger = new FakeLogger();
   const configByRepository = options.configByRepository ?? { "acme/api": options.config ?? null };
   const discoveryClient = new FakeDiscoveryClient(configByRepository);
-  const service = new DiscoveryService(discoveryClient, products, repositories, linear, logger);
+  const setups = {
+    latestByProduct: (productId: string) =>
+      Promise.resolve(
+        (options.setupsByProduct?.[productId] ?? []).map((repositoryFullName) => ({ tenantId: "tenant-1", productId, repositoryFullName }) as RepositorySetupRecord),
+      ),
+  };
+  const service = new DiscoveryService(discoveryClient, products, repositories, linear, logger, setups);
   return { service, products, repositories, linear, logger };
 };
 
@@ -321,5 +348,55 @@ describe("DiscoveryService.syncRepository", () => {
 
     const row = await repositories.findByFullName("tenant-1", "acme/api");
     expect(row?.githubInstallationId).toBe("42");
+  });
+});
+
+// docs/specs/repository-membership.md.
+describe("repository membership", () => {
+  const twoRepositories = {
+    "acme/api": configFor("checkout-platform", "PAY"),
+    "acme/web": configFor("checkout-platform", "PAY"),
+  };
+
+  it("accepts a claim on a pending product, and holds a claim on an active product pending", async () => {
+    const { service, products, repositories } = build({ configByRepository: twoRepositories });
+    const first = await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
+    expect(first).toMatchObject({ kind: "registered", membership: "accepted" });
+    const product = await products.findBySlug("tenant-1", "checkout-platform");
+    await products.activate("tenant-1", product!.id, "L2");
+
+    const second = await service.syncRepository("tenant-1", "acme/web", "main", "install-1");
+    expect(second).toMatchObject({ kind: "registered", membership: "pending" });
+    expect((await repositories.findByFullName("tenant-1", "acme/web"))?.membership).toBe("pending");
+  });
+
+  it("keeps a rejection when the repository pushes its config again", async () => {
+    const { service, products, repositories } = build({ configByRepository: twoRepositories });
+    await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
+    const product = await products.findBySlug("tenant-1", "checkout-platform");
+    await products.activate("tenant-1", product!.id, "L2");
+    await service.syncRepository("tenant-1", "acme/web", "main", "install-1");
+    const web = await repositories.findByFullName("tenant-1", "acme/web");
+    await repositories.decideMembership({ tenantId: "tenant-1", productId: product!.id, repositoryId: web!.id, membership: "rejected", decidedBy: "Ada", at: new Date() });
+
+    const again = await service.syncRepository("tenant-1", "acme/web", "main", "install-1");
+    expect(again).toMatchObject({ kind: "registered", membership: "rejected" });
+  });
+
+  it("accepts a claim on an active product when an admin started a setup of the repository from it", async () => {
+    const setupsByProduct: Record<string, string[]> = {};
+    const { service, products } = build({ configByRepository: twoRepositories, setupsByProduct });
+    await service.syncRepository("tenant-1", "acme/api", "main", "install-1");
+    const product = await products.findBySlug("tenant-1", "checkout-platform");
+    await products.activate("tenant-1", product!.id, "L2");
+    setupsByProduct[product!.id] = ["acme/web"];
+
+    const outcome = await service.syncRepository("tenant-1", "acme/web", "main", "install-1");
+    expect(outcome).toMatchObject({ kind: "registered", membership: "accepted" });
+  });
+
+  it("starts a new pending decision when the config names another active product", () => {
+    expect(membershipOfClaim({ previous: { productId: "a", membership: "accepted" }, productId: "b", productActive: true, setupStartedFromProduct: false })).toEqual({ membership: "pending", changed: true });
+    expect(membershipOfClaim({ previous: { productId: "a", membership: "rejected" }, productId: "a", productActive: true, setupStartedFromProduct: true })).toEqual({ membership: "rejected", changed: false });
   });
 });

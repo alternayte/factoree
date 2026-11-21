@@ -51,7 +51,7 @@ class FakeTenantRegistry implements TenantRegistry {
 class FakeDiscoveryService {
   readonly synced: [string, string, string][] = [];
   readonly absent: string[] = [];
-  nextOutcome: DiscoveryOutcome = { kind: "registered", repositoryId: "r1", productId: "p1", productCreated: false };
+  nextOutcome: DiscoveryOutcome = { kind: "registered", repositoryId: "r1", productId: "p1", productCreated: false, membership: "accepted" };
   syncRepository(
     _tenantId: string,
     fullName: string,

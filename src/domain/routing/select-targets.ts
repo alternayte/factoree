@@ -1,4 +1,6 @@
 import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
+// The workflow bundler resolves a relative path only, so value imports do not use the `~/` alias.
+import { awaitsAcceptance, isMember } from "../products/membership.js";
 
 export type TargetOutcome =
   | { kind: "selected"; repository: RepositoryRecord; reason: string; notify: boolean }
@@ -12,7 +14,7 @@ export const selectTarget = (
   repositories: RepositoryRecord[],
   proposal: { fullName: string; reason: string; confident: boolean } | null,
 ): TargetOutcome => {
-  const present = repositories.filter((candidate) => candidate.absentSince === null);
+  const present = repositories.filter(isMember);
   const sole = present[0];
   if (present.length === 1 && sole !== undefined) {
     return { kind: "selected", repository: sole, reason: "sole member", notify: false };
@@ -31,6 +33,22 @@ const mentions = (text: string, name: string): boolean => {
 };
 
 /**
+ * docs/specs/repository-membership.md. The repositories the issue text names, by full name or by
+ * a short name no other repository shares, whose claim no admin accepted yet or an admin rejected.
+ */
+export const namedNonMembers = (repositories: RepositoryRecord[], issueText: string): RepositoryRecord[] => {
+  const present = repositories.filter((candidate) => candidate.absentSince === null);
+  const shortName = (fullName: string): string => fullName.split("/").at(-1) ?? fullName;
+  return present.filter((candidate) => {
+    if (!awaitsAcceptance(candidate)) return false;
+    if (mentions(issueText, candidate.fullName)) return true;
+    const short = shortName(candidate.fullName);
+    const shared = present.some((other) => other !== candidate && shortName(other.fullName).toLowerCase() === short.toLowerCase());
+    return !shared && mentions(issueText, short);
+  });
+};
+
+/**
  * docs/specs/own-proposals-and-parallel-runs.md. The two deterministic target rules. Rule one: the
  * issue text names exactly one repository, by its full name or by a short name no other
  * repository shares. Rule two: the issue's Linear project matches exactly one repository's
@@ -41,7 +59,7 @@ export const proposeTarget = (
   issueText: string,
   linearProject: string | null,
 ): { fullName: string; reason: string; confident: true } | null => {
-  const present = repositories.filter((candidate) => candidate.absentSince === null);
+  const present = repositories.filter(isMember);
   const shortName = (fullName: string): string => fullName.split("/").at(-1) ?? fullName;
   const named = present.flatMap((candidate) => {
     const short = shortName(candidate.fullName);
@@ -102,7 +120,7 @@ export const proposeTargets = (
   issueText: string,
   linearProject: string | null,
 ): { fullNames: string[]; reason: string } | null => {
-  const present = repositories.filter((candidate) => candidate.absentSince === null);
+  const present = repositories.filter(isMember);
   const shortName = (fullName: string): string => fullName.split("/").at(-1) ?? fullName;
   const named = inSetOrder(present).flatMap((candidate) => {
     const short = shortName(candidate.fullName);
@@ -141,7 +159,7 @@ export const selectTargets = (
   repositories: RepositoryRecord[],
   proposal: { fullNames: string[]; reason: string } | null,
 ): TargetSetOutcome => {
-  const present = repositories.filter((candidate) => candidate.absentSince === null);
+  const present = repositories.filter(isMember);
   const sole = present[0];
   if (present.length === 1 && sole !== undefined) {
     return { kind: "selected", repositories: [sole], reason: "sole member", notify: false };

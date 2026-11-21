@@ -33,7 +33,7 @@ export const createHostCredentialWiring = (dependencies: {
             minRemainingMs: GITHUB_TOKEN_MIN_REMAINING_MS,
           }),
         productRepositories: async (tenant, product, installationId) => {
-          const where: Prisma.RepositoryWhereInput = { tenantId: tenant, productId: product, githubInstallationId: installationId, absentSince: null };
+          const where: Prisma.RepositoryWhereInput = { tenantId: tenant, productId: product, githubInstallationId: installationId, absentSince: null, membership: "accepted" };
           return (await dependencies.prisma.repository.findMany({ where, select: { fullName: true } })).map((row) => row.fullName);
         },
       },
@@ -49,7 +49,7 @@ export const createHostCredentialWiring = (dependencies: {
     /** docs/specs/private-stack-onboarding.md. What already covers a derived host of the product. */
     coverage: async (tenantId: string, productId: string): Promise<DerivedHostCoverage> => {
       const product = await dependencies.prisma.product.findUnique({ where: { id: productId }, select: { allowedDomains: true } });
-      const repositories = await dependencies.prisma.repository.findMany({ where: { tenantId, productId, absentSince: null }, select: { fullName: true } });
+      const repositories = await dependencies.prisma.repository.findMany({ where: { tenantId, productId, absentSince: null, membership: "accepted" }, select: { fullName: true } });
       return derivedHostCoverageOf(product?.allowedDomains ?? [], await store.list(tenantId, productId), repositories.map((row) => row.fullName));
     },
   };

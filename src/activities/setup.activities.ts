@@ -60,6 +60,7 @@ import { applyEgress, assertBindable, probeCredentialHosts, probeHosts, type Cre
 import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
 import { recordSessionFaults } from "./agent-session-recording.js";
+import { isMember } from "~/domain/products/membership.js";
 
 export interface SetupActivityDependencies {
   /** docs/specs/run-diagnostics.md. The writer of run events, absent in a test that records none. */
@@ -700,7 +701,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         dependencies.repositories === undefined
           ? []
           : (await dependencies.repositories.listByProduct(setup.productId))
-              .filter((row) => row.tenantId === setup.tenantId && row.absentSince === null && row.fullName.toLowerCase() !== setup.repositoryFullName.toLowerCase())
+              .filter((row) => row.tenantId === setup.tenantId && isMember(row) && row.fullName.toLowerCase() !== setup.repositoryFullName.toLowerCase())
               .map((row) => row.fullName)
               .sort();
       const prompt: SetupPromptInputs = {

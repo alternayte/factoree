@@ -749,6 +749,7 @@ export type CreateSetupProductResponses = {
     } | null;
     createdAt: string;
     updatedAt: string;
+    pendingRepositories?: number;
   };
 };
 
@@ -918,6 +919,7 @@ export type ListProductsResponses = {
     } | null;
     createdAt: string;
     updatedAt: string;
+    pendingRepositories?: number;
   }>;
 };
 
@@ -1022,6 +1024,7 @@ export type CreateProductResponses = {
     } | null;
     createdAt: string;
     updatedAt: string;
+    pendingRepositories?: number;
   };
 };
 
@@ -1159,6 +1162,7 @@ export type GetProductResponses = {
     } | null;
     createdAt: string;
     updatedAt: string;
+    pendingRepositories?: number;
   };
 };
 
@@ -1313,6 +1317,7 @@ export type UpdateProductResponses = {
     } | null;
     createdAt: string;
     updatedAt: string;
+    pendingRepositories?: number;
   };
 };
 
@@ -1415,6 +1420,7 @@ export type ActivateProductResponses = {
     } | null;
     createdAt: string;
     updatedAt: string;
+    pendingRepositories?: number;
   };
 };
 
@@ -2594,6 +2600,14 @@ export type ListRepositorySetupsResponses = {
     githubInstallationId: string;
     registered: boolean;
     needsSetupReason: string | null;
+    membership: {
+      repositoryId: string;
+      state: "pending" | "accepted" | "rejected";
+      decidedBy: string | null;
+      decidedAt: string | null;
+      requestedSecretNames: Array<string>;
+      configSha: string;
+    } | null;
     buildAheadFailures: Array<{
       provider: string;
       reason: string;
@@ -2667,6 +2681,53 @@ export type StartRepositorySetupsResponses = {
 };
 
 export type StartRepositorySetupsResponse = StartRepositorySetupsResponses[keyof StartRepositorySetupsResponses];
+
+export type DecideRepositoryMembershipData = {
+  body: {
+    linearWorkspaceId: string;
+    decision: "accept" | "reject";
+  };
+  path: {
+    id: string;
+    repositoryId: string;
+  };
+  query?: never;
+  url: "/admin/products/{id}/repositories/{repositoryId}/membership";
+};
+
+export type DecideRepositoryMembershipErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type DecideRepositoryMembershipError = DecideRepositoryMembershipErrors[keyof DecideRepositoryMembershipErrors];
+
+export type DecideRepositoryMembershipResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    repositoryId: string;
+    state: "pending" | "accepted" | "rejected";
+    decidedBy: string | null;
+    decidedAt: string | null;
+    requestedSecretNames: Array<string>;
+    configSha: string;
+  };
+};
+
+export type DecideRepositoryMembershipResponse =
+  DecideRepositoryMembershipResponses[keyof DecideRepositoryMembershipResponses];
 
 export type ListRepositorySetupEventsData = {
   body?: never;

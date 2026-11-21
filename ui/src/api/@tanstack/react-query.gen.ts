@@ -20,6 +20,7 @@ import {
   createProduct,
   createSandboxProvider,
   createSetupProduct,
+  decideRepositoryMembership,
   deleteContextSource,
   deleteProduct,
   deleteProductSecret,
@@ -99,6 +100,9 @@ import type {
   CreateSetupProductData,
   CreateSetupProductError,
   CreateSetupProductResponse,
+  DecideRepositoryMembershipData,
+  DecideRepositoryMembershipError,
+  DecideRepositoryMembershipResponse,
   DeleteContextSourceData,
   DeleteContextSourceError,
   DeleteContextSourceResponse,
@@ -1051,6 +1055,33 @@ export const startRepositorySetupsMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await startRepositorySetups({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+/**
+ * Accept or reject the claim of a repository on this product
+ */
+export const decideRepositoryMembershipMutation = (
+  options?: Partial<Options<DecideRepositoryMembershipData>>,
+): UseMutationOptions<
+  DecideRepositoryMembershipResponse,
+  DecideRepositoryMembershipError,
+  Options<DecideRepositoryMembershipData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DecideRepositoryMembershipResponse,
+    DecideRepositoryMembershipError,
+    Options<DecideRepositoryMembershipData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await decideRepositoryMembership({
         ...options,
         ...fnOptions,
         throwOnError: true,

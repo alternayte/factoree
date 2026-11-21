@@ -11,6 +11,7 @@ import { PATCH } from "../patches.js";
 import type { Run } from "../run.js";
 import { defaultBranchOf, type ResolvedContext, type TargetBase } from "./context.js";
 import type { WorkItemFacts } from "./work-item.js";
+import { isMember } from "../../../domain/products/membership.js";
 
 export type PrepareInput = Parameters<Activities["prepareSandbox"]>[0];
 
@@ -54,7 +55,7 @@ export class Workspace {
     this.siblings = targetsOpen
       ? run.input.product.repositories.filter(
           (repository) =>
-            repository.absentSince === null && !bases.some((target) => target.slug.toLowerCase() === repository.fullName.toLowerCase()),
+            isMember(repository) && !bases.some((target) => target.slug.toLowerCase() === repository.fullName.toLowerCase()),
         )
       : [];
   }

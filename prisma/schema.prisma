@@ -746,6 +746,12 @@ model Repository {
   // offers "Run setup again". A build-ahead that succeeds clears it.
   needsSetupReason     String?       @map("needs_setup_reason")
   needsSetupAt         DateTime?     @map("needs_setup_at")
+  // docs/specs/repository-membership.md. pending, accepted or rejected. A claim on an active product
+  // is pending until a Linear workspace admin accepts it. Only an accepted repository is a member.
+  membership           String        @default("pending")
+  // The display name of the admin who decided, or null for an acceptance no person made.
+  membershipDecidedBy  String?       @map("membership_decided_by")
+  membershipDecidedAt  DateTime?     @map("membership_decided_at")
   runTargets           RunTarget[]
   pullRequests         PullRequest[]
 

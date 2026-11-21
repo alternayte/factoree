@@ -1,6 +1,7 @@
 import { readDerivedHosts } from "~/domain/setup/derived-hosts.js";
 import { credentialKeyOf } from "~/domain/products/host-credentials.js";
 import { PrismaHostCredentialStore } from "~/persistence/prisma/host-credential.prisma.js";
+import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import { SkaelRegistry } from "~/adapters/skael/skael-registry.js";
 import { PrismaRunStopLog } from "~/persistence/prisma/run-stop.prisma.js";
 import { PrismaRunDraftStore } from "~/persistence/prisma/run-draft.prisma.js";
@@ -155,7 +156,7 @@ const discoveryClient = new GitHubRepositoryDiscoveryClient({
   apiBaseUrl: githubApiBaseUrl(settings),
   tokens: githubTokens,
 });
-const discovery = new DiscoveryService(discoveryClient, products, repositories, linearTeams, logger);
+const discovery = new DiscoveryService(discoveryClient, products, repositories, linearTeams, logger, new PrismaRepositorySetupStore(prisma));
 
 const startInstallationSync = createSyncInstallationStarter(client, env.FACTOREE_TEMPORAL_TASK_QUEUE);
 // docs/specs/run-speed.md. A changed bootstrap key requests a build-ahead of the warm snapshot.

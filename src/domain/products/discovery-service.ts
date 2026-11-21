@@ -3,6 +3,8 @@ import type { LinearTeamLookup } from "~/adapters/linear/team-lookup.js";
 import { FactoreeConfigPrivilegeError, parseFactoreeConfig } from "~/domain/products/factoree-config.js";
 import type { ProductRecord, ProductRegistry } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
+import { membershipOfClaim, type RepositoryMembership } from "~/domain/products/membership.js";
+import type { RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import type { Logger } from "~/telemetry/logger.js";
 
 export type DiscoveryOutcome =
@@ -11,6 +13,8 @@ export type DiscoveryOutcome =
       repositoryId: string;
       productId: string;
       productCreated: boolean;
+      /** docs/specs/repository-membership.md. Pending until an admin accepts a claim on an active product. */
+      membership: RepositoryMembership;
       // Set when the stored Linear team key no longer matches Linear. The binding survives,
       // because the team id is stable. Specification section 9 requires a warning, not a failure.
       drift?: "linear_team_key_renamed";
@@ -30,6 +34,11 @@ export class DiscoveryService {
     private readonly repositories: RepositoryRegistry,
     private readonly linearTeamLookup: LinearTeamLookup,
     private readonly logger: Logger,
+    /**
+     * docs/specs/repository-membership.md. The setups an admin started from a product page. A
+     * setup of the repository from the product its claim names accepts the claim.
+     */
+    private readonly setups?: Pick<RepositorySetupStore, "latestByProduct">,
   ) {}
 
   async syncRepository(
@@ -103,6 +112,27 @@ export class DiscoveryService {
       drift = "linear_team_key_renamed";
     }
 
+    const previous = await this.repositories.findByFullName(tenantId, fullName);
+    const productActive = product.status === "active";
+    const newClaim = previous === null || previous.productId !== product.id;
+    const setupStartedFromProduct =
+      newClaim && productActive && this.setups !== undefined
+        ? (await this.setups.latestByProduct(product.id)).some((setup) => setup.tenantId === tenantId && setup.repositoryFullName.toLowerCase() === fullName.toLowerCase())
+        : false;
+    const claim = membershipOfClaim({
+      previous: previous === null ? null : { productId: previous.productId, membership: previous.membership },
+      productId: product.id,
+      productActive,
+      setupStartedFromProduct,
+    });
+    if (claim.changed && claim.membership === "pending") {
+      this.logger.warn("A repository claims an active product. It waits for an admin to accept it.", {
+        tenant_id: tenantId,
+        product_id: product.id,
+        repository: fullName,
+      });
+    }
+
     const repository = await this.repositories.upsert({
       tenantId,
       productId: product.id,
@@ -112,6 +142,7 @@ export class DiscoveryService {
       requestedSecretNames: config.secrets.require,
       linearProjects: config.identity.linear.projects,
       githubInstallationId,
+      ...(claim.changed ? { membership: claim.membership } : {}),
     });
 
     return {
@@ -119,6 +150,7 @@ export class DiscoveryService {
       repositoryId: repository.id,
       productId: product.id,
       productCreated,
+      membership: repository.membership,
       ...(drift !== undefined ? { drift } : {}),
     };
   }

@@ -7,6 +7,7 @@ import {
 import { repositoryNamesOf } from "~/activities/repository-credential.js";
 import { PrismaRepositorySetupStore } from "~/persistence/prisma/repository-setup.prisma.js";
 import { PrismaAppChangeIssueStore } from "~/persistence/prisma/app-change-issue.prisma.js";
+import { toMembership } from "~/domain/products/membership.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import type { Env } from "~/config/env.js";
@@ -272,7 +273,14 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
             ...row,
             linearProjects: row.linearProjects,
             requestedSecretNames: row.requestedSecretNames,
+            membership: toMembership(row.membership),
           })),
+        repositories: dependencies.repositories,
+        ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
+        userName: async (userId) => {
+          const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+          return user === null ? null : user.name.trim() || user.email;
+        },
         installations: async (tenantId) =>
           (await prisma.gitHubInstallation.findMany({ where: { tenantId } })).map((row) => row.githubInstallationId),
         listInstallationRepositories:
@@ -281,7 +289,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         derivedHosts: dependencies.repositorySetup?.derivedHosts,
         derivedHostCoverage: async (tenantId, productId) => {
           const product = await prisma.product.findUnique({ where: { id: productId }, select: { allowedDomains: true } });
-          const registered = await prisma.repository.findMany({ where: { tenantId, productId, absentSince: null }, select: { fullName: true } });
+          const registered = await prisma.repository.findMany({ where: { tenantId, productId, absentSince: null, membership: "accepted" }, select: { fullName: true } });
           return derivedHostCoverageOf(product?.allowedDomains ?? [], await new PrismaHostCredentialStore(prisma).list(tenantId, productId), registered.map((row) => row.fullName));
         },
         buildAheadFailures: async (tenantId) => {
