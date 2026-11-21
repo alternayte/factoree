@@ -1,4 +1,5 @@
 import type { AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import { toolKindOf, type ToolKind } from "~/domain/runs/session-pulse.js";
 import { assistantText } from "../assistant-text.js";
 import { isProviderUnreachableText } from "../provider-unreachable.js";
 
@@ -187,4 +188,36 @@ export const openClaudeToolCall = (text: string): { name: string; input: string 
     }
   }
   return [...open.values()].at(-1) ?? null;
+};
+
+/**
+ * docs/specs/factory-floor.md. What the session does now, from the newest assistant or user event:
+ * the kind of the newest tool use, or `think` after a tool result or for model text. Null before
+ * the first such event. The scan starts at the end, so a long stream costs one short walk.
+ */
+export const latestClaudeToolKind = (text: string): ToolKind | null => {
+  const lines = text.split(/\r\n|\r|\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const trimmed = lines[index]!.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) continue;
+    if (parsed["type"] === "user") return "think";
+    if (parsed["type"] !== "assistant" || !isRecord(parsed["message"])) continue;
+    const content = parsed["message"]["content"];
+    if (!Array.isArray(content) || content.length === 0) return "think";
+    const last = content.at(-1) as unknown;
+    if (isRecord(last) && last["type"] === "tool_use") {
+      const input = last["input"];
+      const command = isRecord(input) && typeof input["command"] === "string" ? input["command"] : null;
+      return toolKindOf(typeof last["name"] === "string" ? last["name"] : "tool", command);
+    }
+    return "think";
+  }
+  return null;
 };

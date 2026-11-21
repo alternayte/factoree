@@ -26,6 +26,8 @@ import {
   deleteProductSecret,
   deleteSandboxProvider,
   getDrainMode,
+  getFloor,
+  getFloorReplay,
   getInstallSettings,
   getMe,
   getModelCatalog,
@@ -117,6 +119,12 @@ import type {
   DeleteSandboxProviderResponse,
   GetDrainModeData,
   GetDrainModeResponse,
+  GetFloorData,
+  GetFloorError,
+  GetFloorReplayData,
+  GetFloorReplayError,
+  GetFloorReplayResponse,
+  GetFloorResponse,
   GetInstallSettingsData,
   GetInstallSettingsResponse,
   GetMeData,
@@ -791,6 +799,50 @@ export const getModelCatalogOptions = (options: Options<GetModelCatalogData>) =>
       return data;
     },
     queryKey: getModelCatalogQueryKey(options),
+  });
+
+export const getFloorQueryKey = (options: Options<GetFloorData>) => createQueryKey("getFloor", options);
+
+/**
+ * The live factory floor of a workspace
+ */
+export const getFloorOptions = (options: Options<GetFloorData>) =>
+  queryOptions<GetFloorResponse, GetFloorError, GetFloorResponse, ReturnType<typeof getFloorQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getFloor({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getFloorQueryKey(options),
+  });
+
+export const getFloorReplayQueryKey = (options: Options<GetFloorReplayData>) =>
+  createQueryKey("getFloorReplay", options);
+
+/**
+ * The factory floor of a workspace over a past window of at most 7 days
+ */
+export const getFloorReplayOptions = (options: Options<GetFloorReplayData>) =>
+  queryOptions<
+    GetFloorReplayResponse,
+    GetFloorReplayError,
+    GetFloorReplayResponse,
+    ReturnType<typeof getFloorReplayQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getFloorReplay({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getFloorReplayQueryKey(options),
   });
 
 export const listRunsQueryKey = (options: Options<ListRunsData>) => createQueryKey("listRuns", options);

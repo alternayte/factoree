@@ -6,7 +6,8 @@ import type {
   CliUsageReading,
 } from "../cli-agent-runner.js";
 import { CliAgentRunner, USAGE_READ_TIMEOUT_MS, type AgentSessionSettings } from "../cli-agent-runner.js";
-import { parseOpenCodeOutput } from "./output-parser.js";
+import { latestOpenCodeToolKind, parseOpenCodeOutput } from "./output-parser.js";
+import type { ToolKind } from "~/domain/runs/session-pulse.js";
 import { readOpenCodeExport } from "./export-usage.js";
 import type { AgentRole } from "~/domain/runs/agent-runner.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
@@ -202,5 +203,9 @@ export class OpenCodeRunner extends CliAgentRunner {
 
   protected parseOutput(text: string): CliAgentParse {
     return parseOpenCodeOutput(text);
+  }
+
+  protected override latestToolKind(stdout: string): ToolKind | null {
+    return latestOpenCodeToolKind(stdout);
   }
 }

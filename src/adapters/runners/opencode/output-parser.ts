@@ -1,3 +1,5 @@
+import { toolKindOf, type ToolKind } from "~/domain/runs/session-pulse.js";
+
 export interface OpenCodeOutput {
   sessionId: string | null;
   summary: string;
@@ -81,4 +83,33 @@ export const parseOpenCodeOutput = (text: string): OpenCodeOutput => {
     summary: summary.length > 0 ? summary : lastPlainLine,
     ...(errorMessage === null ? {} : { errorMessage }),
   };
+};
+
+/**
+ * docs/specs/factory-floor.md. What the session does now, from the newest event: the kind of the
+ * newest tool call, or `think` for model text or reasoning. opencode writes a tool call when it
+ * returns, so a running call shows as the kind before it. Null before the first such event.
+ */
+export const latestOpenCodeToolKind = (text: string): ToolKind | null => {
+  const lines = text.split(/\r\n|\r|\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const trimmed = lines[index]!.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) continue;
+    const type = parsed["type"];
+    if (type === "text" || type === "reasoning") return "think";
+    if (type !== "tool_use") continue;
+    const part = isRecord(parsed["part"]) ? parsed["part"] : {};
+    const state = isRecord(part["state"]) ? part["state"] : {};
+    const input = isRecord(state["input"]) ? state["input"] : {};
+    const command = typeof input["command"] === "string" ? input["command"] : null;
+    return toolKindOf(typeof part["tool"] === "string" ? part["tool"] : "tool", command);
+  }
+  return null;
 };

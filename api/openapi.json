@@ -6907,6 +6907,786 @@
         }
       }
     },
+    "/admin/floor": {
+      "get": {
+        "operationId": "getFloor",
+        "summary": "The live factory floor of a workspace",
+        "tags": [
+          "floor"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "teamKey": {
+                            "type": "string"
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "productId",
+                          "name",
+                          "slug",
+                          "teamKey",
+                          "repositories"
+                        ]
+                      }
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "repairLimit": {
+                            "type": "number"
+                          },
+                          "costUsd": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "followsPullRequest": {
+                            "type": "boolean"
+                          },
+                          "approximate": {
+                            "type": "boolean"
+                          },
+                          "statuses": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "status",
+                                "at"
+                              ]
+                            }
+                          },
+                          "pullRequests": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string"
+                                },
+                                "repository": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "open",
+                                    "merged",
+                                    "closed"
+                                  ]
+                                },
+                                "openedAt": {
+                                  "type": "string"
+                                },
+                                "closedAt": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "url",
+                                "repository",
+                                "state",
+                                "openedAt",
+                                "closedAt"
+                              ]
+                            }
+                          },
+                          "deploys": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "environment": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "success",
+                                    "failure"
+                                  ]
+                                },
+                                "at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "environment",
+                                "state",
+                                "at"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "title",
+                          "url",
+                          "createdAt",
+                          "repairLimit",
+                          "costUsd",
+                          "followsPullRequest",
+                          "approximate",
+                          "statuses",
+                          "pullRequests",
+                          "deploys"
+                        ]
+                      }
+                    },
+                    "setups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "repository": {
+                            "type": "string"
+                          },
+                          "approximate": {
+                            "type": "boolean"
+                          },
+                          "statuses": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "status",
+                                "at"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "repository",
+                          "approximate",
+                          "statuses"
+                        ]
+                      }
+                    },
+                    "pulses": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "setupId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "toolKind": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "edit",
+                              "shell",
+                              "browser",
+                              "think"
+                            ]
+                          },
+                          "lastOutputAt": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "setupId",
+                          "role",
+                          "toolKind",
+                          "lastOutputAt",
+                          "at"
+                        ]
+                      }
+                    },
+                    "throughput": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "day": {
+                            "type": "string"
+                          },
+                          "arrived": {
+                            "type": "number"
+                          },
+                          "merged": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "day",
+                          "arrived",
+                          "merged"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generatedAt",
+                    "from",
+                    "to",
+                    "lines",
+                    "runs",
+                    "setups",
+                    "pulses",
+                    "throughput"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/floor/replay": {
+      "get": {
+        "operationId": "getFloorReplay",
+        "summary": "The factory floor of a workspace over a past window of at most 7 days",
+        "tags": [
+          "floor"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "in": "query",
+            "name": "from",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "in": "query",
+            "name": "to",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "teamKey": {
+                            "type": "string"
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "productId",
+                          "name",
+                          "slug",
+                          "teamKey",
+                          "repositories"
+                        ]
+                      }
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "repairLimit": {
+                            "type": "number"
+                          },
+                          "costUsd": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "followsPullRequest": {
+                            "type": "boolean"
+                          },
+                          "approximate": {
+                            "type": "boolean"
+                          },
+                          "statuses": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "status",
+                                "at"
+                              ]
+                            }
+                          },
+                          "pullRequests": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string"
+                                },
+                                "repository": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "open",
+                                    "merged",
+                                    "closed"
+                                  ]
+                                },
+                                "openedAt": {
+                                  "type": "string"
+                                },
+                                "closedAt": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "url",
+                                "repository",
+                                "state",
+                                "openedAt",
+                                "closedAt"
+                              ]
+                            }
+                          },
+                          "deploys": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "environment": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "success",
+                                    "failure"
+                                  ]
+                                },
+                                "at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "environment",
+                                "state",
+                                "at"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "title",
+                          "url",
+                          "createdAt",
+                          "repairLimit",
+                          "costUsd",
+                          "followsPullRequest",
+                          "approximate",
+                          "statuses",
+                          "pullRequests",
+                          "deploys"
+                        ]
+                      }
+                    },
+                    "setups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "repository": {
+                            "type": "string"
+                          },
+                          "approximate": {
+                            "type": "boolean"
+                          },
+                          "statuses": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "status",
+                                "at"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "repository",
+                          "approximate",
+                          "statuses"
+                        ]
+                      }
+                    },
+                    "pulses": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "setupId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "toolKind": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "edit",
+                              "shell",
+                              "browser",
+                              "think"
+                            ]
+                          },
+                          "lastOutputAt": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "setupId",
+                          "role",
+                          "toolKind",
+                          "lastOutputAt",
+                          "at"
+                        ]
+                      }
+                    },
+                    "throughput": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "day": {
+                            "type": "string"
+                          },
+                          "arrived": {
+                            "type": "number"
+                          },
+                          "merged": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "day",
+                          "arrived",
+                          "merged"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generatedAt",
+                    "from",
+                    "to",
+                    "lines",
+                    "runs",
+                    "setups",
+                    "pulses",
+                    "throughput"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/runs": {
       "get": {
         "operationId": "listRuns",

@@ -1813,6 +1813,200 @@ export type GetModelCatalogResponses = {
 
 export type GetModelCatalogResponse = GetModelCatalogResponses[keyof GetModelCatalogResponses];
 
+export type GetFloorData = {
+  body?: never;
+  path?: never;
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/floor";
+};
+
+export type GetFloorErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetFloorError = GetFloorErrors[keyof GetFloorErrors];
+
+export type GetFloorResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    generatedAt: string;
+    from: string;
+    to: string;
+    lines: Array<{
+      productId: string;
+      name: string;
+      slug: string;
+      teamKey: string;
+      repositories: Array<string>;
+    }>;
+    runs: Array<{
+      id: string;
+      productId: string;
+      title: string | null;
+      url: string | null;
+      createdAt: string;
+      repairLimit: number;
+      costUsd: number | null;
+      followsPullRequest: boolean;
+      approximate: boolean;
+      statuses: Array<{
+        status: string;
+        at: string;
+      }>;
+      pullRequests: Array<{
+        url: string;
+        repository: string;
+        state: "open" | "merged" | "closed";
+        openedAt: string;
+        closedAt: string | null;
+      }>;
+      deploys: Array<{
+        environment: string;
+        state: "success" | "failure";
+        at: string;
+      }>;
+    }>;
+    setups: Array<{
+      id: string;
+      productId: string;
+      repository: string;
+      approximate: boolean;
+      statuses: Array<{
+        status: string;
+        at: string;
+      }>;
+    }>;
+    pulses: Array<{
+      runId: string | null;
+      setupId: string | null;
+      role: string;
+      toolKind: "read" | "edit" | "shell" | "browser" | "think";
+      lastOutputAt: string;
+      at: string;
+    }>;
+    throughput: Array<{
+      day: string;
+      arrived: number;
+      merged: number;
+    }>;
+  };
+};
+
+export type GetFloorResponse = GetFloorResponses[keyof GetFloorResponses];
+
+export type GetFloorReplayData = {
+  body?: never;
+  path?: never;
+  query: {
+    linearWorkspaceId: string;
+    from: string;
+    to: string;
+  };
+  url: "/admin/floor/replay";
+};
+
+export type GetFloorReplayErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetFloorReplayError = GetFloorReplayErrors[keyof GetFloorReplayErrors];
+
+export type GetFloorReplayResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    generatedAt: string;
+    from: string;
+    to: string;
+    lines: Array<{
+      productId: string;
+      name: string;
+      slug: string;
+      teamKey: string;
+      repositories: Array<string>;
+    }>;
+    runs: Array<{
+      id: string;
+      productId: string;
+      title: string | null;
+      url: string | null;
+      createdAt: string;
+      repairLimit: number;
+      costUsd: number | null;
+      followsPullRequest: boolean;
+      approximate: boolean;
+      statuses: Array<{
+        status: string;
+        at: string;
+      }>;
+      pullRequests: Array<{
+        url: string;
+        repository: string;
+        state: "open" | "merged" | "closed";
+        openedAt: string;
+        closedAt: string | null;
+      }>;
+      deploys: Array<{
+        environment: string;
+        state: "success" | "failure";
+        at: string;
+      }>;
+    }>;
+    setups: Array<{
+      id: string;
+      productId: string;
+      repository: string;
+      approximate: boolean;
+      statuses: Array<{
+        status: string;
+        at: string;
+      }>;
+    }>;
+    pulses: Array<{
+      runId: string | null;
+      setupId: string | null;
+      role: string;
+      toolKind: "read" | "edit" | "shell" | "browser" | "think";
+      lastOutputAt: string;
+      at: string;
+    }>;
+    throughput: Array<{
+      day: string;
+      arrived: number;
+      merged: number;
+    }>;
+  };
+};
+
+export type GetFloorReplayResponse = GetFloorReplayResponses[keyof GetFloorReplayResponses];
+
 export type ListRunsData = {
   body?: never;
   path?: never;

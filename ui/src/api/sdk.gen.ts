@@ -50,6 +50,12 @@ import type {
   DeleteSandboxProviderResponses,
   GetDrainModeData,
   GetDrainModeResponses,
+  GetFloorData,
+  GetFloorErrors,
+  GetFloorReplayData,
+  GetFloorReplayErrors,
+  GetFloorReplayResponses,
+  GetFloorResponses,
   GetInstallSettingsData,
   GetInstallSettingsResponses,
   GetMeData,
@@ -689,6 +695,52 @@ export const getModelCatalog = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/model-catalog",
+    ...options,
+  });
+
+/**
+ * The live factory floor of a workspace
+ */
+export const getFloor = <ThrowOnError extends boolean = false>(
+  options: Options<GetFloorData, ThrowOnError>,
+): RequestResult<GetFloorResponses, GetFloorErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetFloorResponses, GetFloorErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/floor",
+    ...options,
+  });
+
+/**
+ * The factory floor of a workspace over a past window of at most 7 days
+ */
+export const getFloorReplay = <ThrowOnError extends boolean = false>(
+  options: Options<GetFloorReplayData, ThrowOnError>,
+): RequestResult<GetFloorReplayResponses, GetFloorReplayErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetFloorReplayResponses, GetFloorReplayErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/floor/replay",
     ...options,
   });
 

@@ -180,6 +180,9 @@ model Run {
   @@index([linearAgentSessionId, createdAt])
   // docs/specs/blocked-by-wait.md. The sweep reads every waiting run each minute.
   @@index([status])
+  // docs/specs/factory-floor.md. The status history and the session pulses of the run.
+  statusChanges             RunStatusChange[]
+  sessionPulses             SessionPulse[]
 }
 
 model AgentExecution {
@@ -1093,6 +1096,9 @@ model RepositorySetup {
   endedAt              DateTime?             @map("ended_at")
   appChangeIssues      SetupAppChangeIssue[]
   events               RunEvent[]
+  // docs/specs/factory-floor.md. The status history and the session pulses of the setup.
+  statusChanges        SetupStatusChange[]
+  sessionPulses        SessionPulse[]
 
   @@index([productId, repositoryFullName, createdAt])
   @@map("repository_setup")
@@ -1256,4 +1262,60 @@ model PullRequestDeploy {
   @@unique([pullRequestId, key])
   @@index([tenantId, state])
   @@map("pull_request_deploy")
+}
+
+// docs/specs/factory-floor.md. One status change of a run. A trigger on "Run" writes it in the
+// transaction of the change, so every writer of the status leaves a row, and the factory floor
+// replays queue and wait times exactly.
+model RunStatusChange {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  runId      String   @map("run_id")
+  run        Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // Null for the insert of the run.
+  fromStatus String?  @map("from_status")
+  toStatus   String   @map("to_status")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([runId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("run_status_change")
+}
+
+// docs/specs/factory-floor.md. One status change of a setup run, written by a trigger on
+// repository_setup, as for a run.
+model SetupStatusChange {
+  id         String          @id @default(uuid())
+  tenantId   String          @map("tenant_id")
+  setupId    String          @map("setup_id")
+  setup      RepositorySetup @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  fromStatus String?         @map("from_status")
+  toStatus   String          @map("to_status")
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  @@index([setupId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("setup_status_change")
+}
+
+// docs/specs/factory-floor.md. What one running agent session did at one moment: its role, the
+// kind of its newest tool call and the time of its newest output. It holds no tool input and no
+// text. A session of a run has the run id, a session of a setup run has the setup id.
+model SessionPulse {
+  id           String           @id @default(uuid())
+  tenantId     String           @map("tenant_id")
+  runId        String?          @map("run_id")
+  run          Run?             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  setupId      String?          @map("setup_id")
+  setup        RepositorySetup? @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  role         String
+  // read, edit, shell, browser or think.
+  toolKind     String           @map("tool_kind")
+  lastOutputAt DateTime         @map("last_output_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  @@index([runId, createdAt])
+  @@index([setupId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("session_pulse")
 }
