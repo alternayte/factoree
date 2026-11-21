@@ -385,7 +385,7 @@ describe("runUserValidation", () => {
   });
 
   it("names the command that ran in place of the contract check, and the last output of a failure", async () => {
-    // GitHub issue 93, DI-21.190.
+    // GitHub issue 93, DI-21.192.
     const commandAssertion: ValidationAssertion = {
       id: "VAL-CMD-001",
       requirement: "AC-2",

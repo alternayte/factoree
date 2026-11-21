@@ -34,7 +34,7 @@ export interface UserValidatorPromptFields {
   targets?: ValidatorTargetLines[];
   /** DI-21.147. The target a `set` entry runs against, or null when no entry may name the set. */
   setServer?: string | null;
-  /** GitHub issue 93, DI-21.190. The proven verify commands of a run with one target. */
+  /** GitHub issue 93, DI-21.192. The proven verify commands of a run with one target. */
   verifyCommands?: Array<{ name: string; run: string }>;
 }
 
