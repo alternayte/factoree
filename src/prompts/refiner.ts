@@ -4,7 +4,7 @@ import { egressBody } from "./egress.js";
 import { targetRepositoriesBody, type TargetRepositoryLine } from "./implementer.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@13";
+export const REFINER_PROMPT_VERSION = "refiner@14";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -30,6 +30,8 @@ export interface RefinerPromptFields {
   /** Issue #39. The most questions the proposal may hold. */
   questionsLimit: number;
   skills: string[];
+  /** GitHub issue 93, DI-21.190. The proven verify commands of the repository. */
+  verifyCommands?: Array<{ name: string; run: string }>;
   /**
    * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
@@ -133,6 +135,13 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         `Propose at most ${String(fields.criteriaLimit)} criteria and at most ${String(fields.questionsLimit)} questions. ` +
           "When the Work Item needs more, keep the criteria the Work Item states, merge related ones, and say in a question that the ticket should be split.",
         "Prefer an existing test or command of the repository. Name the files that show the pattern in `patterns`.",
+        ...((fields.verifyCommands ?? []).length === 0
+          ? []
+          : [
+              `Factoree runs these verify commands on every attempt, and a failed one fails the attempt: ${(fields.verifyCommands ?? []).map((command) => `${command.name}: \`${command.run}\``).join("; ")}.`,
+              "Write no criterion that says only that the build, the lint or the whole test suite passes: the verify commands already prove it.",
+              "A `command` check that runs a test tool starts from the verify command that runs it: keep its variables, its filter and its arguments, and add a narrower filter, such as one test class.",
+            ]),
         "Ask a question only for a decision the Work Item and the code leave open. Give your proposed answer and its reason. Factoree takes your answer without asking a human, and the reviewer reads the reason, so give a reason the code or the Work Item supports.",
         "You must not invent product behaviour the Work Item and the code do not imply.",
         "You must not propose a check that needs a host this sandbox does not reach. Name the host under `missingHosts` instead.",

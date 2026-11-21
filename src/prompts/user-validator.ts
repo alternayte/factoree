@@ -3,7 +3,7 @@ import { imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@12";
+export const USER_VALIDATOR_PROMPT_VERSION = "user-validator@13";
 
 export interface UserValidatorPromptFields {
   goal: string;
@@ -34,6 +34,8 @@ export interface UserValidatorPromptFields {
   targets?: ValidatorTargetLines[];
   /** DI-21.147. The target a `set` entry runs against, or null when no entry may name the set. */
   setServer?: string | null;
+  /** GitHub issue 93, DI-21.190. The proven verify commands of a run with one target. */
+  verifyCommands?: Array<{ name: string; run: string }>;
 }
 
 /** docs/specs/change-sets.md. What the validator learns of one target of a change set. */
@@ -157,6 +159,13 @@ export const renderUserValidatorPrompt = (fields: UserValidatorPromptFields): st
       "What Factoree does",
       [
         "Factoree already ran the verify commands of the repository in this sandbox, and they passed.",
+        ...((fields.verifyCommands ?? []).length === 0
+          ? []
+          : [
+              (fields.verifyCommands ?? []).map((command) => `- ${command.name}: \`${command.run}\``).join("\n"),
+              "A command entry that runs a test tool starts from the verify command that runs it: keep its variables, its filter and its arguments, and add a narrower filter. " +
+                "Without them the tool starts against services this sandbox does not run. Factoree rejects a command that runs the tool of a verify command without the variables that verify command sets.",
+            ]),
         "Factoree executes every check of your Validation Plan after you write it.",
         "Write the plan from the source and the frozen Validation Contract. A check you run yourself is not evidence.",
       ].join("\n"),

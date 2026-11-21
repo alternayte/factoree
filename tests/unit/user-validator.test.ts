@@ -384,6 +384,32 @@ describe("runUserValidation", () => {
     expect(outcome.outcomes[0]!.artifacts[0]!.kind).toBe("command-output");
   });
 
+  it("names the command that ran in place of the contract check, and the last output of a failure", async () => {
+    // GitHub issue 93, DI-21.190.
+    const commandAssertion: ValidationAssertion = {
+      id: "VAL-CMD-001",
+      requirement: "AC-2",
+      statement: "The compose file keeps the escaped dollar. Check: docker compose config --format json",
+      method: "command",
+      evidence: ["command-output"],
+      preconditions: [],
+    };
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(/docker compose run/, { exitCode: 1, stdout: "Starting\nchecking env\n", stderr: "error: KEY not found\n" });
+    const deps = buildDeps({ sandbox });
+    const plan = JSON.stringify({
+      version: 1,
+      entries: [{ assertionId: "VAL-CMD-001", kind: "command", command: { run: "docker compose run --rm app env", expectExitCode: 0 } }],
+    });
+    const outcome = await runUserValidation(deps, buildInput({ contract: { ...contract, assertions: [commandAssertion] }, planText: plan, preview: null }));
+
+    expect(outcome.outcomes[0]!.reason).toBe(
+      '"docker compose run --rm app env" exited with code 1, expected 0. ' +
+        'The validator ran this command in place of the contract check "docker compose config --format json". ' +
+        "Last output, stderr: error: KEY not found; stdout: Starting ⏎ checking env",
+    );
+  });
+
   it("redacts the browser artefact name before it reaches the persisted metadata", async () => {
     // The name comes from the agent-authored `screenshot` step, and that session holds Project
     // test secrets. SDD section 60 requires redaction before persistence.

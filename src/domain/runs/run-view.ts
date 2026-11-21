@@ -83,6 +83,7 @@ export interface RunSessionView {
   outputTokens: number | null;
   reasoningTokens: number | null;
   cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
   costUsd: number | null;
   turns: number | null;
   modelMs: number | null;

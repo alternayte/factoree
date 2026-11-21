@@ -237,6 +237,7 @@ export class PrismaRunViewReader implements RunViewReader {
         outputTokens: session.outputTokens,
         reasoningTokens: session.reasoningTokens,
         cacheReadTokens: session.cacheReadTokens,
+        cacheWriteTokens: session.cacheWriteTokens,
         costUsd: session.costUsd,
         turns: session.turns,
         modelMs: session.modelMs,

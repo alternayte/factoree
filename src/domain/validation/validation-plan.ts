@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { verifyEnvironmentProblem, type VerifyCommandText } from "~/domain/validation/verify-command-rule.js";
 import type { ValidationContract, ValidationMethod } from "~/domain/validation/validation-contract.js";
 import { isPreviewRelativePath } from "~/domain/validation/preview-url.js";
 
@@ -411,6 +412,11 @@ export const parseValidationPlan = (
    * target, and `as` names an account of that target. Absent for a run with one target.
    */
   rules?: PlanTargetRules,
+  /**
+   * GitHub issue 93, DI-21.190. The verify commands of a run with one target. A command entry that
+   * runs the tool of one must set the variables it sets. Absent or empty: no such rule.
+   */
+  verifyCommands: readonly VerifyCommandText[] = [],
 ): ValidationPlan => {
   let document: unknown;
   try {
@@ -569,6 +575,15 @@ export const parseValidationPlan = (
           "with a single slash, and the character after that slash must be neither a slash nor " +
           "a backslash.",
       );
+    }
+  }
+
+  // DI-21.190. A change set has commands of several targets, each with its own environment.
+  if (rules === undefined) {
+    for (const entry of plan.entries) {
+      if (entry.kind !== "command") continue;
+      const problem = verifyEnvironmentProblem(entry.assertionId, entry.command.run, verifyCommands);
+      if (problem !== null) reasons.push(problem);
     }
   }
 

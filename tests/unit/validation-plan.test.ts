@@ -663,3 +663,48 @@ describe("summarizeUserValidation", () => {
     expect(outcome.summary.length).toBeGreaterThan(0);
   });
 });
+
+describe("the verify environment rule (GitHub issue 93, DI-21.190)", () => {
+  const commandContract: ValidationContract = {
+    ...contract,
+    assertions: [
+      { id: "VAL-TEST-001", requirement: "AC-1", statement: "Due dates are kept.", method: "test", evidence: ["test-report"], preconditions: [] },
+    ],
+  };
+  const verify = [
+    { name: "build", run: "dotnet build" },
+    { name: "test", run: 'APP_TESTS_SQLSERVER=off dotnet test --filter "Area!=InternalDb" -- xUnit.ParallelizeTestCollections=false' },
+  ];
+  const planWith = (run: string): string =>
+    JSON.stringify({ version: 1, entries: [{ assertionId: "VAL-TEST-001", kind: "command", command: { run, expectExitCode: 0 } }] });
+  const reasonsOf = (run: string): string[] => {
+    try {
+      parseValidationPlan(planWith(run), commandContract, [], undefined, verify);
+      return [];
+    } catch (error) {
+      if (error instanceof ValidationPlanInvalidError) return error.reasons;
+      throw error;
+    }
+  };
+
+  it("rejects a test tool run without the variables of the verify command that runs it", () => {
+    const reasons = reasonsOf('cd /repo && dotnet build && dotnet test tests/App.Tests --filter "FullyQualifiedName~ActionExecutorTests"');
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain('runs "dotnet test" without APP_TESTS_SQLSERVER=off, which the verify command "test" sets');
+  });
+
+  it("takes the variable before the command, through export or through env", () => {
+    expect(reasonsOf('APP_TESTS_SQLSERVER=off dotnet test --filter "(Area!=InternalDb)&FullyQualifiedName~ActionExecutorDueDateTests"')).toEqual([]);
+    expect(reasonsOf("export APP_TESTS_SQLSERVER=off; dotnet test tests/App.Tests")).toEqual([]);
+    expect(reasonsOf("env APP_TESTS_SQLSERVER=off dotnet test")).toEqual([]);
+  });
+
+  it("leaves a command of another tool, and a quoted mention, alone", () => {
+    expect(reasonsOf("dotnet build && dotnet csharpier check .")).toEqual([]);
+    expect(reasonsOf("grep -F 'dotnet test' README.md")).toEqual([]);
+  });
+
+  it("rejects a variable set to another value", () => {
+    expect(reasonsOf("APP_TESTS_SQLSERVER=on dotnet test")).toHaveLength(1);
+  });
+});

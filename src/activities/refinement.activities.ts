@@ -178,6 +178,8 @@ export interface ProposeRefinementActivityInput {
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
   egress?: EgressFacts | null;
+  /** GitHub issue 93, DI-21.190. The proven verify commands. Absent in an old history. */
+  verifyCommands?: Array<{ name: string; run: string }>;
   /**
    * Issue #39, DI-21.66. The most criteria the proposal may hold, the Product setting. Absent in
    * a history recorded before the setting existed, where the cap was 20.
@@ -398,6 +400,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         questionsLimit: REFINER_QUESTIONS_LIMIT,
         skills: input.skills,
         egress: input.egress ?? null,
+        ...((input.verifyCommands ?? []).length === 0 ? {} : { verifyCommands: input.verifyCommands }),
       });
     const prompt = promptFor(proposalPath);
 
