@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-21
+
 ### Added
 
 - A Factoree check that the kernel killed out of memory, or that hit a full disk, is a sandbox fault. It spends no repair, ends the run FAILED_CONFIGURATION, and starts a setup run of the repository with the fault as input (docs/specs/sandbox-memory-and-size.md, DI-21.195). Kiln needs the console route of alternayte/kiln issue 33; without it Factoree reports "kernel log not available" and keeps the old behaviour on Kiln. E2B reads the kernel log as root.
