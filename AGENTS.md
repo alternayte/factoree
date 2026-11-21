@@ -113,3 +113,5 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - host hint: a host name in a failed output tail that is not on the effective allow list, a guess and never evidence. Avoid: suspected host, guessed host.
 - derived host: a host that Factoree reads from a repository's committed registry config, lockfiles, git dependencies and CI workflows before setup starts. Avoid: detected host, discovered host, inferred host.
 - warm proof: the last setup proof step, which restores a snapshot of the proof sandbox and runs the bootstrap and the services again as a work sprite does. Avoid: warm check, restore test, second bootstrap.
+- sandbox fault: a Factoree check that the kernel killed out of memory, or that hit a full disk, proven by the kernel log. It spends no repair and starts a setup run. Avoid: infra failure, environment error, OOM failure.
+- memory budget: the memory a sandbox provider may give its live sandboxes in total, against which a run holds 3 times its size. Avoid: memory limit, memory cap.
