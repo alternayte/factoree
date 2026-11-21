@@ -13,6 +13,7 @@ import {
   type RepositoryFileEntry,
   type SetMemberKey,
 } from "./warm-snapshot.js";
+import { isMember } from "~/domain/products/membership.js";
 
 /**
  * docs/specs/run-speed.md. A build-ahead builds the warm snapshot of one repository when its
@@ -132,7 +133,7 @@ export class BuildAheadTrigger {
   async afterPush(tenantId: string, repositoryFullName: string): Promise<void> {
     await this.guarded("push", async () => {
       const repository = await this.dependencies.repositories.findByFullName(tenantId, repositoryFullName);
-      if (repository === null || repository.absentSince !== null) return;
+      if (repository === null || !isMember(repository)) return;
       const product = await this.dependencies.products.findById(tenantId, repository.productId);
       if (product === null) return;
       const file = await this.dependencies.readConfig(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
@@ -180,6 +181,19 @@ export class BuildAheadTrigger {
     });
   }
 
+  /**
+   * docs/specs/repository-membership.md. An admin accepted the claim of a repository. Its first run
+   * must not wait for a cold snapshot, so a build-ahead starts. The build compares the key in its
+   * own checkout and builds nothing when the snapshot is current.
+   */
+  async afterAccept(tenantId: string, repositoryFullName: string): Promise<void> {
+    await this.guarded("membership", async () => {
+      const repository = await this.dependencies.repositories.findByFullName(tenantId, repositoryFullName);
+      if (repository === null) return;
+      await this.requestAll([repository]);
+    });
+  }
+
   /** The sandbox image or size changed, so every warm snapshot of the install holds an old template. */
   async afterTemplateChange(): Promise<void> {
     await this.guarded("template", async () => {
@@ -201,7 +215,7 @@ export class BuildAheadTrigger {
     const members: SetMemberKey[] = [];
     for (const url of repositoryUrls) {
       const repository = await this.dependencies.repositories.findByFullName(tenantId, repositorySlugOfUrl(url));
-      if (repository === null || repository.absentSince !== null) return null;
+      if (repository === null || !isMember(repository)) return null;
       const product = await this.dependencies.products.findById(tenantId, repository.productId);
       if (product === null) return null;
       const file = await this.dependencies.readConfig(repository.fullName, repository.defaultBranch, repository.githubInstallationId);
@@ -220,7 +234,7 @@ export class BuildAheadTrigger {
     const names = repositoryUrls.map((url) => repositorySlugOfUrl(url));
     try {
       const first = await this.dependencies.repositories.findByFullName(tenantId, names[0] ?? "");
-      if (first === null || first.absentSince !== null) return;
+      if (first === null || !isMember(first)) return;
       await this.dependencies.request(setBuildAheadRequest({ tenantId, productId: first.productId, repositoryFullNames: names }));
       this.dependencies.logger.info("a build-ahead of a set is requested", {
         tenant_id: tenantId,
@@ -239,7 +253,7 @@ export class BuildAheadTrigger {
 
   private async requestAll(repositories: RepositoryRecord[]): Promise<void> {
     for (const repository of repositories) {
-      if (repository.absentSince !== null) continue;
+      if (!isMember(repository)) continue;
       const request = {
         tenantId: repository.tenantId,
         productId: repository.productId,

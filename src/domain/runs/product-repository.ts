@@ -5,6 +5,8 @@
  * from `~/workflows/agent-run.workflow.js` and the domain depended on the workflow layer. It
  * lives here instead, and the workflow imports it, so dependency direction runs domain-first.
  */
+import type { RepositoryMembership } from "~/domain/products/membership.js";
+
 export interface AgentRunProductRepositoryInput {
   id: string;
   fullName: string;
@@ -18,4 +20,9 @@ export interface AgentRunProductRepositoryInput {
   githubInstallationId: string;
   /** docs/specs/own-proposals-and-parallel-runs.md. The Linear projects the repository declares. */
   linearProjects: string[];
+  /**
+   * docs/specs/repository-membership.md. Only an accepted repository is a member. An input from
+   * before this field carries none, and its repositories were members.
+   */
+  membership?: RepositoryMembership;
 }

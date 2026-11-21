@@ -335,7 +335,7 @@ const discoveryLinearTeams = new TenantScopedLinearTeamLookup(
   linearTokens,
 );
 
-const discoveryService = new DiscoveryService(discoveryClient, products, repositories, discoveryLinearTeams, logger);
+const discoveryService = new DiscoveryService(discoveryClient, products, repositories, discoveryLinearTeams, logger, new PrismaRepositorySetupStore(prisma));
 
 // DI-5.1. `ConfiguredContextSourceProvider` wants a narrow secret-read port, and
 // the real `SecretStore` answers it directly through `get`, which already takes a tenant and a

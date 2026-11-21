@@ -6,6 +6,7 @@ import { activities, bringCurrentActivities } from "../activities.js";
 import { isConfigurationFault, notify, publicationFailureReasonOf, withCause } from "../failures.js";
 import { RunEnded, type Run, type RunEnding } from "../run.js";
 import { checkMerge } from "../stages/merge-check.js";
+import { isMember } from "../../../domain/products/membership.js";
 
 export const bringCurrentEnding = (update: BringCurrentInput): RunEnding => ({
   failureNote: `This bring-current run pushed nothing to ${update.url}.`,
@@ -43,7 +44,7 @@ const recordTargets = async (run: Run, update: BringCurrentInput, repository: Ag
   const repositories: AgentRunProductRepositoryInput[] = [];
   for (const member of members) {
     const memberRepository = input.product.repositories.find((candidate) => candidate.id === member.repositoryId);
-    if (memberRepository === undefined || memberRepository.absentSince !== null) {
+    if (memberRepository === undefined || !isMember(memberRepository)) {
       return await run.fail(
         "TARGET_UNRESOLVED",
         `The repository ${member.repositoryFullName} of ${member.url} is no longer part of this product, so Factoree cannot check the change set of ${update.url}.`,

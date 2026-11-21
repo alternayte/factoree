@@ -33,6 +33,9 @@ import type {
   CreateSetupProductData,
   CreateSetupProductErrors,
   CreateSetupProductResponses,
+  DecideRepositoryMembershipData,
+  DecideRepositoryMembershipErrors,
+  DecideRepositoryMembershipResponses,
   DeleteContextSourceData,
   DeleteContextSourceErrors,
   DeleteContextSourceResponses,
@@ -857,6 +860,33 @@ export const startRepositorySetups = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/products/{id}/repository-setups",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Accept or reject the claim of a repository on this product
+ */
+export const decideRepositoryMembership = <ThrowOnError extends boolean = false>(
+  options: Options<DecideRepositoryMembershipData, ThrowOnError>,
+): RequestResult<DecideRepositoryMembershipResponses, DecideRepositoryMembershipErrors, ThrowOnError> =>
+  (options.client ?? client).post<DecideRepositoryMembershipResponses, DecideRepositoryMembershipErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/repositories/{repositoryId}/membership",
     ...options,
     headers: {
       "Content-Type": "application/json",

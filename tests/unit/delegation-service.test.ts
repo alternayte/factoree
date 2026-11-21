@@ -63,6 +63,9 @@ const repositoryFor = (
   discoveredAt: new Date(),
   lastSeenAt: new Date(),
   absentSince: null,
+  membership: "accepted",
+  membershipDecidedBy: null,
+  membershipDecidedAt: null,
   githubInstallationId,
 });
 
@@ -352,6 +355,7 @@ describe("DelegationService", () => {
           absentSince: null,
           githubInstallationId: "install-1",
           linearProjects: [],
+          membership: "accepted",
         },
       ],
       repositoryBaseUrl: "https://github.com",

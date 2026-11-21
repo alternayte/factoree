@@ -1,8 +1,9 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { DiscoveredRepository } from "~/adapters/github/repository-discovery-client.js";
 import type { ProductRegistry } from "~/domain/products/product-registry.js";
-import type { RepositoryRecord } from "~/domain/products/repository-registry.js";
+import type { RepositoryRecord, RepositoryRegistry } from "~/domain/products/repository-registry.js";
+import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
 import { setupWorkflowId, type RepositorySetupRecord, type RepositorySetupStore } from "~/domain/setup/repository-setup.js";
@@ -12,6 +13,7 @@ import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } fr
 import type { RunEventStore } from "~/domain/diagnostics/run-event.js";
 import { setupDiagnosisOf } from "~/domain/diagnostics/diagnosis.js";
 import { diagnosisSchema, eventsQuerySchema, runEventPageSchema, toDiagnosisJson, toEventJson } from "./run-events.schemas.js";
+import { isMember } from "~/domain/products/membership.js";
 
 export interface RepositorySetupRouteDependencies {
   products: ProductRegistry;
@@ -23,6 +25,12 @@ export interface RepositorySetupRouteDependencies {
   appChangeIssues?: Pick<AppChangeIssueStore, "listForRepository"> | undefined;
   /** Every repository of the tenant, registered to any product. */
   registeredRepositories: (tenantId: string) => Promise<RepositoryRecord[]>;
+  /** docs/specs/repository-membership.md. Records an admin decision on a claim. */
+  repositories: Pick<RepositoryRegistry, "decideMembership">;
+  /** docs/specs/repository-membership.md. An accepted repository builds its warm snapshot ahead. */
+  buildAhead?: Pick<BuildAheadTrigger, "afterAccept"> | undefined;
+  /** The display name of the admin who decides. */
+  userName: (userId: string) => Promise<string | null>;
   /** The GitHub App installations of the tenant. */
   installations: (tenantId: string) => Promise<string[]>;
   listInstallationRepositories: (installationId: string) => Promise<DiscoveredRepository[]>;
@@ -120,6 +128,22 @@ const repositorySetupSchema = z.object({
   /** Why a build-ahead marked the repository for setup, or null. */
   needsSetupReason: z.string().nullable(),
   /**
+   * docs/specs/repository-membership.md. The claim of a registered repository on this product, or
+   * null when the repository claims no product here.
+   */
+  membership: z
+    .object({
+      repositoryId: z.string(),
+      state: z.enum(["pending", "accepted", "rejected"]),
+      decidedBy: z.string().nullable(),
+      decidedAt: z.string().nullable(),
+      /** The secret names the configuration asks for in `secrets.require`. */
+      requestedSecretNames: z.array(z.string()),
+      /** The commit of `.factoree/config.yaml` that discovery last read. */
+      configSha: z.string(),
+    })
+    .nullable(),
+  /**
    * docs/specs/sandbox-provider-spillover.md. The sandbox providers where the last build-ahead of the
    * repository failed. Runs of the repository go to another provider while one is left.
    */
@@ -133,6 +157,20 @@ const startSchema = z.object({
 });
 
 const ACTIVE: ReadonlyArray<RepositorySetupRecord["status"]> = ["queued", "running"];
+
+const membershipOf = (repository: RepositoryRecord): NonNullable<z.infer<typeof repositorySetupSchema>["membership"]> => ({
+  repositoryId: repository.id,
+  state: repository.membership,
+  decidedBy: repository.membershipDecidedBy,
+  decidedAt: repository.membershipDecidedAt?.toISOString() ?? null,
+  requestedSecretNames: repository.requestedSecretNames,
+  configSha: repository.configSha,
+});
+
+const decisionSchema = z.object({
+  linearWorkspaceId: z.string().min(1),
+  decision: z.enum(["accept", "reject"]),
+});
 
 const toSetup = (setup: RepositorySetupRecord): z.infer<typeof setupSchema> => ({
   id: setup.id,
@@ -154,6 +192,14 @@ const toSetup = (setup: RepositorySetupRecord): z.infer<typeof setupSchema> => (
 export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies: RepositorySetupRouteDependencies): void => {
   useSchemasAsDocumentation(app);
 
+  const deciderOf = async (request: FastifyRequest): Promise<string | null> => {
+    // The admin guard sets the principal on every admin route. A server without the guard names no one.
+    const principal = request.principal;
+    if (principal === undefined) return null;
+    if (principal.apiKeyId !== null) return `API key ${principal.apiKeyId}`;
+    return dependencies.userName(principal.userId);
+  };
+
   /** The App-visible repositories this product can set up: its own, and those no product owns. */
   const candidatesOf = async (tenantId: string, productId: string) => {
     const registered = new Map((await dependencies.registeredRepositories(tenantId)).filter((repository) => repository.absentSince === null).map((repository) => [repository.fullName, repository]));
@@ -164,11 +210,16 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
       }
     }
     return [...seen.entries()]
+      // docs/specs/repository-membership.md. A claim no admin accepted makes no owner, so another
+      // product can still set the repository up.
       .filter(([fullName]) => {
         const owner = registered.get(fullName);
-        return owner === undefined || owner.productId === productId;
+        return owner === undefined || owner.productId === productId || !isMember(owner);
       })
-      .map(([fullName, githubInstallationId]) => ({ fullName, githubInstallationId, registered: registered.get(fullName) ?? null }))
+      .map(([fullName, githubInstallationId]) => {
+        const owner = registered.get(fullName);
+        return { fullName, githubInstallationId, registered: owner !== undefined && owner.productId === productId ? owner : null };
+      })
       .sort((left, right) => (left.fullName < right.fullName ? -1 : 1));
   };
 
@@ -200,10 +251,45 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
           githubInstallationId: candidate.githubInstallationId,
           registered: candidate.registered !== null,
           needsSetupReason: candidate.registered?.needsSetupReason ?? null,
+          membership: candidate.registered === null ? null : membershipOf(candidate.registered),
           buildAheadFailures: failures.get(candidate.fullName) ?? [],
           setup: setup === undefined ? null : toSetup(setup),
         };
       });
+    },
+  );
+
+  app.post<{ Params: { id: string; repositoryId: string } }>(
+    "/admin/products/:id/repositories/:repositoryId/membership",
+    {
+      schema: {
+        tags: ["products"],
+        operationId: "decideRepositoryMembership",
+        summary: "Accept or reject the claim of a repository on this product",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string(), repositoryId: z.string() })),
+        body: schemaOf(decisionSchema),
+        response: { 200: schemaOf(repositorySetupSchema.shape.membership.unwrap()), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const body = decisionSchema.safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(body.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const product = await dependencies.products.findById(tenant.id, request.params.id);
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      const decided = await dependencies.repositories.decideMembership({
+        tenantId: tenant.id,
+        productId: product.id,
+        repositoryId: request.params.repositoryId,
+        membership: body.data.decision === "accept" ? "accepted" : "rejected",
+        decidedBy: await deciderOf(request),
+        at: new Date(),
+      });
+      if (decided === null) return reply.code(404).send({ error: "the repository claims no membership in this product" });
+      if (decided.membership === "accepted") await dependencies.buildAhead?.afterAccept(tenant.id, decided.fullName);
+      return membershipOf(decided);
     },
   );
 
@@ -353,6 +439,22 @@ export const registerRepositorySetupRoutes = (app: FastifyInstance, dependencies
         return reply.code(422).send({ error: `The product cannot set up these repositories: ${unknown.join(", ")}.` });
       }
       const latest = new Map((await dependencies.setups.latestByProduct(product.id)).map((setup) => [setup.repositoryFullName, setup]));
+      // docs/specs/repository-membership.md. An admin who starts a setup of a repository chose it for
+      // this product, so the start accepts its claim.
+      const decidedBy = await deciderOf(request);
+      for (const fullName of new Set(body.data.repositories)) {
+        const registered = candidates.get(fullName)?.registered ?? null;
+        if (registered === null || registered.membership === "accepted") continue;
+        await dependencies.repositories.decideMembership({
+          tenantId: tenant.id,
+          productId: product.id,
+          repositoryId: registered.id,
+          membership: "accepted",
+          decidedBy,
+          at: new Date(),
+        });
+        await dependencies.buildAhead?.afterAccept(tenant.id, fullName);
+      }
       const started: Array<{ fullName: string; setupId: string }> = [];
       for (const fullName of [...new Set(body.data.repositories)]) {
         const running = latest.get(fullName);

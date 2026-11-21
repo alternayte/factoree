@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-21
+
+### Added
+
+- A repository whose `.factoree/config.yaml` claims an active product waits for a Linear workspace admin to accept it on the product page. A pending or rejected repository is no run target, sibling, change set member or build-ahead input, and gets no secret or credential. The page shows the requested secret names and the config commit, and the products list shows a pending count (DI-21.190).
+- A run whose issue names a pending repository posts a Linear notice with a link to the product page. Accept starts a build-ahead of the repository.
+
+### Changed
+
+- A setup run started from the product page accepts the repository claim. The activate dialog lists the repositories that activation accepts.
+- Migration `add_repository_membership` marks every existing repository accepted.
+
 ## [0.19.2] - 2026-11-21
 
 ### Fixed

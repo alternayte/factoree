@@ -30,6 +30,7 @@ export const agentRunProductInput = (input: {
       absentSince: repository.absentSince === null ? null : repository.absentSince.toISOString(),
       githubInstallationId: repository.githubInstallationId,
       linearProjects: repository.linearProjects,
+      membership: repository.membership,
     })),
     repositoryBaseUrl: input.repositoryBaseUrl,
     stagingRead: DEFAULT_PROJECT_DEFAULTS.stagingRead,

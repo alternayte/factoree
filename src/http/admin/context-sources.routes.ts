@@ -17,6 +17,7 @@ import {
 } from "~/domain/context/context-source-configuration.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
 import { probeContextSource } from "./context-source-probe.js";
+import { isMember } from "~/domain/products/membership.js";
 
 const TAGS = ["context sources"];
 
@@ -181,7 +182,7 @@ export const registerContextSourceRoutes = (
       }
 
       const repositories = await dependencies.repositories.listByProduct(product.id);
-      const repository = repositories.find((candidate) => candidate.absentSince === null) ?? null;
+      const repository = repositories.find(isMember) ?? null;
       return probeContextSource({
         sourceId: body.sourceId,
         kind: body.kind,

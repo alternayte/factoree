@@ -1,3 +1,5 @@
+import type { RepositoryMembership } from "./membership.js";
+
 export interface RepositoryRecord {
   id: string;
   tenantId: string;
@@ -16,6 +18,11 @@ export interface RepositoryRecord {
   githubInstallationId: string;
   /** docs/specs/repository-setup-and-services.md. Why a build-ahead marked it for setup, or null. */
   needsSetupReason?: string | null;
+  /** docs/specs/repository-membership.md. Only an accepted repository is a member of its product. */
+  membership: RepositoryMembership;
+  /** The display name of the admin who decided, or null for an acceptance no person made. */
+  membershipDecidedBy: string | null;
+  membershipDecidedAt: Date | null;
 }
 
 export interface UpsertRepositoryInput {
@@ -27,6 +34,11 @@ export interface UpsertRepositoryInput {
   requestedSecretNames: string[];
   linearProjects: string[];
   githubInstallationId: string;
+  /**
+   * docs/specs/repository-membership.md. Set only when the claim is new to the product. Absent, the
+   * row keeps its decision.
+   */
+  membership?: RepositoryMembership;
 }
 
 /**
@@ -39,4 +51,16 @@ export interface RepositoryRegistry {
   findByFullName(tenantId: string, fullName: string): Promise<RepositoryRecord | null>;
   /** Marks the row absent as of `at`. The row stays, so the Run history survives. */
   markAbsent(tenantId: string, fullName: string, at: Date): Promise<void>;
+  /**
+   * docs/specs/repository-membership.md. Records an admin decision on the claim of one repository of
+   * one product. Null when the repository does not claim that product.
+   */
+  decideMembership(input: {
+    tenantId: string;
+    productId: string;
+    repositoryId: string;
+    membership: "accepted" | "rejected";
+    decidedBy: string | null;
+    at: Date;
+  }): Promise<RepositoryRecord | null>;
 }

@@ -212,6 +212,9 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,
+      membership: "accepted",
+      membershipDecidedBy: null,
+      membershipDecidedAt: null,
       githubInstallationId: input.githubInstallationId,
     };
     this.rows.push(record);
@@ -228,6 +231,15 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
 
   markAbsent(): Promise<void> {
     throw new Error("not used by this route");
+  }
+
+  decideMembership(input: { tenantId: string; productId: string; repositoryId: string; membership: "accepted" | "rejected"; decidedBy: string | null; at: Date }): Promise<RepositoryRecord | null> {
+    const row = this.rows.find((r) => r.id === input.repositoryId && r.tenantId === input.tenantId && r.productId === input.productId);
+    if (row === undefined) return Promise.resolve(null);
+    row.membership = input.membership;
+    row.membershipDecidedBy = input.decidedBy;
+    row.membershipDecidedAt = input.at;
+    return Promise.resolve(row);
   }
 }
 

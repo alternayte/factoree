@@ -24,6 +24,7 @@ import { SandboxSlotUnavailableError } from "~/domain/runs/sandbox-slot-error.js
 import type { BuildAheadOutcome, SandboxManager } from "~/domain/runs/sandbox-manager.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
+import { isMember } from "~/domain/products/membership.js";
 
 export interface BuildAheadActivityDependencies {
   sandboxManager: SandboxManager;
@@ -58,6 +59,7 @@ export const createBuildAheadActivities = (dependencies: BuildAheadActivityDepen
   const memberOf = async (tenantId: string, fullName: string): Promise<BuildAheadMember | { skipped: string }> => {
     const repository = await dependencies.repositories.findByFullName(tenantId, fullName);
     if (repository === null || repository.absentSince !== null) return { skipped: "discovery no longer sees the repository" };
+    if (!isMember(repository)) return { skipped: "no admin accepted the repository as a member of its product" };
     const product = await dependencies.products.findById(tenantId, repository.productId);
     if (product === null) return { skipped: "the Product of the repository is gone" };
     const file = await dependencies.discoveryClient.readConfig(repository.fullName, repository.defaultBranch, repository.githubInstallationId);

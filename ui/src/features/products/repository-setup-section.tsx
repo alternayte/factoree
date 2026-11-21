@@ -5,7 +5,12 @@ import {
   listRepositorySetupsOptions,
   listRepositorySetupsQueryKey,
 } from "@/api/@tanstack/react-query.gen";
-import { listSetupDerivedHosts, startRepositorySetups, updateProduct } from "@/api/sdk.gen";
+import {
+  decideRepositoryMembership,
+  listSetupDerivedHosts,
+  startRepositorySetups,
+  updateProduct,
+} from "@/api/sdk.gen";
 import type { ListRepositorySetupsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Input } from "@/components/form";
@@ -44,6 +49,9 @@ export function setupStatus(setup: Pick<Setup, "status" | "skippedFromSetupId">)
  * registered repository takes issues, so it reads active whatever its latest setup says.
  */
 function State({ repository }: { repository: Repository }) {
+  // docs/specs/repository-membership.md. A claim no admin accepted takes no issue.
+  if (repository.membership?.state === "pending") return <Badge tone="warning">waits for acceptance</Badge>;
+  if (repository.membership?.state === "rejected") return <Badge tone="danger">rejected</Badge>;
   if (repository.needsSetupReason) return <Badge tone="danger">needs setup</Badge>;
   const setup = repository.setup;
   if (repository.registered) {
@@ -53,6 +61,9 @@ function State({ repository }: { repository: Repository }) {
     return (
       <span className="flex flex-col items-start gap-1">
         <Badge tone="success">active</Badge>
+        {repository.membership?.decidedBy ? (
+          <span className="text-xs text-mute">accepted by {repository.membership.decidedBy}</span>
+        ) : null}
         {running ? <span className="text-xs text-mute">setup {setup.status}</span> : null}
         {open ? (
           <a className="link text-xs" href={setup.pullRequestUrl!} target="_blank" rel="noreferrer">
@@ -182,7 +193,20 @@ export function RepositorySetupSection({
     },
   });
 
-  const all = repositories.data ?? [];
+  // docs/specs/repository-membership.md. An admin accepts or rejects the claim of a repository.
+  const decide = useMutation({
+    mutationFn: async ({ repositoryId, decision }: { repositoryId: string; decision: "accept" | "reject" }) =>
+      decideRepositoryMembership({
+        path: { id: productId, repositoryId },
+        body: { linearWorkspaceId, decision },
+        throwOnError: true,
+      }),
+    onSuccess: () => void refresh(),
+  });
+
+  // A claim that waits for an admin comes first, so it is not lost below the fold.
+  const waits = (repository: Repository) => (repository.membership?.state === "pending" ? 0 : 1);
+  const all = [...(repositories.data ?? [])].sort((left, right) => waits(left) - waits(right));
   const needle = filter.trim().toLowerCase();
   const rows = needle === "" ? all : all.filter((repository) => repository.fullName.toLowerCase().includes(needle));
   const starting = (name: string) =>
@@ -209,6 +233,7 @@ export function RepositorySetupSection({
       {repositories.isPending ? <SkeletonRows label="Loading the repositories" /> : null}
       <ErrorAlert error={repositories.error} title="The repositories did not load" />
       <ErrorAlert error={start.error} title="The setup did not start" />
+      <ErrorAlert error={decide.error} title="The decision was not saved" />
       <ErrorAlert error={allowHost.error ?? allowHosts.error} title="The host was not added" />
       <ErrorAlert error={preflight.error} title="The hosts of the repository did not load" />
       {pending !== null ? (
@@ -290,6 +315,14 @@ export function RepositorySetupSection({
                   canEdit={canEdit}
                   productId={productId}
                   linearWorkspaceId={linearWorkspaceId}
+                  onDecide={(decision) =>
+                    repository.membership && decide.mutate({ repositoryId: repository.membership.repositoryId, decision })
+                  }
+                  deciding={
+                    decide.isPending && decide.variables?.repositoryId === repository.membership?.repositoryId
+                      ? decide.variables.decision
+                      : null
+                  }
                 />
               ))}
             </tbody>
@@ -320,8 +353,13 @@ function RepositoryRow(props: {
   canEdit: boolean;
   productId: string;
   linearWorkspaceId: string;
+  onDecide: (decision: "accept" | "reject") => void;
+  /** The decision in flight for this row, or null. */
+  deciding: "accept" | "reject" | null;
 }) {
   const { repository } = props;
+  const membership = repository.membership;
+  const undecided = membership !== null && membership.state !== "accepted";
   const setup = repository.setup;
   const again = repository.registered || setup !== null;
   return (
@@ -339,6 +377,15 @@ function RepositoryRow(props: {
         <td className="t-value">
           <span className="block text-ink">{repository.fullName}</span>
           {repository.needsSetupReason ? <span className="block text-mute">{repository.needsSetupReason}</span> : null}
+          {undecided ? (
+            <span className="block text-xs text-mute">
+              Claims this product at config {membership.configSha.slice(0, 7)}.{" "}
+              {membership.requestedSecretNames.length === 0
+                ? "Asks for no secret."
+                : `Asks for ${membership.requestedSecretNames.join(", ")}.`}
+              {membership.state === "rejected" && membership.decidedBy ? ` Rejected by ${membership.decidedBy}.` : ""}
+            </span>
+          ) : null}
           {/* docs/specs/sandbox-provider-spillover.md. Runs go to another provider while one is left. */}
           {repository.buildAheadFailures.map((failure) => (
             <span key={failure.provider} className="block text-xs text-danger">
@@ -364,6 +411,30 @@ function RepositoryRow(props: {
           )}
         </td>
         <td className="whitespace-nowrap text-right">
+          {undecided && props.canEdit ? (
+            <>
+              <Button
+                variant="primary"
+                className="mr-2"
+                onClick={() => props.onDecide("accept")}
+                disabled={props.deciding !== null && props.deciding !== "accept"}
+                pending={props.deciding === "accept"}
+              >
+                Accept
+              </Button>
+              {membership.state === "pending" ? (
+                <Button
+                  variant="ghost"
+                  className="mr-2"
+                  onClick={() => props.onDecide("reject")}
+                  disabled={props.deciding !== null && props.deciding !== "reject"}
+                  pending={props.deciding === "reject"}
+                >
+                  Reject
+                </Button>
+              ) : null}
+            </>
+          ) : null}
           {setup ? (
             <Link
               className="link mr-2"

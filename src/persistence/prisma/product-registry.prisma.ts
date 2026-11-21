@@ -1,5 +1,6 @@
 import type { RepositorySetupMarks } from "~/domain/setup/repository-setup.js";
 import { Prisma } from "@prisma/client";
+import { toMembership } from "~/domain/products/membership.js";
 import { isAgentRunnerName, type AgentRunnerName } from "~/domain/products/agent-settings.js";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
@@ -179,9 +180,13 @@ type RepositoryRow = {
   lastSeenAt: Date;
   absentSince: Date | null;
   githubInstallationId: string;
+  needsSetupReason?: string | null;
+  membership: string;
+  membershipDecidedBy: string | null;
+  membershipDecidedAt: Date | null;
 };
 
-const toRepository = (row: RepositoryRow): RepositoryRecord => ({ ...row });
+const toRepository = (row: RepositoryRow): RepositoryRecord => ({ ...row, membership: toMembership(row.membership) });
 
 export class PrismaProductRegistry implements ProductRegistry {
   constructor(private readonly prisma: FactoreePrismaClient) {}
@@ -407,6 +412,7 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry, RepositoryS
         requestedSecretNames: input.requestedSecretNames,
         linearProjects: input.linearProjects,
         githubInstallationId: input.githubInstallationId,
+        membership: input.membership ?? "pending",
       },
       update: {
         productId: input.productId,
@@ -416,6 +422,8 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry, RepositoryS
         githubInstallationId: input.githubInstallationId,
         lastSeenAt: new Date(),
         absentSince: null,
+        // docs/specs/repository-membership.md. A claim new to the product starts a new decision.
+        ...(input.membership === undefined ? {} : { membership: input.membership, membershipDecidedBy: null, membershipDecidedAt: null }),
       },
     });
     return toRepository(row);
@@ -460,6 +468,24 @@ export class PrismaRepositoryRegistry implements RepositoryRegistry, RepositoryS
       where: { tenantId_fullName: { tenantId, fullName } },
       data: { absentSince: at },
     });
+  }
+
+  async decideMembership(input: {
+    tenantId: string;
+    productId: string;
+    repositoryId: string;
+    membership: "accepted" | "rejected";
+    decidedBy: string | null;
+    at: Date;
+  }): Promise<RepositoryRecord | null> {
+    // The tenant and the product are part of the filter, so a decision never crosses either.
+    const updated = await this.prisma.repository.updateMany({
+      where: { id: input.repositoryId, tenantId: input.tenantId, productId: input.productId },
+      data: { membership: input.membership, membershipDecidedBy: input.decidedBy, membershipDecidedAt: input.at },
+    });
+    if (updated.count === 0) return null;
+    const row = await this.prisma.repository.findUnique({ where: { id: input.repositoryId } });
+    return row ? toRepository(row) : null;
   }
 }
 

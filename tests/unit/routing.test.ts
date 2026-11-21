@@ -45,6 +45,9 @@ const repository = (fullName: string): RepositoryRecord => ({
   discoveredAt: new Date(),
   lastSeenAt: new Date(),
   absentSince: null,
+  membership: "accepted",
+  membershipDecidedBy: null,
+  membershipDecidedAt: null,
   githubInstallationId: "install-1",
 });
 

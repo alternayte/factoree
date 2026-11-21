@@ -461,6 +461,11 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       existing.githubInstallationId = input.githubInstallationId;
       existing.lastSeenAt = new Date();
       existing.absentSince = null;
+      if (input.membership !== undefined) {
+        existing.membership = input.membership;
+        existing.membershipDecidedBy = null;
+        existing.membershipDecidedAt = null;
+      }
       return Promise.resolve(existing);
     }
     this.counter += 1;
@@ -477,6 +482,9 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
       discoveredAt: new Date(),
       lastSeenAt: new Date(),
       absentSince: null,
+      membership: input.membership ?? "pending",
+      membershipDecidedBy: null,
+      membershipDecidedAt: null,
     };
     this.rows.push(record);
     return Promise.resolve(record);
@@ -494,6 +502,15 @@ class FakeRepositoryRegistry implements RepositoryRegistry {
     const row = this.rows.find((r) => r.tenantId === tenantId && r.fullName === fullName);
     if (row !== undefined) row.absentSince = at;
     return Promise.resolve();
+  }
+
+  decideMembership(input: { tenantId: string; productId: string; repositoryId: string; membership: "accepted" | "rejected"; decidedBy: string | null; at: Date }): Promise<RepositoryRecord | null> {
+    const row = this.rows.find((r) => r.id === input.repositoryId && r.tenantId === input.tenantId && r.productId === input.productId);
+    if (row === undefined) return Promise.resolve(null);
+    row.membership = input.membership;
+    row.membershipDecidedBy = input.decidedBy;
+    row.membershipDecidedAt = input.at;
+    return Promise.resolve(row);
   }
 }
 
