@@ -70,6 +70,8 @@ export interface ProofPackForYourEye {
   screenshot: ProofPackEvidenceRef | null;
   /** Why no screenshot exists. Null when one does. */
   reason: string | null;
+  /** What the browser saw: a blank page, console errors, failed requests. Absent in older documents. */
+  notes?: string[];
 }
 
 /** The heading of the for-your-eye section. The body holds it only when a criterion exists. */
@@ -568,9 +570,11 @@ const visualSection = (input: ProofPackInput): string[] => {
 /** docs/specs/by-eye-criteria-and-selector-recheck.md. One line per criterion a person judges by eye. */
 export const needsYourEyeLine = (item: ProofPackForYourEye): string => {
   const head = `- ${line(item.statement)} (\`${line(item.route)}\`)`;
-  if (item.screenshot === null) return `${head}: Factoree has no screenshot: ${line(item.reason ?? "no reason was recorded.")}`;
-  if (!openable(item.screenshot.storageRef)) return `${head}: the screenshot is stored, and its link does not open here.`;
-  return `${head}\n\n  ![${item.id}](${item.screenshot.storageRef})`;
+  const notes = item.notes ?? [];
+  const seen = notes.length === 0 ? "" : `\n\n  The browser saw: ${notes.map((note) => line(note)).join("; ")}.`;
+  if (item.screenshot === null) return `${head}: Factoree has no screenshot: ${line(item.reason ?? "no reason was recorded.")}${seen}`;
+  if (!openable(item.screenshot.storageRef)) return `${head}: the screenshot is stored, and its link does not open here.${seen}`;
+  return `${head}${seen}\n\n  ![${item.id}](${item.screenshot.storageRef})`;
 };
 
 const evidenceLinks = (assertion: ProofPackAssertion): string => {

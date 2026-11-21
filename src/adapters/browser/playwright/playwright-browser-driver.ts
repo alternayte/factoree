@@ -74,6 +74,21 @@ const selectorFailureOf = (step: BrowserStep, index: number, error: unknown): Br
 };
 
 /** A wait of at most `limitMs` that ends by `deadline`, and never less than the floor. */
+/**
+ * True when the page shows no text and no sized image, canvas, svg or video. A string, so the
+ * worker build needs no DOM types. An error page or a loading text is not blank.
+ */
+const BLANK_PAGE_SCRIPT = `(() => {
+  const body = document.body;
+  if (!body) return true;
+  if ((body.innerText || "").trim().length > 0) return false;
+  for (const element of document.querySelectorAll("img, canvas, svg, video, iframe, object, embed")) {
+    const box = element.getBoundingClientRect();
+    if (box.width > 1 && box.height > 1) return false;
+  }
+  return true;
+})()`;
+
 const capped = (limitMs: number, deadline: number): number =>
   Math.max(MIN_STEP_TIMEOUT_MS, Math.min(limitMs, deadline - Date.now()));
 
@@ -225,6 +240,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
     let failureReason: string | null = null;
     let selectorFailure: BrowserSelectorFailure | null = null;
     let pageHtml: string | null = null;
+    let blankPage: boolean | null = null;
 
     try {
       browser = await chromium.launch({ headless: true });
@@ -333,6 +349,11 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       } catch (error) {
         consoleLines.push(`driver: failed to capture the final screenshot: ${redact(error)}`);
       }
+      try {
+        blankPage = (await page.evaluate<unknown>(BLANK_PAGE_SCRIPT)) === true;
+      } catch (error) {
+        consoleLines.push(`driver: failed to read whether the page is blank: ${redact(error)}`);
+      }
       // docs/specs/by-eye-criteria-and-selector-recheck.md. The validator corrects a selector from
       // the real markup, so a selector-only failure keeps the page HTML.
       if (selectorFailure !== null) {
@@ -403,6 +424,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         failureReason,
         selectorFailure,
         pageHtml,
+        blankPage,
       };
     } finally {
       signal?.removeEventListener("abort", onAbort);

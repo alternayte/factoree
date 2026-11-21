@@ -2,8 +2,8 @@
 // docs/specs/preview-host-and-e2b-egress.md. The preview proxy. It listens on the proxy port and
 // forwards every request to the preview on localhost:<port>, so the app sees each request as a
 // developer's browser sends it after a clone: Host, Origin, Referer and X-Forwarded-Host name
-// localhost:<port>. A response Location and a Set-Cookie Domain that name localhost go back to
-// the public host. Websocket upgrades pass through. The body is never changed.
+// localhost:<port>. A response Location that names localhost goes back to the public host. A
+// Set-Cookie Domain that does not cover the public host is dropped. Websocket upgrades pass through. The body is never changed.
 //
 // Usage: factoree-preview-proxy <listen port> <preview port>
 // ES module syntax: Node 24 detects it in a file with no extension and no package.json.
@@ -50,6 +50,20 @@ const upstreamHeaders = (headers, origin) => {
   return out;
 };
 
+/**
+ * A browser refuses a cookie whose Domain does not cover the host that set it: localhost, or a
+ * company domain that an auth package sets in its options. Such a cookie never reaches the
+ * preview, so the app signs in and then answers every call as signed out. Without its Domain, the
+ * cookie belongs to the host the browser sees, the public host. A Domain that covers the public
+ * host stays as it is.
+ */
+const withoutForeignDomain = (cookie, host) =>
+  cookie.replace(/;\s*domain=\s*\.?([^;\s]*)\s*(?=;|$)/gi, (attribute, domain) => {
+    const name = domain.toLowerCase();
+    if (host !== null && name !== "" && (host === name || host.endsWith(`.${name}`))) return attribute;
+    return "";
+  });
+
 /** The response headers the browser receives. */
 const downstreamHeaders = (headers, origin) => {
   const out = { ...headers };
@@ -57,9 +71,8 @@ const downstreamHeaders = (headers, origin) => {
     for (const from of localOrigins) out.location = swapOrigin(out.location, from, origin);
   }
   if (Array.isArray(out["set-cookie"])) {
-    // A cookie for localhost would not reach the public host. A cookie with no Domain belongs to
-    // the host that set it, which the browser sees as the public host.
-    out["set-cookie"] = out["set-cookie"].map((cookie) => cookie.replace(/;\s*domain=(localhost|127\.0\.0\.1)(?=;|$)/gi, ""));
+    const host = origin === null ? null : new URL(origin).hostname.toLowerCase();
+    out["set-cookie"] = out["set-cookie"].map((cookie) => withoutForeignDomain(cookie, host));
   }
   if (origin !== null && typeof out["access-control-allow-origin"] === "string") {
     for (const from of localOrigins) out["access-control-allow-origin"] = swapOrigin(out["access-control-allow-origin"], from, origin);

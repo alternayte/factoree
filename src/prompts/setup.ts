@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@15";
+export const SETUP_PROMPT_VERSION = "setup@16";
 
 export interface SetupPromptFields {
   repository: string;
@@ -185,6 +185,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "Factoree sends each browser request to the preview as localhost:<port>, so the app needs no allowed-hosts or trusted-origins setting for Factoree.",
         "Set preview.readySelector only when the app renders its markup before it attaches its handlers, as Blazor Server, Phoenix LiveView and Hotwire do: a click before then does nothing. Pick a selector that shows only once the page takes input. Before the first click or fill after each page load, Factoree waits for it, as well as for the load event and network idle.",
         "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",
+        "When the sign-in goes through an external identity provider, such as Entra ID, Auth0, Okta or Keycloak, add a fake identity provider to `.factoree/compose.yaml`, such as an OIDC mock server, and point the app at it through its environment. When the app cannot read its provider from its configuration, write that as an app change. Never turn the sign-in off and never add a sign-in path that skips the app's own auth: Factoree then checks a path that production never runs.",
       ].join("\n"),
     ),
     section(

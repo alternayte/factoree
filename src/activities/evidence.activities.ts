@@ -175,7 +175,13 @@ export const createEvidencePersistence = (
   async persistForYourEye(input: PersistForYourEyeInput): Promise<void> {
     const { capture } = input;
     const idempotencyKey = `run:${input.runId}:validation:${input.attempt}:for-your-eye:${capture.id}`;
-    const base = { forYourEye: capture.id, statement: capture.statement, route: capture.route, attempt: input.attempt };
+    const base = {
+      forYourEye: capture.id,
+      statement: capture.statement,
+      route: capture.route,
+      attempt: input.attempt,
+      ...(capture.notes.length === 0 ? {} : { notes: capture.notes }),
+    };
     if (capture.captured) {
       const stored = await dependencies.storage.put({
         tenantId: input.tenantId,
@@ -430,13 +436,16 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
           metadataNumber(candidate.metadata, "attempt") === lastValidationAttempt,
       );
       if (row === undefined) {
-        return { ...item, screenshot: null, reason: "Factoree captured no screenshot in the last attempt." };
+        return { ...item, screenshot: null, reason: "Factoree captured no screenshot in the last attempt.", notes: [] };
       }
+      const raw = row.metadata["notes"];
+      const notes = Array.isArray(raw) ? raw.filter((note): note is string => typeof note === "string") : [];
       if (row.metadata["captured"] !== true) {
-        return { ...item, screenshot: null, reason: metadataText(row.metadata, "reason") || "the capture failed." };
+        return { ...item, screenshot: null, reason: metadataText(row.metadata, "reason") || "the capture failed.", notes };
       }
       return {
         ...item,
+        notes,
         screenshot: { kind: row.kind, source: row.source, sha256: row.sha256, storageRef: row.storageRef },
         reason: null,
       };

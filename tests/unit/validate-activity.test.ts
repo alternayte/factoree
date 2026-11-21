@@ -709,6 +709,39 @@ describe("the userValidate activity, for-your-eye screenshots (docs/specs/by-eye
     expect(row).toMatchObject({ storageRef: null });
     expect(row!.metadata).toMatchObject({ captured: false, reason: "The page `/events` did not load within 30 s." });
   });
+
+  it("keeps what the browser saw on a white page: blank, console errors and failed requests", async () => {
+    const { activities, browser, evidence } = build(new FakeRunner());
+    const queue = [passingBrowserResult];
+    browser.run = (scenario) => {
+      browser.calls.push(scenario);
+      return Promise.resolve(
+        queue.shift() ?? {
+          ...passingBrowserResult,
+          blankPage: true,
+          consoleLines: ["log: boot", "error: Failed to load resource: the server responded with a status of 401"],
+          network: [
+            { method: "GET", url: `${scenario.baseUrl}/events`, status: 200 },
+            { method: "GET", url: `${scenario.baseUrl}/api/me?x=1`, status: 401 },
+            { method: "GET", url: "https://cdn.example.org/app.js", status: null },
+          ],
+        },
+      );
+    };
+
+    await run(activities);
+
+    const row = evidence.rows.find((candidate) => candidate.source === "for-your-eye:AC-R3:screenshot");
+    expect(row!.metadata).toMatchObject({
+      captured: true,
+      notes: [
+        "the page shows no text and no image",
+        "console error: Failed to load resource: the server responded with a status of 401",
+        "GET /api/me?x=1 401",
+        "GET https://cdn.example.org/app.js failed",
+      ],
+    });
+  });
 });
 
 describe("the userValidate activity, the keys and directories of a retry (docs/specs/provider-unreachable.md, plan section 8)", () => {

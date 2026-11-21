@@ -126,6 +126,12 @@ export interface BrowserRunResult {
    * correct the selector from the real markup. Absent or null otherwise.
    */
   pageHtml?: string | null;
+  /**
+   * True when the final page shows no text and no image, canvas, svg or video with a size, as a
+   * single-page app shows when its data or its script failed. Absent or null when the driver could
+   * not read the page.
+   */
+  blankPage?: boolean | null;
 }
 
 /**

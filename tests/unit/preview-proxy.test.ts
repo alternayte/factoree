@@ -40,7 +40,10 @@ beforeAll(async () => {
   upstream = createServer((incoming, answer) => {
     seen = incoming.headers;
     if (incoming.url === "/redirect") {
-      answer.writeHead(302, { location: `http://localhost:${upstreamPort}/signed-in`, "set-cookie": ["s=1; Path=/; Domain=localhost; HttpOnly"] });
+      answer.writeHead(302, {
+        location: `http://localhost:${upstreamPort}/signed-in`,
+        "set-cookie": ["s=1; Path=/; Domain=localhost; HttpOnly", "auth=2; Domain=.client.example; Secure", "keep=3; Domain=e2b.app"],
+      });
       answer.end();
       return;
     }
@@ -88,11 +91,11 @@ describe("factoree-preview-proxy", () => {
     expect(seen["x-forwarded-proto"]).toBe("http");
   });
 
-  it("sends a redirect and a cookie back to the public host", async () => {
+  it("sends a redirect back to the public host and drops a cookie Domain that does not cover it", async () => {
     const answer = await get("/redirect", { host: "3000-abc.e2b.app", "x-forwarded-proto": "https" });
     expect(answer.status).toBe(302);
     expect(answer.headers.location).toBe("https://3000-abc.e2b.app/signed-in");
-    expect(answer.headers["set-cookie"]).toEqual(["s=1; Path=/; HttpOnly"]);
+    expect(answer.headers["set-cookie"]).toEqual(["s=1; Path=/; HttpOnly", "auth=2; Secure", "keep=3; Domain=e2b.app"]);
   });
 
   it("passes a websocket upgrade with the rewritten host", async () => {

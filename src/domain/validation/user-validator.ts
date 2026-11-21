@@ -17,7 +17,7 @@ import {
   type ValidationPlan,
   type ValidationPlanEntry,
 } from "~/domain/validation/validation-plan.js";
-import { forYourEyeSource, type ForYourEyeCapture, type ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
+import { captureNotesOf, forYourEyeSource, type ForYourEyeCapture, type ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
 import type {
   AssertionOutcome,
   EvidenceArtifact,
@@ -542,6 +542,7 @@ const validate = async (
       ...summarizeUserValidation(outcomes),
       forYourEye: forYourEye.map((item) => ({
         ...item,
+        notes: [],
         captured: false,
         reason: "Factoree ran no check in this attempt, because it had no Validation Plan it could run.",
       })),
@@ -906,7 +907,7 @@ const captureForYourEye = async (
   item: ForYourEyeCriterion,
   context: CaptureContext,
 ): Promise<ForYourEyeCapture> => {
-  const failed = (reason: string): ForYourEyeCapture => ({ ...item, captured: false, reason });
+  const failed = (reason: string, notes: string[] = []): ForYourEyeCapture => ({ ...item, notes, captured: false, reason });
   if (context.handle === null) return failed(context.previewProblem ?? "the preview did not start");
   const account = (input.accounts ?? [])[0];
   let storageState: string | undefined;
@@ -939,11 +940,13 @@ const captureForYourEye = async (
       ...(storageState === undefined ? {} : { storageState }),
     });
     const screenshot = run.artifacts.find((artifact) => artifact.kind === "screenshot");
+    const notes = captureNotesOf(run, context.handle.baseUrl).map((note) => dependencies.redactor.redactText(note));
     if (!run.passed || screenshot === undefined) {
-      return failed(dependencies.redactor.redactText(run.failureReason ?? "the browser returned no screenshot"));
+      return failed(dependencies.redactor.redactText(run.failureReason ?? "the browser returned no screenshot"), notes);
     }
     return {
       ...item,
+      notes,
       captured: true,
       artifact: {
         kind: "screenshot",
