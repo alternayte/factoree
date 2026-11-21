@@ -8,7 +8,7 @@ Every preview answers the browser and the readiness probe as it answers a develo
 ## Decisions
 - A preview proxy runs in the sandbox behind the exposed port, for every preview, with no config key — the app then sees what a developer sees, on every stack and every sandbox provider.
 - The proxy sets Host, Origin, Referer and X-Forwarded-Host to `localhost:<port>` and X-Forwarded-Proto to `http` — a rewrite of Host alone fails the Origin checks, as GitHub Codespaces shows.
-- The proxy rewrites Location and the Set-Cookie Domain of a response back to the public host, and it passes websocket upgrades — redirects, sessions and hot reload then work through the public URL.
+- The proxy rewrites a Location of a response back to the public host and drops each Set-Cookie Domain that does not cover the public host, such as `localhost` or a fixed company domain (DI-21.189), and it passes websocket upgrades — redirects, sessions and hot reload then work through the public URL.
 - The proxy does not change response bodies. An absolute URL that the app writes into a page points to localhost — Devin documents the same limit, and a body rewrite would change the evidence.
 - The proxy is a Node script in `/opt/factoree/bin`, owned by root, and it runs as the sandbox user — it sits between the browser and the patched app, so a changed proxy can serve nothing that the app cannot serve itself, and Kiln runs no command as root.
 - The proxy runs on the providers that run the sandbox image, Kiln and E2B. Fly Sprites and the local adapter expose the readyUrl port as before — they do not hold the image, and the local URL is already localhost.

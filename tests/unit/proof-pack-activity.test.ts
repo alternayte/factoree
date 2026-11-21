@@ -587,6 +587,18 @@ describe("publishProofPack, needs your eye (docs/specs/by-eye-criteria-and-selec
     expect(harness.posted[0]).toContain("(`/events`): Factoree has no screenshot: the preview did not start");
   });
 
+  it("names what the browser saw under the screenshot", async () => {
+    const harness = build({
+      evidence: {
+        listForRun: async () => [
+          eyeRow(2, { captured: true, notes: ["the page shows no text and no image", "GET /api/me 401"] }, "https://uploads.linear.app/eye.png"),
+        ],
+      },
+    } as unknown as Partial<ProofPackActivityDependencies>);
+    await harness.activities.publishProofPack({ ...input, forYourEye: [eye] });
+    expect(harness.posted[0]).toContain("The browser saw: the page shows no text and no image; GET /api/me 401.");
+  });
+
   it("writes no Needs your eye section when the run has no by-eye criterion", async () => {
     const harness = build();
     await harness.activities.publishProofPack(input);

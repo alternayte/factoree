@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-11-21
+
+### Fixed
+
+- A for-your-eye screenshot of a white page now says why. The Proof Pack lists under the criterion whether the page is blank, the first console errors and the requests that failed or got a status of 400 or more (DI-21.188).
+- The preview proxy drops a cookie Domain that does not cover the sandbox host, such as the company domain a cookie-auth package sets. The browser then keeps the sign-in cookie, and the app does not answer every call as signed out (DI-21.189).
+
+### Changed
+
+- `setup@16`: for an external identity provider, the setup agent adds a fake identity provider, or writes an app change. It never turns the sign-in off (DI-21.189).
+
 ## [0.19.1] - 2026-11-21
 
 ### Added
