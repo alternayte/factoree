@@ -50,3 +50,12 @@ export const notify = async (send: () => Promise<unknown>): Promise<void> => {
     // The durable state is already written. The call is best effort.
   }
 };
+
+/** docs/specs/sandbox-memory-and-size.md. The run sentence of a sandbox fault in a check sprite. */
+export const SANDBOX_FAULT_SENTENCE = "A check stopped on a sandbox fault, so Factoree spent no repair.";
+
+/** Part of every sandbox fault message (`sandboxFaultSentence` in src/domain/runs/sandbox-fault.ts). */
+const SANDBOX_FAULT_MARK = "This is a sandbox fault, not a code failure";
+
+/** True when a configuration fault is a sandbox fault, by the sentence its message carries. */
+export const isSandboxFault = (error: unknown): boolean => isConfigurationFault(error) && causeOf(error).includes(SANDBOX_FAULT_MARK);

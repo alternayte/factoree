@@ -267,3 +267,14 @@ describe("KilnSandbox warm snapshot restore (issue #5)", () => {
     });
   });
 });
+
+// docs/specs/sandbox-memory-and-size.md. A Kiln without the console route must read as "not
+// available", never as an empty log, so Factoree does not guess an out-of-memory kill.
+describe("KilnClient.console", () => {
+  it("returns the console lines, and null on a Kiln without the route", async () => {
+    const withRoute = fakeKiln((call) => (call.path === "/v1/sandboxes/s1/console?lines=400" ? { status: 200, body: { lines: ["a", "b"] } } : undefined));
+    expect(await withRoute.client.console("s1", 400)).toEqual(["a", "b"]);
+    const without = fakeKiln(() => undefined);
+    expect(await without.client.console("s1", 400)).toBeNull();
+  });
+});

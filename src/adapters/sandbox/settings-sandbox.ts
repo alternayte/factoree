@@ -327,6 +327,11 @@ export class SettingsSandbox implements Sandbox {
     return sandbox.egressLog === undefined ? null : sandbox.egressLog(ref);
   }
 
+  async kernelLog(ref: SandboxRef): Promise<string[] | null> {
+    const sandbox = await this.forRef(ref);
+    return sandbox.kernelLog === undefined ? null : sandbox.kernelLog(ref);
+  }
+
   async applyNetworkPolicy(ref: SandboxRef, policy: NetworkPolicy): Promise<void> {
     return (await this.forRef(ref)).applyNetworkPolicy(ref, policy);
   }
@@ -461,6 +466,10 @@ class ProviderSandbox implements Sandbox {
 
   egressLog(ref: SandboxRef): Promise<EgressRecord[] | null> {
     return this.parent.egressLog(ref);
+  }
+
+  kernelLog(ref: SandboxRef): Promise<string[] | null> {
+    return this.parent.kernelLog(ref);
   }
 
   attachEnvironment(ref: SandboxRef, environment: Record<string, string>): void {

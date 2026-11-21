@@ -58,6 +58,7 @@ import {
   type UnwiredPair,
 } from "./set-check.js";
 import type { ReadinessProbe } from "./preview.js";
+import { readSandboxFault, readSandboxPeak, reportSandboxFault, startResourceSampler, type SandboxFaultSink } from "./sandbox-fault.js";
 import type { Redactor } from "~/telemetry/redaction.js";
 import { recordStage, type RunStageStore } from "./run-stage.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -371,6 +372,8 @@ export interface SandboxManagerOptions {
    */
   previewProbe?: ReadinessProbe;
   redactor?: Redactor;
+  /** docs/specs/sandbox-memory-and-size.md. Starts the setup run after a sandbox fault of a run. */
+  onSandboxFault?: SandboxFaultSink;
 }
 
 /**
@@ -694,6 +697,8 @@ export class SandboxManager {
       }
 
       await probeCredentialHosts(sandbox, ref, access);
+      // docs/specs/sandbox-memory-and-size.md. The peaks of this sandbox, for a fault and for setup.
+      await startResourceSampler(sandbox, ref);
 
       let primary: CheckedOutRepository;
       let targets: PreparedTarget[];
@@ -828,16 +833,20 @@ export class SandboxManager {
       // The credential hosts join every phase, so a host hint never names one.
       const phaseTwoHosts = [...bootstrapAllowList, ...egress.access.hosts];
       const stackFailed = async (error: unknown, ordinal: string): Promise<never> => {
-        await this.recordCommandFailure(input, sandbox, ref, {
+        const sandboxFault = await this.recordCommandFailure(input, sandbox, ref, {
           step: "services",
           command: "docker compose",
           exitCode: null,
+          timedOut: false,
           durationMs: null,
           log: error instanceof Error ? error.message : String(error),
           allowList: phaseTwoHosts,
           sentence: "The compose stack or its seed did not start.",
           ordinal,
+          repository: ordinal.slice(ordinal.indexOf(":") + 1),
+          checkName: "the compose stack or its seed",
         });
+        if (sandboxFault !== null) throw new RunConfigurationError(sandboxFault);
         throw error;
       };
       const install = browserTools
@@ -1186,16 +1195,55 @@ export class SandboxManager {
     input: PrepareSandboxInput,
     sandbox: Sandbox,
     ref: SandboxRef,
-    fault: { step: string; command: string; exitCode: number | null; durationMs: number | null; log: string; allowList: readonly string[]; sentence: string; ordinal: string },
-  ): Promise<void> {
+    fault: {
+      step: string;
+      command: string;
+      exitCode: number | null;
+      /** True when Factoree stopped the step at its timeout. */
+      timedOut: boolean;
+      durationMs: number | null;
+      log: string;
+      allowList: readonly string[];
+      sentence: string;
+      ordinal: string;
+      /** The `owner/repo` of the failed step, and its words in a sentence. */
+      repository: string;
+      checkName: string;
+    },
+  ): Promise<string | null> {
     const subject: RunEventSubject | null = input.runId.startsWith("setup:")
       ? { setupId: input.runId.slice("setup:".length) }
       : input.runId.includes(":")
         ? null
         : { runId: input.runId };
-    if (subject === null || this.options.events === undefined) return;
+    if (subject === null) return null;
     const log = withoutUrlCredentials(fault.log);
+    // docs/specs/sandbox-memory-and-size.md. A step the kernel killed out of memory, or that hit a
+    // full disk, is a sandbox fault: the run ends with it and starts a setup run.
+    const reading = await readSandboxFault(sandbox, ref, { exitCode: fault.exitCode, stoppedByFactoree: fault.timedOut, output: log });
+    if (reading.fault !== null) {
+      return reportSandboxFault({
+        recorder: this.options.events,
+        sink: this.options.onSandboxFault,
+        tenantId: input.tenantId,
+        productId: input.productId,
+        repositoryFullName: fault.repository,
+        subject,
+        stage: "PREPARING",
+        attempt: 0,
+        step: fault.step,
+        checkName: fault.checkName,
+        command: fault.command,
+        exitCode: fault.exitCode,
+        log,
+        fault: reading.fault,
+        peak: await readSandboxPeak(sandbox, ref),
+        idempotencyKey: `prepare:${ref.id}:${fault.step}:${fault.ordinal}`,
+      });
+    }
+    if (this.options.events === undefined) return null;
     const facts = await faultEgressFacts({ sandbox, ref, allowList: fault.allowList }, log);
+    const sentence = reading.note === null ? fault.sentence : `${fault.sentence} ${reading.note}`;
     await recordRunEvent(this.options.events, {
       tenantId: input.tenantId,
       subject,
@@ -1204,10 +1252,11 @@ export class SandboxManager {
       attempt: 0,
       role: null,
       kind: "command_failed",
-      message: withDeniedHosts(fault.sentence, facts),
+      message: withDeniedHosts(sentence, facts),
       detail: { step: fault.step, command: fault.command, exitCode: fault.exitCode, durationMs: fault.durationMs, log, ...facts },
       idempotencyKey: `prepare:${ref.id}:${fault.step}:${fault.ordinal}`,
     });
+    return null;
   }
 
   /** Runs the bootstrap of one target in its own folder. A failure is a configuration fault. */
@@ -1232,16 +1281,20 @@ export class SandboxManager {
     if (result.timedOut || result.exitCode !== 0) {
       const subject = count > 1 ? `the bootstrap command of ${target.repository}` : "the bootstrap command";
       const failure = result.timedOut ? `ran longer than ${String(BOOTSTRAP_TIMEOUT_MS / 60_000)} minutes` : `failed with exit code ${String(result.exitCode)}`;
-      await this.recordCommandFailure(input, sandbox, ref, {
+      const sandboxFault = await this.recordCommandFailure(input, sandbox, ref, {
         step: "bootstrap",
         command,
         exitCode: result.exitCode,
+        timedOut: result.timedOut,
         durationMs: Date.now() - started,
         log: `--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}\n`,
         allowList,
         sentence: `${subject.charAt(0).toUpperCase()}${subject.slice(1)} ${failure}.`,
         ordinal: target.repository,
+        repository: target.repository,
+        checkName: subject,
       });
+      if (sandboxFault !== null) throw new RunConfigurationError(sandboxFault);
       // The bootstrap command comes from the repository configuration, so a failure of it is
       // a configuration fault. A retry runs the same command and fails again.
       throw new RunConfigurationError(`${subject} ${failure}: ${withoutUrlCredentials(bootstrapFailureDetail(result.stdout, result.stderr))}`);

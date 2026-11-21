@@ -1,6 +1,7 @@
 import { CancellationScope, deprecatePatch } from "@temporalio/workflow";
 import type { PrepareCheckSandboxActivityOutput, PrepareSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { VerifyActivityOutput } from "~/activities/verification.activities.js";
+import { SANDBOX_FAULT_SENTENCE } from "../failures.js";
 import { buildSandboxActivities, buildVerifyActivities, cancelActivities } from "../activities.js";
 import { PATCH } from "../patches.js";
 import type { Run } from "../run.js";
@@ -108,7 +109,8 @@ export const verify = async (run: Run, sprite: PrepareSandboxActivityOutput, att
         : { stacks: sprite.setCheck.targets.map((target) => ({ repository: target.repository, path: target.path, services: target.services })) }),
     });
   } catch (error) {
-    return await run.timeoutFrom(error);
+    // docs/specs/sandbox-memory-and-size.md. A sandbox fault ends the run FAILED_CONFIGURATION.
+    return await run.failFrom(error, SANDBOX_FAULT_SENTENCE);
   }
   await run.progress(verification.summary);
   return verification;

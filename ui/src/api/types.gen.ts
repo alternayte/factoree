@@ -2042,6 +2042,48 @@ export type GetRunResponses = {
             stage: string;
             attempt: number;
             role: string | null;
+            kind: "sandbox_out_of_memory";
+            message: string;
+            detail: {
+              step: string;
+              command: string;
+              exitCode: number | null;
+              killed: Array<string>;
+              kernelLines: Array<string>;
+              peakMemoryMb: number | null;
+              peakDiskMb: number | null;
+              totalMemoryMb: number | null;
+              totalDiskMb: number | null;
+              log: string | null;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "sandbox_disk_full";
+            message: string;
+            detail: {
+              step: string;
+              command: string;
+              exitCode: number | null;
+              killed: Array<string>;
+              kernelLines: Array<string>;
+              peakMemoryMb: number | null;
+              peakDiskMb: number | null;
+              totalMemoryMb: number | null;
+              totalDiskMb: number | null;
+              log: string | null;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
             kind: "plan_rejected";
             message: string;
             detail: {
@@ -2322,6 +2364,48 @@ export type ListRunEventsResponses = {
             egress: "recorded" | "not_recorded" | "unreadable";
             deniedHosts: Array<string>;
             hostHints: Array<string>;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "sandbox_out_of_memory";
+          message: string;
+          detail: {
+            step: string;
+            command: string;
+            exitCode: number | null;
+            killed: Array<string>;
+            kernelLines: Array<string>;
+            peakMemoryMb: number | null;
+            peakDiskMb: number | null;
+            totalMemoryMb: number | null;
+            totalDiskMb: number | null;
+            log: string | null;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "sandbox_disk_full";
+          message: string;
+          detail: {
+            step: string;
+            command: string;
+            exitCode: number | null;
+            killed: Array<string>;
+            kernelLines: Array<string>;
+            peakMemoryMb: number | null;
+            peakDiskMb: number | null;
+            totalMemoryMb: number | null;
+            totalDiskMb: number | null;
+            log: string | null;
           };
           createdAt: string;
         }
@@ -2851,6 +2935,48 @@ export type ListRepositorySetupEventsResponses = {
           stage: string;
           attempt: number;
           role: string | null;
+          kind: "sandbox_out_of_memory";
+          message: string;
+          detail: {
+            step: string;
+            command: string;
+            exitCode: number | null;
+            killed: Array<string>;
+            kernelLines: Array<string>;
+            peakMemoryMb: number | null;
+            peakDiskMb: number | null;
+            totalMemoryMb: number | null;
+            totalDiskMb: number | null;
+            log: string | null;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
+          kind: "sandbox_disk_full";
+          message: string;
+          detail: {
+            step: string;
+            command: string;
+            exitCode: number | null;
+            killed: Array<string>;
+            kernelLines: Array<string>;
+            peakMemoryMb: number | null;
+            peakDiskMb: number | null;
+            totalMemoryMb: number | null;
+            totalDiskMb: number | null;
+            log: string | null;
+          };
+          createdAt: string;
+        }
+      | {
+          id: string;
+          stage: string;
+          attempt: number;
+          role: string | null;
           kind: "plan_rejected";
           message: string;
           detail: {
@@ -3075,6 +3201,48 @@ export type ListRepositorySetupHistoryResponses = {
               egress: "recorded" | "not_recorded" | "unreadable";
               deniedHosts: Array<string>;
               hostHints: Array<string>;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "sandbox_out_of_memory";
+            message: string;
+            detail: {
+              step: string;
+              command: string;
+              exitCode: number | null;
+              killed: Array<string>;
+              kernelLines: Array<string>;
+              peakMemoryMb: number | null;
+              peakDiskMb: number | null;
+              totalMemoryMb: number | null;
+              totalDiskMb: number | null;
+              log: string | null;
+            };
+            createdAt: string;
+          }
+        | {
+            id: string;
+            stage: string;
+            attempt: number;
+            role: string | null;
+            kind: "sandbox_disk_full";
+            message: string;
+            detail: {
+              step: string;
+              command: string;
+              exitCode: number | null;
+              killed: Array<string>;
+              kernelLines: Array<string>;
+              peakMemoryMb: number | null;
+              peakDiskMb: number | null;
+              totalMemoryMb: number | null;
+              totalDiskMb: number | null;
+              log: string | null;
             };
             createdAt: string;
           }

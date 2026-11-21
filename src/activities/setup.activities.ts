@@ -58,6 +58,7 @@ import { PUBLICATION_COMMIT_TIMESTAMP } from "./publishing.activities.js";
 import { NO_HOST_CREDENTIALS, type HostCredentialAccess } from "~/domain/products/host-credentials.js";
 import { applyEgress, assertBindable, probeCredentialHosts, probeHosts, type CredentialBindingStore, type CredentialEgress } from "~/domain/runs/credential-egress.js";
 import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
+import { higherPeak, killedOf, readSandboxFault, readSandboxPeak, reportSandboxFault, startResourceSampler, type SandboxPeak } from "~/domain/runs/sandbox-fault.js";
 import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
 import { recordSessionFaults } from "./agent-session-recording.js";
 import { isMember } from "~/domain/products/membership.js";
@@ -261,6 +262,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     await applyEgress(dependencies.sandbox, ref, allowedDomains, egress);
     await dependencies.sandbox.exec(ref, { file: "mkdir", args: ["-p", ref.workspacePath], cwd: "/" });
     await probeCredentialHosts(dependencies.sandbox, ref, egress.access);
+    // docs/specs/sandbox-memory-and-size.md. The agent reads the peaks of its session, and the
+    // report states the peaks of the proof.
+    await startResourceSampler(dependencies.sandbox, ref);
     return ref;
   };
 
@@ -288,6 +292,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, setup.tenantId, setup.productId);
         await applyEgress(dependencies.sandbox, ref, allowedDomains, egress);
         await probeCredentialHosts(dependencies.sandbox, ref, egress.access);
+        await startResourceSampler(dependencies.sandbox, ref);
         return { ref, warm: true, egress };
       } catch (error) {
         if (error instanceof SandboxSlotUnavailableError) throw error;
@@ -323,6 +328,10 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       let phaseAllowList: string[] = repositoryHosts;
       const failedParts: Array<{ part: SetupPartResult; allowList: string[] }> = [];
       let recordedFaults = 0;
+      // docs/specs/sandbox-memory-and-size.md. The highest peaks of the proof sandboxes, and the
+      // kernel kill lines already given to a part, so a later part gets only its own.
+      let proofPeak: SandboxPeak | null = null;
+      const seenKernelLines = new Set<string>();
       const record = (part: SetupPartResult): void => {
         const kept = { ...part, ...(part.logTail === undefined ? {} : { logTail: dependencies.redactor.redactText(withoutUrlCredentials(part.logTail)) }) };
         parts.push(kept);
@@ -336,9 +345,38 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
       };
       // The egress log goes with each sandbox, so its faults are written before it is destroyed.
       const recordProofFaults = async (): Promise<void> => {
+        const peak = await readSandboxPeak(dependencies.sandbox, ref);
+        if (peak !== null) proofPeak = higherPeak(proofPeak, peak);
         for (const { part, allowList } of failedParts.splice(0)) {
           const index = recordedFaults;
           recordedFaults += 1;
+          // docs/specs/sandbox-memory-and-size.md. A part the kernel killed, or that hit a full
+          // disk, names the sandbox fault in its reason. A setup starts no other setup run.
+          const reading = await readSandboxFault(dependencies.sandbox, ref, { exitCode: null, stoppedByFactoree: false, output: part.logTail ?? "" });
+          const fault = reading.fault === null ? null : { ...reading.fault, kernelLines: reading.fault.kernelLines.filter((line) => !seenKernelLines.has(line)) };
+          if (fault !== null && (fault.kind === "sandbox_disk_full" || fault.kernelLines.length > 0)) {
+            for (const line of fault.kernelLines) seenKernelLines.add(line);
+            const message = await reportSandboxFault({
+              recorder: dependencies.events,
+              sink: undefined,
+              tenantId: setup.tenantId,
+              productId: setup.productId,
+              repositoryFullName: setup.repositoryFullName,
+              subject: { setupId: setup.id },
+              stage: "setup_proof",
+              attempt: 1,
+              step: `setup_proof:${part.kind}`,
+              checkName: `the setup proof of ${part.name}`,
+              command: part.kind === "bootstrap" ? (runtime.bootstrapCommand ?? "") : part.name,
+              exitCode: null,
+              log: part.logTail ?? null,
+              fault: fault.kind === "sandbox_out_of_memory" ? { ...fault, killed: killedOf(fault.kernelLines) } : fault,
+              peak,
+              idempotencyKey: `setup:${setup.id}:proof:${String(index)}`,
+            });
+            part.reason = `${part.reason ?? "it did not pass"}. ${message}`;
+            continue;
+          }
           const facts = await faultEgressFacts({ sandbox: dependencies.sandbox, ref, allowList }, part.logTail ?? null);
           await recordRunEvent(dependencies.events, {
             tenantId: setup.tenantId,
@@ -459,6 +497,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           phaseAllowList = repositoryHosts;
           await applyEgress(dependencies.sandbox, ref, repositoryHosts, egress);
           await probeCredentialHosts(dependencies.sandbox, ref, egress.access);
+          await startResourceSampler(dependencies.sandbox, ref);
           primary = await refreshPrimary(dependencies.sandbox, ref, { url, ref: session.baseSha }, readToken);
           await applyProposal(primary.path);
           phaseAllowList = [...bootstrapAllowList, ...egress.access.hosts];
@@ -588,6 +627,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         githubRepositories: [],
       };
       const derivedHosts = uncoveredDerivedHosts(setup.derivedHosts ?? [], coverage);
+      // The closures above set the peak, so the compiler cannot narrow it here.
+      const measured = proofPeak as SandboxPeak | null;
       const report: SetupReport = {
         parts: finalParts,
         observedHosts: session.observedHosts,
@@ -604,6 +645,9 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
             : alreadyRequested(session.appChanges, await dependencies.appChangeIssues.listForRepository(setup.tenantId, setup.repositoryFullName)),
         ...(derivedHosts.length === 0 ? {} : { derivedHosts }),
         ...(warmProof === undefined ? {} : { warmProof }),
+        ...(measured === null
+          ? {}
+          : { resources: { peakMemoryMb: measured.memoryMb, peakDiskMb: measured.diskMb, memoryMb: measured.totalMemoryMb, diskMb: measured.totalDiskMb } }),
       };
       await dependencies.setups.update(setup.id, { report });
       if (finalPatch === null) {
@@ -717,6 +761,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         previousProven: previousParts.filter((part) => part.passed).map((part) => ({ kind: part.kind, name: part.name })),
         requestedChanges,
         repositoryInstructions,
+        // docs/specs/sandbox-memory-and-size.md. A setup a sandbox fault started repairs that fault.
+        sandboxFault: setup.sandboxFault,
       };
       const inputKey = setupInputKeyOf(headSha, prompt);
       await dependencies.setups.update(setup.id, { inputKey });

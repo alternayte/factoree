@@ -349,6 +349,26 @@ export class E2BSandbox implements Sandbox {
   }
 
   /**
+   * docs/specs/sandbox-memory-and-size.md. The guest kernel log through the root exec, because
+   * /dev/kmsg is root-only. The agent runs as the sandbox user and cannot write it. Null when the
+   * read fails.
+   */
+  async kernelLog(ref: SandboxRef): Promise<string[] | null> {
+    try {
+      await this.keepAlive(ref);
+      const result = await this.options.gateway.run(ref.id, "dmesg | tail -n 400", {
+        cwd: "/",
+        envs: { PATH: E2B_PATH },
+        user: ROOT_USER,
+        timeoutMs: DNS_TIMEOUT_MS,
+      });
+      return result.timedOut || result.exitCode !== 0 ? null : result.stdout.split("\n").filter((line) => line.length > 0);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * DI-21.29. The E2B guest kernel makes /dev/net/tun and /dev/fuse root-only at boot, and no udev
    * opens them, so rootless Docker cannot create the TAP device of slirp4netns. Kiln opens both in
    * its guest init (DI-21.12). A guest without a device still serves a run without Docker, so a

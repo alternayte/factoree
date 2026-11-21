@@ -195,6 +195,12 @@ export interface Sandbox {
    */
   egressLog?(ref: SandboxRef): Promise<EgressRecord[] | null>;
   /**
+   * docs/specs/sandbox-memory-and-size.md. The last lines of the guest kernel log, read where the
+   * agent cannot change them. Null when the provider cannot read it, so Factoree proves no
+   * out-of-memory kill. Absent on a provider that never can.
+   */
+  kernelLog?(ref: SandboxRef): Promise<string[] | null>;
+  /**
    * Holds an environment that every later `exec` and `startProcess` on this sandbox receives.
    *
    * `SandboxCreateInput.environment` alone cannot carry a value to a command: the Fly Sprites exec

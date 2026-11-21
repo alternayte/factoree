@@ -31,6 +31,7 @@ const toRecord = (row: Row): RepositorySetupRecord => ({
   warm: row.warm,
   derivedHosts: (row.derivedHosts ?? null) as DerivedHost[] | null,
   warmProofMs: row.warmProofMs,
+  sandboxFault: row.sandboxFault,
   createdAt: row.createdAt,
   endedAt: row.endedAt,
 });
@@ -41,7 +42,8 @@ export class PrismaRepositorySetupStore implements RepositorySetupStore {
   constructor(private readonly prisma: FactoreePrismaClient) {}
 
   async create(
-    input: Pick<RepositorySetupRecord, "tenantId" | "productId" | "repositoryFullName" | "githubInstallationId" | "workflowId">,
+    input: Pick<RepositorySetupRecord, "tenantId" | "productId" | "repositoryFullName" | "githubInstallationId" | "workflowId"> &
+      Partial<Pick<RepositorySetupRecord, "sandboxFault">>,
   ): Promise<RepositorySetupRecord> {
     return toRecord(await this.prisma.repositorySetup.create({ data: { ...input, status: "queued" } }));
   }

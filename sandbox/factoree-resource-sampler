@@ -1,0 +1,31 @@
+#!/bin/sh
+# docs/specs/sandbox-memory-and-size.md. Rootless Docker runs without cgroups, so no memory.peak
+# exists. This loop reads the used memory (MemTotal minus MemAvailable) and the used disk of the
+# home file system each second, and keeps the peaks in one file: peak memory MB, peak disk MB,
+# total memory MB, total disk MB. Factoree starts it at each sandbox preparation; a second start
+# exits while the first runs, also after a warm restore. A sandbox that ran its bootstrap before
+# the snapshot keeps that peak, because the bootstrap is part of what the repository needs.
+peak_file=/tmp/factoree-peak
+pid_file=/tmp/factoree-sampler.pid
+if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then exit 0; fi
+echo $$ >"$pid_file"
+home=${HOME:-/home/agent}
+mem_peak=0
+disk_peak=0
+if [ -f "$peak_file" ]; then read -r mem_peak disk_peak _ _ <"$peak_file" || true; fi
+written=""
+while :; do
+  memory=$(awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { printf "%d %d", t / 1024, (t - a) / 1024 }' /proc/meminfo)
+  mem_total=${memory% *}
+  mem_used=${memory#* }
+  disk=$(df -Pm "$home" 2>/dev/null | awk 'NR == 2 { printf "%d %d", $2, $3 }')
+  disk_total=${disk% *}
+  disk_used=${disk#* }
+  [ "${mem_used:-0}" -gt "$mem_peak" ] && mem_peak=$mem_used
+  [ -n "$disk_used" ] && [ "$disk_used" -gt "$disk_peak" ] && disk_peak=$disk_used
+  line="$mem_peak $disk_peak ${mem_total:-0} ${disk_total:-0}"
+  if [ "$line" != "$written" ] && printf '%s\n' "$line" >"$peak_file.tmp" 2>/dev/null && mv "$peak_file.tmp" "$peak_file"; then
+    written=$line
+  fi
+  sleep 1
+done

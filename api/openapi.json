@@ -7891,6 +7891,232 @@
                                         "kind": {
                                           "type": "string",
                                           "enum": [
+                                            "sandbox_out_of_memory"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "step": {
+                                              "type": "string"
+                                            },
+                                            "command": {
+                                              "type": "string"
+                                            },
+                                            "exitCode": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "killed": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "kernelLines": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "peakMemoryMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "peakDiskMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "totalMemoryMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "totalDiskMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "log": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "step",
+                                            "command",
+                                            "exitCode",
+                                            "killed",
+                                            "kernelLines",
+                                            "peakMemoryMb",
+                                            "peakDiskMb",
+                                            "totalMemoryMb",
+                                            "totalDiskMb",
+                                            "log"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "sandbox_disk_full"
+                                          ]
+                                        },
+                                        "message": {
+                                          "type": "string"
+                                        },
+                                        "detail": {
+                                          "type": "object",
+                                          "properties": {
+                                            "step": {
+                                              "type": "string"
+                                            },
+                                            "command": {
+                                              "type": "string"
+                                            },
+                                            "exitCode": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "killed": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "kernelLines": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "peakMemoryMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "peakDiskMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "totalMemoryMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "totalDiskMb": {
+                                              "type": [
+                                                "number",
+                                                "null"
+                                              ]
+                                            },
+                                            "log": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "step",
+                                            "command",
+                                            "exitCode",
+                                            "killed",
+                                            "kernelLines",
+                                            "peakMemoryMb",
+                                            "peakDiskMb",
+                                            "totalMemoryMb",
+                                            "totalDiskMb",
+                                            "log"
+                                          ]
+                                        },
+                                        "createdAt": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "stage",
+                                        "attempt",
+                                        "role",
+                                        "kind",
+                                        "message",
+                                        "detail",
+                                        "createdAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "stage": {
+                                          "type": "string"
+                                        },
+                                        "attempt": {
+                                          "type": "number"
+                                        },
+                                        "role": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
                                             "plan_rejected"
                                           ]
                                         },
@@ -9202,6 +9428,232 @@
                                   "egress",
                                   "deniedHosts",
                                   "hostHints"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "sandbox_out_of_memory"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "step": {
+                                    "type": "string"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "killed": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "kernelLines": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "peakMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "peakDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "step",
+                                  "command",
+                                  "exitCode",
+                                  "killed",
+                                  "kernelLines",
+                                  "peakMemoryMb",
+                                  "peakDiskMb",
+                                  "totalMemoryMb",
+                                  "totalDiskMb",
+                                  "log"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "sandbox_disk_full"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "step": {
+                                    "type": "string"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "killed": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "kernelLines": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "peakMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "peakDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "step",
+                                  "command",
+                                  "exitCode",
+                                  "killed",
+                                  "kernelLines",
+                                  "peakMemoryMb",
+                                  "peakDiskMb",
+                                  "totalMemoryMb",
+                                  "totalDiskMb",
+                                  "log"
                                 ]
                               },
                               "createdAt": {
@@ -11132,6 +11584,232 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "sandbox_out_of_memory"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "step": {
+                                    "type": "string"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "killed": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "kernelLines": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "peakMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "peakDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "step",
+                                  "command",
+                                  "exitCode",
+                                  "killed",
+                                  "kernelLines",
+                                  "peakMemoryMb",
+                                  "peakDiskMb",
+                                  "totalMemoryMb",
+                                  "totalDiskMb",
+                                  "log"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "sandbox_disk_full"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "detail": {
+                                "type": "object",
+                                "properties": {
+                                  "step": {
+                                    "type": "string"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "exitCode": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "killed": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "kernelLines": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "peakMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "peakDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalMemoryMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "totalDiskMb": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "log": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "step",
+                                  "command",
+                                  "exitCode",
+                                  "killed",
+                                  "kernelLines",
+                                  "peakMemoryMb",
+                                  "peakDiskMb",
+                                  "totalMemoryMb",
+                                  "totalDiskMb",
+                                  "log"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "stage",
+                              "attempt",
+                              "role",
+                              "kind",
+                              "message",
+                              "detail",
+                              "createdAt"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "attempt": {
+                                "type": "number"
+                              },
+                              "role": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
                                   "plan_rejected"
                                 ]
                               },
@@ -12128,6 +12806,232 @@
                                               "egress",
                                               "deniedHosts",
                                               "hostHints"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "sandbox_out_of_memory"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "step": {
+                                                "type": "string"
+                                              },
+                                              "command": {
+                                                "type": "string"
+                                              },
+                                              "exitCode": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "killed": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "kernelLines": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "peakMemoryMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "peakDiskMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "totalMemoryMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "totalDiskMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "log": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "step",
+                                              "command",
+                                              "exitCode",
+                                              "killed",
+                                              "kernelLines",
+                                              "peakMemoryMb",
+                                              "peakDiskMb",
+                                              "totalMemoryMb",
+                                              "totalDiskMb",
+                                              "log"
+                                            ]
+                                          },
+                                          "createdAt": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "stage",
+                                          "attempt",
+                                          "role",
+                                          "kind",
+                                          "message",
+                                          "detail",
+                                          "createdAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "stage": {
+                                            "type": "string"
+                                          },
+                                          "attempt": {
+                                            "type": "number"
+                                          },
+                                          "role": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "sandbox_disk_full"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string"
+                                          },
+                                          "detail": {
+                                            "type": "object",
+                                            "properties": {
+                                              "step": {
+                                                "type": "string"
+                                              },
+                                              "command": {
+                                                "type": "string"
+                                              },
+                                              "exitCode": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "killed": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "kernelLines": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "peakMemoryMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "peakDiskMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "totalMemoryMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "totalDiskMb": {
+                                                "type": [
+                                                  "number",
+                                                  "null"
+                                                ]
+                                              },
+                                              "log": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "step",
+                                              "command",
+                                              "exitCode",
+                                              "killed",
+                                              "kernelLines",
+                                              "peakMemoryMb",
+                                              "peakDiskMb",
+                                              "totalMemoryMb",
+                                              "totalDiskMb",
+                                              "log"
                                             ]
                                           },
                                           "createdAt": {

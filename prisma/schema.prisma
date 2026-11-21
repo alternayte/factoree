@@ -1073,6 +1073,8 @@ model RepositorySetup {
   // before the session, and the time of the warm proof, null when none ran.
   derivedHosts         Json?                 @map("derived_hosts")
   warmProofMs          Int?                  @map("warm_proof_ms")
+  // docs/specs/sandbox-memory-and-size.md. The sandbox fault of the run that started this setup.
+  sandboxFault         String?               @map("sandbox_fault")
   createdAt            DateTime              @default(now()) @map("created_at")
   endedAt              DateTime?             @map("ended_at")
   appChangeIssues      SetupAppChangeIssue[]

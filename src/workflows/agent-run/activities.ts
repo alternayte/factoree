@@ -84,13 +84,17 @@ export const buildSessionActivities = (budgetMs: number) =>
 /** The longest one verification pass can take. */
 const VERIFY_ATTEMPT_TIMEOUT_MS = 60 * 60_000;
 
-/** Verification returns a failing check as a result, so a retry covers only a transport fault. */
+/**
+ * Verification returns a failing check as a result, so a retry covers only a transport fault. A
+ * sandbox fault is a configuration fault and fails fast.
+ */
 export const buildVerifyActivities = (budgetMs: number) =>
   proxyActivities<Activities>({
     startToCloseTimeout: `${Math.min(VERIFY_ATTEMPT_TIMEOUT_MS, budgetMs)} milliseconds`,
     scheduleToCloseTimeout: `${budgetMs} milliseconds`,
     heartbeatTimeout: LONG_ACTIVITY_HEARTBEAT_TIMEOUT,
-    retry: retry(3, "5 seconds"),
+    // docs/specs/sandbox-memory-and-size.md. A sandbox fault repeats on a retry.
+    retry: retry(3, "5 seconds", [RUN_CONFIGURATION_ERROR_TYPE]),
   });
 
 const PUBLICATION_FAILURE_TYPES = [RUN_CONFIGURATION_ERROR_TYPE, "PATCH_HASH_MISMATCH", "EMPTY_PATCH", "PUBLICATION_FAILED"];

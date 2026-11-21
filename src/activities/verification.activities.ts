@@ -16,6 +16,8 @@ import { metrics } from "~/telemetry/metrics.js";
 import { timeStage, type RunStageStore } from "~/domain/runs/run-stage.js";
 import { recordRunEvent, type RunEventRecorder } from "~/domain/diagnostics/run-event.js";
 import { faultEgressFacts, withDeniedHosts } from "~/domain/diagnostics/egress-facts.js";
+import { readSandboxFault, readSandboxPeak, reportSandboxFault, type SandboxFaultSink } from "~/domain/runs/sandbox-fault.js";
+import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 
 /** The SHA-256 of an empty output, for a check that ran no command. */
 const EMPTY_SHA256 = createHash("sha256").update("", "utf8").digest("hex");
@@ -30,6 +32,8 @@ export interface VerificationActivityDependencies {
   stages?: RunStageStore | undefined;
   /** docs/specs/run-diagnostics.md. A failed check writes a run event. */
   events?: RunEventRecorder | undefined;
+  /** docs/specs/sandbox-memory-and-size.md. Starts the setup run after a sandbox fault. */
+  onSandboxFault?: SandboxFaultSink | undefined;
 }
 
 export interface VerifyActivityInput {
@@ -178,6 +182,10 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
       },
     );
 
+    // docs/specs/sandbox-memory-and-size.md. The message of the first sandbox fault, which ends the
+    // run with no repair: a repair would change correct code.
+    let sandboxFault: string | null = null;
+
     // SDD section 39. One immutable row per check. The idempotency key carries the attempt, so
     // a Temporal retry of this activity writes nothing new and a repair pass writes its own row.
     for (const check of outcome.checks) {
@@ -213,7 +221,38 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
         },
         idempotencyKey: `run:${input.runId}:verify:${input.attempt}:${check.name}`,
       });
-      if (!check.passed) {
+      let note: string | null = null;
+      if (!check.passed && sandboxFault === null) {
+        const isServices = check.name.endsWith(": services");
+        const reading = await readSandboxFault(dependencies.sandbox, ref, {
+          exitCode: isServices ? null : check.exitCode,
+          stoppedByFactoree: check.timedOut,
+          output: check.log ?? "",
+        });
+        if (reading.fault !== null) {
+          sandboxFault = await reportSandboxFault({
+            recorder: dependencies.events,
+            sink: dependencies.onSandboxFault,
+            tenantId: input.tenantId,
+            productId: input.productId,
+            repositoryFullName: input.stacks?.find((stack) => check.name.startsWith(`${stack.repository}: `))?.repository ?? null,
+            subject: { runId: input.runId },
+            stage: "VERIFYING",
+            attempt: input.attempt,
+            step: "verify",
+            checkName: isServices ? "the compose stack" : `the verify command ${check.name}`,
+            command: check.command,
+            exitCode: check.exitCode,
+            log: check.log,
+            fault: reading.fault,
+            peak: await readSandboxPeak(dependencies.sandbox, ref),
+            idempotencyKey: `run:${input.runId}:verify:${input.attempt}:${check.name}:event`,
+          });
+          continue;
+        }
+        note = reading.note;
+      }
+      if (!check.passed && sandboxFault === null) {
         // docs/specs/run-diagnostics.md. The verify input names no allow list, so a failed check
         // carries the egress log but no host hints.
         const facts = await faultEgressFacts({ sandbox: dependencies.sandbox, ref, allowList: null }, check.log);
@@ -227,7 +266,7 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
           message: withDeniedHosts(
             check.timedOut
               ? `The verify command ${check.name} ran out of time after ${String(Math.round(check.durationMs / 1000))} seconds.`
-              : `The verify command ${check.name} failed with exit code ${String(check.exitCode)}.`,
+              : `The verify command ${check.name} failed with exit code ${String(check.exitCode)}.${note === null ? "" : ` ${note}`}`,
             facts,
           ),
           detail: {
@@ -242,6 +281,8 @@ export const createVerificationActivities = (dependencies: VerificationActivityD
         });
       }
     }
+
+    if (sandboxFault !== null) throw new RunConfigurationError(sandboxFault);
 
     metrics.verificationDuration.observe(
       { tenant_id: input.tenantId, product_id: input.productId },

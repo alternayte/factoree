@@ -46,6 +46,7 @@ import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.j
 import type { BuildAheadFailureStore } from "~/domain/runs/build-ahead.js";
 import { createAgentActivities } from "./agent.activities.js";
 import { createVerificationActivities } from "./verification.activities.js";
+import type { SandboxFaultSink } from "~/domain/runs/sandbox-fault.js";
 import { createRefinementActivities } from "./refinement.activities.js";
 import { createContextActivities } from "./context.activities.js";
 import { createValidationActivities } from "./validation.activities.js";
@@ -80,6 +81,8 @@ import {
 } from "./skill-registry.activities.js";
 
 export interface ActivityDependencies {
+  /** docs/specs/sandbox-memory-and-size.md. Starts the setup run after a sandbox fault of a run. */
+  onSandboxFault?: SandboxFaultSink;
   /** docs/specs/drain-mode.md. True while drain mode is on. Absent means never. */
   drainModeOn?: () => Promise<boolean>;
   /** docs/specs/host-credentials.md. The host credentials of each product. Absent means none. */
@@ -431,6 +434,7 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
   }),
   ...createValidationActivities({
     events: dependencies.events,
+    onSandboxFault: dependencies.onSandboxFault,
     contracts: dependencies.validationContracts,
     runs: dependencies.runs,
     logger: dependencies.logger,
@@ -528,6 +532,7 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
   }),
   ...createVerificationActivities({
     events: dependencies.events,
+    onSandboxFault: dependencies.onSandboxFault,
     sandbox: dependencies.sandbox,
     evidence: dependencies.evidence,
     secrets: dependencies.secrets,

@@ -81,7 +81,8 @@ import { PrismaContextContractStore } from "~/persistence/prisma/context-contrac
 import { PrismaValidationContractStore } from "~/persistence/prisma/validation-contract.prisma.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
 import { createActivities } from "~/activities/index.js";
-import { createBuildAheadRequester, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
+import { createBuildAheadRequester, createRepositorySetupStarter, createTemporalClient, createWorkerConnection } from "~/temporal/connection.js";
+import { createSetupAfterFault } from "~/domain/setup/setup-after-fault.js";
 import { BuildAheadTrigger, setBuildAheadRequest } from "~/domain/runs/build-ahead.js";
 import { parseWorkflowId } from "~/temporal/workflow-id.js";
 import type { AgentSessionPort, WorkItemPort } from "~/domain/runs/ports.js";
@@ -187,6 +188,20 @@ const events = { store: new PrismaRunEventStore(prisma), redactor, logger };
 // a credential is read only when a sandbox is prepared.
 const hostCredentials = createHostCredentialWiring({ prisma, secrets: () => secrets, tokens: () => githubTokens });
 const credentialBindings = new PrismaCredentialBindingStore(prisma);
+// docs/specs/sandbox-memory-and-size.md. A sandbox fault of a run starts a setup run of the
+// repository. The Temporal client is built further down, before the first run prepares a sandbox.
+const onSandboxFault = createSetupAfterFault({
+  setups: new PrismaRepositorySetupStore(prisma),
+  repository: async (tenantId, fullName) => {
+    const row = await repositories.findByFullName(tenantId, fullName);
+    return row === null ? null : { productId: row.productId, githubInstallationId: row.githubInstallationId };
+  },
+  primaryRepositoryOf: async (runId) =>
+    (await prisma.runTarget.findFirst({ where: { runId }, orderBy: { createdAt: "asc" }, select: { repository: { select: { fullName: true } } } }))?.repository
+      .fullName ?? null,
+  startSetup: (input) => createRepositorySetupStarter(blockerClient, env.FACTOREE_TEMPORAL_TASK_QUEUE)(input),
+  logger,
+});
 const sandboxManager = new SandboxManager({
   sandbox,
   logger,
@@ -207,6 +222,7 @@ const sandboxManager = new SandboxManager({
   // The probe is defined below, and the manager reads it only when a sandbox is prepared.
   previewProbe: (url) => previewProbe(url),
   redactor,
+  onSandboxFault,
 });
 
 // docs/specs/claude-code-runner.md. The Product of the Run holds the runner, the model and the
@@ -521,6 +537,7 @@ const worker = await Worker.create({
   // session still ends at the shutdown: only a reattach (GitHub issue 13) can keep it.
   shutdownGraceTime: "8 seconds",
   activities: createActivities({
+    onSandboxFault,
     drainModeOn: () => drainMode.isOn(),
     hostCredentials: { access: hostCredentials.access, hosts: hostCredentials.hosts, key: hostCredentials.key, bindings: credentialBindings, coverage: hostCredentials.coverage },
     runs,

@@ -55,12 +55,17 @@ export interface RepositorySetupRecord {
   derivedHosts: DerivedHost[] | null;
   /** docs/specs/private-stack-onboarding.md. The time of the warm proof, or null when none ran. */
   warmProofMs: number | null;
+  /** docs/specs/sandbox-memory-and-size.md. The sandbox fault of the run that started this setup, or null. */
+  sandboxFault: string | null;
   createdAt: Date;
   endedAt: Date | null;
 }
 
 export interface RepositorySetupStore {
-  create(input: Pick<RepositorySetupRecord, "tenantId" | "productId" | "repositoryFullName" | "githubInstallationId" | "workflowId">): Promise<RepositorySetupRecord>;
+  create(
+    input: Pick<RepositorySetupRecord, "tenantId" | "productId" | "repositoryFullName" | "githubInstallationId" | "workflowId"> &
+      Partial<Pick<RepositorySetupRecord, "sandboxFault">>,
+  ): Promise<RepositorySetupRecord>;
   findById(id: string): Promise<RepositorySetupRecord | null>;
   /** The newest setup of each repository of the product. */
   latestByProduct(productId: string): Promise<RepositorySetupRecord[]>;

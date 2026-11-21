@@ -21,7 +21,7 @@ import { queuedMessage } from "../../domain/runs/run-slots.js";
 import { endsWithoutPullRequest } from "../../domain/runs/issue-status.js";
 import { describeDecision, type FactoreeDecision } from "../../domain/runs/factoree-decision.js";
 import { activities, cancelActivities } from "./activities.js";
-import { isConfigurationFault, isSandboxSlotUnavailable, notify, withCause } from "./failures.js";
+import { isConfigurationFault, isSandboxFault, isSandboxSlotUnavailable, notify, SANDBOX_FAULT_SENTENCE, withCause } from "./failures.js";
 import { PATCH } from "./patches.js";
 import type { AgentRunWorkflowInput, AgentRunWorkflowResult, RunSnapshot } from "./types.js";
 
@@ -189,7 +189,10 @@ export class Run {
    */
   async failFrom(error: unknown, configurationSentence: string): Promise<never> {
     rethrowControl(error);
-    if (isConfigurationFault(error)) return await this.fail("CONFIGURATION_INVALID", withCause(configurationSentence, error));
+    // docs/specs/sandbox-memory-and-size.md. A sandbox fault names itself, not the step's configuration.
+    if (isConfigurationFault(error)) {
+      return await this.fail("CONFIGURATION_INVALID", withCause(isSandboxFault(error) ? SANDBOX_FAULT_SENTENCE : configurationSentence, error));
+    }
     if (this.remainingMs() > 0) throw error;
     return await this.timeout();
   }

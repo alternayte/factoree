@@ -58,6 +58,8 @@ const KILN_BASE_ENVIRONMENT: Record<string, string> = {
 const TEMPLATE_WAIT_MS = 20 * 60_000;
 const TEMPLATE_POLL_MS = 5_000;
 const TEMPLATE_DISK_MB = 16_384;
+/** docs/specs/sandbox-memory-and-size.md. Enough console lines to hold the kill lines of one check. */
+const KERNEL_LOG_LINES = 400;
 
 
 // A work sprite waits for check sprites and repairs between agent sessions. A persistent sandbox
@@ -184,6 +186,11 @@ export class KilnSandbox implements Sandbox {
           "credential injection. Rebuild the template on the Kiln host, or remove the host credentials.",
       );
     }
+  }
+
+  /** docs/specs/sandbox-memory-and-size.md. The guest console that Kiln writes on the host. */
+  kernelLog(ref: SandboxRef): Promise<string[] | null> {
+    return this.options.client.console(ref.id, KERNEL_LOG_LINES);
   }
 
   async egressLog(ref: SandboxRef): Promise<EgressRecord[]> {

@@ -1,7 +1,7 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@16";
+export const SETUP_PROMPT_VERSION = "setup@17";
 
 export interface SetupPromptFields {
   repository: string;
@@ -57,6 +57,11 @@ export interface SetupPromptFields {
    * the implementer. opencode runs with OPENCODE_DISABLE_PROJECT_CONFIG=1 and loads none itself.
    */
   repositoryInstructions: { file: string; text: string } | null;
+  /**
+   * docs/specs/sandbox-memory-and-size.md. The sandbox fault of a run that started this setup:
+   * the check, the killed processes and the peak. Null for any other setup.
+   */
+  sandboxFault?: string | null;
 }
 
 /** The name of a report part as the prompt writes it. */
@@ -120,6 +125,9 @@ context:                  # optional
   authority: ["ARCHITECTURE.md", "docs/design/**"]  # the docs that state current architecture
 sandbox:
   allowedDomains: []      # Factoree fills this from what the bootstrap reached
+  memoryMb: 8192          # optional: the least memory the repository needs, in MB
+  diskMb: 32768           # optional: the least disk the repository needs, in MB
+  vcpus: 4                # optional: the least vCPUs the repository needs
 secrets:
   require: []             # the product test secret names the app reads`;
 
@@ -186,6 +194,24 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
         "Set preview.readySelector only when the app renders its markup before it attaches its handlers, as Blazor Server, Phoenix LiveView and Hotwire do: a click before then does nothing. Pick a selector that shows only once the page takes input. Before the first click or fill after each page load, Factoree waits for it, as well as for the load event and network idle.",
         "agent-browser is installed. Use it against your running preview to find each account's sign-in steps and its check, and to confirm that they sign the account in, before you write them. Factoree signs each account in again with its own browser.",
         "When the sign-in goes through an external identity provider, such as Entra ID, Auth0, Okta or Keycloak, add a fake identity provider to `.factoree/compose.yaml`, such as an OIDC mock server, and point the app at it through its environment. When the app cannot read its provider from its configuration, write that as an app change. Never turn the sign-in off and never add a sign-in path that skips the app's own auth: Factoree then checks a path that production never runs.",
+      ].join("\n"),
+    ),
+    section(
+      "Memory and disk",
+      [
+        "Rootless Docker in the sandbox runs without cgroups, so a compose `mem_limit` or `deploy.resources` limit has no effect.",
+        "A service that takes a share of all memory by default fills any sandbox. Cap each one in `.factoree/compose.yaml` through its own setting: `MSSQL_MEMORY_LIMIT_MB` for SQL Server, `ES_JAVA_OPTS: -Xms512m -Xmx512m` for Elasticsearch and OpenSearch, `JAVA_OPTS_KC_HEAP` or `JAVA_OPTS` for Keycloak, `KAFKA_HEAP_OPTS` for Kafka. Pick the smallest cap the tests pass with.",
+        "The file /tmp/factoree-peak holds the peak memory and disk of your sandbox since it started, in MB: `<peak memory> <peak disk> <total memory> <total disk>`. Read it after the bootstrap, the services and each verify command ran.",
+        "When the peak memory is above 80% of the total memory, set sandbox.memoryMb to the peak times 1.25, rounded up to a multiple of 512. Do the same for sandbox.diskMb with the disk. Set no sandbox size when the peaks are below 80%.",
+        "A test command that runs out of memory exits 137. Lower the parallel test workers of the test runner, as `maxParallelForks` in Gradle, `-T` in Maven or `--maxWorkers` in Jest, before you raise the sandbox size.",
+        ...(fields.sandboxFault === undefined || fields.sandboxFault === null
+          ? []
+          : [
+              "",
+              "A run of this repository stopped on this sandbox fault, and Factoree started this setup to repair it. Add the service caps or the sandbox size that stop it, and keep every other part that works:",
+              "",
+              fields.sandboxFault,
+            ]),
       ].join("\n"),
     ),
     section(
