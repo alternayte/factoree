@@ -664,7 +664,7 @@ describe("summarizeUserValidation", () => {
   });
 });
 
-describe("the verify environment rule (GitHub issue 93, DI-21.190)", () => {
+describe("the verify environment rule (GitHub issue 93, DI-21.192)", () => {
   const commandContract: ValidationContract = {
     ...contract,
     assertions: [

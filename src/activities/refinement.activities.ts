@@ -178,7 +178,7 @@ export interface ProposeRefinementActivityInput {
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
   egress?: EgressFacts | null;
-  /** GitHub issue 93, DI-21.190. The proven verify commands. Absent in an old history. */
+  /** GitHub issue 93, DI-21.192. The proven verify commands. Absent in an old history. */
   verifyCommands?: Array<{ name: string; run: string }>;
   /**
    * Issue #39, DI-21.66. The most criteria the proposal may hold, the Product setting. Absent in

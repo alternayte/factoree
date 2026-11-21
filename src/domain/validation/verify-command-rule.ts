@@ -1,5 +1,5 @@
 /**
- * GitHub issue 93, DI-21.190. A contract command that runs the tool of a proven verify command
+ * GitHub issue 93, DI-21.192. A contract command that runs the tool of a proven verify command
  * must run it with the environment that verify command sets. A test tool without that environment
  * starts against infrastructure the sandbox does not run, so it fails on correct code and spends a
  * repair. The rule reads shell text, so it only splits on quotes, separators and assignments.

@@ -108,7 +108,7 @@ export interface UserValidationInput {
    * a run with one target.
    */
   planRules?: PlanTargetRules;
-  /** GitHub issue 93, DI-21.190. The verify commands a command entry must keep the variables of. */
+  /** GitHub issue 93, DI-21.192. The verify commands a command entry must keep the variables of. */
   verifyCommands?: readonly VerifyCommandText[];
   /**
    * docs/specs/change-sets.md, DI-21.146. A preview the caller started and stops itself: the
@@ -263,7 +263,7 @@ const executeCommandAssertion = async (
   };
 
   const passed = result.exitCode === entry.command.expectExitCode;
-  // GitHub issue 93, DI-21.190. A reader must see which command earned the result when the plan
+  // GitHub issue 93, DI-21.192. A reader must see which command earned the result when the plan
   // ran another one than the contract names, and why a failed one failed, without a download.
   // A `test` criterion names a test file as its check, not a command, so only `command` compares.
   const contractCheck = assertion.method === "command" ? contractCheckOf(assertion.statement) : null;

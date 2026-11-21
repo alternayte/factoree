@@ -30,7 +30,7 @@ export interface RefinerPromptFields {
   /** Issue #39. The most questions the proposal may hold. */
   questionsLimit: number;
   skills: string[];
-  /** GitHub issue 93, DI-21.190. The proven verify commands of the repository. */
+  /** GitHub issue 93, DI-21.192. The proven verify commands of the repository. */
   verifyCommands?: Array<{ name: string; run: string }>;
   /**
    * docs/specs/egress-honesty-and-issue-status.md. The effective allow list of the work sprite and

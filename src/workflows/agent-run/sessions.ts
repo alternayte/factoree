@@ -253,7 +253,7 @@ export const runUserValidate = async (
       services: prepared.runtime.services ?? null,
       imageFiles: prepared.imageFiles ?? [],
       egress: egressOf(prepared),
-      // GitHub issue 93, DI-21.190. A command entry keeps the variables of the verify command it narrows.
+      // GitHub issue 93, DI-21.192. A command entry keeps the variables of the verify command it narrows.
       ...(prepared.verifyCommands.length === 0
         ? {}
         : { verifyCommands: prepared.verifyCommands.map((command) => ({ name: command.name, run: command.run })) }),

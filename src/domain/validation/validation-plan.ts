@@ -413,7 +413,7 @@ export const parseValidationPlan = (
    */
   rules?: PlanTargetRules,
   /**
-   * GitHub issue 93, DI-21.190. The verify commands of a run with one target. A command entry that
+   * GitHub issue 93, DI-21.192. The verify commands of a run with one target. A command entry that
    * runs the tool of one must set the variables it sets. Absent or empty: no such rule.
    */
   verifyCommands: readonly VerifyCommandText[] = [],
@@ -578,7 +578,7 @@ export const parseValidationPlan = (
     }
   }
 
-  // DI-21.190. A change set has commands of several targets, each with its own environment.
+  // DI-21.192. A change set has commands of several targets, each with its own environment.
   if (rules === undefined) {
     for (const entry of plan.entries) {
       if (entry.kind !== "command") continue;

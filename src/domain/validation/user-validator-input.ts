@@ -35,7 +35,7 @@ export interface BuildUserValidatorInput {
   targets?: ValidatorTargetLines[];
   /** DI-21.147. The target a `set` entry runs against, or null. */
   setServer?: string | null;
-  /** GitHub issue 93, DI-21.190. The proven verify commands of a run with one target. */
+  /** GitHub issue 93, DI-21.192. The proven verify commands of a run with one target. */
   verifyCommands?: ReadonlyArray<{ name: string; run: string }>;
 }
 

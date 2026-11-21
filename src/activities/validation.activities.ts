@@ -194,7 +194,7 @@ export interface UserValidateActivityInput {
   edges?: Array<{ provider: string; consumer: string }>;
   /** DI-21.149. The targets whose patch changes a file. Absent for one target. */
   changedTargets?: string[];
-  /** GitHub issue 93, DI-21.190. The proven verify commands. Absent in an old history. */
+  /** GitHub issue 93, DI-21.192. The proven verify commands. Absent in an old history. */
   verifyCommands?: Array<{ name: string; run: string }>;
 }
 
@@ -578,7 +578,7 @@ export const createValidationActivities = (dependencies: ValidationActivityDepen
       // docs/specs/change-sets.md, DI-21.147. A change set names each target's own preview instead.
       const setCheck = input.setCheck;
       const planRules = setCheck === undefined ? undefined : planTargetRulesOf(setCheck);
-      // GitHub issue 93, DI-21.190. A replayed plan passed once and keeps the rules it passed under.
+      // GitHub issue 93, DI-21.192. A replayed plan passed once and keeps the rules it passed under.
       const verifyCommands =
         setCheck !== undefined || input.replay === true
           ? []

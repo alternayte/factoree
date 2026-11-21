@@ -6,11 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-21
+
 ### Fixed
 
-- Contract command checks run a test tool the way the proven verify command does. The refiner and the validator get the verify commands. A plan command that runs a verify tool without the variables of that verify command goes back to the validator once for a correction (`refiner@14`, `user-validator@13`, DI-21.190, GitHub issue 93).
-- A failed command check names the last lines of its output, and a check that ran a different command than the contract names both (DI-21.190).
-- The run page and the Proof Pack show the same token kinds: uncached input, cache read, cache write, output and reasoning (DI-21.191, GitHub issue 90).
+- Contract command checks run a test tool the way the proven verify command does. The refiner and the validator get the verify commands. A plan command that runs a verify tool without the variables of that verify command goes back to the validator once for a correction (`refiner@14`, `user-validator@13`, DI-21.192, GitHub issue 93).
+- A failed command check names the last lines of its output, and a check that ran a different command than the contract names both (DI-21.192).
+- The run page and the Proof Pack show the same token kinds: uncached input, cache read, cache write, output and reasoning (DI-21.193, GitHub issue 90).
 
 ## [0.20.0] - 2026-11-21
 
