@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-22
+
 ### Added
 
 - The factory floor has a full screen button, and the Floor page uses the whole main area. The sidebar collapses to icons on every page, and the browser remembers it (docs/specs/floor-full-screen.md, DI-21.197).
