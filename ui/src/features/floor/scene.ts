@@ -63,13 +63,52 @@ const STEP = 6;
 const LINE_GAP = 27;
 /** The camera position relative to its target: the angle of the Night shift concept. */
 const CAMERA_OFFSET = new THREE.Vector3(22, 40, 48);
-/** docs/specs/floor-growth.md. The silos a line shows before the rest become a "+N" sign. */
-const SILOS_SHOWN = 6;
+/**
+ * docs/specs/floor-growth.md. Where the silos of a line stand, one per repository. Up to SILO_ROW
+ * stand in one row behind the dock, each named. More fill a field across the back of the line,
+ * behind its buildings, at the largest scale that keeps the field at most SILO_FIELD_ROWS deep.
+ */
+const SILO_ROW = 8;
+const SILO_FIELD_ROWS = 6;
+interface SiloLayout {
+  field: boolean;
+  scale: number;
+  gap: number;
+  columns: number;
+  rows: number;
+  x0: number;
+  z0: number;
+}
+const siloLayout = (count: number): SiloLayout => {
+  if (count <= SILO_ROW) return { field: false, scale: 1, gap: 2.6, columns: SILO_ROW, rows: 1, x0: STEP * 6.2, z0: -10.2 };
+  const x0 = -1;
+  const width = STEP * 9 + 5 - x0;
+  const scales = [0.8, 0.65, 0.5, 0.4];
+  for (const scale of scales) {
+    const gap = 2.6 * scale;
+    const columns = Math.floor(width / gap) + 1;
+    const rows = Math.ceil(count / columns);
+    if (rows <= SILO_FIELD_ROWS || scale === scales.at(-1)) return { field: true, scale, gap, columns, rows, x0, z0: -15 };
+  }
+  throw new Error("unreachable");
+};
+/** The crates the PR yard shows before the rest wait there as a "+N" count. */
+const YARD_SHOWN = 36;
+/** docs/specs/floor-growth.md. The PR yard is a pad in front of the belt, past the dock. */
+const YARD_Z = 4.2;
+/** The extra room a silo field needs behind a line, past the room every line has. */
+const siloDepth = (repositories: number): number => {
+  const layout = siloLayout(repositories);
+  // The camera looks down from the front, so a silo also needs its height free behind it.
+  return layout.field ? Math.max(0, -layout.z0 + (layout.rows - 1) * layout.gap + 2 + 4 * layout.scale - 13) : 0;
+};
 const BELT_OFFSET = 0;
 const REPAIR_OFFSET = 1.6;
 const MACHINE_OFFSET = -2.9;
 const BIN_OFFSET = 3.5;
 const MOVE_SPEED = 3.2;
+/** How far along the belt a machine behind it appears, seen from CAMERA_OFFSET. */
+const BELT_STOP_SHIFT = (-MACHINE_OFFSET * CAMERA_OFFSET.x) / CAMERA_OFFSET.z;
 /** The footprint each machine model is scaled to, by station. */
 const FOOTPRINT: Record<StationKey, { w: number; d: number; h: number }> = {
   intake: { w: 3.4, d: 3.2, h: 2.6 },
@@ -80,7 +119,7 @@ const FOOTPRINT: Record<StationKey, { w: number; d: number; h: number }> = {
   lab: { w: 3.8, d: 3.2, h: 3 },
   inspect: { w: 3.6, d: 3.2, h: 3 },
   dock: { w: 4, d: 3.4, h: 1.4 },
-  yard: { w: 5.4, d: 4.6, h: 0.3 },
+  yard: { w: 6.4, d: 7.4, h: 0.3 },
   gate: { w: 3.4, d: 3.6, h: 3.8 },
 };
 
@@ -112,6 +151,8 @@ interface CrateView {
   band: THREE.MeshBasicMaterial;
   /** The path the crate walks now, and when it started. */
   path: THREE.Vector3[];
+  /** Where the crate is on its path now, without its lift and bounce. */
+  at: THREE.Vector3;
   pathLength: number;
   startedAt: number;
   place: Place;
@@ -227,6 +268,8 @@ export class FloorScene {
   /** True once the viewer panned or zoomed, so a new stage size keeps their view. */
   private userMoved = false;
   private lines: SceneLine[] = [];
+  /** The z of each line: a line with more silo rows stands further from the line above. */
+  private lineOffsets: number[] = [];
   private machines = new Map<string, Machine>();
   private signs = new Map<string, HTMLDivElement>();
   private crates = new Map<string, CrateView>();
@@ -235,6 +278,9 @@ export class FloorScene {
   private badges: HTMLDivElement[] = [];
   private stationCrew = new Map<string, Crew>();
   private silos = new Map<string, { cap: THREE.MeshBasicMaterial; label: HTMLDivElement; point: THREE.Vector3 }>();
+  /** The silos of a field, for the hover that names one. */
+  private siloHits: Array<{ object: THREE.Object3D; key: string }> = [];
+  private hoveredSilo: string | null = null;
   private growthSigns = new Map<string, HTMLSpanElement>();
   private readonly props = propMaterials();
   private animated: Animated = emptyAnimated();
@@ -340,6 +386,8 @@ export class FloorScene {
     this.stationCrew.clear();
     this.silos.forEach((entry) => entry.label.remove());
     this.silos.clear();
+    this.siloHits = [];
+    this.hoveredSilo = null;
     this.growthSigns.clear();
     this.animated = emptyAnimated();
     disposeTree(this.world);
@@ -364,6 +412,11 @@ export class FloorScene {
     grid.position.y = 0.01;
     this.world.add(grid);
 
+    this.lineOffsets = [];
+    lines.forEach((line, index) => {
+      const previous = index === 0 ? 0 : this.lineOffsets[index - 1]! + LINE_GAP;
+      this.lineOffsets.push(previous + (index === 0 ? 0 : siloDepth(line.repositories.length)));
+    });
     lines.forEach((line, index) => this.buildLine(line, index));
     // Everything casts and takes a shadow, except the floor, which only takes one.
     this.world.traverse((node) => {
@@ -373,7 +426,7 @@ export class FloorScene {
       mesh.castShadow = mesh !== floor;
     });
     // The shadow camera covers every line and its surroundings.
-    const last = (lines.length - 1) * LINE_GAP;
+    const last = this.lineOffsets.at(-1) ?? 0;
     const centre = new THREE.Vector3(this.x(4.5), 0, last / 2);
     this.key.target.position.copy(centre);
     this.key.position.copy(centre).add(new THREE.Vector3(-22, 40, 18));
@@ -413,7 +466,7 @@ export class FloorScene {
   }
 
   private lineZ(productId: string): number {
-    return Math.max(0, this.lines.findIndex((line) => line.productId === productId)) * LINE_GAP;
+    return this.lineOffsets[Math.max(0, this.lines.findIndex((line) => line.productId === productId))] ?? 0;
   }
 
   /**
@@ -427,18 +480,27 @@ export class FloorScene {
     if (place === "gone") return new THREE.Vector3(this.x(stationIndex("gate")) + 7, 0, z);
     if (place === "bin") return new THREE.Vector3(this.x(stationIndex("inspect")) - gap + (slot % 3) * gap, Math.floor(slot / 3) * 1.55, z + BIN_OFFSET);
     const index = stationIndex(place);
-    if (place === "intake" || place === "yard") {
+    if (place === "intake") {
       return new THREE.Vector3(this.x(index) - gap + (slot % 3) * gap, Math.floor(slot / 6) * 1.55, z - 0.8 + (Math.floor(slot / 3) % 2) * gap);
     }
+    if (place === "yard") {
+      // docs/specs/floor-growth.md. The yard holds YARD_SHOWN crates: four rows of three in front
+      // of the belt, stacked up to three high.
+      const layer = slot % 12;
+      return new THREE.Vector3(this.x(index) - gap + (layer % 3) * gap, Math.floor(slot / 12) * 1.55, z + YARD_Z + (Math.floor(layer / 3) - 1.5) * 1.85);
+    }
     // On the belt, in line with the machine as the concept: one crate at its centre, two side by
-    // side, then a second level.
+    // side, then a second level. The machine stands behind the belt, so the crate stops
+    // BELT_STOP_SHIFT further along, where the camera shows it in front of the machine.
     const perLevel = Math.min(2, count - Math.floor(slot / 2) * 2);
-    return new THREE.Vector3(this.x(index) + ((slot % 2) - (perLevel - 1) / 2) * gap, Math.floor(slot / 2) * 1.55, z + BELT_OFFSET);
+    const shift = place === "gate" ? 0 : BELT_STOP_SHIFT;
+    return new THREE.Vector3(this.x(index) + shift + ((slot % 2) - (perLevel - 1) / 2) * gap, Math.floor(slot / 2) * 1.55, z + BELT_OFFSET);
   }
 
   /** How many crates a place shows. More wait there as a "+N" count. */
   private capacityOf(place: Place): number {
-    if (place === "intake" || place === "yard") return 12;
+    if (place === "yard") return YARD_SHOWN;
+    if (place === "intake") return 12;
     if (place === "bin") return 6;
     return 4;
   }
@@ -492,7 +554,7 @@ export class FloorScene {
   }
 
   private buildLine(line: SceneLine, index: number): void {
-    const z = index * LINE_GAP;
+    const z = this.lineOffsets[index] ?? 0;
     const pad = new THREE.Mesh(new THREE.BoxGeometry(this.x(9) + 11, 0.08, 10.6), this.materials.pad);
     pad.position.set(this.x(4.5) + 1.5, 0.04, z - 0.4);
     this.world.add(pad);
@@ -511,7 +573,7 @@ export class FloorScene {
       const size = FOOTPRINT[station.key];
       const model = placeModel(this.models[station.key], size, MODEL_TINT.machine, STATION_COLOR[station.key]);
       const mx = this.x(stationAt);
-      const mz = station.key === "yard" ? z - 0.4 : station.key === "gate" ? z : z + MACHINE_OFFSET;
+      const mz = station.key === "yard" ? z + YARD_Z : station.key === "gate" ? z : z + MACHINE_OFFSET;
       model.position.set(mx, 0, mz);
       model.userData.pick = { kind: "station", productId: line.productId, station: station.key } satisfies Pick;
       model.traverse((node) => (node.userData.pick = model.userData.pick));
@@ -612,37 +674,38 @@ export class FloorScene {
 
     // Behind the line: a walkway, then one silo per repository.
     add(walkway(m, length, 1.4), this.x(4.5) + 1, -6.6);
-    // Low silos behind the dock, so they never outweigh the stations, and the back left of the
-    // line stays clear for the sign of the line above. Up to SILOS_SHOWN stand
-    // in a row; the rest are a "+N" sign that opens the line panel with every repository. The
-    // labels alternate below and above the silos, so neighbours never overlap, and a long name
-    // is cut with an ellipsis and shown whole on hover.
-    const shown = line.repositories.slice(0, SILOS_SHOWN);
-    shown.forEach((repository, index) => {
+    // Low silos, so they never outweigh the stations. In one row behind the dock the labels
+    // alternate below and above the silos, so neighbours never overlap. In a field only the silos
+    // of busy repositories and the silo under the pointer show their name. A long name is cut with
+    // an ellipsis and shown whole on hover; a click opens the line panel with every repository.
+    const layout = siloLayout(line.repositories.length);
+    const pick: Pick = { kind: "line", productId: line.productId };
+    line.repositories.forEach((repository, index) => {
+      const column = index % layout.columns;
+      const row = Math.floor(index / layout.columns);
       const tank = silo(m, 2 + random() * 0.6);
-      const x = this.x(6.2) + index * 2.6;
-      add(tank.group, x, -10.2);
-      const above = index % 2 === 1;
-      const label = this.label(repository.split("/").at(-1) ?? repository, `floor-label floor-silo${above ? " floor-silo-above" : ""}`);
+      tank.group.scale.setScalar(layout.scale);
+      const x = layout.x0 + column * layout.gap;
+      const oz = layout.z0 - row * layout.gap;
+      add(tank.group, x, oz);
+      tank.group.traverse((node) => (node.userData.pick = pick));
+      const above = !layout.field && index % 2 === 1;
+      const className = layout.field ? "floor-label floor-silo floor-silo-field" : `floor-label floor-silo${above ? " floor-silo-above" : ""}`;
+      const label = this.label(repository.split("/").at(-1) ?? repository, className);
       label.title = repository;
-      label.addEventListener("click", () => this.options.onPick({ kind: "line", productId: line.productId }));
-      const point = above ? new THREE.Vector3(x, tank.top + 0.2, z - 10.2) : new THREE.Vector3(x, 0.1, z - 8.9);
-      this.silos.set(`${line.productId}:${repository}`, { cap: tank.cap, label, point });
+      label.addEventListener("click", () => this.options.onPick(pick));
+      const top = tank.top * layout.scale;
+      const point = above ? new THREE.Vector3(x, top + 0.2, z + oz) : new THREE.Vector3(x, 0.1, z + oz + 1.3 * layout.scale);
+      const key = `${line.productId}:${repository}`;
+      this.silos.set(key, { cap: tank.cap, label, point });
+      if (layout.field) this.siloHits.push({ object: tank.group, key });
     });
-    const more = line.repositories.length - shown.length;
-    if (more > 0) {
-      const label = this.label(`+${String(more)} repositories`, "floor-label floor-silo floor-silo-more");
-      label.title = line.repositories.slice(SILOS_SHOWN).join("\n");
-      label.addEventListener("click", () => this.options.onPick({ kind: "line", productId: line.productId }));
-      const cap = new THREE.MeshBasicMaterial();
-      this.silos.set(`${line.productId}:+more`, { cap, label, point: new THREE.Vector3(this.x(6.2) + shown.length * 2.6 + 0.6, 0.1, z - 9.4) });
-    }
 
     // docs/specs/floor-growth.md. The buildings the merged pull requests unlocked, behind the
     // line and in its front yard, inside the view the camera fits.
     if (built.has("tanks")) add(tankFarm(m, this.animated), this.x(3.2), -10.6);
     if (built.has("warehouse")) add(warehouse(m, this.animated, new THREE.Vector3(this.x(5.2), 0, z - 11)), this.x(5.2), -11);
-    if (built.has("racks")) add(racks(m, random), this.x(9) + 2.5, -10.2);
+    if (built.has("racks")) add(racks(m, random), this.x(9) + 5, -10.2);
     if (built.has("trucks")) add(truckBay(m, this.animated), this.x(8), 10.2, Math.PI / 2);
   }
 
@@ -665,7 +728,7 @@ export class FloorScene {
     this.world.add(group);
     const start = this.stationPoint(crate.run.productId, crate.from ?? crate.place, 0);
     group.position.copy(start);
-    const view: CrateView = { group, body, band, path: [start], pathLength: 0, startedAt: performance.now(), place: crate.from ?? crate.place };
+    const view: CrateView = { group, body, band, path: [start], at: start.clone(), pathLength: 0, startedAt: performance.now(), place: crate.from ?? crate.place };
     this.crates.set(crate.run.id, view);
     return view;
   }
@@ -742,7 +805,7 @@ export class FloorScene {
         const goal = this.stationPoint(crate.run.productId, crate.place, slot, Math.min(counts.get(slotKey) ?? 1, this.capacityOf(crate.place)));
         const end = view.path.at(-1)!;
         if (view.place !== crate.place || end.distanceTo(goal) > 0.01) {
-          const from = view.group.position.clone();
+          const from = view.at.clone();
           view.path = view.place !== crate.place ? this.pathOf(crate.run.productId, from, goal, crate.place, crate.repair) : [from, goal];
           view.pathLength = view.path.reduce((sum, point, index) => (index === 0 ? 0 : sum + point.distanceTo(view.path[index - 1]!)), 0);
           view.startedAt = now;
@@ -761,10 +824,13 @@ export class FloorScene {
           }
           remaining -= segment;
         }
+        view.at.copy(position);
         view.group.position.set(position.x, 1.3 + position.y + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
         view.group.visible = (crate.place !== "gone" || moving) && !overflow;
         const color = TONE_COLOR[crate.tone];
         view.band.color.setHex(color);
+        // A full yard is many crates; their bands glow less, so the yard does not outshine the line.
+        if (crate.place === "yard") view.band.color.multiplyScalar(0.55);
         if (crate.tone === "danger" && crate.place !== "bin" && motion) view.body.emissive.setHex(TOKENS.danger).multiplyScalar(0.25 + 0.2 * Math.sin(now / 120));
         else view.body.emissive.setHex(0x000000);
         if (crate.place !== "gone" && crate.place !== "bin") {
@@ -922,7 +988,7 @@ export class FloorScene {
           this.puffs.push({ mesh, bornAt: now });
         }
       }
-      this.place(machine.label, new THREE.Vector3(machine.x - 0.6, 0, this.lineZ(key.slice(0, key.lastIndexOf(":"))) + (station === "yard" ? 4.2 : 3)));
+      this.place(machine.label, new THREE.Vector3(machine.x - 0.6, 0, this.lineZ(key.slice(0, key.lastIndexOf(":"))) + (station === "yard" ? YARD_Z + 3.3 : 3)));
       machine.label.dataset.on = tone !== undefined && tone !== "idle" ? "true" : "false";
     }
     // docs/specs/floor-growth.md. The crew works only while its station is lit by real state.
@@ -957,6 +1023,7 @@ export class FloorScene {
       entry.cap.color.setHex(busy ? TOKENS.accent : 0x232c30);
       if (busy && motion) entry.cap.color.multiplyScalar(0.7 + 0.3 * Math.sin(now / 500));
       entry.label.dataset.on = busy ? "true" : "false";
+      entry.label.dataset.hover = this.hoveredSilo === key ? "true" : "false";
       this.place(entry.label, entry.point);
     }
     // Decoration moves only in place.
@@ -1046,15 +1113,16 @@ export class FloorScene {
       this.resize();
       return;
     }
-    const last = (this.lines.length - 1) * LINE_GAP;
+    const last = this.lineOffsets.at(-1) ?? 0;
+    const back = -13 - siloDepth(this.lines[0]?.repositories.length ?? 0);
     // docs/specs/floor-growth.md. Every line with its silos, its buildings, its front yard and
     // its setup crews.
     const corners = [
-      new THREE.Vector3(this.x(0) - 8, 0, -13),
-      new THREE.Vector3(this.x(9) + 5, 0, -13),
+      new THREE.Vector3(this.x(0) - 8, 0, back),
+      new THREE.Vector3(this.x(9) + 7, 0, back),
       new THREE.Vector3(this.x(0) - 8, 0, last + 14),
-      new THREE.Vector3(this.x(9) + 5, 0, last + 14),
-      new THREE.Vector3(this.x(5), 6, -14),
+      new THREE.Vector3(this.x(9) + 7, 0, last + 14),
+      new THREE.Vector3(this.x(5), 6, back - 1),
       new THREE.Vector3(this.x(0) - 6, 4, -2),
     ];
     this.target.set(0, 0, 0);
@@ -1099,7 +1167,10 @@ export class FloorScene {
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     const down = this.down;
-    if (down === null) return;
+    if (down === null) {
+      this.hoverSilo(event);
+      return;
+    }
     const dx = event.clientX - down.x;
     const dy = event.clientY - down.y;
     if (!down.moved && Math.hypot(dx, dy) > 5) {
@@ -1116,6 +1187,22 @@ export class FloorScene {
     this.target.copy(down.target).addScaledVector(right, -dx * perPixel).addScaledVector(forward, (dy * perPixel) / pitch);
     this.placeCamera();
   };
+
+  /** Names the silo of a field under the pointer. */
+  private hoverSilo(event: PointerEvent): void {
+    if (this.siloHits.length === 0) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const point = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(point, this.camera);
+    const hit = this.raycaster.intersectObjects(this.siloHits.map((entry) => entry.object), true)[0];
+    if (hit === undefined) {
+      this.hoveredSilo = null;
+      return;
+    }
+    let node: THREE.Object3D | null = hit.object;
+    while (node !== null && !this.siloHits.some((entry) => entry.object === node)) node = node.parent;
+    this.hoveredSilo = this.siloHits.find((entry) => entry.object === node)?.key ?? null;
+  }
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     const down = this.down;

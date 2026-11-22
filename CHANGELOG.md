@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The floor stations follow the workflow order: prep before the refinery, so a crate never walks back. A crate no longer jumps when its step changes, and it stops under its machine as the camera shows it (docs/specs/floor-growth.md).
+- The PR yard is a pad in front of the belt that shows 36 crates and counts the rest.
+
+### Changed
+
+- The floor shows a silo for every repository, up to about 200 per product, in a field behind the line; busy silos glow and show their names, and the pointer names any silo.
+
 ## [0.21.3] - 2026-11-22
 
 ### Fixed

@@ -54,7 +54,9 @@
 .floor-silo { font-size: 9.5px; text-transform: none; letter-spacing: 0; max-width: 11ch; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; cursor: pointer; }
 .floor-silo:hover { color: var(--ink); max-width: none; z-index: 1; background: rgba(11, 13, 14, 0.9); }
 .floor-silo-above { translate: -50% -100%; }
-.floor-silo-more { max-width: none; color: var(--body); }
+.floor-silo-field { font-size: 9px; visibility: hidden; }
+.floor-silo-field[data-on="true"], .floor-silo-field[data-hover="true"] { visibility: visible; }
+.floor-silo-field[data-hover="true"] { color: var(--ink); max-width: none; z-index: 2; background: rgba(11, 13, 14, 0.9); }
 .floor-team { font: 500 10.5px/1 var(--font-mono); color: var(--accent-ink); background: var(--accent); padding: 2px 5px; border-radius: var(--radius-control); }
 .floor-pill {
   translate: -50% -100%;
