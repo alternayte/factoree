@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.6] - 2026-11-22
+
+### Fixed
+
+- The floor PR yard is a lighter concrete slab with a painted border, bay lines and corner bollards, so its crates read as standing in the yard (docs/specs/floor-growth.md).
+
 ## [0.21.5] - 2026-11-22
 
 ### Fixed

@@ -96,6 +96,39 @@ const siloLayout = (count: number): SiloLayout => {
 const YARD_SHOWN = 36;
 /** docs/specs/floor-growth.md. The PR yard is a pad in front of the belt, past the dock. */
 const YARD_Z = 4.2;
+/**
+ * docs/specs/floor-growth.md. The PR yard: a raised concrete slab, lighter than the floor, with a
+ * painted border, a painted bay line per row of crates, and a bollard at each corner, so the crates
+ * stand in a yard and not loose beside the belt.
+ */
+const yardPad = (size: { w: number; d: number }): THREE.Group => {
+  const group = new THREE.Group();
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(size.w, 0.22, size.d), new THREE.MeshStandardMaterial({ color: 0x4a5053, roughness: 0.95 }));
+  slab.position.y = 0.11;
+  const paint = new THREE.MeshStandardMaterial({ color: 0xa39d86, roughness: 0.8 });
+  const line = (w: number, d: number, x: number, z: number) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), paint);
+    mesh.position.set(x, 0.23, z);
+    group.add(mesh);
+  };
+  const inset = 0.25;
+  line(size.w - inset * 2, 0.12, 0, -size.d / 2 + inset);
+  line(size.w - inset * 2, 0.12, 0, size.d / 2 - inset);
+  line(0.12, size.d - inset * 2, -size.w / 2 + inset, 0);
+  line(0.12, size.d - inset * 2, size.w / 2 - inset, 0);
+  for (let row = 1; row < 4; row += 1) line(size.w - inset * 4, 0.05, 0, -size.d / 2 + inset + (row * (size.d - inset * 2)) / 4);
+  const bollard = new THREE.MeshStandardMaterial({ color: 0x6b6a5e, roughness: 0.7 });
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.9, 10), bollard);
+      post.position.set(sx * (size.w / 2 - 0.1), 0.45, sz * (size.d / 2 - 0.1));
+      group.add(post);
+    }
+  }
+  group.add(slab);
+  return group;
+};
+
 /** The order the yard rows fill, from the belt (0) to the front (3). */
 const YARD_ROW_ORDER = [1, 2, 0, 3];
 /** The extra room a silo field needs behind a line, past the room every line has. */
@@ -575,7 +608,7 @@ export class FloorScene {
 
     STATIONS.forEach((station, stationAt) => {
       const size = FOOTPRINT[station.key];
-      const model = placeModel(this.models[station.key], size, MODEL_TINT.machine, STATION_COLOR[station.key]);
+      const model = station.key === "yard" ? yardPad(size) : placeModel(this.models[station.key], size, MODEL_TINT.machine, STATION_COLOR[station.key]);
       const mx = this.x(stationAt);
       const mz = station.key === "yard" ? z + YARD_Z : station.key === "gate" ? z : z + MACHINE_OFFSET;
       model.position.set(mx, 0, mz);
