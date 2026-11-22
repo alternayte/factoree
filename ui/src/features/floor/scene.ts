@@ -178,7 +178,143 @@ interface Machine {
   z: number;
   top: number;
   label: HTMLDivElement;
+  /** docs/specs/floor-active.md. The machine model, its own materials, and its moving parts. */
+  model: THREE.Group;
+  materials: THREE.MeshStandardMaterial[];
+  parts: ActiveParts | null;
 }
+
+/**
+ * docs/specs/floor-active.md. The colour a station glows in while it works: its own colour, bright,
+ * and never cyan, yellow, red or green, which name state.
+ */
+const ACTIVE_COLOR: Partial<Record<StationKey, number>> = {
+  refinery: 0x9d7bff,
+  prep: 0x3fb6c8,
+  workshop: 0xff9b3d,
+  test: 0x46d9b4,
+  lab: 0x5d7dff,
+  inspect: 0xff6fae,
+  dock: 0x9fd46a,
+};
+
+/** The moving parts of one station: built once, animated each frame while the station works. */
+interface ActiveParts {
+  group: THREE.Group;
+  animate: (now: number, on: boolean, dt: number) => void;
+}
+
+/**
+ * docs/specs/floor-active.md. The Kenney models are single meshes with no animation, so each
+ * working station gets parts drawn in code that move only while it works: a pipe ring at the
+ * refinery, a piston at prep, a flywheel at the workshop, a scanner beam over the belt at the test
+ * bench, a blinking lamp at the user lab, a turning beacon at inspection and a lamp at the dock.
+ * `box` is the machine in world space and `beltZ` the belt in front of it.
+ */
+const activeParts = (station: StationKey, box: THREE.Box3, beltZ: number, crateX: number): ActiveParts | null => {
+  const color = ACTIVE_COLOR[station];
+  if (color === undefined) return null;
+  const group = new THREE.Group();
+  const idle = 0x2a3236;
+  const glowing = (geometry: THREE.BufferGeometry) => new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: idle }));
+  const centre = box.getCenter(new THREE.Vector3());
+  const top = box.max.y;
+  const light = (mesh: THREE.Mesh, on: boolean, level: number) => (mesh.material as THREE.MeshBasicMaterial).color.setHex(on ? color : idle).multiplyScalar(on ? level : 1);
+  switch (station) {
+    case "refinery": {
+      const ring = glowing(new THREE.TorusGeometry(0.55, 0.09, 8, 24));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(centre.x, top + 0.12, centre.z);
+      group.add(ring);
+      return { group, animate: (now, on) => light(ring, on, 1.2 + 0.6 * Math.sin(now / 260)) };
+    }
+    case "prep": {
+      const piston = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.9, 10), new THREE.MeshStandardMaterial({ color: 0x6d777b, roughness: 0.5, metalness: 0.4 }));
+      const cap = glowing(new THREE.CylinderGeometry(0.24, 0.24, 0.12, 12));
+      group.add(piston, cap);
+      const place = (lift: number) => {
+        piston.position.set(centre.x + 0.5, top + 0.3 + lift, centre.z);
+        cap.position.set(centre.x + 0.5, top + 0.78 + lift, centre.z);
+      };
+      place(0);
+      return {
+        group,
+        animate: (now, on) => {
+          place(on ? 0.25 + 0.25 * Math.sin(now / 180) : 0);
+          light(cap, on, 1.3);
+        },
+      };
+    }
+    case "workshop": {
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.11, 8, 18), new THREE.MeshStandardMaterial({ color: 0x737d81, roughness: 0.5, metalness: 0.5 }));
+      const hub = glowing(new THREE.CylinderGeometry(0.16, 0.16, 0.3, 10));
+      wheel.position.set(box.max.x + 0.18, centre.y + 0.2, centre.z);
+      wheel.rotation.y = Math.PI / 2;
+      hub.rotation.z = Math.PI / 2;
+      hub.position.copy(wheel.position);
+      for (let spoke = 0; spoke < 3; spoke += 1) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.9, 0.06), wheel.material);
+        bar.rotation.z = (spoke * Math.PI) / 3;
+        wheel.add(bar);
+      }
+      group.add(wheel, hub);
+      return {
+        group,
+        animate: (_now, on, dt) => {
+          if (on) wheel.rotation.x += dt * 7;
+          light(hub, on, 1.5);
+        },
+      };
+    }
+    case "test": {
+      // The beam stands over the belt and sweeps across the crate under test.
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 2.2, 1.5),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthWrite: false }),
+      );
+      const head = glowing(new THREE.BoxGeometry(2.6, 0.18, 0.5));
+      head.position.set(crateX, 3.1, beltZ);
+      group.add(beam, head);
+      return {
+        group,
+        animate: (now, on) => {
+          beam.visible = on;
+          beam.position.set(crateX + 1.1 * Math.sin(now / 320), 1.95, beltZ);
+          light(head, on, 1.2);
+        },
+      };
+    }
+    case "lab": {
+      const lamp = glowing(new THREE.SphereGeometry(0.26, 12, 10));
+      lamp.position.set(centre.x + 0.6, top + 0.25, centre.z);
+      group.add(lamp);
+      return { group, animate: (now, on) => light(lamp, on && Math.floor(now / 380) % 2 === 0, 1.8) };
+    }
+    case "inspect": {
+      const base = glowing(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 12));
+      base.position.set(centre.x, top + 0.15, centre.z);
+      const sweep = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.22), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
+      sweep.position.set(centre.x, top + 0.34, centre.z);
+      group.add(base, sweep);
+      return {
+        group,
+        animate: (now, on) => {
+          sweep.visible = on;
+          sweep.rotation.y = now / 300;
+          light(base, on, 1.4);
+        },
+      };
+    }
+    case "dock": {
+      const lamp = glowing(new THREE.SphereGeometry(0.24, 12, 10));
+      lamp.position.set(box.max.x - 0.3, top + 0.24, centre.z);
+      group.add(lamp);
+      return { group, animate: (now, on) => light(lamp, on && Math.floor(now / 500) % 2 === 0, 1.6) };
+    }
+    default:
+      return null;
+  }
+};
 
 interface CrateView {
   group: THREE.Group;
@@ -242,10 +378,10 @@ export const loadModels = async (): Promise<Record<ModelName, THREE.Group>> => {
  * (the orange bands) turned to a dim cyan. A machine stays matte; only state lights it.
  */
 const themedMaterials = new Map<string, THREE.MeshStandardMaterial>();
-const themedMaterial = (original: THREE.Material, tint: number, accent: number): THREE.MeshStandardMaterial => {
+const themedMaterial = (original: THREE.Material, tint: number, accent: number, own = false): THREE.MeshStandardMaterial => {
   const map = (original as THREE.MeshStandardMaterial).map ?? null;
   const key = `${map?.uuid ?? "none"}:${tint}:${accent}`;
-  const known = themedMaterials.get(key);
+  const known = own ? undefined : themedMaterials.get(key);
   if (known !== undefined) return known;
   const material = new THREE.MeshStandardMaterial({ map, color: tint, roughness: 0.82, metalness: 0.08 });
   const accentColor = new THREE.Color(accent);
@@ -263,12 +399,12 @@ const themedMaterial = (original: THREE.Material, tint: number, accent: number):
 #endif`,
       );
   };
-  themedMaterials.set(key, material);
+  if (!own) themedMaterials.set(key, material);
   return material;
 };
 
 /** One copy of a model, scaled to a footprint and standing on the floor at the origin, in the theme. */
-const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number }, tint: number, accent: number): THREE.Group => {
+const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number }, tint: number, accent: number, own = false): THREE.Group => {
   const model = source.clone(true);
   const box = new THREE.Box3().setFromObject(model);
   const dimensions = box.getSize(new THREE.Vector3());
@@ -281,7 +417,7 @@ const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
     const original = Array.isArray(mesh.material) ? mesh.material[0]! : mesh.material;
-    mesh.material = themedMaterial(original, tint, accent);
+    mesh.material = themedMaterial(original, tint, accent, own);
   });
   const group = new THREE.Group();
   group.add(model);
@@ -323,6 +459,8 @@ export class FloorScene {
   /** docs/specs/factory-floor.md. Steam over a machine while a session or a check runs in it. */
   private puffs: Array<{ mesh: THREE.Mesh; bornAt: number }> = [];
   private lastPuff = new Map<string, number>();
+  /** docs/specs/floor-active.md. The repair belt and transfer plates of each line, lit while a crate rides them. */
+  private repairBelts = new Map<string, THREE.MeshStandardMaterial[]>();
   private readonly puffGeometry = new THREE.SphereGeometry(0.28, 10, 8);
   private belts: THREE.Texture[] = [];
   private moment: FloorMoment | null = null;
@@ -431,6 +569,7 @@ export class FloorScene {
     this.belts = [];
     this.machines.forEach((machine) => machine.label.remove());
     this.machines.clear();
+    this.repairBelts.clear();
     this.signs.forEach((sign) => sign.remove());
     this.signs.clear();
     this.crates.forEach((crate) => disposeTree(crate.group));
@@ -558,7 +697,7 @@ export class FloorScene {
     return texture;
   }
 
-  private belt(x0: number, x1: number, z: number, width: number, tint: number = MODEL_TINT.belt): void {
+  private belt(x0: number, x1: number, z: number, width: number, tint: number = MODEL_TINT.belt): THREE.MeshStandardMaterial {
     // The conveyor model, repeated along the belt, carries a moving stripe so the belt runs.
     const length = x1 - x0;
     const source = this.models.conveyor;
@@ -576,10 +715,12 @@ export class FloorScene {
     }
     const texture = this.stripeTexture();
     texture.repeat.set(length / 1.4, 1);
-    const surface = new THREE.Mesh(new THREE.PlaneGeometry(length, width * 0.8), new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9 }));
+    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9 });
+    const surface = new THREE.Mesh(new THREE.PlaneGeometry(length, width * 0.8), material);
     surface.rotation.x = -Math.PI / 2;
     surface.position.set((x0 + x1) / 2, 0.52, z);
     this.world.add(surface);
+    return material;
   }
 
   private label(text: string, className: string): HTMLDivElement {
@@ -600,7 +741,19 @@ export class FloorScene {
     this.world.add(padEdge);
     this.belt(this.x(0) - 1.5, this.x(9) + 7, z + BELT_OFFSET, 1.2);
     // The repair belt carries a crate back to the workshop. It stays dark until one rides it.
-    this.belt(this.x(3), this.x(6), z + REPAIR_OFFSET, 0.8, 0x313c40);
+    // docs/specs/floor-active.md. A transfer plate joins it to the main belt at each check station,
+    // where a failed check sends the crate off, and at the workshop, where it rejoins.
+    const repairFrom = this.x(stationIndex("workshop")) + BELT_STOP_SHIFT;
+    const repairTo = this.x(stationIndex("inspect")) + BELT_STOP_SHIFT;
+    const repairSurfaces = [this.belt(repairFrom - 0.7, repairTo + 0.7, z + REPAIR_OFFSET, 0.8, 0x313c40)];
+    for (const key of ["workshop", "test", "lab", "inspect"] as const) {
+      const material = new THREE.MeshStandardMaterial({ color: 0x313c40, roughness: 0.8 });
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.46, REPAIR_OFFSET - 0.5), material);
+      plate.position.set(this.x(stationIndex(key)) + BELT_STOP_SHIFT, 0.25, z + (REPAIR_OFFSET + 0.5) / 2);
+      this.world.add(plate);
+      repairSurfaces.push(material);
+    }
+    this.repairBelts.set(line.productId, repairSurfaces);
 
     const bin = placeModel(this.models.bin, { w: 2.4, d: 1.9, h: 1 }, MODEL_TINT.bin, 0x5a1c26);
     bin.position.set(this.x(stationIndex("inspect")), 0, z + BIN_OFFSET);
@@ -608,25 +761,43 @@ export class FloorScene {
 
     STATIONS.forEach((station, stationAt) => {
       const size = FOOTPRINT[station.key];
-      const model = station.key === "yard" ? yardPad(size) : placeModel(this.models[station.key], size, MODEL_TINT.machine, STATION_COLOR[station.key]);
+      const model = station.key === "yard" ? yardPad(size) : placeModel(this.models[station.key], size, MODEL_TINT.machine, STATION_COLOR[station.key], true);
       const mx = this.x(stationAt);
       const mz = station.key === "yard" ? z + YARD_Z : station.key === "gate" ? z : z + MACHINE_OFFSET;
       model.position.set(mx, 0, mz);
       model.userData.pick = { kind: "station", productId: line.productId, station: station.key } satisfies Pick;
       model.traverse((node) => (node.userData.pick = model.userData.pick));
       this.world.add(model);
-      const height = new THREE.Box3().setFromObject(model).max.y;
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const height = box.max.y;
+      // docs/specs/floor-active.md. The strip sits flush on the front face of the model as drawn,
+      // not of its footprint, at the height of the face's middle.
       const glow = new THREE.MeshBasicMaterial({ color: TOKENS.idleGlow });
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(size.w * 0.8, 0.12, 0.08), glow);
-      strip.position.set(mx, station.key === "yard" ? 0.32 : Math.max(0.4, height * 0.8), mz + size.d / 2 + 0.06);
+      const yard = station.key === "yard";
+      const strip = new THREE.Mesh(new THREE.BoxGeometry((box.max.x - box.min.x) * (yard ? 0.8 : 0.84), yard ? 0.1 : 0.16, 0.06), glow);
+      strip.position.set((box.min.x + box.max.x) / 2, yard ? 0.28 : Math.max(0.35, height * 0.5), box.max.z + 0.035);
       strip.userData.pick = model.userData.pick;
       this.world.add(strip);
+      const materials: THREE.MeshStandardMaterial[] = [];
+      model.traverse((node) => {
+        const mesh = node as THREE.Mesh;
+        if (mesh.isMesh && mesh.material instanceof THREE.MeshStandardMaterial && !materials.includes(mesh.material)) materials.push(mesh.material);
+      });
+      const parts = activeParts(station.key, box, z + BELT_OFFSET, this.x(stationAt) + BELT_STOP_SHIFT);
+      if (parts !== null) {
+        parts.group.traverse((node) => (node.userData.pick = model.userData.pick));
+        this.world.add(parts.group);
+      }
       this.machines.set(`${line.productId}:${station.key}`, {
         glow,
         x: mx,
         z: mz,
         top: height,
         label: this.label(station.name, "floor-label"),
+        model,
+        materials: yard ? [] : materials,
+        parts,
       });
     });
 
@@ -819,6 +990,8 @@ export class FloorScene {
     if (motion) this.belts.forEach((texture) => (texture.offset.x -= dt * 0.6));
     const moment = this.moment;
     const active = new Map<string, Tone>();
+    /** The lines whose repair belt carries a crate now. */
+    const repairing = new Set<string>();
     /** The stations whose crew member works a session now, with its tool kind. */
     const crewSessions = new Map<string, string>();
     let badges = 0;
@@ -862,6 +1035,7 @@ export class FloorScene {
           remaining -= segment;
         }
         view.at.copy(position);
+        if (moving && crate.repair) repairing.add(crate.run.productId);
         view.group.position.set(position.x, 1.3 + position.y + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
         view.group.visible = (crate.place !== "gone" || moving) && !overflow;
         const color = TONE_COLOR[crate.tone];
@@ -878,6 +1052,13 @@ export class FloorScene {
         }
         if (crate.status === "WAITING_FOR_INPUT" || crate.status === "BLOCKED_TARGET") {
           this.place(this.badge(badges++, "?", "warn"), view.group.position.clone().setY(3.4));
+        }
+      }
+      for (const [productId, surfaces] of this.repairBelts) {
+        const lit = repairing.has(productId);
+        for (const surface of surfaces) {
+          surface.emissive.setHex(lit ? TOKENS.danger : 0x000000);
+          if (lit) surface.emissive.multiplyScalar(0.35 + (motion ? 0.15 * Math.sin(now / 200) : 0));
         }
       }
       // A place with more crates than it shows names the rest as a count.
@@ -1014,8 +1195,19 @@ export class FloorScene {
       else if (tone === "success" || ((station === "dock" || station === "gate") && tone !== undefined)) color = TOKENS.success;
       else if (tone === "accent") color = TOKENS.accent;
       machine.glow.color.setHex(color);
+      if (tone !== undefined && tone !== "idle") machine.glow.color.multiplyScalar(1.5 + (motion ? 0.35 * Math.sin(now / 420 + machine.x) : 0));
+      // docs/specs/floor-active.md. A working station glows in its own colour, shakes a little and
+      // runs its parts. An idle one stands still and dark.
+      const on = tone === "accent" || tone === "warning" || ((station === "dock" || station === "gate") && tone === "success");
+      const own = ACTIVE_COLOR[station];
+      for (const material of machine.materials) {
+        material.emissive.setHex(on && own !== undefined ? own : 0x000000);
+        if (on) material.emissive.multiplyScalar(0.16 + (motion ? 0.07 * Math.sin(now / 300 + machine.x) : 0));
+      }
+      const shake = on && motion && station !== "dock" && station !== "gate" ? 0.025 : 0;
+      machine.model.position.set(machine.x + shake * Math.sin(now / 31), shake * Math.abs(Math.sin(now / 47)), machine.z);
+      machine.parts?.animate(motion ? now : 0, on, motion ? dt : 0);
       if (tone === "accent" && motion) {
-        machine.glow.color.multiplyScalar(0.75 + 0.25 * Math.sin(now / 420 + machine.x));
         const working = station !== "intake" && station !== "dock" && station !== "yard" && station !== "gate";
         if (working && now - (this.lastPuff.get(key) ?? 0) > 700) {
           this.lastPuff.set(key, now);
