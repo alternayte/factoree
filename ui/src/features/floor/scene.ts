@@ -96,6 +96,8 @@ const siloLayout = (count: number): SiloLayout => {
 const YARD_SHOWN = 36;
 /** docs/specs/floor-growth.md. The PR yard is a pad in front of the belt, past the dock. */
 const YARD_Z = 4.2;
+/** The order the yard rows fill, from the belt (0) to the front (3). */
+const YARD_ROW_ORDER = [1, 2, 0, 3];
 /** The extra room a silo field needs behind a line, past the room every line has. */
 const siloDepth = (repositories: number): number => {
   const layout = siloLayout(repositories);
@@ -485,9 +487,11 @@ export class FloorScene {
     }
     if (place === "yard") {
       // docs/specs/floor-growth.md. The yard holds YARD_SHOWN crates: four rows of three in front
-      // of the belt, stacked up to three high.
+      // of the belt, stacked up to three high. The middle rows fill first, so a few crates stand in
+      // the yard and not against the belt.
       const layer = slot % 12;
-      return new THREE.Vector3(this.x(index) - gap + (layer % 3) * gap, Math.floor(slot / 12) * 1.55, z + YARD_Z + (Math.floor(layer / 3) - 1.5) * 1.85);
+      const row = YARD_ROW_ORDER[Math.floor(layer / 3)]!;
+      return new THREE.Vector3(this.x(index) - gap + (layer % 3) * gap, Math.floor(slot / 12) * 1.55, z + YARD_Z + (row - 1.5) * 1.85);
     }
     // On the belt, in line with the machine as the concept: one crate at its centre, two side by
     // side, then a second level. The machine stands behind the belt, so the crate stops

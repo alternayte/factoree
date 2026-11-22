@@ -64,6 +64,10 @@ export function FloorPage({ search }: { search: FloorSearch }) {
   });
   const floor = replay ? past : live;
   const [webGl] = useState(hasWebGl);
+  // docs/specs/floor-replay.md. The stage stays mounted while the other mode or window loads, so
+  // full screen and the camera survive the switch: the floor keeps the last answer until the next.
+  const shown = useRef<{ data: FloorJson; receivedAt: number; replay: boolean } | null>(null);
+  if (floor.data !== undefined) shown.current = { data: floor.data, receivedAt: floor.dataUpdatedAt, replay };
 
   if (!workspace) {
     return (
@@ -95,7 +99,7 @@ export function FloorPage({ search }: { search: FloorSearch }) {
       </>
     );
   }
-  if (floor.data === undefined) {
+  if (shown.current === null) {
     return (
       <Loading label="Loading the factory floor">
         <Skeleton className="h-5 w-48" />
@@ -103,7 +107,16 @@ export function FloorPage({ search }: { search: FloorSearch }) {
       </Loading>
     );
   }
-  return <Floor floor={floor.data} receivedAt={floor.dataUpdatedAt} search={search} linearWorkspaceId={linearWorkspaceId} replay={replay} />;
+  return (
+    <Floor
+      floor={shown.current.data}
+      receivedAt={shown.current.receivedAt}
+      search={search}
+      linearWorkspaceId={linearWorkspaceId}
+      replay={shown.current.replay}
+      loading={floor.data === undefined}
+    />
+  );
 }
 
 function Floor({
@@ -112,12 +125,14 @@ function Floor({
   search,
   linearWorkspaceId,
   replay,
+  loading,
 }: {
   floor: FloorJson;
   receivedAt: number;
   search: FloorSearch;
   linearWorkspaceId: string;
   replay: boolean;
+  loading: boolean;
 }) {
   const navigate = useNavigate();
   const stage = useRef<HTMLDivElement>(null);
@@ -133,18 +148,56 @@ function Floor({
   const from = Date.parse(floor.from);
   const to = Date.parse(floor.to);
   const offset = Date.parse(floor.generatedAt) - receivedAt;
-  const [at, setAt] = useState(() => (replay ? (search.run !== undefined ? runStart(floor, search.run) ?? from : from) : Date.now() + offset));
+  const startOf = () => (replay ? (search.run !== undefined ? (runStart(floor, search.run) ?? from) - LEAD_MS : from) : Date.now() + offset);
+  const [at, setAt] = useState(startOf);
   const [playing, setPlaying] = useState(!reducedMotion);
-  const speed = search.speed ?? (replay ? 60 : 1);
+  const speed = search.speed ?? (replay ? DEFAULT_SPEED : 1);
+  // docs/specs/floor-replay.md. A new mode, window or run starts the clock again; the stage stays.
+  const windowKey = replay ? `replay|${floor.from}|${floor.to}|${search.run ?? ""}` : "live";
+  const shownWindow = useRef(windowKey);
+  useEffect(() => {
+    if (shownWindow.current === windowKey) return;
+    shownWindow.current = windowKey;
+    setAt(startOf());
+    setPlaying(!reducedMotion);
+    // startOf reads the props of this render; the key names every one that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowKey]);
+
+  // docs/specs/floor-replay.md. Replay plays at its speed while a run is on the line, and jumps over
+  // the quiet time between runs to LEAD_MS before the next change, so a window shows its work.
+  const timeline = useMemo(() => replayTimeline(floor, from, to), [floor, from, to]);
   useEffect(() => {
     if (!replay) {
       const timer = setInterval(() => setAt(Date.now() + offset), 250);
       return () => clearInterval(timer);
     }
     if (!playing) return;
-    const timer = setInterval(() => setAt((value) => Math.min(to, value + 250 * speed)), 250);
+    const timer = setInterval(
+      () =>
+        setAt((value) => {
+          const next = Math.min(to, value + 250 * speed);
+          if (timeline.busy.some(([start, end]) => start <= next && next <= end)) return next;
+          const upcoming = timeline.changes.find((time) => time > next);
+          return upcoming === undefined ? to : Math.min(to, Math.max(next, upcoming - LEAD_MS));
+        }),
+      250,
+    );
     return () => clearInterval(timer);
-  }, [replay, playing, speed, offset, to]);
+  }, [replay, playing, speed, offset, to, timeline]);
+  const jumpToRun = (id: string) => {
+    const start = timeline.runs.find((run) => run.id === id)?.start;
+    if (start === undefined) return;
+    setAt(Math.max(from, start - LEAD_MS));
+    setPick({ kind: "run", id });
+    setPlaying(true);
+  };
+  const stepRun = (direction: 1 | -1) => {
+    const ordered = direction === 1 ? timeline.runs : [...timeline.runs].reverse();
+    // Previous skips the run that started in the last three seconds on screen, as a media player does.
+    const target = ordered.find((run) => (direction === 1 ? run.start - LEAD_MS > at + 1000 : run.start - LEAD_MS < at - 3000 * speed));
+    if (target !== undefined) jumpToRun(target.id);
+  };
 
   const moment: FloorMoment = useMemo(() => floorAt(floor, at, !replay), [floor, at, replay]);
 
@@ -204,7 +257,7 @@ function Floor({
 
   const startReplay = () => {
     const end = Date.now();
-    setSearch({ from: new Date(end - 24 * 60 * 60 * 1000).toISOString(), to: new Date(end).toISOString(), speed: 60 }, true);
+    setSearch({ from: new Date(end - 24 * 60 * 60 * 1000).toISOString(), to: new Date(end).toISOString(), speed: DEFAULT_SPEED }, true);
   };
   const approximate = moment.crates.some((crate) => crate.run.approximate);
 
@@ -279,13 +332,14 @@ function Floor({
               className="floor-chip"
               onClick={() => {
                 const end = Date.now();
-                setSearch({ from: new Date(end - MAX_REPLAY_MS).toISOString(), to: new Date(end).toISOString(), speed: 120 }, true);
+                setSearch({ from: new Date(end - MAX_REPLAY_MS).toISOString(), to: new Date(end).toISOString(), speed: DEFAULT_SPEED }, true);
               }}
             >
               Quiet now · <b>Replay the last 7 days</b>
             </button>
           ) : null}
           {!ready ? <span className="floor-chip">Loading the factory…</span> : null}
+          {loading ? <span className="floor-chip">Loading…</span> : null}
         </div>
         <div ref={bubble} className="floor-bubble" hidden>
           {pick !== null ? <BubbleContent pick={pick} floor={floor} moment={moment} onDetails={() => setPanel(true)} /> : null}
@@ -301,7 +355,7 @@ function Floor({
               onPick={(next) => setPick(next)}
               onReplayRun={(id) => {
                 const window = runWindow(floor, id, Date.now());
-                if (window !== null) setSearch({ from: window.from, to: window.to, run: id, speed: 60 });
+                if (window !== null) setSearch({ from: window.from, to: window.to, run: id, speed: DEFAULT_SPEED });
               }}
             />
           </aside>
@@ -327,15 +381,39 @@ function Floor({
                   </button>
                 ))}
               </div>
-              <input
-                type="range"
-                aria-label="Replay position"
-                min={from}
-                max={to}
-                step={1000}
-                value={Math.min(to, Math.max(from, at))}
-                onChange={(event) => setAt(Number(event.target.value))}
-              />
+              <button type="button" className="floor-icon-button" aria-label="Previous work item" title="Previous work item" onClick={() => stepRun(-1)}>
+                ⏮
+              </button>
+              <button type="button" className="floor-icon-button" aria-label="Next work item" title="Next work item" onClick={() => stepRun(1)}>
+                ⏭
+              </button>
+              <div className="floor-scrub">
+                <input
+                  type="range"
+                  aria-label="Replay position"
+                  min={from}
+                  max={to}
+                  step={1000}
+                  value={Math.min(to, Math.max(from, at))}
+                  onChange={(event) => setAt(Number(event.target.value))}
+                />
+                {/* docs/specs/floor-replay.md. One mark per work item at its first status; a click plays it. */}
+                <div className="floor-marks">
+                  {timeline.runs.map((run) => (
+                    <button
+                      key={run.id}
+                      type="button"
+                      className="floor-mark"
+                      data-tone={run.tone}
+                      data-on={pick?.kind === "run" && pick.id === run.id ? "true" : "false"}
+                      style={{ left: `${(((run.start - from) / Math.max(1, to - from)) * 100).toFixed(3)}%` }}
+                      title={`${formatClock(run.start, true)} · ${run.title}`}
+                      aria-label={`Play ${run.title}`}
+                      onClick={() => jumpToRun(run.id)}
+                    />
+                  ))}
+                </div>
+              </div>
               <ReplayWindow from={from} to={to} onChange={(window) => setSearch(window)} />
             </>
           ) : (
@@ -847,4 +925,35 @@ function SetupPanel({ setupId, floor, linearWorkspaceId, close }: { setupId: str
       {entry ? <SetupDetail entry={entry} entries={entries} linearWorkspaceId={linearWorkspaceId} /> : history.data ? <Empty>This setup run is not in the history.</Empty> : null}
     </PanelFrame>
   );
+}
+
+/** docs/specs/floor-replay.md. The default replay speed: a five-minute run plays in thirty seconds. */
+const DEFAULT_SPEED = 10;
+/** How far before a run's first change replay starts it, and lands after a quiet gap. */
+const LEAD_MS = 20_000;
+
+/**
+ * docs/specs/floor-replay.md. What replay needs to know about a window: the work items that start
+ * in it, the spans while a run is on the line, and every change time in order.
+ */
+function replayTimeline(floor: FloorJson, from: number, to: number) {
+  const ended = new Set(["READY_FOR_HUMAN", "REPORTED", "DRAFT_PUBLISHED", "FAILED", "FAILED_REVIEW", "FAILED_CONFIGURATION", "STALE_BASE", "BLOCKED_ROUTING", "CANCELLED"]);
+  const runs: Array<{ id: string; title: string; start: number; tone: "ok" | "warn" | "bad" }> = [];
+  const busy: Array<[number, number]> = [];
+  const changes: number[] = [];
+  for (const run of floor.runs) {
+    const times = run.statuses.map((change) => Date.parse(change.at));
+    if (times.length === 0) continue;
+    const last = run.statuses.at(-1)!.status;
+    busy.push([times[0]!, ended.has(last) ? times.at(-1)! : to]);
+    changes.push(...times, ...run.pullRequests.flatMap((pr) => [Date.parse(pr.openedAt), ...(pr.closedAt === null ? [] : [Date.parse(pr.closedAt)])]), ...run.deploys.map((deploy) => Date.parse(deploy.at)));
+    if (times[0]! >= from && times[0]! <= to) {
+      const tone = last.startsWith("FAILED") || last === "CANCELLED" || last === "STALE_BASE" || last === "BLOCKED_ROUTING" ? "bad" : last === "READY_FOR_HUMAN" || !ended.has(last) ? "warn" : "ok";
+      runs.push({ id: run.id, title: run.title ?? "Untitled work item", start: times[0]!, tone });
+    }
+  }
+  for (const setup of floor.setups) changes.push(...setup.statuses.map((change) => Date.parse(change.at)));
+  runs.sort((a, b) => a.start - b.start);
+  changes.sort((a, b) => a - b);
+  return { runs, busy, changes };
 }

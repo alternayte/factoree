@@ -159,7 +159,13 @@ button.floor-chip { cursor: pointer; }
   padding: 8px 10px;
 }
 .floor-stage[data-panel="true"] .floor-bar { right: calc(min(400px, 100%) + 12px); }
-.floor-bar input[type="range"] { flex: 1 1 160px; min-width: 120px; accent-color: var(--accent); }
+.floor-scrub { position: relative; flex: 1 1 200px; min-width: 140px; display: flex; align-items: center; padding-top: 10px; }
+.floor-scrub input[type="range"] { width: 100%; accent-color: var(--accent); }
+.floor-marks { position: absolute; left: 8px; right: 8px; top: 0; height: 10px; pointer-events: none; }
+.floor-mark { position: absolute; top: 0; width: 6px; height: 10px; margin-left: -3px; padding: 0; border: 0; border-radius: 1px; background: var(--accent); opacity: 0.75; cursor: pointer; pointer-events: auto; }
+.floor-mark[data-tone="warn"] { background: var(--warning); }
+.floor-mark[data-tone="bad"] { background: var(--danger); }
+.floor-mark:hover, .floor-mark[data-on="true"] { opacity: 1; outline: 1px solid var(--ink); }
 .floor-seg { display: inline-flex; border: 1px solid var(--hairline-strong); border-radius: var(--radius-control); overflow: hidden; }
 .floor-seg button { font: 500 11.5px/1 var(--font-mono); background: transparent; color: var(--body); border: 0; padding: 7px 9px; cursor: pointer; }
 .floor-seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
