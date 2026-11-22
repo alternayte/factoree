@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-11-22
+
 ### Added
 
 - The floor has a crew member at each station, props around each line, a silo per repository, and buildings that unlock at 5, 25, 100 and 250 merged pull requests of the product (docs/specs/floor-growth.md).
