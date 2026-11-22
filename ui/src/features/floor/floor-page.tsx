@@ -8,6 +8,7 @@ import {
   getRunOptions,
   listRepositorySetupHistoryOptions,
 } from "@/api/@tanstack/react-query.gen";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { Alert, Badge, Empty, ErrorAlert, KeyValue, Loading, PageHeader, Skeleton, SkeletonRows } from "@/components/layout";
 import { SetupDetail } from "@/features/products/setup-history-page";
 import { Diagnosis } from "@/features/runs/run-events";
@@ -207,16 +208,60 @@ function Floor({
   };
   const approximate = moment.crates.some((crate) => crate.run.approximate);
 
+  // docs/specs/floor-full-screen.md. Full screen on the stage, or the stage fixed over the window
+  // where the browser has no full screen API for it.
+  const [fullScreen, setFullScreen] = useState(false);
+  const [fixed, setFixed] = useState(false);
+  useEffect(() => {
+    const changed = () => setFullScreen(document.fullscreenElement === stage.current);
+    document.addEventListener("fullscreenchange", changed);
+    return () => document.removeEventListener("fullscreenchange", changed);
+  }, []);
+  useEffect(() => {
+    if (!fixed) return;
+    const leave = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFixed(false);
+    };
+    window.addEventListener("keydown", leave);
+    return () => window.removeEventListener("keydown", leave);
+  }, [fixed]);
+  const toggleFullScreen = () => {
+    const element = stage.current;
+    if (element === null) return;
+    if (fullScreen) {
+      void document.exitFullscreen();
+      return;
+    }
+    if (fixed) {
+      setFixed(false);
+      return;
+    }
+    if (document.fullscreenEnabled && typeof element.requestFullscreen === "function") {
+      element.requestFullscreen().catch(() => setFixed(true));
+      return;
+    }
+    setFixed(true);
+  };
+  const expanded = fullScreen || fixed;
+  const title = replay ? `Replay of ${formatClock(from, true)} to ${formatClock(to, true)}` : "Live";
+
   if (sceneError !== null) return <ErrorAlert error={sceneError} title="The factory floor models did not load" />;
 
   return (
     <>
-      <PageHeader
-        title="Floor"
-        description={replay ? `Replay of ${formatClock(from, true)} to ${formatClock(to, true)}` : "Live: every run of the workspace, as it moves."}
-      />
-      <div className="floor-stage" ref={stage} data-panel={panel && pick !== null ? "true" : "false"}>
+      <h1 className="sr-only">Floor</h1>
+      <div
+        className="floor-stage"
+        ref={stage}
+        role="region"
+        aria-label="Factory floor"
+        data-panel={panel && pick !== null ? "true" : "false"}
+        data-fixed={fixed ? "true" : "false"}
+      >
         <div className="floor-hud">
+          <span className="floor-chip floor-title">
+            Floor <span className="text-mute">·</span> <span className={replay ? "text-body" : "text-success"}>{title}</span>
+          </span>
           <button type="button" className="floor-chip" data-tone="warn" onClick={showHuman} title="Pan to the next work item that waits for a human">
             <span className="floor-dot" />
             Needs a human <b>{moment.human.length}</b>
@@ -227,6 +272,19 @@ function Floor({
           </span>
           <Throughput days={floor.throughput} />
           {approximate ? <span className="floor-chip">Approximate times on older runs</span> : null}
+          {!replay && moment.running === 0 ? (
+            // docs/specs/factory-floor.md. A quiet floor offers the week that already happened.
+            <button
+              type="button"
+              className="floor-chip"
+              onClick={() => {
+                const end = Date.now();
+                setSearch({ from: new Date(end - MAX_REPLAY_MS).toISOString(), to: new Date(end).toISOString(), speed: 120 }, true);
+              }}
+            >
+              Quiet now · <b>Replay the last 7 days</b>
+            </button>
+          ) : null}
           {!ready ? <span className="floor-chip">Loading the factory…</span> : null}
         </div>
         <div ref={bubble} className="floor-bubble" hidden>
@@ -289,6 +347,16 @@ function Floor({
           </button>
           <button type="button" className="floor-icon-button" aria-label="Zoom in" onClick={() => scene.current?.zoomBy(1.25)}>
             +
+          </button>
+          <button
+            type="button"
+            className="floor-icon-button grid place-items-center"
+            aria-label={expanded ? "Leave full screen" : "Full screen"}
+            aria-pressed={expanded}
+            title={expanded ? "Leave full screen (Esc)" : "Full screen"}
+            onClick={toggleFullScreen}
+          >
+            {expanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden />}
           </button>
         </div>
       </div>

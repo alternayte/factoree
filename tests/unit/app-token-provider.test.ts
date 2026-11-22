@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { GitHubAppTokenProvider, GitHubAppAuthError } from "~/adapters/github/app-token-provider.js";
+import { asRunConfigurationErrorIfDeterministic } from "~/domain/runs/github-app-auth-fault.js";
+import { Redactor } from "~/telemetry/redaction.js";
 
 const privateKey = (() => {
   const { privateKey: key } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -268,5 +270,23 @@ describe("GitHubAppTokenProvider", () => {
     expect(w1).toBe(w2);
     expect(r).not.toBe(w1);
     expect(minted).toBe(2);
+  });
+
+  // GitHub answers 422 for a repository the installation cannot read as well as for a missing
+  // permission (FAC-103). The operator needs GitHub's words and the repositories asked for.
+  it("names GitHub's message and the requested repositories on a 422", async () => {
+    const message = "There is at least one repository that does not exist or is not accessible to the parent installation.";
+    const provider = new GitHubAppTokenProvider({
+      credentials,
+      fetch: () => Promise.resolve(new Response(JSON.stringify({ message }), { status: 422 })),
+    });
+    const failure = await provider
+      .tokenForInstallation("177331290", { contents: "read" }, ["alternayte/anthology", "alternayte/factoree-live-fixture"])
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(GitHubAppAuthError);
+    const converted = asRunConfigurationErrorIfDeterministic(new Redactor(), failure);
+    if (!(converted instanceof Error)) throw new Error("expected an Error");
+    expect(converted.message).toContain(message);
+    expect(converted.message).toContain("anthology, factoree-live-fixture");
   });
 });

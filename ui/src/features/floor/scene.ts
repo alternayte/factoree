@@ -24,8 +24,11 @@ const TOKENS = {
   danger: 0xff5d73,
   success: 0x3dffa8,
   idleGlow: 0x14363c,
-  crate: 0x7d8f95,
+  crate: 0xa9bec4,
 } as const;
+
+/** The grey each kind of model is drawn in, before its texture shading. */
+const MODEL_TINT = { machine: 0x8fa3aa, belt: 0x5c6c72, bin: 0x7a6d70 } as const;
 
 const TONE_COLOR: Record<Tone, number> = {
   accent: TOKENS.accent,
@@ -36,7 +39,7 @@ const TONE_COLOR: Record<Tone, number> = {
 };
 
 /** The distance between two stations, and between two lines. */
-const STEP = 6.5;
+const STEP = 5.4;
 const LINE_GAP = 12;
 const BELT_OFFSET = 0;
 const REPAIR_OFFSET = 1.6;
@@ -123,10 +126,38 @@ export const loadModels = async (): Promise<Record<ModelName, THREE.Group>> => {
 };
 
 /**
- * One copy of a model, scaled to a footprint and standing on the floor at the origin, with the
- * Night shift materials: a matte body, and hairline edges that keep its shape readable.
+ * The Night shift look of a Kenney model: its own colour map turned to the grey of the theme,
+ * so the shapes, windows and panels keep their detail, and the warm accent parts of the map
+ * (the orange bands) turned to a dim cyan. A machine stays matte; only state lights it.
  */
-const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number }, body: THREE.Material, edge: THREE.LineBasicMaterial): THREE.Group => {
+const themedMaterials = new Map<string, THREE.MeshStandardMaterial>();
+const themedMaterial = (original: THREE.Material, tint: number, accent: number): THREE.MeshStandardMaterial => {
+  const map = (original as THREE.MeshStandardMaterial).map ?? null;
+  const key = `${map?.uuid ?? "none"}:${tint}:${accent}`;
+  const known = themedMaterials.get(key);
+  if (known !== undefined) return known;
+  const material = new THREE.MeshStandardMaterial({ map, color: tint, roughness: 0.82, metalness: 0.08 });
+  const accentColor = new THREE.Color(accent);
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.accentColor = { value: accentColor };
+    shader.fragmentShader = shader.fragmentShader
+      .replace("void main() {", "uniform vec3 accentColor;\nvoid main() {")
+      .replace(
+        "#include <map_fragment>",
+        `#ifdef USE_MAP
+  vec4 texel = texture2D( map, vMapUv );
+  float light = dot( texel.rgb, vec3( 0.299, 0.587, 0.114 ) );
+  float warm = smoothstep( 0.12, 0.3, texel.r - texel.b );
+  diffuseColor.rgb = mix( diffuseColor.rgb * ( 0.35 + 0.9 * light ), accentColor, warm );
+#endif`,
+      );
+  };
+  themedMaterials.set(key, material);
+  return material;
+};
+
+/** One copy of a model, scaled to a footprint and standing on the floor at the origin, in the theme. */
+const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number }, tint: number, accent: number): THREE.Group => {
   const model = source.clone(true);
   const box = new THREE.Box3().setFromObject(model);
   const dimensions = box.getSize(new THREE.Vector3());
@@ -135,14 +166,11 @@ const placeModel = (source: THREE.Group, size: { w: number; d: number; h: number
   const scaled = new THREE.Box3().setFromObject(model);
   const center = scaled.getCenter(new THREE.Vector3());
   model.position.set(-center.x, -scaled.min.y, -center.z);
-  const edges: THREE.LineSegments[] = [];
   model.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
-    mesh.material = body;
-    edges.push(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30), edge));
-    edges.at(-1)!.matrixAutoUpdate = false;
-    mesh.add(edges.at(-1)!);
+    const original = Array.isArray(mesh.material) ? mesh.material[0]! : mesh.material;
+    mesh.material = themedMaterial(original, tint, accent);
   });
   const group = new THREE.Group();
   group.add(model);
@@ -160,6 +188,8 @@ export class FloorScene {
   private readonly target = new THREE.Vector3();
   private zoom = 1;
   private fitSize = 40;
+  /** True once the viewer panned or zoomed, so a new stage size keeps their view. */
+  private userMoved = false;
   private lines: SceneLine[] = [];
   private machines = new Map<string, Machine>();
   private signs = new Map<string, HTMLDivElement>();
@@ -167,6 +197,10 @@ export class FloorScene {
   private figures = new Map<string, Figure>();
   private crews = new Map<string, { group: THREE.Group; pill: HTMLDivElement }>();
   private badges: HTMLDivElement[] = [];
+  /** docs/specs/factory-floor.md. Steam over a machine while a session or a check runs in it. */
+  private puffs: Array<{ mesh: THREE.Mesh; bornAt: number }> = [];
+  private lastPuff = new Map<string, number>();
+  private readonly puffGeometry = new THREE.SphereGeometry(0.28, 10, 8);
   private belts: THREE.Texture[] = [];
   private moment: FloorMoment | null = null;
   private selected: Pick | null = null;
@@ -215,7 +249,9 @@ export class FloorScene {
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
-    this.resizeObserver = new ResizeObserver(() => this.resize());
+    // docs/specs/floor-full-screen.md. A new stage size fits the lines again, until the viewer
+    // pans or zooms.
+    this.resizeObserver = new ResizeObserver(() => (this.userMoved ? this.resize() : this.fit()));
     this.resizeObserver.observe(container);
     const canvas = this.renderer.domElement;
     canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -287,10 +323,12 @@ export class FloorScene {
   focusRun(id: string): void {
     const crate = this.crates.get(id);
     if (crate === undefined) return;
+    this.userMoved = true;
     this.target.set(crate.group.position.x, 0, crate.group.position.z);
   }
 
   zoomBy(factor: number): void {
+    this.userMoved = true;
     this.zoom = Math.min(3.5, Math.max(0.35, this.zoom * factor));
     this.resize();
   }
@@ -303,15 +341,28 @@ export class FloorScene {
     return Math.max(0, this.lines.findIndex((line) => line.productId === productId)) * LINE_GAP;
   }
 
+  /**
+   * Where the crate in one slot of a place stands. Crates at one machine stand side by side on the
+   * belt, then stack one level up, so several runs in the same step stay apart and countable. The
+   * yard, the intake and the bin hold a grid. `y` is the stack height.
+   */
   private stationPoint(productId: string, place: Place, slot: number): THREE.Vector3 {
     const z = this.lineZ(productId);
-    if (place === "bin") return new THREE.Vector3(this.x(stationIndex("inspect")) + (slot % 3) * 0.7 - 0.7, 0, z + BIN_OFFSET + Math.floor(slot / 3) * 0.7);
+    const gap = 1.6;
     if (place === "gone") return new THREE.Vector3(this.x(stationIndex("gate")) + 7, 0, z);
+    if (place === "bin") return new THREE.Vector3(this.x(stationIndex("inspect")) - gap + (slot % 3) * gap, Math.floor(slot / 3) * 1.25, z + BIN_OFFSET);
     const index = stationIndex(place);
-    if (place === "intake") return new THREE.Vector3(this.x(index) - 1 + (slot % 3) * 1.1, 0, z - 0.4 + Math.floor(slot / 3) * 1.1);
-    if (place === "yard") return new THREE.Vector3(this.x(index) - 1.4 + (slot % 3) * 1.3, 0, z - 1.3 + Math.floor(slot / 3) * 1.3);
-    if (place === "gate" || place === "dock") return new THREE.Vector3(this.x(index) + (slot % 2) * 1.1 - 0.5, 0, z + Math.floor(slot / 2) * 1.1);
-    return new THREE.Vector3(this.x(index) + (slot % 2) * 1.1 - 0.5, 0, z + BELT_OFFSET + Math.floor(slot / 2) * 1.1);
+    if (place === "intake" || place === "yard") {
+      return new THREE.Vector3(this.x(index) - gap + (slot % 3) * gap, Math.floor(slot / 6) * 1.25, z - 0.8 + (Math.floor(slot / 3) % 2) * gap);
+    }
+    return new THREE.Vector3(this.x(index) - gap / 2 + (slot % 2) * gap, Math.floor(slot / 2) * 1.25, z + BELT_OFFSET);
+  }
+
+  /** How many crates a place shows. More wait there as a "+N" count. */
+  private capacityOf(place: Place): number {
+    if (place === "intake" || place === "yard") return 12;
+    if (place === "bin") return 6;
+    return 4;
   }
 
   private stripeTexture(): THREE.CanvasTexture {
@@ -341,7 +392,7 @@ export class FloorScene {
       // A conveyor model runs along its longer side. One that runs along z is fitted turned, then
       // turned to run along x.
       const alongZ = size.z > size.x;
-      const model = placeModel(source, alongZ ? { w: width, d: piece, h: 0.5 } : { w: piece, d: width, h: 0.5 }, this.materials.body, this.materials.edge);
+      const model = placeModel(source, alongZ ? { w: width, d: piece, h: 0.5 } : { w: piece, d: width, h: 0.5 }, MODEL_TINT.belt, TOKENS.idleGlow);
       if (alongZ) model.rotation.y = Math.PI / 2;
       model.position.set(x0 + piece * (index + 0.5), 0, z);
       this.world.add(model);
@@ -364,7 +415,7 @@ export class FloorScene {
 
   private buildLine(line: SceneLine, index: number): void {
     const z = index * LINE_GAP;
-    const pad = new THREE.Mesh(new THREE.BoxGeometry(this.x(9) + 14, 0.08, 10.6), this.materials.pad);
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(this.x(9) + 11, 0.08, 10.6), this.materials.pad);
     pad.position.set(this.x(4.5) + 1.5, 0.04, z - 0.4);
     this.world.add(pad);
     const padEdge = new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), this.materials.padEdge);
@@ -373,13 +424,13 @@ export class FloorScene {
     this.belt(this.x(0) - 1.5, this.x(9) + 7, z + BELT_OFFSET, 1.2);
     this.belt(this.x(3), this.x(6), z + REPAIR_OFFSET, 0.8);
 
-    const bin = placeModel(this.models.bin, { w: 2.4, d: 1.9, h: 1 }, this.materials.body, new THREE.LineBasicMaterial({ color: TOKENS.danger, transparent: true, opacity: 0.55 }));
+    const bin = placeModel(this.models.bin, { w: 2.4, d: 1.9, h: 1 }, MODEL_TINT.bin, 0x5a1c26);
     bin.position.set(this.x(stationIndex("inspect")), 0, z + BIN_OFFSET);
     this.world.add(bin);
 
     STATIONS.forEach((station, stationAt) => {
       const size = FOOTPRINT[station.key];
-      const model = placeModel(this.models[station.key], size, this.materials.body, this.materials.edge);
+      const model = placeModel(this.models[station.key], size, MODEL_TINT.machine, 0x0f4c55);
       const mx = this.x(stationAt);
       const mz = station.key === "yard" ? z - 0.4 : station.key === "gate" ? z : z + MACHINE_OFFSET;
       model.position.set(mx, 0, mz);
@@ -426,8 +477,8 @@ export class FloorScene {
     const body = new THREE.MeshStandardMaterial({ color: TOKENS.crate, roughness: 0.75 });
     const band = new THREE.MeshBasicMaterial({ color: TOKENS.accent });
     const group = new THREE.Group();
-    const box = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.05, 1.2), body);
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.26, 0.2, 1.26), band);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.25, 1.45), body);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.52, 0.26, 1.52), band);
     stripe.position.y = 0.15;
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: TOKENS.canvas, transparent: true, opacity: 0.5 }));
     group.add(box, stripe, edges);
@@ -475,7 +526,7 @@ export class FloorScene {
     element.style.transform = `translate(${screen.x.toFixed(1)}px, ${screen.y.toFixed(1)}px)`;
   }
 
-  private badge(index: number, text: string, tone: "danger" | "warn"): HTMLDivElement {
+  private badge(index: number, text: string, tone: "danger" | "warn" | "count"): HTMLDivElement {
     while (this.badges.length <= index) this.badges.push(this.label("", "floor-badge"));
     const badge = this.badges[index]!;
     badge.textContent = text;
@@ -502,6 +553,7 @@ export class FloorScene {
         const slotKey = `${crate.run.productId}:${crate.place}`;
         const slot = slots.get(slotKey) ?? 0;
         slots.set(slotKey, slot + 1);
+        const overflow = crate.place !== "gone" && slot >= this.capacityOf(crate.place);
         const view = this.crateView(crate);
         const goal = this.stationPoint(crate.run.productId, crate.place, slot);
         const end = view.path.at(-1)!;
@@ -525,8 +577,8 @@ export class FloorScene {
           }
           remaining -= segment;
         }
-        view.group.position.set(position.x, 1.05 + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
-        view.group.visible = crate.place !== "gone" || moving;
+        view.group.position.set(position.x, 1.15 + position.y + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
+        view.group.visible = (crate.place !== "gone" || moving) && !overflow;
         const color = TONE_COLOR[crate.tone];
         view.band.color.setHex(color);
         if (crate.tone === "danger" && crate.place !== "bin" && motion) view.body.emissive.setHex(TOKENS.danger).multiplyScalar(0.25 + 0.2 * Math.sin(now / 120));
@@ -540,6 +592,13 @@ export class FloorScene {
         if (crate.status === "WAITING_FOR_INPUT" || crate.status === "BLOCKED_TARGET") {
           this.place(this.badge(badges++, "?", "warn"), view.group.position.clone().setY(2));
         }
+      }
+      // A place with more crates than it shows names the rest as a count.
+      for (const [slotKey, count] of slots) {
+        const [productId, place] = slotKey.split(":") as [string, Place];
+        if (place === "gone" || count <= this.capacityOf(place)) continue;
+        const point = this.stationPoint(productId, place, 0);
+        this.place(this.badge(badges++, `+${String(count - this.capacityOf(place))}`, "count"), point.setX(point.x - 1.4).setY(3.2));
       }
       for (const [id, view] of this.crates) {
         if (seen.has(id)) continue;
@@ -594,7 +653,7 @@ export class FloorScene {
         crewsSeen.add(setup.setup.id);
         let crew = this.crews.get(setup.setup.id);
         if (crew === undefined) {
-          const group = placeModel(this.models.scaffold, { w: 2.4, d: 2.4, h: 3 }, this.materials.body, new THREE.LineBasicMaterial({ color: TOKENS.warning, transparent: true, opacity: 0.7 }));
+          const group = placeModel(this.models.scaffold, { w: 2.4, d: 2.4, h: 3 }, MODEL_TINT.machine, 0x7a6420);
           const pick: Pick = { kind: "setup", id: setup.setup.id };
           group.traverse((node) => (node.userData.pick = pick));
           this.world.add(group);
@@ -620,7 +679,7 @@ export class FloorScene {
     }
     for (let index = badges; index < this.badges.length; index += 1) this.badges[index]!.hidden = true;
 
-    // Machines: light only from state.
+    // Machines: light only from state. A working machine breathes and lets off steam.
     for (const [key, machine] of this.machines) {
       const tone = active.get(key);
       const station = key.split(":").at(-1) as StationKey;
@@ -630,9 +689,34 @@ export class FloorScene {
       else if (tone === "success" || ((station === "dock" || station === "gate") && tone !== undefined)) color = TOKENS.success;
       else if (tone === "accent") color = TOKENS.accent;
       machine.glow.color.setHex(color);
+      if (tone === "accent" && motion) {
+        machine.glow.color.multiplyScalar(0.75 + 0.25 * Math.sin(now / 420 + machine.x));
+        const working = station !== "intake" && station !== "dock" && station !== "yard" && station !== "gate";
+        if (working && now - (this.lastPuff.get(key) ?? 0) > 700) {
+          this.lastPuff.set(key, now);
+          const mesh = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({ color: 0x5ff0ff, transparent: true, opacity: 0.35, depthWrite: false }));
+          mesh.position.set(machine.x + (Math.random() - 0.5) * 0.6, machine.top + 0.2, machine.z + (Math.random() - 0.5) * 0.6);
+          this.world.add(mesh);
+          this.puffs.push({ mesh, bornAt: now });
+        }
+      }
       this.place(machine.label, new THREE.Vector3(machine.x, 0.1, machine.z + (station === "yard" ? 3 : station === "gate" ? 2.6 : 2)));
       machine.label.dataset.on = tone !== undefined && tone !== "idle" ? "true" : "false";
     }
+    // Steam rises, grows and fades over two seconds.
+    this.puffs = this.puffs.filter((puff) => {
+      const age = (now - puff.bornAt) / 2000;
+      const material = puff.mesh.material as THREE.MeshBasicMaterial;
+      if (age >= 1) {
+        this.world.remove(puff.mesh);
+        material.dispose();
+        return false;
+      }
+      puff.mesh.position.y += dt * 0.9;
+      puff.mesh.scale.setScalar(0.6 + age * 1.4);
+      material.opacity = 0.35 * (1 - age);
+      return true;
+    });
     for (const [productId, sign] of this.signs) this.place(sign, new THREE.Vector3(this.x(0) - 3.6, 0.2, this.lineZ(productId) - 0.6));
 
     this.options.onAnchor(this.anchorOf(this.selected));
@@ -682,14 +766,17 @@ export class FloorScene {
   private fit(): void {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
-    if (width === 0 || height === 0 || this.lines.length === 0) return;
+    if (width === 0 || height === 0 || this.lines.length === 0) {
+      this.resize();
+      return;
+    }
     const last = (this.lines.length - 1) * LINE_GAP;
     const corners = [
-      new THREE.Vector3(this.x(0) - 12, 0, -4),
-      new THREE.Vector3(this.x(9) + 8, 0, -4),
-      new THREE.Vector3(this.x(0) - 12, 0, last + 5),
-      new THREE.Vector3(this.x(9) + 8, 0, last + 5),
-      new THREE.Vector3(this.x(0) - 12, 4, -4),
+      new THREE.Vector3(this.x(0) - 9, 0, -5),
+      new THREE.Vector3(this.x(9) + 5, 0, -5),
+      new THREE.Vector3(this.x(0) - 9, 0, last + 5),
+      new THREE.Vector3(this.x(9) + 5, 0, last + 5),
+      new THREE.Vector3(this.x(0) - 9, 4, -5),
     ];
     this.target.set(0, 0, 0);
     this.placeCamera();
@@ -716,7 +803,7 @@ export class FloorScene {
   }
 
   private placeCamera(): void {
-    this.camera.position.set(this.target.x + 9, 40, this.target.z + 46);
+    this.camera.position.set(this.target.x + 6, 52, this.target.z + 36);
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();
   }
@@ -738,6 +825,7 @@ export class FloorScene {
     const dy = event.clientY - down.y;
     if (!down.moved && Math.hypot(dx, dy) > 5) {
       down.moved = true;
+      this.userMoved = true;
       this.renderer.domElement.dataset.dragging = "true";
     }
     if (!down.moved) return;

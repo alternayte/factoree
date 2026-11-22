@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { Activity, Boxes, Building2, Factory, KeyRound, LogOut, Settings2 } from "lucide-react";
-import { useEffect, useId, useRef, type ReactNode } from "react";
-import { Brand } from "@/app/brand";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Activity, Boxes, Building2, Factory, KeyRound, LogOut, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Brand, BrandMark } from "@/app/brand";
 import { Button } from "@/components/button";
 import { Alert, ErrorAlert, Skeleton } from "@/components/layout";
 import { useDrainMode } from "@/features/settings/drain-section";
@@ -32,6 +32,9 @@ export function Frame({
   footer,
   children,
   narrow,
+  wide,
+  collapsed = false,
+  onToggle,
 }: {
   navLabel: string;
   nav: ReactNode;
@@ -41,6 +44,12 @@ export function Frame({
   children: ReactNode;
   /** narrow holds the content to the 640px form width. */
   narrow?: boolean;
+  /** docs/specs/floor-full-screen.md. wide lifts the 1440px cap, for the factory floor. */
+  wide?: boolean;
+  /** docs/specs/floor-full-screen.md. From sm, a collapsed sidebar is a 56px rail of icons. */
+  collapsed?: boolean;
+  /** Shows the collapse button at the foot of the sidebar. */
+  onToggle?: () => void;
 }) {
   const navRef = useRef<HTMLElement>(null);
   // On a narrow screen the navigation is a scroll row. It keeps the current item in view without
@@ -55,10 +64,20 @@ export function Frame({
     }
   });
   return (
-    <div className="min-h-screen bg-canvas sm:grid sm:grid-cols-[200px_minmax(0,1fr)]">
+    <div
+      className={cn("min-h-screen bg-canvas sm:grid", collapsed ? "sm:grid-cols-[56px_minmax(0,1fr)]" : "sm:grid-cols-[200px_minmax(0,1fr)]")}
+      data-sidebar={collapsed ? "collapsed" : "expanded"}
+    >
       <aside className="vt-sidebar grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-hairline bg-sidebar px-3 pt-3.5 pb-2.5 sm:sticky sm:top-0 sm:flex sm:h-screen sm:flex-col sm:items-stretch sm:border-r sm:border-b-0 sm:py-4">
-        <Brand className="mx-1 sm:mb-[18px]" />
-        {account ? <div className="sm:order-last sm:mt-auto">{account}</div> : null}
+        {collapsed ? (
+          <>
+            <Brand className="mx-1 sm:hidden" />
+            <BrandMark className="mx-auto mb-[18px] hidden sm:inline-grid" />
+          </>
+        ) : (
+          <Brand className="mx-1 sm:mb-[18px]" />
+        )}
+        {account ? <div className={cn("sm:order-last", onToggle ? "" : "sm:mt-auto")}>{account}</div> : null}
         <nav
           ref={navRef}
           aria-label={navLabel}
@@ -67,10 +86,23 @@ export function Frame({
           {navItems}
         </nav>
         {footer ? <div className="col-span-2 mt-2 px-1 sm:mt-auto sm:pt-4">{footer}</div> : null}
+        {onToggle ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+            aria-expanded={!collapsed}
+            title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+            className={cn("nav-link mb-2 hidden sm:order-[9998] sm:mt-auto sm:flex", collapsed ? "justify-center" : "")}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4 shrink-0" aria-hidden /> : <PanelLeftClose className="h-4 w-4 shrink-0" aria-hidden />}
+            {collapsed ? null : "Collapse"}
+          </button>
+        ) : null}
       </aside>
       <main className="vt-main min-w-0 px-5 py-5 sm:px-8 sm:py-7">
         {/* docs/specs/run-visibility.md. The content grows to 1440px and stays centered, as in Sluice. */}
-        <div className={cn("mx-auto w-full min-w-0", narrow ? "max-w-[640px]" : "max-w-[1440px]")}>{children}</div>
+        <div className={cn("mx-auto w-full min-w-0", narrow ? "max-w-[640px]" : wide ? "" : "max-w-[1440px]")}>{children}</div>
       </main>
     </div>
   );
@@ -79,19 +111,50 @@ export function Frame({
 /** navList lays out the items of the sidebar navigation: a row on narrow screens, a column on wide ones. */
 export const navList = "flex gap-0.5 sm:flex-col";
 
+/** docs/specs/floor-full-screen.md. Where the browser keeps the sidebar choice. */
+const SIDEBAR_KEY = "factoree.sidebar";
+
+/** The stored sidebar choice. A missing or blocked store means expanded. */
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+  } catch {
+    return false;
+  }
+}
+
+function writeCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
+  } catch {
+    // A blocked store keeps the choice for this page view only.
+  }
+}
+
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // docs/specs/drain-mode.md. While drain mode is on, every page says that new runs wait.
   const drain = useDrainMode();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = () =>
+    setCollapsed((value) => {
+      writeCollapsed(!value);
+      return !value;
+    });
+  // docs/specs/floor-full-screen.md. The factory floor uses the whole main area.
+  const wide = useRouterState({ select: (state) => state.location.pathname === "/floor" });
   return (
     <Frame
       navLabel="Main"
-      account={<UserMenu me={me} />}
+      account={<UserMenu me={me} collapsed={collapsed} />}
+      collapsed={collapsed}
+      onToggle={toggle}
+      wide={wide}
       nav={
         <div className={navList}>
           {nav.map(({ to, label, Icon }) => (
-            <Link key={to} to={to} className="nav-link">
+            <Link key={to} to={to} className={cn("nav-link", collapsed ? "sm:justify-center" : "")} title={collapsed ? label : undefined} aria-label={label}>
               <Icon className="h-4 w-4 shrink-0" aria-hidden />
-              {label}
+              <span className={collapsed ? "sm:sr-only" : undefined}>{label}</span>
             </Link>
           ))}
         </div>
@@ -136,7 +199,7 @@ export function AppShellSkeleton() {
 }
 
 /** UserMenu opens with the HTML popover attribute, which needs no script for focus and dismissal. */
-function UserMenu({ me }: { me: Me }) {
+function UserMenu({ me, collapsed = false }: { me: Me; collapsed?: boolean }) {
   const id = useId();
   const menuId = `${id}-menu`;
   const qc = useQueryClient();
@@ -161,7 +224,7 @@ function UserMenu({ me }: { me: Me }) {
       <button
         type="button"
         popoverTarget={menuId}
-        className="flex w-full items-center gap-2 rounded-card p-1 text-left hover:bg-raised sm:px-1.5 sm:py-1.5"
+        className={cn("flex w-full items-center gap-2 rounded-card p-1 text-left hover:bg-raised sm:px-1.5 sm:py-1.5", collapsed ? "sm:justify-center" : "")}
         aria-label={`Account menu for ${me.name}`}
       >
         <span
@@ -170,7 +233,7 @@ function UserMenu({ me }: { me: Me }) {
         >
           {initials || "?"}
         </span>
-        <span className="hidden min-w-0 sm:block">
+        <span className={cn("hidden min-w-0", collapsed ? "" : "sm:block")}>
           <span className="block truncate text-[13px] text-ink">{me.name}</span>
           <span className="block truncate font-mono text-[11px] text-mute">{me.email}</span>
         </span>
