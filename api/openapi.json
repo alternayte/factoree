@@ -6972,6 +6972,11 @@
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "mergedTotal": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
                           }
                         },
                         "required": [
@@ -6979,7 +6984,8 @@
                           "name",
                           "slug",
                           "teamKey",
-                          "repositories"
+                          "repositories",
+                          "mergedTotal"
                         ]
                       }
                     },
@@ -7020,6 +7026,12 @@
                           },
                           "followsPullRequest": {
                             "type": "boolean"
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           },
                           "approximate": {
                             "type": "boolean"
@@ -7116,6 +7128,7 @@
                           "repairLimit",
                           "costUsd",
                           "followsPullRequest",
+                          "repositories",
                           "approximate",
                           "statuses",
                           "pullRequests",
@@ -7372,6 +7385,11 @@
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "mergedTotal": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
                           }
                         },
                         "required": [
@@ -7379,7 +7397,8 @@
                           "name",
                           "slug",
                           "teamKey",
-                          "repositories"
+                          "repositories",
+                          "mergedTotal"
                         ]
                       }
                     },
@@ -7420,6 +7439,12 @@
                           },
                           "followsPullRequest": {
                             "type": "boolean"
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           },
                           "approximate": {
                             "type": "boolean"
@@ -7516,6 +7541,7 @@
                           "repairLimit",
                           "costUsd",
                           "followsPullRequest",
+                          "repositories",
                           "approximate",
                           "statuses",
                           "pullRequests",

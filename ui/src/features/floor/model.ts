@@ -294,3 +294,28 @@ export const ROLE_STATION: Record<string, StationKey | "setup"> = {
   reviewer: "inspect",
   setup: "setup",
 };
+
+/** docs/specs/floor-growth.md. The buildings a line gains from its lifetime merged pull requests. */
+export const GROWTH = [
+  { key: "racks", at: 5, name: "storage racks" },
+  { key: "tanks", at: 25, name: "tank farm" },
+  { key: "warehouse", at: 100, name: "warehouse" },
+  { key: "trucks", at: 250, name: "truck bay" },
+] as const;
+export type GrowthKey = (typeof GROWTH)[number]["key"];
+
+export const builtAt = (mergedTotal: number): Set<GrowthKey> => new Set(GROWTH.filter((tier) => mergedTotal >= tier.at).map((tier) => tier.key));
+
+/** The next building of a line, or null when it has all of them. */
+export const nextBuilding = (mergedTotal: number): (typeof GROWTH)[number] | null => GROWTH.find((tier) => mergedTotal < tier.at) ?? null;
+
+/** The crew of each station: an agent role, or a Factoree bot. */
+export const STATION_CREW: Partial<Record<StationKey, { kind: "agent" | "bot"; name: string }>> = {
+  refinery: { kind: "agent", name: "refiner" },
+  prep: { kind: "bot", name: "prep bot" },
+  workshop: { kind: "agent", name: "implementer" },
+  test: { kind: "bot", name: "check bot" },
+  lab: { kind: "agent", name: "validator" },
+  inspect: { kind: "agent", name: "reviewer" },
+  dock: { kind: "bot", name: "dock bot" },
+};

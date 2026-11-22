@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The floor has a crew member at each station, props around each line, a silo per repository, and buildings that unlock at 5, 25, 100 and 250 merged pull requests of the product (docs/specs/floor-growth.md).
+- `GET /admin/floor` returns `mergedTotal` per line and `repositories` per run.
+
+### Changed
+
+- The floor camera uses the concept angle and fits every line; crates are larger; the product sign is a compact plate in the line's front yard; the floor has a warm key light with soft shadows and a muted colour per station; crates are centred on the belt in line with their machine; a setup run shows a solid half-built building.
+
 ## [0.21.1] - 2026-11-22
 
 ### Added

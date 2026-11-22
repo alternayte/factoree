@@ -22,7 +22,7 @@ export const floorSchema = z.object({
   to: z.string(),
   /** One line per product of the workspace. */
   lines: z.array(
-    z.object({ productId: z.string(), name: z.string(), slug: z.string(), teamKey: z.string(), repositories: z.array(z.string()) }),
+    z.object({ productId: z.string(), name: z.string(), slug: z.string(), teamKey: z.string(), repositories: z.array(z.string()), mergedTotal: z.number().int() }),
   ),
   runs: z.array(
     z.object({
@@ -35,6 +35,8 @@ export const floorSchema = z.object({
       costUsd: z.number().nullable(),
       /** True for a PR follow-up run: it works on the pull request of an earlier run. */
       followsPullRequest: z.boolean(),
+      /** The repositories the run changes. */
+      repositories: z.array(z.string()),
       /** True for a run from before the status history: its times come from the stage rows. */
       approximate: z.boolean(),
       statuses: z.array(statusChangeSchema),

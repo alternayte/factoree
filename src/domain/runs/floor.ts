@@ -23,6 +23,11 @@ export interface FloorLine {
   slug: string;
   teamKey: string;
   repositories: string[];
+  /**
+   * docs/specs/floor-growth.md. The pull requests of the product merged up to the end of the
+   * window, over its whole life. The floor grows from it.
+   */
+  mergedTotal: number;
 }
 
 export interface FloorStatusChange {
@@ -55,6 +60,8 @@ export interface FloorRun {
   costUsd: number | null;
   /** True when the run works on the pull request of an earlier run: a PR follow-up run. */
   followsPullRequest: boolean;
+  /** docs/specs/floor-growth.md. The repositories the run changes: its run targets. */
+  repositories: string[];
   /**
    * True for a run from before the status history. Its changes come from the stage rows and the
    * row times, so the page marks them.

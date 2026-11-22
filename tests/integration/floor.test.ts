@@ -82,6 +82,37 @@ describe("factory floor", () => {
     });
   });
 
+  it("counts the merged pull requests of each product over its life, up to the window end", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+      const repository = await prisma.repository.create({
+        data: { tenantId, productId, fullName: "acme/app", defaultBranch: "main", configSha: "a", githubInstallationId: "1" },
+      });
+      const now = Date.now();
+      const pullRequest = (number: number, state: string, closedDaysAgo: number | null) => ({
+        tenantId,
+        repositoryId: repository.id,
+        number,
+        url: `https://github.com/acme/app/pull/${String(number)}`,
+        headBranch: `b${String(number)}`,
+        headSha: "s",
+        baseBranch: "main",
+        originRunId: runId,
+        workflowId: `pr-${String(number)}`,
+        state,
+        closedAt: closedDaysAgo === null ? null : new Date(now - closedDaysAgo * 24 * 60 * 60_000),
+      });
+      // Merged 30 days ago, outside every window, and 1 day ago. One open, one closed unmerged.
+      await prisma.pullRequest.createMany({
+        data: [pullRequest(1, "merged", 30), pullRequest(2, "merged", 1), pullRequest(3, "open", null), pullRequest(4, "closed", 2)],
+      });
+      const reader = new PrismaFloorReader(prisma);
+      expect((await reader.live(tenantId, new Date(now))).lines[0]?.mergedTotal).toBe(2);
+      const replay = await reader.replay(tenantId, new Date(now - 5 * 24 * 60 * 60_000), new Date(now - 3 * 24 * 60 * 60_000));
+      expect(replay.lines[0]?.mergedTotal).toBe(1);
+    });
+  });
+
   it("keeps the runs of another tenant off the floor", async () => {
     await withDatabase(async (prisma) => {
       await seedTenantProjectAndRun(prisma);

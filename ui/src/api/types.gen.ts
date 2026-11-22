@@ -1853,6 +1853,7 @@ export type GetFloorResponses = {
       slug: string;
       teamKey: string;
       repositories: Array<string>;
+      mergedTotal: number;
     }>;
     runs: Array<{
       id: string;
@@ -1863,6 +1864,7 @@ export type GetFloorResponses = {
       repairLimit: number;
       costUsd: number | null;
       followsPullRequest: boolean;
+      repositories: Array<string>;
       approximate: boolean;
       statuses: Array<{
         status: string;
@@ -1951,6 +1953,7 @@ export type GetFloorReplayResponses = {
       slug: string;
       teamKey: string;
       repositories: Array<string>;
+      mergedTotal: number;
     }>;
     runs: Array<{
       id: string;
@@ -1961,6 +1964,7 @@ export type GetFloorReplayResponses = {
       repairLimit: number;
       costUsd: number | null;
       followsPullRequest: boolean;
+      repositories: Array<string>;
       approximate: boolean;
       statuses: Array<{
         status: string;
