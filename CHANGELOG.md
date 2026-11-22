@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.7] - 2026-11-22
+
+### Added
+
+- A working floor station glows in its own colour, shakes a little and runs moving parts: a refinery ring, a prep piston, a workshop flywheel, a test bench scanner beam, a user lab lamp, an inspection beacon and a dock lamp (docs/specs/floor-active.md).
+
+### Fixed
+
+- The cyan glow strip sits flush on the front face of each machine.
+- The repair belt joins the main belt at the workshop and at each check station, and glows red while a crate rides it.
+
 ## [0.21.6] - 2026-11-22
 
 ### Fixed
