@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.5] - 2026-11-22
+
+### Fixed
+
+- The floor keeps full screen when the viewer switches between live and replay or between the day and the week.
+- The PR yard fills its middle rows first, so a few crates stand in the yard and not against the belt.
+
+### Changed
+
+- Replay plays at 10× by default and jumps over the time when no run is on the line. The timeline marks each work item, a click plays it, and previous and next buttons step through them (docs/specs/floor-replay.md).
+
 ## [0.21.4] - 2026-11-22
 
 ### Fixed
