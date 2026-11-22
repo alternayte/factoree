@@ -12,8 +12,8 @@ export type ToolKind = FloorJson["pulses"][number]["toolKind"];
 /** The stations of one line, in order. The index is the position along the line. */
 export const STATIONS = [
   { key: "intake", name: "Intake" },
-  { key: "refinery", name: "Refinery" },
   { key: "prep", name: "Prep" },
+  { key: "refinery", name: "Refinery" },
   { key: "workshop", name: "Workshop" },
   { key: "test", name: "Test bench" },
   { key: "lab", name: "User lab" },
@@ -122,6 +122,25 @@ const changeAt = <T extends { at: string }>(changes: T[], at: number): { change:
 
 const placeOfStatus = (status: string): Place | null => STATUS_STATION[status] ?? (REJECTED.has(status) ? "bin" : null);
 
+/**
+ * docs/specs/floor-growth.md. Where the status at `index` puts the crate, read with the statuses
+ * before it, so the crate follows the workflow order: the ticket read and the first context before
+ * the work sprite are intake work, and the refiner runs in the work sprite after prep. A later
+ * PREPARING (the sprite of a change set, a fresh sandbox after an unreachable provider) keeps the
+ * crate where it is, so it never walks back to prep.
+ */
+const placeAtIndex = (statuses: Array<{ status: string }>, index: number): Place | null => {
+  const status = statuses[index]!.status;
+  const place = placeOfStatus(status);
+  const prepared = statuses.slice(0, index).some((change) => change.status === "PREPARING");
+  if (place === "refinery" && !prepared && status !== "BUILDING_VALIDATION_CONTRACT") return "intake";
+  if (place === "prep" && index > 0) {
+    const before = placeAtIndex(statuses, index - 1);
+    if (before !== null && before !== "bin" && stationIndex(before as StationKey) > stationIndex("prep")) return before;
+  }
+  return place;
+};
+
 const TONE_OF_STATION: Partial<Record<Place, Tone>> = { intake: "idle", dock: "success", gate: "success", bin: "danger" };
 
 const STATUS_WORDS: Record<string, string> = {
@@ -163,12 +182,13 @@ export const crateAt = (run: FloorRunJson, at: number): CrateState | null => {
   const status = current.change.status;
   const since = ms(current.change.at);
   const previous = current.index > 0 ? run.statuses[current.index - 1]!.status : null;
+  const previousPlace = current.index > 0 ? placeAtIndex(run.statuses, current.index - 1) : null;
   const repairs = run.statuses.filter((change, index) => index <= current.index && change.status === "REPAIRING").length;
   const base = { run, status, since, repairs, mark: null as CrateState["mark"] };
 
-  const running = placeOfStatus(status);
+  const running = placeAtIndex(run.statuses, current.index);
   if (running !== null && running !== "bin") {
-    const from = previous === null ? (run.followsPullRequest ? "yard" : null) : placeOfStatus(previous);
+    const from = previous === null ? (run.followsPullRequest ? "yard" : null) : previousPlace;
     const repair = running === "workshop" && from !== null && from !== "workshop" && from !== "refinery" && from !== "prep" && from !== "intake";
     const human = HUMAN_STATUSES.has(status);
     const tone: Tone = human ? "warning" : (TONE_OF_STATION[running] ?? "accent");
@@ -219,7 +239,7 @@ export const crateAt = (run: FloorRunJson, at: number): CrateState | null => {
       mark: status === "REPORTED" ? "reported" : status === "DRAFT_PUBLISHED" ? "draft" : null,
     };
   }
-  return { ...base, from: previous === null ? null : placeOfStatus(previous), repair: false, place: "bin", label: statusWords(status), tone: "danger", human: false };
+  return { ...base, from: previousPlace, repair: false, place: "bin", label: statusWords(status), tone: "danger", human: false };
 };
 
 /** The checks that failed into a repair within ALERT_MS before `at`, by machine. */
@@ -230,7 +250,7 @@ const alertsAt = (runs: FloorRunJson[], at: number): FloorMoment["alerts"] => {
       if (change.status !== "REPAIRING" || index === 0) return;
       const when = ms(change.at);
       if (when > at || at - when > ALERT_MS) return;
-      const place = placeOfStatus(run.statuses[index - 1]!.status);
+      const place = placeAtIndex(run.statuses, index - 1);
       if (place === "test" || place === "lab" || place === "inspect") alerts.push({ productId: run.productId, station: place });
     });
   }
@@ -246,6 +266,8 @@ export const floorAt = (floor: FloorJson, at: number, live: boolean): FloorMomen
     const crate = crateAt(run, at);
     return crate === null ? [] : [crate];
   });
+  // The oldest run takes the first slot of a place, so crates keep their slots from frame to frame.
+  crates.sort((a, b) => a.run.createdAt.localeCompare(b.run.createdAt) || a.run.id.localeCompare(b.run.id));
   const productOfRun = new Map(floor.runs.map((run) => [run.id, run.productId]));
   const productOfSetup = new Map(floor.setups.map((setup) => [setup.id, setup.productId]));
   const newest = new Map<string, FloorJson["pulses"][number]>();
