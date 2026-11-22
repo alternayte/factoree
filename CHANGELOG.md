@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.4] - 2026-11-22
+
 ### Fixed
 
 - The floor stations follow the workflow order: prep before the refinery, so a crate never walks back. A crate no longer jumps when its step changes, and it stops under its machine as the camera shows it (docs/specs/floor-growth.md).
