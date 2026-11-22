@@ -63,6 +63,8 @@ const STEP = 6;
 const LINE_GAP = 27;
 /** The camera position relative to its target: the angle of the Night shift concept. */
 const CAMERA_OFFSET = new THREE.Vector3(22, 40, 48);
+/** docs/specs/floor-growth.md. The silos a line shows before the rest become a "+N" sign. */
+const SILOS_SHOWN = 6;
 const BELT_OFFSET = 0;
 const REPAIR_OFFSET = 1.6;
 const MACHINE_OFFSET = -2.9;
@@ -534,7 +536,12 @@ export class FloorScene {
     sign.className = "floor-sign";
     const name = document.createElement("span");
     name.className = "floor-sign-name";
-    name.textContent = line.name;
+    // A long product name is cut with an ellipsis; the tooltip and the line panel show it whole.
+    const title = document.createElement("span");
+    title.className = "floor-sign-title";
+    title.textContent = line.name;
+    name.append(title);
+    sign.title = `${line.name} (${line.teamKey})\n${line.repositories.join("\n")}`;
     const team = document.createElement("span");
     team.className = "floor-team";
     team.textContent = line.teamKey;
@@ -605,21 +612,37 @@ export class FloorScene {
 
     // Behind the line: a walkway, then one silo per repository.
     add(walkway(m, length, 1.4), this.x(4.5) + 1, -6.6);
-    // Low silos behind the intake, so they never outweigh the stations.
-    const shown = line.repositories.slice(0, 5);
+    // Low silos behind the dock, so they never outweigh the stations, and the back left of the
+    // line stays clear for the sign of the line above. Up to SILOS_SHOWN stand
+    // in a row; the rest are a "+N" sign that opens the line panel with every repository. The
+    // labels alternate below and above the silos, so neighbours never overlap, and a long name
+    // is cut with an ellipsis and shown whole on hover.
+    const shown = line.repositories.slice(0, SILOS_SHOWN);
     shown.forEach((repository, index) => {
       const tank = silo(m, 2 + random() * 0.6);
-      const x = this.x(0) - 1 + index * 2.7;
+      const x = this.x(6.2) + index * 2.6;
       add(tank.group, x, -10.2);
-      const label = this.label(repository.split("/").at(-1) ?? repository, "floor-label floor-silo");
-      this.silos.set(`${line.productId}:${repository}`, { cap: tank.cap, label, point: new THREE.Vector3(x, 0.1, z - 8.6) });
+      const above = index % 2 === 1;
+      const label = this.label(repository.split("/").at(-1) ?? repository, `floor-label floor-silo${above ? " floor-silo-above" : ""}`);
+      label.title = repository;
+      label.addEventListener("click", () => this.options.onPick({ kind: "line", productId: line.productId }));
+      const point = above ? new THREE.Vector3(x, tank.top + 0.2, z - 10.2) : new THREE.Vector3(x, 0.1, z - 8.9);
+      this.silos.set(`${line.productId}:${repository}`, { cap: tank.cap, label, point });
     });
+    const more = line.repositories.length - shown.length;
+    if (more > 0) {
+      const label = this.label(`+${String(more)} repositories`, "floor-label floor-silo floor-silo-more");
+      label.title = line.repositories.slice(SILOS_SHOWN).join("\n");
+      label.addEventListener("click", () => this.options.onPick({ kind: "line", productId: line.productId }));
+      const cap = new THREE.MeshBasicMaterial();
+      this.silos.set(`${line.productId}:+more`, { cap, label, point: new THREE.Vector3(this.x(6.2) + shown.length * 2.6 + 0.6, 0.1, z - 9.4) });
+    }
 
     // docs/specs/floor-growth.md. The buildings the merged pull requests unlocked, behind the
     // line and in its front yard, inside the view the camera fits.
     if (built.has("tanks")) add(tankFarm(m, this.animated), this.x(3.2), -10.6);
     if (built.has("warehouse")) add(warehouse(m, this.animated, new THREE.Vector3(this.x(5.2), 0, z - 11)), this.x(5.2), -11);
-    if (built.has("racks")) add(racks(m, random), this.x(7.8), -10.2);
+    if (built.has("racks")) add(racks(m, random), this.x(9) + 2.5, -10.2);
     if (built.has("trucks")) add(truckBay(m, this.animated), this.x(8), 10.2, Math.PI / 2);
   }
 
@@ -965,7 +988,12 @@ export class FloorScene {
       material.opacity = 0.35 * (1 - age);
       return true;
     });
-    for (const [productId, sign] of this.signs) this.place(sign, new THREE.Vector3(this.x(0) - 1, 0, this.lineZ(productId) + 8.5));
+    // A sign stays inside the stage: on a narrow stage the lower lines sit left of the view.
+    for (const [productId, sign] of this.signs) {
+      const screen = this.toScreen(new THREE.Vector3(this.x(0) - 8, 0, this.lineZ(productId) + 11.5));
+      const x = Math.max(8, Math.min(screen.x, this.container.clientWidth - sign.offsetWidth - 8));
+      sign.style.transform = `translate(${x.toFixed(1)}px, ${screen.y.toFixed(1)}px)`;
+    }
 
     this.options.onAnchor(this.anchorOf(this.selected));
     this.composer.render();
@@ -987,7 +1015,7 @@ export class FloorScene {
       const crew = this.crews.get(pick.id);
       return crew === undefined ? null : this.toScreen(crew.group.position.clone().setY(3.2));
     }
-    return this.toScreen(new THREE.Vector3(this.x(0) - 1, 0, this.lineZ(pick.productId) + 8.5));
+    return this.toScreen(new THREE.Vector3(this.x(0) - 5, 0, this.lineZ(pick.productId) + 11.5));
   }
 
   private resize(): void {
@@ -1024,8 +1052,8 @@ export class FloorScene {
     const corners = [
       new THREE.Vector3(this.x(0) - 8, 0, -13),
       new THREE.Vector3(this.x(9) + 5, 0, -13),
-      new THREE.Vector3(this.x(0) - 8, 0, last + 11),
-      new THREE.Vector3(this.x(9) + 5, 0, last + 11),
+      new THREE.Vector3(this.x(0) - 8, 0, last + 14),
+      new THREE.Vector3(this.x(9) + 5, 0, last + 14),
       new THREE.Vector3(this.x(5), 6, -14),
       new THREE.Vector3(this.x(0) - 6, 4, -2),
     ];
@@ -1047,7 +1075,7 @@ export class FloorScene {
     // A narrow stage shows the front of the lines at a readable size, and the viewer pans along.
     if (aspect < 1) {
       this.fitSize = Math.max(40, (maxY - minY) * 0.9);
-      this.target.x = this.x(0.6);
+      this.target.x = this.x(0);
     }
     this.zoom = 1;
     this.resize();

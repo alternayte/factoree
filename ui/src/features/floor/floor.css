@@ -30,7 +30,8 @@
 }
 .floor-label[data-on="true"] { color: var(--accent-text); }
 .floor-sign {
-  translate: -50% 0;
+  translate: 0 0;
+  max-width: min(250px, 70vw);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -45,10 +46,15 @@
 }
 .floor-sign:hover .floor-sign-name { color: var(--accent-text); }
 .floor-sign:focus-visible { outline: 1px solid var(--accent); }
-.floor-sign-name { font: 600 13px/1 var(--font-mono); color: var(--ink); text-shadow: 0 1px 3px #000; }
+.floor-sign-name { display: flex; align-items: center; gap: 6px; max-width: 100%; font: 600 13px/1 var(--font-mono); color: var(--ink); text-shadow: 0 1px 3px #000; }
+.floor-sign-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.floor-sign-name .floor-team { flex: none; }
 .floor-sign-meta { font: 500 10.5px/1 var(--font-mono); color: var(--mute); }
 .floor-sign-growth { font: 500 10.5px/1 var(--font-mono); color: var(--success); text-shadow: 0 1px 2px #000; }
-.floor-silo { font-size: 9.5px; text-transform: none; letter-spacing: 0; }
+.floor-silo { font-size: 9.5px; text-transform: none; letter-spacing: 0; max-width: 11ch; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; cursor: pointer; }
+.floor-silo:hover { color: var(--ink); max-width: none; z-index: 1; background: rgba(11, 13, 14, 0.9); }
+.floor-silo-above { translate: -50% -100%; }
+.floor-silo-more { max-width: none; color: var(--body); }
 .floor-team { font: 500 10.5px/1 var(--font-mono); color: var(--accent-ink); background: var(--accent); padding: 2px 5px; border-radius: var(--radius-control); }
 .floor-pill {
   translate: -50% -100%;
