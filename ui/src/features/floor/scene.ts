@@ -4,8 +4,9 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { ROLE_STATION, SILENT_MS, STATIONS, stationIndex, type CrateState, type FloorMoment, type Place, type StationKey, type Tone } from "./model";
+import { builtAt, nextBuilding, ROLE_STATION, SILENT_MS, STATION_CREW, STATIONS, stationIndex, type CrateState, type FloorMoment, type Place, type StationKey, type Tone } from "./model";
 import { MODEL_BASE, MODELS, type ModelName } from "./models";
+import { barrels, crewFigure, emptyAnimated, lampPost, pallet, propMaterials, racks, rail, seeded, silo, tankFarm, truckBay, walkway, warehouse, type Animated } from "./props";
 
 /**
  * docs/specs/factory-floor.md. The Night shift scene: matte machines in the DESIGN.md tokens on the
@@ -23,12 +24,30 @@ const TOKENS = {
   warning: 0xffd84d,
   danger: 0xff5d73,
   success: 0x3dffa8,
-  idleGlow: 0x14363c,
-  crate: 0xa9bec4,
+  idleGlow: 0x283033,
+  /** docs/specs/floor-growth.md. Cardboard: a neutral the state band reads against. */
+  crate: 0x8f7556,
 } as const;
 
 /** The grey each kind of model is drawn in, before its texture shading. */
-const MODEL_TINT = { machine: 0x8fa3aa, belt: 0x5c6c72, bin: 0x7a6d70 } as const;
+const MODEL_TINT = { machine: 0xb2bec1, belt: 0x5c6c72, bin: 0x7a6d70 } as const;
+
+/**
+ * docs/specs/floor-growth.md. The Lit factory colour of each station, muted so it never reads as a
+ * state colour. It replaces the warm accent parts of each model.
+ */
+const STATION_COLOR: Record<StationKey, number> = {
+  intake: 0x5d676b,
+  refinery: 0x6f6491,
+  prep: 0x587580,
+  workshop: 0x9a7740,
+  test: 0x4d7a6c,
+  lab: 0x52698f,
+  inspect: 0x8a5d68,
+  dock: 0x667050,
+  yard: 0x4a5257,
+  gate: 0x4c7a84,
+};
 
 const TONE_COLOR: Record<Tone, number> = {
   accent: TOKENS.accent,
@@ -39,8 +58,11 @@ const TONE_COLOR: Record<Tone, number> = {
 };
 
 /** The distance between two stations, and between two lines. */
-const STEP = 5.4;
-const LINE_GAP = 12;
+const STEP = 6;
+/** docs/specs/floor-growth.md. Room behind a line for its silos and buildings, and in front for its yard. */
+const LINE_GAP = 27;
+/** The camera position relative to its target: the angle of the Night shift concept. */
+const CAMERA_OFFSET = new THREE.Vector3(22, 40, 48);
 const BELT_OFFSET = 0;
 const REPAIR_OFFSET = 1.6;
 const MACHINE_OFFSET = -2.9;
@@ -48,16 +70,16 @@ const BIN_OFFSET = 3.5;
 const MOVE_SPEED = 3.2;
 /** The footprint each machine model is scaled to, by station. */
 const FOOTPRINT: Record<StationKey, { w: number; d: number; h: number }> = {
-  intake: { w: 3, d: 3, h: 2 },
-  refinery: { w: 3.4, d: 3, h: 2.8 },
-  prep: { w: 2.6, d: 2.6, h: 2 },
-  workshop: { w: 4, d: 3.4, h: 3.2 },
-  test: { w: 3.2, d: 2.8, h: 1.8 },
-  lab: { w: 3.2, d: 3, h: 2.4 },
-  inspect: { w: 3, d: 3, h: 2.4 },
-  dock: { w: 3.6, d: 3.4, h: 1 },
-  yard: { w: 5, d: 4.4, h: 0.3 },
-  gate: { w: 3, d: 3.4, h: 3.4 },
+  intake: { w: 3.4, d: 3.2, h: 2.6 },
+  refinery: { w: 3.8, d: 3.2, h: 3.4 },
+  prep: { w: 3.2, d: 3, h: 2.6 },
+  workshop: { w: 4.4, d: 3.4, h: 3.8 },
+  test: { w: 3.8, d: 3, h: 2.4 },
+  lab: { w: 3.8, d: 3.2, h: 3 },
+  inspect: { w: 3.6, d: 3.2, h: 3 },
+  dock: { w: 4, d: 3.4, h: 1.4 },
+  yard: { w: 5.4, d: 4.6, h: 0.3 },
+  gate: { w: 3.4, d: 3.6, h: 3.8 },
 };
 
 export type Pick =
@@ -71,6 +93,7 @@ export interface SceneLine {
   name: string;
   teamKey: string;
   repositories: string[];
+  mergedTotal: number;
 }
 
 interface Machine {
@@ -90,6 +113,16 @@ interface CrateView {
   pathLength: number;
   startedAt: number;
   place: Place;
+}
+
+/** docs/specs/floor-growth.md. The crew member of one station. */
+interface Crew {
+  group: THREE.Group;
+  head: THREE.MeshBasicMaterial;
+  arm: THREE.Object3D;
+  kind: "agent" | "bot";
+  home: THREE.Vector3;
+  phase: number;
 }
 
 interface Figure {
@@ -181,6 +214,7 @@ export class FloorScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 600);
+  private readonly key = new THREE.DirectionalLight(0xfff0d8, 1.7);
   private readonly composer: EffectComposer;
   private readonly bloom: UnrealBloomPass;
   private readonly overlay: HTMLDivElement;
@@ -197,6 +231,12 @@ export class FloorScene {
   private figures = new Map<string, Figure>();
   private crews = new Map<string, { group: THREE.Group; pill: HTMLDivElement }>();
   private badges: HTMLDivElement[] = [];
+  private stationCrew = new Map<string, Crew>();
+  private silos = new Map<string, { cap: THREE.MeshBasicMaterial; label: HTMLDivElement; point: THREE.Vector3 }>();
+  private growthSigns = new Map<string, HTMLSpanElement>();
+  private readonly props = propMaterials();
+  private animated: Animated = emptyAnimated();
+  private lastSmoke = 0;
   /** docs/specs/factory-floor.md. Steam over a machine while a session or a check runs in it. */
   private puffs: Array<{ mesh: THREE.Mesh; bornAt: number }> = [];
   private lastPuff = new Map<string, number>();
@@ -211,7 +251,7 @@ export class FloorScene {
   private readonly materials = {
     body: new THREE.MeshStandardMaterial({ color: 0x1c262a, roughness: 0.9, metalness: 0.05 }),
     top: new THREE.MeshStandardMaterial({ color: TOKENS.hairline, roughness: 0.85, metalness: 0.05 }),
-    pad: new THREE.MeshStandardMaterial({ color: TOKENS.panel, roughness: 1 }),
+    pad: new THREE.MeshStandardMaterial({ color: 0x22292c, roughness: 1 }),
     edge: new THREE.LineBasicMaterial({ color: 0x35525a }),
     padEdge: new THREE.LineBasicMaterial({ color: TOKENS.hairlineStrong }),
     figure: new THREE.MeshStandardMaterial({ color: 0x56656b, roughness: 0.7 }),
@@ -230,6 +270,9 @@ export class FloorScene {
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // docs/specs/floor-growth.md. A warm key light with soft shadows, as the Lit factory concept.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.className = "floor-canvas";
     container.prepend(this.renderer.domElement);
     this.overlay = document.createElement("div");
@@ -238,14 +281,18 @@ export class FloorScene {
 
     this.scene.background = new THREE.Color(TOKENS.canvas);
     this.scene.add(this.world);
-    this.scene.add(new THREE.HemisphereLight(0xdff6ff, TOKENS.canvas, 1.1));
-    const key = new THREE.DirectionalLight(0xdff6ff, 0.55);
-    key.position.set(-22, 40, 18);
-    this.scene.add(key);
+    this.scene.add(new THREE.HemisphereLight(0xe8f4f6, 0x15191b, 1));
+    this.key.position.set(-22, 40, 18);
+    this.key.castShadow = true;
+    this.key.shadow.mapSize.set(2048, 2048);
+    this.key.shadow.bias = -0.0008;
+    this.key.shadow.radius = 4;
+    this.scene.add(this.key, this.key.target);
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.85, 0.45, 0.32);
+    // Only the state lights are bright enough to bloom.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.42, 0.55);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
@@ -271,6 +318,7 @@ export class FloorScene {
     canvas.removeEventListener("pointerup", this.onPointerUp);
     canvas.removeEventListener("wheel", this.onWheel);
     disposeTree(this.scene);
+    Object.values(this.props).forEach((material) => material.dispose());
     this.belts.forEach((texture) => texture.dispose());
     this.composer.dispose();
     this.renderer.dispose();
@@ -280,9 +328,18 @@ export class FloorScene {
 
   /** Builds the lines. It runs again only when the products change. */
   setLines(lines: SceneLine[]): void {
-    const same = lines.length === this.lines.length && lines.every((line, index) => line.productId === this.lines[index]?.productId && line.name === this.lines[index]?.name);
+    const shapeOf = (line: SceneLine): string => `${line.productId}|${line.name}|${line.repositories.join(",")}|${[...builtAt(line.mergedTotal)].join(",")}`;
+    const same = lines.length === this.lines.length && lines.every((line, index) => this.lines[index] !== undefined && shapeOf(line) === shapeOf(this.lines[index]!));
+    // The merged total changes the sign text without a rebuild.
+    this.lines = same ? lines : this.lines;
+    if (same) this.updateGrowthSigns();
     if (same) return;
     this.lines = lines;
+    this.stationCrew.clear();
+    this.silos.forEach((entry) => entry.label.remove());
+    this.silos.clear();
+    this.growthSigns.clear();
+    this.animated = emptyAnimated();
     disposeTree(this.world);
     this.world.clear();
     this.belts.forEach((texture) => texture.dispose());
@@ -298,14 +355,30 @@ export class FloorScene {
     this.crews.forEach((crew) => crew.pill.remove());
     this.crews.clear();
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: TOKENS.canvas, roughness: 1 }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x171c1e, roughness: 1 }));
     floor.rotation.x = -Math.PI / 2;
     this.world.add(floor);
-    const grid = new THREE.GridHelper(400, 200, 0x162024, 0x162024);
+    const grid = new THREE.GridHelper(400, 200, 0x1c2427, 0x1c2427);
     grid.position.y = 0.01;
     this.world.add(grid);
 
     lines.forEach((line, index) => this.buildLine(line, index));
+    // Everything casts and takes a shadow, except the floor, which only takes one.
+    this.world.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.receiveShadow = true;
+      mesh.castShadow = mesh !== floor;
+    });
+    // The shadow camera covers every line and its surroundings.
+    const last = (lines.length - 1) * LINE_GAP;
+    const centre = new THREE.Vector3(this.x(4.5), 0, last / 2);
+    this.key.target.position.copy(centre);
+    this.key.position.copy(centre).add(new THREE.Vector3(-22, 40, 18));
+    const reach = Math.max(this.x(9) + 20, last + 30) / 2 + 10;
+    Object.assign(this.key.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 1, far: 200 });
+    this.key.shadow.camera.updateProjectionMatrix();
+    this.updateGrowthSigns();
     this.resize();
     this.fit();
   }
@@ -346,16 +419,19 @@ export class FloorScene {
    * belt, then stack one level up, so several runs in the same step stay apart and countable. The
    * yard, the intake and the bin hold a grid. `y` is the stack height.
    */
-  private stationPoint(productId: string, place: Place, slot: number): THREE.Vector3 {
+  private stationPoint(productId: string, place: Place, slot: number, count = 1): THREE.Vector3 {
     const z = this.lineZ(productId);
-    const gap = 1.6;
+    const gap = 2;
     if (place === "gone") return new THREE.Vector3(this.x(stationIndex("gate")) + 7, 0, z);
-    if (place === "bin") return new THREE.Vector3(this.x(stationIndex("inspect")) - gap + (slot % 3) * gap, Math.floor(slot / 3) * 1.25, z + BIN_OFFSET);
+    if (place === "bin") return new THREE.Vector3(this.x(stationIndex("inspect")) - gap + (slot % 3) * gap, Math.floor(slot / 3) * 1.55, z + BIN_OFFSET);
     const index = stationIndex(place);
     if (place === "intake" || place === "yard") {
-      return new THREE.Vector3(this.x(index) - gap + (slot % 3) * gap, Math.floor(slot / 6) * 1.25, z - 0.8 + (Math.floor(slot / 3) % 2) * gap);
+      return new THREE.Vector3(this.x(index) - gap + (slot % 3) * gap, Math.floor(slot / 6) * 1.55, z - 0.8 + (Math.floor(slot / 3) % 2) * gap);
     }
-    return new THREE.Vector3(this.x(index) - gap / 2 + (slot % 2) * gap, Math.floor(slot / 2) * 1.25, z + BELT_OFFSET);
+    // On the belt, in line with the machine as the concept: one crate at its centre, two side by
+    // side, then a second level.
+    const perLevel = Math.min(2, count - Math.floor(slot / 2) * 2);
+    return new THREE.Vector3(this.x(index) + ((slot % 2) - (perLevel - 1) / 2) * gap, Math.floor(slot / 2) * 1.55, z + BELT_OFFSET);
   }
 
   /** How many crates a place shows. More wait there as a "+N" count. */
@@ -381,7 +457,7 @@ export class FloorScene {
     return texture;
   }
 
-  private belt(x0: number, x1: number, z: number, width: number): void {
+  private belt(x0: number, x1: number, z: number, width: number, tint: number = MODEL_TINT.belt): void {
     // The conveyor model, repeated along the belt, carries a moving stripe so the belt runs.
     const length = x1 - x0;
     const source = this.models.conveyor;
@@ -392,7 +468,7 @@ export class FloorScene {
       // A conveyor model runs along its longer side. One that runs along z is fitted turned, then
       // turned to run along x.
       const alongZ = size.z > size.x;
-      const model = placeModel(source, alongZ ? { w: width, d: piece, h: 0.5 } : { w: piece, d: width, h: 0.5 }, MODEL_TINT.belt, TOKENS.idleGlow);
+      const model = placeModel(source, alongZ ? { w: width, d: piece, h: 0.5 } : { w: piece, d: width, h: 0.5 }, tint, TOKENS.idleGlow);
       if (alongZ) model.rotation.y = Math.PI / 2;
       model.position.set(x0 + piece * (index + 0.5), 0, z);
       this.world.add(model);
@@ -422,7 +498,8 @@ export class FloorScene {
     padEdge.position.copy(pad.position);
     this.world.add(padEdge);
     this.belt(this.x(0) - 1.5, this.x(9) + 7, z + BELT_OFFSET, 1.2);
-    this.belt(this.x(3), this.x(6), z + REPAIR_OFFSET, 0.8);
+    // The repair belt carries a crate back to the workshop. It stays dark until one rides it.
+    this.belt(this.x(3), this.x(6), z + REPAIR_OFFSET, 0.8, 0x313c40);
 
     const bin = placeModel(this.models.bin, { w: 2.4, d: 1.9, h: 1 }, MODEL_TINT.bin, 0x5a1c26);
     bin.position.set(this.x(stationIndex("inspect")), 0, z + BIN_OFFSET);
@@ -430,7 +507,7 @@ export class FloorScene {
 
     STATIONS.forEach((station, stationAt) => {
       const size = FOOTPRINT[station.key];
-      const model = placeModel(this.models[station.key], size, MODEL_TINT.machine, 0x0f4c55);
+      const model = placeModel(this.models[station.key], size, MODEL_TINT.machine, STATION_COLOR[station.key]);
       const mx = this.x(stationAt);
       const mz = station.key === "yard" ? z - 0.4 : station.key === "gate" ? z : z + MACHINE_OFFSET;
       model.position.set(mx, 0, mz);
@@ -464,11 +541,86 @@ export class FloorScene {
     name.append(" ", team);
     const repositories = document.createElement("span");
     repositories.className = "floor-sign-meta";
-    repositories.textContent = line.repositories.length === 0 ? "no repository" : line.repositories.slice(0, 2).join(", ") + (line.repositories.length > 2 ? ` +${line.repositories.length - 2}` : "");
-    sign.append(name, repositories);
+    // docs/specs/floor-growth.md. The silos name the repositories; the sign counts them.
+    repositories.textContent = line.repositories.length === 1 ? "1 repository" : `${String(line.repositories.length)} repositories`;
+    const growth = document.createElement("span");
+    growth.className = "floor-sign-growth";
+    this.growthSigns.set(line.productId, growth);
+    sign.append(name, repositories, growth);
     sign.addEventListener("click", () => this.options.onPick({ kind: "line", productId: line.productId }));
     this.overlay.append(sign);
     this.signs.set(line.productId, sign as unknown as HTMLDivElement);
+    this.buildSurroundings(line, z);
+  }
+
+  /** docs/specs/floor-growth.md. The sign line that names the merged total and the next building. */
+  private updateGrowthSigns(): void {
+    for (const line of this.lines) {
+      const growth = this.growthSigns.get(line.productId);
+      if (growth === undefined) continue;
+      const next = nextBuilding(line.mergedTotal);
+      growth.textContent = `${String(line.mergedTotal)} merged` + (next === null ? " · fully built" : ` · ${next.name} at ${String(next.at)}`);
+    }
+  }
+
+  /**
+   * docs/specs/floor-growth.md. The crew of each station, the props around the line, a silo per
+   * repository behind it and the buildings its merged pull requests unlocked.
+   */
+  private buildSurroundings(line: SceneLine, z: number): void {
+    const m = this.props;
+    const random = seeded(line.productId);
+    const add = (object: THREE.Object3D, x: number, oz: number, turn = 0): THREE.Object3D => {
+      object.position.set(x, 0, z + oz);
+      object.rotation.y = turn;
+      this.world.add(object);
+      return object;
+    };
+
+    // Crew: one per station, beside its machine on the belt side.
+    STATIONS.forEach((station, stationAt) => {
+      const crew = STATION_CREW[station.key];
+      if (crew === undefined) return;
+      const figure = crewFigure(m, crew.kind);
+      figure.group.scale.setScalar(1.45);
+      const home = new THREE.Vector3(this.x(stationAt) + FOOTPRINT[station.key].w / 2 + 0.75, 0, z - 2.1);
+      figure.group.position.copy(home);
+      figure.group.rotation.y = -Math.PI / 2;
+      this.world.add(figure.group);
+      this.stationCrew.set(`${line.productId}:${station.key}`, { ...figure, kind: crew.kind, home, phase: random() * Math.PI * 2 });
+    });
+
+    // The yard in front: a walkway, a safety rail, lamps, pallets and barrels.
+    const front = 6.2;
+    const length = this.x(9) + 8;
+    add(walkway(m, length, 1.6), this.x(4.5) + 1, front);
+    add(rail(m, this.x(5) - 2), this.x(2.5), front + 1.1);
+    for (let lamp = 0; lamp <= 3; lamp += 1) add(lampPost(m, this.animated), this.x(lamp * 3) - 1, front + 1.6, Math.PI / 2);
+    // Stock in front of the line: pallets and barrels in small groups between the lamps.
+    const built = builtAt(line.mergedTotal);
+    for (let x = this.x(0) + 2; x < this.x(9) + 4; x += 2.6 + random() * 1.8) {
+      if (random() < 0.3 || (built.has("trucks") && x > this.x(7) && x < this.x(9))) continue;
+      add(random() < 0.65 ? pallet(m, random) : barrels(m, random), x, front + 2.4 + random() * 1.4, random() * 0.5 - 0.25);
+    }
+
+    // Behind the line: a walkway, then one silo per repository.
+    add(walkway(m, length, 1.4), this.x(4.5) + 1, -6.6);
+    // Low silos behind the intake, so they never outweigh the stations.
+    const shown = line.repositories.slice(0, 5);
+    shown.forEach((repository, index) => {
+      const tank = silo(m, 2 + random() * 0.6);
+      const x = this.x(0) - 1 + index * 2.7;
+      add(tank.group, x, -10.2);
+      const label = this.label(repository.split("/").at(-1) ?? repository, "floor-label floor-silo");
+      this.silos.set(`${line.productId}:${repository}`, { cap: tank.cap, label, point: new THREE.Vector3(x, 0.1, z - 8.6) });
+    });
+
+    // docs/specs/floor-growth.md. The buildings the merged pull requests unlocked, behind the
+    // line and in its front yard, inside the view the camera fits.
+    if (built.has("tanks")) add(tankFarm(m, this.animated), this.x(3.2), -10.6);
+    if (built.has("warehouse")) add(warehouse(m, this.animated, new THREE.Vector3(this.x(5.2), 0, z - 11)), this.x(5.2), -11);
+    if (built.has("racks")) add(racks(m, random), this.x(7.8), -10.2);
+    if (built.has("trucks")) add(truckBay(m, this.animated), this.x(8), 10.2, Math.PI / 2);
   }
 
   private crateView(crate: CrateState): CrateView {
@@ -477,10 +629,12 @@ export class FloorScene {
     const body = new THREE.MeshStandardMaterial({ color: TOKENS.crate, roughness: 0.75 });
     const band = new THREE.MeshBasicMaterial({ color: TOKENS.accent });
     const group = new THREE.Group();
-    const box = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.25, 1.45), body);
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.52, 0.26, 1.52), band);
-    stripe.position.y = 0.15;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.55, 1.8), body);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.88, 0.3, 1.88), band);
+    stripe.position.y = 0.2;
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: TOKENS.canvas, transparent: true, opacity: 0.5 }));
+    box.castShadow = true;
+    stripe.castShadow = true;
     group.add(box, stripe, edges);
     const pick: Pick = { kind: "run", id: crate.run.id };
     box.userData.pick = pick;
@@ -542,12 +696,19 @@ export class FloorScene {
     if (motion) this.belts.forEach((texture) => (texture.offset.x -= dt * 0.6));
     const moment = this.moment;
     const active = new Map<string, Tone>();
+    /** The stations whose crew member works a session now, with its tool kind. */
+    const crewSessions = new Map<string, string>();
     let badges = 0;
 
     if (moment !== null) {
       // Crates: one per run on the floor, each walking its path to its place.
       const seen = new Set<string>();
       const slots = new Map<string, number>();
+      const counts = new Map<string, number>();
+      for (const crate of moment.crates) {
+        const countKey = `${crate.run.productId}:${crate.place}`;
+        counts.set(countKey, (counts.get(countKey) ?? 0) + 1);
+      }
       for (const crate of moment.crates) {
         seen.add(crate.run.id);
         const slotKey = `${crate.run.productId}:${crate.place}`;
@@ -555,7 +716,7 @@ export class FloorScene {
         slots.set(slotKey, slot + 1);
         const overflow = crate.place !== "gone" && slot >= this.capacityOf(crate.place);
         const view = this.crateView(crate);
-        const goal = this.stationPoint(crate.run.productId, crate.place, slot);
+        const goal = this.stationPoint(crate.run.productId, crate.place, slot, Math.min(counts.get(slotKey) ?? 1, this.capacityOf(crate.place)));
         const end = view.path.at(-1)!;
         if (view.place !== crate.place || end.distanceTo(goal) > 0.01) {
           const from = view.group.position.clone();
@@ -577,7 +738,7 @@ export class FloorScene {
           }
           remaining -= segment;
         }
-        view.group.position.set(position.x, 1.15 + position.y + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
+        view.group.position.set(position.x, 1.3 + position.y + (moving ? Math.abs(Math.sin(now / 160)) * 0.05 : 0) + (crate.place === "bin" ? 0.5 : 0), position.z);
         view.group.visible = (crate.place !== "gone" || moving) && !overflow;
         const color = TONE_COLOR[crate.tone];
         view.band.color.setHex(color);
@@ -590,7 +751,7 @@ export class FloorScene {
           if (known === undefined || tone === "warning") active.set(machineKey, tone);
         }
         if (crate.status === "WAITING_FOR_INPUT" || crate.status === "BLOCKED_TARGET") {
-          this.place(this.badge(badges++, "?", "warn"), view.group.position.clone().setY(2));
+          this.place(this.badge(badges++, "?", "warn"), view.group.position.clone().setY(3.4));
         }
       }
       // A place with more crates than it shows names the rest as a count.
@@ -613,7 +774,8 @@ export class FloorScene {
         if (machine !== undefined) this.place(this.badge(badges++, "!", "danger"), new THREE.Vector3(machine.x, machine.top + 1.2, machine.z));
       }
 
-      // Operators: one figure per running session, at the machine of its role.
+      // Operators: one figure per running session, at the machine of its role. The station crew
+      // member is the first one; a second session at the same station adds a figure beside it.
       const figuresSeen = new Set<string>();
       const perMachine = new Map<string, number>();
       for (const operator of moment.operators) {
@@ -626,9 +788,23 @@ export class FloorScene {
         const count = perMachine.get(`${operator.productId}:${station}`) ?? 0;
         perMachine.set(`${operator.productId}:${station}`, count + 1);
         const silent = moment.at - operator.lastOutputAt;
+        const crewMember = this.stationCrew.get(`${operator.productId}:${station}`);
+        if (count === 0 && crewMember !== undefined) {
+          // The crew member works this session: its pill rides above it.
+          const figure = this.figure(key, TOKENS.accent);
+          figure.group.visible = false;
+          crewSessions.set(`${operator.productId}:${station}`, silent > SILENT_MS ? "silent" : operator.toolKind);
+          crewMember.head.color.setHex(silent > SILENT_MS ? TOKENS.warning : TOKENS.accent);
+          figure.pill.textContent = `${operator.role} · ${silent > SILENT_MS ? formatSilence(silent) : operator.toolKind}`;
+          figure.pill.dataset.tone = silent > SILENT_MS ? "warn" : "accent";
+          figure.pill.hidden = false;
+          this.place(figure.pill, crewMember.home.clone().setY(3.2));
+          if ((active.get(`${operator.productId}:${station}`) ?? "idle") === "idle") active.set(`${operator.productId}:${station}`, "accent");
+          continue;
+        }
         const figure = this.figure(key, silent > SILENT_MS ? TOKENS.warning : TOKENS.accent);
         (figure.head.material as THREE.MeshBasicMaterial).color.setHex(silent > SILENT_MS ? TOKENS.warning : TOKENS.accent);
-        figure.group.position.set(machine.x + 1.6 + count * 0.9, 0.1, this.lineZ(operator.productId) - 1.3);
+        figure.group.position.set(machine.x + 1.6 + count * 0.9, 0.1, this.lineZ(operator.productId) - 0.9);
         const speed = operator.toolKind === "edit" ? 9 : operator.toolKind === "shell" ? 5 : operator.toolKind === "browser" ? 3 : 1.6;
         figure.head.position.y = 1.15 + (motion ? Math.abs(Math.sin((now / 1000) * speed)) * 0.06 : 0);
         figure.group.rotation.y = motion && operator.toolKind === "browser" ? Math.sin(now / 800) * 0.6 : operator.toolKind === "read" ? -0.5 : 0;
@@ -653,7 +829,31 @@ export class FloorScene {
         crewsSeen.add(setup.setup.id);
         let crew = this.crews.get(setup.setup.id);
         if (crew === undefined) {
-          const group = placeModel(this.models.scaffold, { w: 2.4, d: 2.4, h: 3 }, MODEL_TINT.machine, 0x7a6420);
+          // The building being made: a slab, walls half up, corner posts, and a yellow work light.
+          const group = new THREE.Group();
+          const m = this.props;
+          const slab = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.16, 4.4), m.light);
+          slab.position.y = 0.08;
+          group.add(slab);
+          for (const [w, h, d, x, z] of [[3.4, 1.4, 0.3, 0, -1.55], [0.3, 0.9, 3.4, -1.55, 0], [0.3, 1.8, 1.6, 1.55, -0.9], [1.6, 0.6, 0.3, -0.8, 1.55]] as const) {
+            const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m.body);
+            wall.position.set(x, 0.16 + h / 2, z);
+            group.add(wall);
+          }
+          for (const [x, z] of [[-1.7, -1.7], [1.7, -1.7], [-1.7, 1.7], [1.7, 1.7]] as const) {
+            const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3, 0.16), m.steel);
+            post.position.set(x, 1.66, z);
+            group.add(post);
+          }
+          const beam = new THREE.Mesh(new THREE.BoxGeometry(3.56, 0.12, 0.16), m.steel);
+          beam.position.set(0, 3.1, -1.7);
+          const light = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, 0.14), new THREE.MeshBasicMaterial({ color: TOKENS.warning }));
+          light.position.set(0, 2.96, -1.7);
+          group.add(beam, light);
+          group.traverse((node) => {
+            const mesh = node as THREE.Mesh;
+            if (mesh.isMesh) mesh.castShadow = mesh.receiveShadow = true;
+          });
           const pick: Pick = { kind: "setup", id: setup.setup.id };
           group.traverse((node) => (node.userData.pick = pick));
           this.world.add(group);
@@ -663,11 +863,10 @@ export class FloorScene {
         }
         const count = perLine.get(setup.setup.productId) ?? 0;
         perLine.set(setup.setup.productId, count + 1);
-        crew.group.position.set(this.x(0) - 6 - count * 3, 0, this.lineZ(setup.setup.productId) - 0.4);
+        crew.group.position.set(this.x(0) - 6.5 - count * 5, 0, this.lineZ(setup.setup.productId) + 1.5);
         const pulse = moment.operators.find((operator) => operator.owner === `setup:${setup.setup.id}`);
         crew.pill.textContent = `Setup · ${setup.setup.repository.split("/").at(-1) ?? setup.setup.repository}${pulse === undefined ? ` · ${setup.status}` : ` · ${pulse.toolKind}`}`;
-        this.place(crew.pill, crew.group.position.clone().setY(3.6));
-        if (motion) crew.group.rotation.y = Math.sin(now / 1500) * 0.05;
+        this.place(crew.pill, crew.group.position.clone().setY(2.9));
       }
       for (const [id, crew] of this.crews) {
         if (crewsSeen.has(id)) continue;
@@ -700,8 +899,57 @@ export class FloorScene {
           this.puffs.push({ mesh, bornAt: now });
         }
       }
-      this.place(machine.label, new THREE.Vector3(machine.x, 0.1, machine.z + (station === "yard" ? 3 : station === "gate" ? 2.6 : 2)));
+      this.place(machine.label, new THREE.Vector3(machine.x - 0.6, 0, this.lineZ(key.slice(0, key.lastIndexOf(":"))) + (station === "yard" ? 4.2 : 3)));
       machine.label.dataset.on = tone !== undefined && tone !== "idle" ? "true" : "false";
+    }
+    // docs/specs/floor-growth.md. The crew works only while its station is lit by real state.
+    for (const [key, crew] of this.stationCrew) {
+      const tone = active.get(key);
+      const working = tone !== undefined && tone !== "idle";
+      const session = crewSessions.get(key);
+      if (session === undefined) {
+        crew.head.color.setHex(working ? (tone === "danger" ? TOKENS.danger : tone === "warning" ? TOKENS.warning : tone === "success" ? TOKENS.success : TOKENS.accent) : 0x3d4f55);
+      }
+      const t = now / 1000 + crew.phase;
+      if (working && motion) {
+        // Fast hands for an edit, slower for a shell, a look around in a browser, still for a read.
+        const speed = session === "edit" ? 9 : session === "shell" ? 6 : session === "browser" ? 3 : session === "silent" ? 0 : 4;
+        crew.arm.rotation.x = Math.sin(t * speed) * 0.7;
+        crew.group.position.set(crew.home.x, Math.abs(Math.sin(t * speed)) * 0.05, crew.home.z + Math.sin(t * 0.6) * 0.35);
+        crew.group.rotation.y = -Math.PI / 2 + (session === "browser" ? Math.sin(t * 0.8) * 0.6 : Math.sin(t * 0.5) * 0.15);
+      } else {
+        crew.arm.rotation.x = 0;
+        crew.group.position.copy(crew.home);
+        crew.group.rotation.y = -Math.PI / 2 + 0.5;
+      }
+    }
+    // Silos light while a run of their repository is on the line, and not ended.
+    const busyRepositories = new Set<string>();
+    for (const crate of moment?.crates ?? []) {
+      if (crate.place === "gone" || crate.place === "bin" || crate.place === "yard" || crate.place === "gate") continue;
+      for (const repository of crate.run.repositories) busyRepositories.add(`${crate.run.productId}:${repository}`);
+    }
+    for (const [key, entry] of this.silos) {
+      const busy = busyRepositories.has(key);
+      entry.cap.color.setHex(busy ? TOKENS.accent : 0x232c30);
+      if (busy && motion) entry.cap.color.multiplyScalar(0.7 + 0.3 * Math.sin(now / 500));
+      entry.label.dataset.on = busy ? "true" : "false";
+      this.place(entry.label, entry.point);
+    }
+    // Decoration moves only in place.
+    if (motion) {
+      const breathe = 0.82 + 0.18 * Math.sin(now / 1400);
+      this.animated.lamps.forEach((lamp) => lamp.color.setHex(lamp.userData.base as number).multiplyScalar(breathe));
+      this.animated.fans.forEach((fan) => (fan.rotation.y += dt * 2.4));
+      if (now - this.lastSmoke > 900) {
+        this.lastSmoke = now;
+        for (const point of this.animated.stacks) {
+          const mesh = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({ color: 0x55666c, transparent: true, opacity: 0.35, depthWrite: false }));
+          mesh.position.copy(point);
+          this.world.add(mesh);
+          this.puffs.push({ mesh, bornAt: now });
+        }
+      }
     }
     // Steam rises, grows and fades over two seconds.
     this.puffs = this.puffs.filter((puff) => {
@@ -717,7 +965,7 @@ export class FloorScene {
       material.opacity = 0.35 * (1 - age);
       return true;
     });
-    for (const [productId, sign] of this.signs) this.place(sign, new THREE.Vector3(this.x(0) - 3.6, 0.2, this.lineZ(productId) - 0.6));
+    for (const [productId, sign] of this.signs) this.place(sign, new THREE.Vector3(this.x(0) - 1, 0, this.lineZ(productId) + 8.5));
 
     this.options.onAnchor(this.anchorOf(this.selected));
     this.composer.render();
@@ -729,7 +977,7 @@ export class FloorScene {
     if (pick === null) return null;
     if (pick.kind === "run") {
       const crate = this.crates.get(pick.id);
-      return crate === undefined || !crate.group.visible ? null : this.toScreen(crate.group.position.clone().setY(1.3));
+      return crate === undefined || !crate.group.visible ? null : this.toScreen(crate.group.position.clone().setY(1.6));
     }
     if (pick.kind === "station") {
       const machine = this.machines.get(`${pick.productId}:${pick.station}`);
@@ -739,7 +987,7 @@ export class FloorScene {
       const crew = this.crews.get(pick.id);
       return crew === undefined ? null : this.toScreen(crew.group.position.clone().setY(3.2));
     }
-    return this.toScreen(new THREE.Vector3(this.x(0) - 3.6, 0.2, this.lineZ(pick.productId) - 2));
+    return this.toScreen(new THREE.Vector3(this.x(0) - 1, 0, this.lineZ(pick.productId) + 8.5));
   }
 
   private resize(): void {
@@ -771,12 +1019,15 @@ export class FloorScene {
       return;
     }
     const last = (this.lines.length - 1) * LINE_GAP;
+    // docs/specs/floor-growth.md. Every line with its silos, its buildings, its front yard and
+    // its setup crews.
     const corners = [
-      new THREE.Vector3(this.x(0) - 9, 0, -5),
-      new THREE.Vector3(this.x(9) + 5, 0, -5),
-      new THREE.Vector3(this.x(0) - 9, 0, last + 5),
-      new THREE.Vector3(this.x(9) + 5, 0, last + 5),
-      new THREE.Vector3(this.x(0) - 9, 4, -5),
+      new THREE.Vector3(this.x(0) - 8, 0, -13),
+      new THREE.Vector3(this.x(9) + 5, 0, -13),
+      new THREE.Vector3(this.x(0) - 8, 0, last + 11),
+      new THREE.Vector3(this.x(9) + 5, 0, last + 11),
+      new THREE.Vector3(this.x(5), 6, -14),
+      new THREE.Vector3(this.x(0) - 6, 4, -2),
     ];
     this.target.set(0, 0, 0);
     this.placeCamera();
@@ -787,7 +1038,7 @@ export class FloorScene {
     const minY = Math.min(...local.map((point) => point.y));
     const maxY = Math.max(...local.map((point) => point.y));
     const aspect = width / height;
-    this.fitSize = Math.max(maxY - minY, (maxX - minX) / aspect) * 1.08;
+    this.fitSize = Math.max(maxY - minY, (maxX - minX) / aspect) * 1.04;
     const centre = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, local[0]!.z).applyMatrix4(this.camera.matrixWorld);
     // Move the target along the view direction to the floor, so the centre stays on screen.
     const direction = this.camera.getWorldDirection(new THREE.Vector3());
@@ -795,15 +1046,15 @@ export class FloorScene {
     this.target.copy(centre.addScaledVector(direction, t)).setY(0);
     // A narrow stage shows the front of the lines at a readable size, and the viewer pans along.
     if (aspect < 1) {
-      this.fitSize = Math.max(26, (maxY - minY) * 1.08);
-      this.target.x = this.x(2);
+      this.fitSize = Math.max(40, (maxY - minY) * 0.9);
+      this.target.x = this.x(0.6);
     }
     this.zoom = 1;
     this.resize();
   }
 
   private placeCamera(): void {
-    this.camera.position.set(this.target.x + 6, 52, this.target.z + 36);
+    this.camera.position.copy(this.target).add(CAMERA_OFFSET);
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();
   }

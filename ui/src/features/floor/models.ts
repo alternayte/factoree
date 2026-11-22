@@ -8,7 +8,7 @@ import type { StationKey } from "./model";
  */
 export const MODEL_BASE = "/floor-models/";
 
-export type ModelName = StationKey | "conveyor" | "bin" | "scaffold";
+export type ModelName = StationKey | "conveyor" | "bin";
 
 export const MODELS: Record<ModelName, string> = {
   intake: "factory/hopper-high-square.glb",
@@ -23,5 +23,4 @@ export const MODELS: Record<ModelName, string> = {
   gate: "factory/structure-doorway-wide.glb",
   conveyor: "factory/conveyor-long.glb",
   bin: "factory/hopper-square.glb",
-  scaffold: "factory/structure-yellow-high.glb",
 };

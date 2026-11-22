@@ -176,8 +176,15 @@ export class PrismaFloorReader implements FloorReader {
     const products = await this.prisma.product.findMany({
       where: { tenantId },
       orderBy: [{ name: "asc" }, { id: "asc" }],
-      select: { id: true, name: true, slug: true, linearTeamKey: true, repositories: { orderBy: { fullName: "asc" }, select: { fullName: true } } },
+      select: { id: true, name: true, slug: true, linearTeamKey: true, repositories: { orderBy: { fullName: "asc" }, select: { id: true, fullName: true } } },
     });
+    // docs/specs/floor-growth.md. Lifetime merged pull requests per product, up to the window end.
+    const mergedRows = await this.prisma.pullRequest.groupBy({
+      by: ["repositoryId"],
+      where: { tenantId, state: "merged", closedAt: { lte: to } },
+      _count: { _all: true },
+    });
+    const mergedOfRepository = new Map(mergedRows.map((row) => [row.repositoryId, row._count._all]));
     const runIds = runRows.map((run) => run.id);
     const costs = await this.prisma.agentSession.groupBy({
       by: ["runId"],
@@ -234,6 +241,7 @@ export class PrismaFloorReader implements FloorReader {
           const first = firstRunOfUrl.get(target.pullRequestUrl);
           return first !== undefined && first.id !== run.id;
         }),
+        repositories: [...new Set(run.targets.map((target) => target.repository.fullName))].sort(),
         approximate: history.approximate,
         statuses: history.statuses,
         pullRequests: ownPullRequests,
@@ -270,6 +278,7 @@ export class PrismaFloorReader implements FloorReader {
         slug: product.slug,
         teamKey: product.linearTeamKey,
         repositories: product.repositories.map((repository) => repository.fullName),
+        mergedTotal: product.repositories.reduce((sum, repository) => sum + (mergedOfRepository.get(repository.id) ?? 0), 0),
       })),
       runs,
       setups,
