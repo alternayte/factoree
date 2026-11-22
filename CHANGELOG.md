@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The floor product sign stays inside the stage and cuts a long product name with an ellipsis; hover or click shows it whole. Silo labels alternate below and above the silos, cut long names, and more than 6 repositories show as a "+N repositories" sign that opens the line panel (docs/specs/floor-growth.md).
+
 ## [0.21.2] - 2026-11-22
 
 ### Added

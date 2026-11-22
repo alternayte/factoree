@@ -7,12 +7,12 @@ The floor shows each line at the angle and scale of the concept, lit as the Lit 
 
 ## Decisions
 - The camera looks from (22, 40, 48) relative to its target, as the concept does — the line runs on the diagonal and uses the width and the height of the stage.
-- The default view fits every line with its silos, buildings and front yard. The product sign is a compact plate in the front yard below the intake, and counts the repositories — the sign is never cut off at the stage edge on a wide stage.
+- The default view fits every line with its silos, buildings and front yard. The product sign is a compact plate in the front yard left of the intake, anchored by its left edge and kept inside the stage. It counts the repositories, cuts a long product name with an ellipsis, and shows the whole name on hover and in the line panel on click — a product name of any length never runs off the stage.
 - The machines are larger and closer to the concept boxes — the line reads at a glance on a wall screen.
 - Each station has one crew member. The refinery, workshop, user lab and inspection crew are the refiner, implementer, validator and reviewer. The prep, test bench and dock crew are Factoree bots — every station has a person or a bot, as a builder game has.
 - A crew member works only while its station is lit by real state: a session pulse or a crate in a running step. Only a session pulse shows a tool pill — the floor never shows work that does not happen.
 - A second session at the same station adds a second figure next to the crew member — several runs in one step stay countable.
-- A silo per repository stands behind the line, with the short repository name. Its cap lights while a run of that repository is on the line — the structure of the product is visible.
+- A silo per repository stands behind the dock, up to 6 in a row, with the short repository name. Labels alternate below and above the silos, a long name is cut with an ellipsis and shown whole on hover, and more repositories show as a "+N repositories" sign that opens the line panel. Its cap lights while a run of that repository is on the line — the structure of the product is visible at any repository count, and the back left of a line stays clear for the sign of the line above.
 - The floor API returns `mergedTotal` per line: the merged pull requests of the product over its life, up to the window end — replay shows the factory as it was.
 - The buildings unlock at 5 (storage racks), 25 (tank farm), 100 (warehouse) and 250 (truck bay) merged pull requests — a new product starts small and grows from its own results.
 - The props come from a random seed of the product id — a line looks the same on every load.
