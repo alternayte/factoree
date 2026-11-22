@@ -17,17 +17,22 @@ export const isDeterministicGitHubAppAuthError = (error: GitHubAppAuthError): bo
   error.status === 401 || error.status === 403 || error.status === 404 || error.status === 422;
 
 /**
- * Builds the operator-facing message of a deterministic `GitHubAppAuthError`. A 422 names a
- * permission gap, not a missing installation, so its message must point the operator at the
- * App's permissions rather than at the installation itself.
+ * Builds the operator-facing message of a deterministic `GitHubAppAuthError`. GitHub answers 422
+ * both for a permission the installation lacks and for a repository it cannot read, so the
+ * message quotes GitHub and names every repository the mint asked for.
  */
-const githubAppAuthFaultMessage = (error: GitHubAppAuthError): string => {
+export const githubAppAuthFaultMessage = (error: GitHubAppAuthError): string => {
   if (error.status === 422) {
+    const said = error.githubMessage === undefined ? "" : ` GitHub said: "${error.githubMessage}"`;
+    const asked =
+      error.repositories === undefined || error.repositories.length === 0
+        ? ""
+        : ` Factoree asked for these repositories: ${error.repositories.join(", ")}.`;
     return (
       `Factoree could not mint a GitHub credential for installation ${error.githubInstallationId}: ` +
-      "the GitHub API answered 422. The installation does not grant the permissions this operation " +
-      "requests. Add the missing permission to the Factoree GitHub App installation, then retry the " +
-      "Run."
+      `the GitHub API answered 422.${said}${asked} Check that the installation's repository access ` +
+      "includes each of them, and that the installation accepted every permission the App asks for, " +
+      "then retry the Run."
     );
   }
   return (

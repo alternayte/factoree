@@ -2,7 +2,8 @@
    badges that the scene places, and the HUD, bubble, panel and player that the page renders. */
 .floor-stage {
   position: relative;
-  height: calc(100vh - 150px);
+  /* docs/specs/floor-full-screen.md. The stage is the page: the window height less the main padding. */
+  height: calc(100dvh - 56px);
   min-height: 520px;
   overflow: hidden;
   border: 1px solid var(--hairline);
@@ -154,9 +155,13 @@ button.floor-chip { cursor: pointer; }
 .floor-seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .floor-icon-button { width: 28px; height: 28px; border-radius: var(--radius-control); border: 1px solid var(--hairline-strong); background: var(--raised); color: var(--ink); cursor: pointer; font: 500 13px/1 var(--font-mono); }
 
+.floor-stage:fullscreen { height: 100%; border: 0; border-radius: 0; }
+.floor-stage[data-fixed="true"] { position: fixed; inset: 0; z-index: 50; height: auto; border: 0; border-radius: 0; }
+
 @media (max-width: 640px) {
-  .floor-stage { height: calc(100vh - 210px); }
+  .floor-stage { height: calc(100dvh - 150px); }
   .floor-panel { top: auto; height: 62%; width: 100%; border-left: 0; border-top: 1px solid var(--hairline-strong); }
   .floor-stage[data-panel="true"] .floor-bar { display: none; }
   .floor-bubble { width: 220px; }
 }
+.floor-badge[data-tone="count"] { width: auto; min-width: 26px; padding: 0 6px; border-radius: var(--radius); background: rgba(15, 19, 21, 0.92); border: 1px solid rgba(0, 229, 255, 0.5); color: var(--accent-text); font-size: 11.5px; }

@@ -9,6 +9,10 @@ export class GitHubAppAuthError extends Error {
     message: string,
     readonly status: number | null,
     readonly githubInstallationId: string,
+    /** The repository names the mint asked for, or absent for every repository of the installation. */
+    readonly repositories?: readonly string[],
+    /** The `message` GitHub answered with, such as which repository is not accessible. */
+    readonly githubMessage?: string,
   ) {
     super(message);
     this.name = "GitHubAppAuthError";
@@ -146,10 +150,22 @@ export class GitHubAppTokenProvider implements GitHubTokenProvider {
           }),
     });
     if (response.status !== 201) {
+      // GitHub answers 422 both for a permission the installation lacks and for a repository it
+      // cannot read, and only its message tells which.
+      let githubMessage: string | undefined;
+      try {
+        const answer = (await response.json()) as { message?: unknown };
+        if (typeof answer.message === "string" && answer.message.length > 0) githubMessage = answer.message.slice(0, 300);
+      } catch {
+        githubMessage = undefined;
+      }
       throw new GitHubAppAuthError(
-        `the GitHub API answered ${String(response.status)} while it minted a token for installation ${githubInstallationId}`,
+        `the GitHub API answered ${String(response.status)} while it minted a token for installation ${githubInstallationId}` +
+          (githubMessage === undefined ? "" : `: ${githubMessage}`),
         response.status,
         githubInstallationId,
+        repositories,
+        githubMessage,
       );
     }
     const body = (await response.json()) as { token?: unknown; expires_at?: unknown };

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The factory floor has a full screen button, and the Floor page uses the whole main area. The sidebar collapses to icons on every page, and the browser remembers it (docs/specs/floor-full-screen.md, DI-21.197).
+- A quiet live floor offers the replay of the last 7 days.
+
+### Changed
+
+- The floor draws the Kenney models with their own detail in the theme grey, closer stations and a higher camera, larger crates, and steam on working machines. Several runs in one step stand apart and stack, with a "+N" count.
+
+### Fixed
+
+- A GitHub token mint that answers 422 quotes GitHub's message and names the repositories it asked for, instead of always blaming a permission (FAC-103).
+
 ## [0.21.0] - 2026-11-21
 
 ### Added
