@@ -3,7 +3,7 @@ import type { CredentialPrefill } from "./derived-hosts";
 import { SandboxProviderChoice } from "./sandbox-provider-choice";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import {
   getProductAutoMergeAttentionOptions,
@@ -48,6 +48,7 @@ import { bodyOf, formOf, LIMITS, type Product, type ProductForm } from "./produc
 import { SecretsSection, type KeyRequest } from "./secrets-section";
 import { HostCredentialsSection } from "./host-credentials-section";
 import { AgentsSection } from "./model-picker";
+import { CopyProduct } from "./copy-product";
 
 /** docs/specs/skill-registry.md. The Product secret that holds the registry service key. */
 const SKILL_REGISTRY_KEY = "SKILL_REGISTRY_KEY";
@@ -121,6 +122,7 @@ function ProductEditor({
   const [form, setForm] = useState<ProductForm>(() => formOf(product));
   const [attempted, setAttempted] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [registryWarning, setRegistryWarning] = useState<string | null>(null);
   const dirty = JSON.stringify(form) !== JSON.stringify(formOf(product));
   // The same query as the secrets section, so the cache answers both.
@@ -207,13 +209,24 @@ function ProductEditor({
         }
         actions={
           canEdit ? (
-            <Button variant="danger" onClick={() => setDeleting(true)}>
-              <Trash2 className="h-3.5 w-3.5" aria-hidden />
-              Delete
-            </Button>
+            <>
+              {!copying ? (
+                <Button onClick={() => setCopying(true)}>
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                  Copy product
+                </Button>
+              ) : null}
+              <Button variant="danger" onClick={() => setDeleting(true)}>
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                Delete
+              </Button>
+            </>
           ) : null
         }
       />
+      {copying ? (
+        <CopyProduct source={product} linearWorkspaceId={linearWorkspaceId} onClose={() => setCopying(false)} />
+      ) : null}
       {!canEdit ? (
         <Alert tone="info" className="mb-4">
           You are a member of this workspace. A Linear workspace admin changes this product.

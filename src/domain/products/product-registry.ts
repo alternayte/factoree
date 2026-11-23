@@ -99,12 +99,25 @@ export interface CreateProductInput {
   organizationSkillsRepository?: string | null;
 }
 
+/** docs/specs/product-copy.md. What the copy does not take from its source. */
+export interface CopyProductInput {
+  slug: string;
+  name: string;
+  linearTeamKey: string;
+  linearTeamId: string;
+}
+
 /**
  * A Product owns policy. It reads by tenant and slug, or by tenant and Linear team id, never by
  * a bare column, so a lookup never picks the wrong tenant row by accident.
  */
 export interface ProductRegistry {
   create(input: CreateProductInput): Promise<ProductRecord>;
+  /**
+   * docs/specs/product-copy.md. A new pending product with every setting, secret, host credential
+   * and context source of the source, in one transaction. Null when the source is not in the tenant.
+   */
+  copy(tenantId: string, sourceId: string, input: CopyProductInput): Promise<ProductRecord | null>;
   list(tenantId: string): Promise<ProductRecord[]>;
   findById(tenantId: string, id: string): Promise<ProductRecord | null>;
   findBySlug(tenantId: string, slug: string): Promise<ProductRecord | null>;

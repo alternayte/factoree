@@ -92,3 +92,67 @@ describe("the Product secret store", () => {
     );
   });
 });
+
+// docs/specs/product-copy.md. The copy shares no row with its source, and its secrets decrypt.
+describe("a product copy", () => {
+  it("copies settings, secrets, host credentials and context sources, and links nothing", async () => {
+    const tenant = await prisma.tenant.create({ data: { linearWorkspaceId: "ws-copy-1", name: "Acme" } });
+    const source = await products.create({
+      tenantId: tenant.id,
+      slug: "source",
+      name: "Source",
+      linearTeamKey: "SRC",
+      linearTeamId: "team-src",
+    });
+    await products.activate(tenant.id, source.id, "L2");
+    await products.updatePolicy(tenant.id, source.id, { riskCaps: { billing: "L1" }, allowedDomains: ["api.example.com"] });
+    await products.updateSettings(tenant.id, source.id, { model: "anthropic/claude-sonnet-4-5", maxConcurrentRuns: 3 });
+    await secrets.put(tenant.id, source.id, "API_TOKEN", "s3cret", { kind: "test" });
+    await prisma.hostCredential.create({
+      data: { tenantId: tenant.id, productId: source.id, position: 0, kind: "header", host: "npm.example.com", headerName: "Authorization", secretName: "API_TOKEN" },
+    });
+    await prisma.contextSourceConfiguration.create({
+      data: { tenantId: tenant.id, productId: source.id, sourceId: "docs", kind: "http", endpoint: "https://docs.example.com", secretName: "API_TOKEN", settings: { depth: 2 } },
+    });
+    await prisma.repository.create({
+      data: { tenantId: tenant.id, productId: source.id, fullName: "acme/source", configSha: "abc", githubInstallationId: "1" },
+    });
+
+    const copy = await products.copy(tenant.id, source.id, {
+      slug: "copy",
+      name: "Copy",
+      linearTeamKey: "CPY",
+      linearTeamId: "team-cpy",
+    });
+
+    expect(copy).toMatchObject({
+      status: "pending",
+      slug: "copy",
+      linearTeamId: "team-cpy",
+      defaultAutonomy: "L2",
+      riskCaps: { billing: "L1" },
+      allowedDomains: ["api.example.com"],
+      model: "anthropic/claude-sonnet-4-5",
+      maxConcurrentRuns: 3,
+    });
+    const copyId = copy!.id;
+    expect(await secrets.get(tenant.id, copyId, "API_TOKEN")).toBe("s3cret");
+    expect(await prisma.hostCredential.count({ where: { productId: copyId, host: "npm.example.com", secretName: "API_TOKEN" } })).toBe(1);
+    expect(await prisma.contextSourceConfiguration.findFirst({ where: { productId: copyId } })).toMatchObject({ sourceId: "docs", settings: { depth: 2 } });
+    expect(await prisma.repository.count({ where: { productId: copyId } })).toBe(0);
+    expect(await prisma.productPolicyChange.findMany({ where: { productId: copyId } })).toMatchObject([
+      { field: "copiedFrom", newValue: { productId: source.id, slug: "source" } },
+    ]);
+
+    await secrets.put(tenant.id, copyId, "API_TOKEN", "changed", { kind: "test" });
+    await products.updateSettings(tenant.id, copyId, { maxConcurrentRuns: 1 });
+    expect(await secrets.get(tenant.id, source.id, "API_TOKEN")).toBe("s3cret");
+    expect((await products.findById(tenant.id, source.id))?.maxConcurrentRuns).toBe(3);
+
+    expect(await products.copy(tenant.id, "missing", { slug: "x", name: "X", linearTeamKey: "X", linearTeamId: "team-x" })).toBeNull();
+    await expect(
+      products.copy(tenant.id, source.id, { slug: "other", name: "Other", linearTeamKey: "CPY", linearTeamId: "team-cpy" }),
+    ).rejects.toThrow();
+    expect(await prisma.product.count({ where: { tenantId: tenant.id } })).toBe(2);
+  });
+});

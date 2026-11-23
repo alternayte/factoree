@@ -1030,6 +1030,111 @@ export type CreateProductResponses = {
 
 export type CreateProductResponse = CreateProductResponses[keyof CreateProductResponses];
 
+export type CopyProductData = {
+  body: {
+    slug: string;
+    name: string;
+    linearTeamKey: string;
+  };
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/copy";
+};
+
+export type CopyProductErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type CopyProductError = CopyProductErrors[keyof CopyProductErrors];
+
+export type CopyProductResponses = {
+  /**
+   * Default Response
+   */
+  201: {
+    id: string;
+    tenantId: string;
+    slug: string;
+    name: string;
+    status: "pending" | "active";
+    linearTeamKey: string;
+    linearTeamId: string;
+    defaultAutonomy: string;
+    riskCaps: {
+      [key: string]: string;
+    } | null;
+    allowedDomains: Array<string>;
+    maxRunMinutes: number;
+    organizationSkillsRepository: string | null;
+    skillRegistry: {
+      kind: "skael";
+      url: string;
+      set: string | null;
+    } | null;
+    skillRegistryWarning?: string | null;
+    defaultRunner: "opencode" | "claude";
+    model: string | null;
+    runners: {
+      implementer: "opencode" | "claude" | null;
+      refiner: "opencode" | "claude" | null;
+      validator: "opencode" | "claude" | null;
+      reviewer: "opencode" | "claude" | null;
+      setup: "opencode" | "claude" | null;
+    };
+    models: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
+    effort: {
+      implementer: string | null;
+      refiner: string | null;
+      validator: string | null;
+      reviewer: string | null;
+      setup: string | null;
+    };
+    silenceMinutes: number;
+    refinerCriteriaLimit: number;
+    repairMaxAttempts: number;
+    sandboxRetentionHours: number;
+    sandboxProviderIds: Array<string>;
+    maxConcurrentRuns: number;
+    appChangeIssues: "one_per_change" | "one_for_all";
+    prReviewer: {
+      appSlug: string;
+      checkName: string;
+    } | null;
+    createdAt: string;
+    updatedAt: string;
+    pendingRepositories?: number;
+  };
+};
+
+export type CopyProductResponse = CopyProductResponses[keyof CopyProductResponses];
+
 export type DeleteProductData = {
   body?: never;
   path: {

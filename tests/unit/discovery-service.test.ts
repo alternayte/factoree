@@ -115,6 +115,10 @@ class FakeProductRegistry implements ProductRegistry {
     throw new Error("not used by this test");
   }
 
+  copy(): Promise<ProductRecord | null> {
+    throw new Error("not used by this test");
+  }
+
   remove(): Promise<boolean> {
     throw new Error("not used by this test");
   }

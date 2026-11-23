@@ -56,6 +56,15 @@ const createSchema = z
   })
   .strict();
 
+// docs/specs/product-copy.md. The copy takes everything else from its source product.
+const copySchema = z
+  .object({
+    slug: z.string().min(1),
+    name: z.string().min(1),
+    linearTeamKey: z.string().min(1),
+  })
+  .strict();
+
 // docs/specs/pr-review-merge-and-deploy.md amends docs/specs/autonomy-levels.md: an operator can set
 // L4. `autonomyLevel` in ./schemas.ts holds L0 to L4.
 
@@ -196,6 +205,60 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
             claimant === null
               ? `Product "${parsed.data.slug}" already exists for tenant "${tenant.id}".`
               : `Linear team "${team.key}" is already claimed by Product "${claimant.slug}".`,
+        });
+      }
+      throw error;
+    }
+  },
+  );
+
+  // docs/specs/product-copy.md. A new pending product with the source's settings, secrets, host
+  // credentials and context sources, in the same tenant. Nothing links the two afterward.
+  app.post<{ Params: { id: string } }>(
+    "/admin/products/:id/copy",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "copyProduct",
+        security: SESSION_SECURITY,
+        params: idParams,
+        querystring: workspaceQuery,
+        body: schemaOf(copySchema),
+        response: { 201: schemaOf(productSchema), 400: errorSchema, 404: errorSchema, 409: errorSchema },
+      },
+    },
+    async (request, reply) => {
+    const query = tenantQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+    const parsed = copySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const tenant = await resolveTenant(query.data.linearWorkspaceId);
+    if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+    const team = await dependencies.linearTeams.resolveTeamKey(tenant.id, parsed.data.linearTeamKey);
+    if (!team) {
+      return reply.code(404).send({ error: `Linear reports no team for the key "${parsed.data.linearTeamKey}".` });
+    }
+    const claimant = await dependencies.products.findByLinearTeamId(tenant.id, team.id);
+    if (claimant) {
+      return reply.code(409).send({ error: `Linear team "${team.key}" is already claimed by Product "${claimant.slug}".` });
+    }
+    try {
+      const product = await dependencies.products.copy(tenant.id, request.params.id, {
+        slug: parsed.data.slug,
+        name: parsed.data.name,
+        linearTeamKey: team.key,
+        linearTeamId: team.id,
+      });
+      if (!product) return reply.code(404).send({ error: "product not found" });
+      return reply.code(201).send(product);
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        const taken = await dependencies.products.findByLinearTeamId(tenant.id, team.id);
+        return reply.code(409).send({
+          error:
+            taken === null
+              ? `Product "${parsed.data.slug}" already exists for tenant "${tenant.id}".`
+              : `Linear team "${team.key}" is already claimed by Product "${taken.slug}".`,
         });
       }
       throw error;

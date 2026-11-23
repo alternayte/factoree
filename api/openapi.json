@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.21.7"
+    "version": "0.21.8"
   },
   "components": {
     "securitySchemes": {
@@ -3859,6 +3859,498 @@
             }
           },
           "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/copy": {
+      "post": {
+        "operationId": "copyProduct",
+        "tags": [
+          "products"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "slug": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "linearTeamKey": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "slug",
+                  "name",
+                  "linearTeamKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "tenantId": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "active"
+                      ]
+                    },
+                    "linearTeamKey": {
+                      "type": "string"
+                    },
+                    "linearTeamId": {
+                      "type": "string"
+                    },
+                    "defaultAutonomy": {
+                      "type": "string"
+                    },
+                    "riskCaps": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "allowedDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "maxRunMinutes": {
+                      "type": "number"
+                    },
+                    "organizationSkillsRepository": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "skillRegistry": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "skael"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "set": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "set"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "skillRegistryWarning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "defaultRunner": {
+                      "type": "string",
+                      "enum": [
+                        "opencode",
+                        "claude"
+                      ]
+                    },
+                    "model": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "runners": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refiner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "validator": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewer": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "setup": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "models": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "effort": {
+                      "type": "object",
+                      "properties": {
+                        "implementer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "refiner": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "validator": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "setup": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "implementer",
+                        "refiner",
+                        "validator",
+                        "reviewer",
+                        "setup"
+                      ]
+                    },
+                    "silenceMinutes": {
+                      "type": "number"
+                    },
+                    "refinerCriteriaLimit": {
+                      "type": "number"
+                    },
+                    "repairMaxAttempts": {
+                      "type": "number"
+                    },
+                    "sandboxRetentionHours": {
+                      "type": "number"
+                    },
+                    "sandboxProviderIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "maxConcurrentRuns": {
+                      "type": "number"
+                    },
+                    "appChangeIssues": {
+                      "type": "string",
+                      "enum": [
+                        "one_per_change",
+                        "one_for_all"
+                      ]
+                    },
+                    "prReviewer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "appSlug": {
+                              "type": "string"
+                            },
+                            "checkName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "appSlug",
+                            "checkName"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "pendingRepositories": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "tenantId",
+                    "slug",
+                    "name",
+                    "status",
+                    "linearTeamKey",
+                    "linearTeamId",
+                    "defaultAutonomy",
+                    "riskCaps",
+                    "allowedDomains",
+                    "maxRunMinutes",
+                    "organizationSkillsRepository",
+                    "skillRegistry",
+                    "defaultRunner",
+                    "model",
+                    "runners",
+                    "models",
+                    "effort",
+                    "silenceMinutes",
+                    "refinerCriteriaLimit",
+                    "repairMaxAttempts",
+                    "sandboxRetentionHours",
+                    "sandboxProviderIds",
+                    "maxConcurrentRuns",
+                    "appChangeIssues",
+                    "prReviewer",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
             "description": "Default Response",
             "content": {
               "application/json": {
