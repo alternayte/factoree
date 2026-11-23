@@ -15,6 +15,7 @@ import {
   bindGitHubInstallation,
   completeSetup,
   convertGitHubAppManifest,
+  copyProduct,
   createApiKey,
   createGitHubAppManifest,
   createProduct,
@@ -87,6 +88,9 @@ import type {
   ConvertGitHubAppManifestData,
   ConvertGitHubAppManifestError,
   ConvertGitHubAppManifestResponse,
+  CopyProductData,
+  CopyProductError,
+  CopyProductResponse,
   CreateApiKeyData,
   CreateApiKeyError,
   CreateApiKeyResponse,
@@ -553,6 +557,22 @@ export const createProductMutation = (
   const mutationOptions: UseMutationOptions<CreateProductResponse, CreateProductError, Options<CreateProductData>> = {
     mutationFn: async (fnOptions) => {
       const { data } = await createProduct({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const copyProductMutation = (
+  options?: Partial<Options<CopyProductData>>,
+): UseMutationOptions<CopyProductResponse, CopyProductError, Options<CopyProductData>> => {
+  const mutationOptions: UseMutationOptions<CopyProductResponse, CopyProductError, Options<CopyProductData>> = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await copyProduct({
         ...options,
         ...fnOptions,
         throwOnError: true,

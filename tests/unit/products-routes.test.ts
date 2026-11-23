@@ -1,7 +1,10 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import { registerProductRoutes } from "~/http/admin/products.routes.js";
-import type { CreateProductInput, ProductRecord, ProductRegistry, ProductSettingsUpdate } from "~/domain/products/product-registry.js";
+import type {
+  CopyProductInput,
+  CreateProductInput,
+  ProductRecord, ProductRegistry, ProductSettingsUpdate } from "~/domain/products/product-registry.js";
 import type {
   RepositoryRecord,
   RepositoryRegistry,
@@ -90,8 +93,9 @@ class FakeProductRegistry implements ProductRegistry {
     throw new Error("not used by this route");
   }
 
-  findByLinearTeamId(): Promise<ProductRecord | null> {
-    throw new Error("not used by this route");
+  findByLinearTeamId(tenantId: string, linearTeamId: string): Promise<ProductRecord | null> {
+    const row = [...this.rows.values()].find((p) => p.tenantId === tenantId && p.linearTeamId === linearTeamId);
+    return Promise.resolve(row ?? null);
   }
 
   activate(tenantId: string, id: string, defaultAutonomy: string): Promise<ProductRecord | null> {
@@ -186,6 +190,15 @@ class FakeProductRegistry implements ProductRegistry {
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
+  }
+
+  copy(tenantId: string, sourceId: string, input: CopyProductInput): Promise<ProductRecord | null> {
+    const source = this.rows.get(sourceId);
+    if (!source || source.tenantId !== tenantId) return Promise.resolve(null);
+    this.counter += 1;
+    const record: ProductRecord = { ...source, ...input, id: `p${this.counter}`, status: "pending" };
+    this.rows.set(record.id, record);
+    return Promise.resolve(record);
   }
 
   remove(tenantId: string, id: string): Promise<boolean> {
@@ -331,6 +344,35 @@ describe("Products administration API", () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({ linearTeamKey: "PAY", linearTeamId: "team-pay" });
+  });
+
+  // docs/specs/product-copy.md. The copy is pending on a free team, and a taken team creates nothing.
+  it("copies a product to a free Linear team and refuses a team another product holds", async () => {
+    const { app, products } = build({});
+    const create = (slug: string, linearTeamKey: string) =>
+      app.inject({ method: "POST", url: "/admin/products", payload: { linearWorkspaceId: "ws-1", slug, name: slug, linearTeamKey } });
+    const source = (await create("source", "SRC")).json<ProductRecord>();
+    await create("other", "OTH");
+    await app.inject({
+      method: "POST",
+      url: `/admin/products/${source.id}/activate?linearWorkspaceId=ws-1`,
+      payload: { defaultAutonomy: "L3" },
+    });
+    const copy = (linearTeamKey: string, slug: string) =>
+      app.inject({
+        method: "POST",
+        url: `/admin/products/${source.id}/copy?linearWorkspaceId=ws-1`,
+        payload: { slug, name: "Copy", linearTeamKey },
+      });
+
+    const taken = await copy("OTH", "copy");
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json()).toMatchObject({ error: 'Linear team "OTH" is already claimed by Product "other".' });
+    expect(products.rows.size).toBe(2);
+
+    const created = await copy("CPY", "copy");
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ slug: "copy", status: "pending", linearTeamId: "team-cpy", defaultAutonomy: "L3" });
   });
 
   it("rejects a body that carries a team id", async () => {

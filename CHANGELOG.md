@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.8] - 2026-11-23
+
+### Added
+
+- "Copy product" on a product page creates a new pending product on a free Linear team with every setting, secret, host credential and context source of the source, and no repository. `POST /admin/products/:id/copy` (docs/specs/product-copy.md, DI-21.202).
+
 ## [0.21.7] - 2026-11-22
 
 ### Added

@@ -18,6 +18,9 @@ import type {
   ConvertGitHubAppManifestData,
   ConvertGitHubAppManifestErrors,
   ConvertGitHubAppManifestResponses,
+  CopyProductData,
+  CopyProductErrors,
+  CopyProductResponses,
   CreateApiKeyData,
   CreateApiKeyErrors,
   CreateApiKeyResponses,
@@ -431,6 +434,30 @@ export const createProduct = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/products",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const copyProduct = <ThrowOnError extends boolean = false>(
+  options: Options<CopyProductData, ThrowOnError>,
+): RequestResult<CopyProductResponses, CopyProductErrors, ThrowOnError> =>
+  (options.client ?? client).post<CopyProductResponses, CopyProductErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/copy",
     ...options,
     headers: {
       "Content-Type": "application/json",

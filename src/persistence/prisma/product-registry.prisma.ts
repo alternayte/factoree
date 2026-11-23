@@ -6,6 +6,7 @@ import { isAgentRunnerName, type AgentRunnerName } from "~/domain/products/agent
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
 import type {
+  CopyProductInput,
   CreateProductInput,
   ProductPolicyUpdate,
   ProductRecord,
@@ -205,6 +206,13 @@ const sandboxColumns = (minimum: SandboxMinimum | null | undefined) =>
     ? {}
     : { sandboxVcpus: minimum?.vcpus ?? null, sandboxMemoryMb: minimum?.memoryMb ?? null, sandboxDiskMb: minimum?.diskMb ?? null };
 
+/** docs/specs/product-copy.md. A row without the named columns, for a copy under a new owner. */
+const omitColumns = <T extends object, K extends keyof T>(row: T, keys: readonly K[]): Omit<T, K> => {
+  const copy = { ...row };
+  for (const key of keys) delete copy[key];
+  return copy;
+};
+
 export class PrismaProductRegistry implements ProductRegistry {
   constructor(private readonly prisma: FactoreePrismaClient) {}
 
@@ -223,6 +231,55 @@ export class PrismaProductRegistry implements ProductRegistry {
       },
     });
     return toProduct(row);
+  }
+
+  // docs/specs/product-copy.md. Every column of the source except identity, team and status, so a
+  // settings column added later is copied too. A secret keeps its cipher text: AES-GCM with a
+  // random IV binds no product, so the copy decrypts nothing.
+  async copy(tenantId: string, sourceId: string, input: CopyProductInput): Promise<ProductRecord | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const source = await tx.product.findFirst({
+        where: { id: sourceId, tenantId },
+        include: { secrets: true, hostCredentials: true, contextSources: true },
+      });
+      if (source === null) return null;
+      const { secrets, hostCredentials, contextSources, riskCaps } = source;
+      const row = await tx.product.create({
+        data: {
+          ...omitColumns(source, ["id", "status", "createdAt", "updatedAt", "secrets", "hostCredentials", "contextSources", "riskCaps"]),
+          riskCaps: riskCaps ?? Prisma.DbNull,
+          slug: input.slug,
+          name: input.name,
+          linearTeamKey: input.linearTeamKey,
+          linearTeamId: input.linearTeamId,
+          status: "pending",
+        },
+      });
+      const owned = ["id", "productId", "createdAt", "updatedAt"] as const;
+      await tx.productSecret.createMany({
+        data: secrets.map((secret) => ({ ...omitColumns(secret, owned), productId: row.id })),
+      });
+      await tx.hostCredential.createMany({
+        data: hostCredentials.map((credential) => ({ ...omitColumns(credential, ["id", "productId", "createdAt"]), productId: row.id })),
+      });
+      await tx.contextSourceConfiguration.createMany({
+        data: contextSources.map((context) => ({
+          ...omitColumns(context, owned),
+          settings: context.settings as Prisma.InputJsonValue,
+          productId: row.id,
+        })),
+      });
+      await tx.productPolicyChange.create({
+        data: {
+          tenantId,
+          productId: row.id,
+          field: "copiedFrom",
+          oldValue: Prisma.JsonNull,
+          newValue: { productId: source.id, slug: source.slug },
+        },
+      });
+      return toProduct(row);
+    });
   }
 
   async list(tenantId: string): Promise<ProductRecord[]> {

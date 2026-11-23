@@ -64,15 +64,11 @@ describe("REVIEWING", () => {
   it("enters REVIEWING after user validation passes", async () => {
     const runId = "run-ses-rv1";
 
-    await runWorker(async () => {
-      const handle = await startRun("ses-rv1");
-      await waitFor(() => reviewsOf(runId).length === 1, "the review of ses-rv1");
-      // docs/specs/run-speed.md. The review runs beside user validation, and the Run waits in
-      // REVIEWING for it once validation passed.
-      await waitFor(() => statusesOf(runId).includes("REVIEWING"), "REVIEWING of ses-rv1");
-      await handle.signal(stopSignal);
-      await handle.result();
-    });
+    // docs/specs/run-speed.md. The review runs beside user validation, and the Run waits in
+    // REVIEWING for it once validation passed. The Run ends by itself: a stop while sibling
+    // activities complete can race the time-skipping test server into ACTIVITY_UNKNOWN.
+    const result = await runWorker(async () => (await startRun("ses-rv1")).result());
+    expect(result.status).toBe("READY_FOR_HUMAN");
 
     const sequence = statusesOf(runId);
     expect(sequence.indexOf("VERIFYING")).toBeGreaterThanOrEqual(0);
@@ -85,12 +81,9 @@ describe("REVIEWING", () => {
     runtimeOverrides.set(runId, { repairMaxAttempts: 2 });
     reviewOutcomes.set(runId, (attempt) => (attempt === 1 ? blocking : {}));
 
-    await runWorker(async () => {
-      const handle = await startRun("ses-rv2");
-      await waitFor(() => reviewsOf(runId).length === 2, "the second review of ses-rv2");
-      await handle.signal(stopSignal);
-      await handle.result();
-    });
+    const result = await runWorker(async () => (await startRun("ses-rv2")).result());
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    expect(reviewsOf(runId)).toHaveLength(2);
 
     // SDD section 42. The repair limit is per Run, so this repair uses the same counter the
     // other two stages use.
@@ -110,17 +103,10 @@ describe("REVIEWING", () => {
     reviewOutcomes.set(runId, (attempt) => (attempt === 1 ? blocking : {}));
     const before = activityOrder.length;
 
-    await runWorker(async () => {
-      const handle = await startRun("ses-rv3");
-      await waitFor(() => reviewsOf(runId).length === 2, "the second review of ses-rv3");
-      // The second user validation runs beside the second review.
-      await waitFor(
-        () => harness.userValidateCalls.filter((entry) => entry.runId === runId).length === 2,
-        "the second user validation of ses-rv3",
-      );
-      await handle.signal(stopSignal);
-      await handle.result();
-    });
+    const result = await runWorker(async () => (await startRun("ses-rv3")).result());
+    expect(result.status).toBe("READY_FOR_HUMAN");
+    // The second user validation runs beside the second review.
+    expect(harness.userValidateCalls.filter((entry) => entry.runId === runId)).toHaveLength(2);
 
     // SDD section 42 draws the repair chain: repair, deterministic verification, user-level
     // validation, and then a fresh review.
@@ -168,12 +154,8 @@ describe("REVIEWING", () => {
           },
     );
 
-    await runWorker(async () => {
-      const handle = await startRun("ses-rv-merged");
-      await waitFor(() => implementsOf(runId).length === 2, "the repair of ses-rv-merged");
-      await handle.signal(stopSignal);
-      await handle.result();
-    });
+    const result = await runWorker(async () => (await startRun("ses-rv-merged")).result());
+    expect(result.status).toBe("READY_FOR_HUMAN");
 
     const repairs = harness.statusCalls.filter((entry) => entry.runId === runId && entry.status === "REPAIRING");
     expect(repairs).toHaveLength(1);
