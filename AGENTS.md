@@ -100,10 +100,12 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - retro finding: one proposed improvement that targets one product and cites its runs, and that becomes a Linear issue only when a human creates it. Avoid: insight, recommendation, lesson.
 - retro goal: the optional product text that tells the retro agent what to improve first. Only the retro agent reads it. Avoid: product goal, factory goal, mandate.
 - kept transcript: the redacted, gzipped full output and tool inputs of one agent session, stored only when the product turns it on. Avoid: session log, trace, full log.
-- PR reviewer: an external review app that a product names by app slug and check name. Its check on the PR head gates an L4 merge, and its failure starts a PR follow-up run. Avoid: PR bot, review bot, external reviewer.
-- PR follow-up run: a follow-up run that targets an existing PR branch, started by a failed PR reviewer check, a human request-changes review or a base conflict, and that pushes a new verified commit. Avoid: PR repair, autofix, PR fix.
+- review app: a GitHub App, other than Factoree, that submitted a review on a Factoree pull request. Its check on the head is its verdict, and its unresolved threads and annotations are its findings. Avoid: PR reviewer, PR bot, review bot.
+- PR follow-up run: a follow-up run that targets an existing PR branch, started by review app findings, a failed CI check, a human decision on the PR or in Linear, or a base conflict, that pushes a new verified commit or answers. Avoid: PR repair, autofix, PR fix.
 - PR workflow: the workflow that publication starts per published PR, which takes the review, check, conflict, merge and deploy events after the run ends. Avoid: PR watcher, PR monitor.
-- finding triage: the fresh reviewer session that keeps only PR reviewer findings with a concrete defect, a rule and evidence, and answers each dropped finding on the PR. Avoid: finding filter, comment triage.
+- finding triage: the fresh reviewer session that keeps only review app findings with a concrete defect, a rule and evidence, and answers each dropped finding on the PR. Avoid: finding filter, comment triage.
+- settle: the wait until no review app check on the head is pending and no new review has arrived for the quiet window. Avoid: debounce, cool-down.
+- human decision: a "request changes" review, a mention of Factoree from a user with write access, or an agent-session reply while the PR is open. It skips triage and has no limit. Avoid: human command, human request.
 - blocker: a Linear issue that blocks a work item through a "blocks" relation, open while its state type is neither completed nor canceled. Avoid: dependency, prerequisite, parent issue.
 - failed-run draft: the draft pull request Factoree publishes from the last patch of a failed run on human request, never marked ready by Factoree. Avoid: partial PR, WIP PR, unverified PR.
 - selector re-check: one validator round, after a browser entry fails only on its selector, that may change only that entry's selectors before Factoree runs it again. Avoid: selector repair, selector retry.
