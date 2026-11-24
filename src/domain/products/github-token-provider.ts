@@ -14,7 +14,9 @@ export type GitHubPermissionName =
   | "statuses"
   | "metadata"
   // Slice 5, DI-21.122. The deploy report reads the deployments of an environment.
-  | "deployments";
+  | "deployments"
+  // docs/specs/pr-feedback-loop.md. A PR follow-up run reads the job log tail of a failed Actions check.
+  | "actions";
 
 /** The access level of one permission. GitHub also defines `admin`; Factoree asks for neither. */
 export type GitHubPermissionLevel = "read" | "write";

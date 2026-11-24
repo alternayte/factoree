@@ -3,7 +3,7 @@ import { GitHubRest } from "./github-rest.js";
 import { GitHubApiError } from "./github-pull-requests.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
-import type { PrReviewer } from "~/domain/products/product-registry.js";
+import type { PrReviewer } from "~/domain/pull-requests/auto-merge.js";
 import {
   BRANCH_PROTECTION,
   MERGE_GATING_RULES,

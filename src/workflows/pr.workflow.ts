@@ -147,6 +147,10 @@ const autoMergeTriggerOf = (event: PullRequestEvent): AutoMergeTrigger | null =>
   switch (event.kind) {
     case "closed":
     case "deployment_status":
+    // docs/specs/pr-feedback-loop.md. A conversation comment and a Linear reply change no merge
+    // condition. These kinds reach no history from before them, so the switch needs no patch.
+    case "comment":
+    case "linear_reply":
       return null;
     case "synchronized":
       return "new_head";

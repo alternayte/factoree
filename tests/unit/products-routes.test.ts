@@ -72,7 +72,7 @@ class FakeProductRegistry implements ProductRegistry {
       repairMaxAttempts: 2,
       sandboxRetentionHours: 24,
       sandboxProviderIds: [],
-      maxConcurrentRuns: 2, appChangeIssues: "one_per_change", prReviewer: null,
+      maxConcurrentRuns: 2, appChangeIssues: "one_per_change", reviewAppDenyList: [], automaticFollowUpLimit: 3,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -186,7 +186,8 @@ class FakeProductRegistry implements ProductRegistry {
       ...(settings.sandboxRetentionHours === undefined ? {} : { sandboxRetentionHours: settings.sandboxRetentionHours }),
       ...(settings.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: settings.maxConcurrentRuns }),
       ...(settings.sandboxProviderIds === undefined ? {} : { sandboxProviderIds: settings.sandboxProviderIds }),
-      ...(settings.prReviewer === undefined ? {} : { prReviewer: settings.prReviewer }),
+      ...(settings.reviewAppDenyList === undefined ? {} : { reviewAppDenyList: settings.reviewAppDenyList }),
+      ...(settings.automaticFollowUpLimit === undefined ? {} : { automaticFollowUpLimit: settings.automaticFollowUpLimit }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
@@ -507,8 +508,8 @@ describe("Products administration API", () => {
     expect(products.rows.get(product.id)?.riskCaps).toEqual({ payments: "L2", docs: "L4" });
   });
 
-  // docs/specs/pr-review-merge-and-deploy.md, DI-21.102. Only the product names the PR reviewer.
-  it("sets and clears the PR reviewer, and refuses a slug GitHub cannot hold", async () => {
+  // docs/specs/pr-feedback-loop.md, DI-21.203. The deny list holds GitHub App slugs, and the limit its bounds.
+  it("stores the review app deny list in lower case once each, and refuses a slug or a limit GitHub cannot hold", async () => {
     const { app } = build({});
     const created = await app.inject({
       method: "POST",
@@ -516,18 +517,22 @@ describe("Products administration API", () => {
       payload: { linearWorkspaceId: "ws-1", slug: "review", name: "Review", linearTeamKey: "REV" },
     });
     const product = created.json<{ id: string }>();
-    const put = (prReviewer: unknown) =>
-      app.inject({ method: "PUT", url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`, payload: { prReviewer } });
+    const put = (payload: Record<string, unknown>) =>
+      app.inject({ method: "PUT", url: `/admin/products/${product.id}?linearWorkspaceId=ws-1`, payload });
 
-    const set = await put({ appSlug: " Review-Bot ", checkName: "Code review" });
+    const set = await put({ reviewAppDenyList: [" Noisy-Bot ", "coderabbitai", "noisy-bot"], automaticFollowUpLimit: 5 });
     expect(set.statusCode).toBe(200);
-    expect(set.json<{ prReviewer: unknown }>().prReviewer).toEqual({ appSlug: "review-bot", checkName: "Code review" });
+    expect(set.json<{ reviewAppDenyList: string[]; automaticFollowUpLimit: number }>()).toMatchObject({
+      reviewAppDenyList: ["coderabbitai", "noisy-bot"],
+      automaticFollowUpLimit: 5,
+    });
 
-    expect((await put({ appSlug: "review bot", checkName: "Code review" })).statusCode).toBe(422);
-    expect((await put({ appSlug: "review-bot", checkName: "" })).statusCode).toBe(422);
+    expect((await put({ reviewAppDenyList: ["noisy bot"] })).statusCode).toBe(422);
+    expect((await put({ automaticFollowUpLimit: 0 })).statusCode).toBe(422);
+    expect((await put({ automaticFollowUpLimit: 21 })).statusCode).toBe(422);
 
-    const cleared = await put(null);
-    expect(cleared.json<{ prReviewer: unknown }>().prReviewer).toBeNull();
+    const cleared = await put({ reviewAppDenyList: [] });
+    expect(cleared.json<{ reviewAppDenyList: string[] }>().reviewAppDenyList).toEqual([]);
   });
 
   // docs/specs/claude-code-runner.md. A model or an effort of one runner means nothing to the other.

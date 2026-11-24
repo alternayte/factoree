@@ -1,5 +1,14 @@
-import type { PrReviewer } from "~/domain/products/product-registry.js";
 import type { AutoMergeState } from "./pull-request-store.js";
+
+/**
+ * docs/specs/pr-review-merge-and-deploy.md. An external review app: its GitHub App slug, and the name
+ * of the check run or commit status it reports on the pull request head. docs/specs/pr-feedback-loop.md
+ * removes the product setting that named one, so no product names a reviewer (DI-21.203).
+ */
+export interface PrReviewer {
+  appSlug: string;
+  checkName: string;
+}
 
 /**
  * docs/specs/pr-review-merge-and-deploy.md. The L4 merge: Factoree turns on GitHub auto-merge when

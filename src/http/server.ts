@@ -178,6 +178,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
       ...(dependencies.setupAfterPush === undefined ? {} : { setupAfterPush: dependencies.setupAfterPush }),
       ...(dependencies.pullRequestClosed === undefined ? {} : { pullRequestClosed: dependencies.pullRequestClosed }),
       ...(dependencies.pullRequestEvents === undefined ? {} : { pullRequestEvents: dependencies.pullRequestEvents }),
+      factoreeAppSlug: async () => (await dependencies.settings.read()).github.appSlug,
     });
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });

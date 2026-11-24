@@ -423,7 +423,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.sandboxProviderIds !== undefined ||
       body.data.maxConcurrentRuns !== undefined ||
       body.data.appChangeIssues !== undefined ||
-      body.data.prReviewer !== undefined
+      body.data.reviewAppDenyList !== undefined ||
+      body.data.automaticFollowUpLimit !== undefined
     ) {
       const before = await dependencies.products.findById(tenant.id, request.params.id);
       product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
@@ -440,7 +441,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
           : { sandboxRetentionHours: body.data.sandboxRetentionHours }),
         ...(body.data.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: body.data.maxConcurrentRuns }),
         ...(body.data.appChangeIssues === undefined ? {} : { appChangeIssues: body.data.appChangeIssues }),
-        ...(body.data.prReviewer === undefined ? {} : { prReviewer: body.data.prReviewer }),
+        ...(body.data.reviewAppDenyList === undefined ? {} : { reviewAppDenyList: body.data.reviewAppDenyList }),
+        ...(body.data.automaticFollowUpLimit === undefined ? {} : { automaticFollowUpLimit: body.data.automaticFollowUpLimit }),
         ...(body.data.sandboxProviderIds === undefined
           ? {}
           : { sandboxProviderIds: [...new Set(body.data.sandboxProviderIds)].sort() }),

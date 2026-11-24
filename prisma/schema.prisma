@@ -712,11 +712,11 @@ model Product {
   skillRegistryKind            String?                      @map("skill_registry_kind")
   skillRegistryUrl             String?                      @map("skill_registry_url")
   skillRegistrySet             String?                      @map("skill_registry_set")
-  // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer: the GitHub App slug and the check
-  // name of an external review app. Both null means the product names none. Only the product sets
-  // it, never .factoree/config.yaml (R-4).
-  prReviewerAppSlug            String?                      @map("pr_reviewer_app_slug")
-  prReviewerCheckName          String?                      @map("pr_reviewer_check_name")
+  // docs/specs/pr-feedback-loop.md. The review apps whose findings Factoree does not act on, by
+  // GitHub App slug in lower case, and the most PR follow-up runs that review apps and CI checks
+  // start on one pull request. Only the product sets them, never .factoree/config.yaml (R-4).
+  reviewAppDenyList            String[]                     @default([]) @map("review_app_deny_list")
+  automaticFollowUpLimit       Int                          @default(3) @map("automatic_follow_up_limit")
   createdAt                    DateTime                     @default(now())
   updatedAt                    DateTime                     @updatedAt
   repositories                 Repository[]

@@ -28,7 +28,7 @@ const commentLine = (pullRequestUrls: readonly string[]): string =>
  * request of the run (docs/specs/change-sets.md).
  */
 export const noFollowUpLine = (status: string, pullRequestUrls: readonly string[]): string => {
-  if (status === "READY_FOR_HUMAN" || status === "REPORTED") {
+  if (status === "READY_FOR_HUMAN" || status === "REPORTED" || status === "ANSWERED") {
     return `This run is complete, so Factoree starts no new run here. ${commentLine(pullRequestUrls)}`;
   }
   // docs/specs/draft-of-failed-run.md. The draft pull request has its own review loop.

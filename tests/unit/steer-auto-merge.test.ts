@@ -151,7 +151,7 @@ const build = (
     logger: createLogger({ level: "error", redactor: new Redactor() }),
     autoMerge: port,
     deploys: { contains: reject, previousSuccess: reject },
-    products: { findById: () => Promise.resolve({ prReviewer: { appSlug: "review-bot", checkName: "Code review" } } as ProductRecord) },
+    products: { findById: () => Promise.resolve({ reviewAppDenyList: [], automaticFollowUpLimit: 3 } as unknown as ProductRecord) },
     agentSession: {
       respond: (_sessionId: string, body: string) => {
         said.push(body);

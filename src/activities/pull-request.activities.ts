@@ -16,7 +16,7 @@ import {
   type PullRequestReviewPort,
   type TriagedFinding,
 } from "~/domain/pull-requests/pr-follow-up.js";
-import type { PrReviewer } from "~/domain/products/product-registry.js";
+import type { PrReviewer } from "~/domain/pull-requests/auto-merge.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WorkItemPort } from "~/domain/runs/ports.js";
 import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
@@ -119,6 +119,12 @@ export type PullRequestFollowUpPlan =
   | { kind: "start"; workflowId: string; input: AgentRunWorkflowInput; changeSet?: boolean };
 
 /** DI-21.158. A PR workflow that held the set longer than this died with it, so another one may take it. */
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.203. The product no longer names a PR reviewer. Until the
+ * review apps replace it, every PR reviewer path takes its "no reviewer" branch.
+ */
+const namedReviewer = (): PrReviewer | null => null;
+
 const CHANGE_SET_LOCK_STALE_MS = 24 * 60 * 60_000;
 
 /**
@@ -506,8 +512,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     const record = await store.find(input.tenantId, input.pullRequestId);
     if (record === null || record.state !== "open") return { amend: null };
     const origin = await store.originFacts(input.tenantId, record.id);
-    const product = await dependencies.products.findById(input.tenantId, origin.productId);
-    const reviewer = product?.prReviewer ?? null;
+    const reviewer = namedReviewer();
     const bot = reviewer === null ? null : `${reviewer.appSlug}[bot]`;
     const base = { tenantId: input.tenantId, productId: origin.productId, runId: record.verifiedRunId ?? record.originRunId };
     if (event.kind === "review") {
@@ -623,7 +628,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       reviewerLogin = review.reviewerLogin;
       findings = review.findings;
     } else {
-      reviewer = product.prReviewer;
+      reviewer = namedReviewer();
       if (reviewer === null) return { kind: "none", reason: "the product names no PR reviewer" };
       const verdict = reviewerVerdictOfEvent(event, reviewer);
       if (verdict === null) return { kind: "none", reason: "another check" };
@@ -1094,8 +1099,7 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     }
     if (state === "unavailable") return { state };
 
-    const product = await dependencies.products.findById(input.tenantId, facts.productId);
-    const reviewer = product?.prReviewer ?? null;
+    const reviewer = namedReviewer();
     const verified = pullRequest.headSha === record.verifiedHeadSha;
     const reviewerVerdict = reviewer !== null && verified ? await port.reviewerVerdict(slug, pullRequest.headSha, reviewer, installationId) : null;
     const changeRequests = verified ? openChangeRequests(await port.reviews(slug, record.number, installationId)) : [];

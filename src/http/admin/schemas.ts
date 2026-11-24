@@ -6,6 +6,7 @@ import { buildInfo } from "~/config/build-info.js";
 import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
 import { REFINER_CRITERIA_LIMIT_MAX, REFINER_CRITERIA_LIMIT_MIN } from "~/domain/refinement/refiner-proposal.js";
 import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
+import { AUTOMATIC_FOLLOW_UP_LIMIT_MAX, AUTOMATIC_FOLLOW_UP_LIMIT_MIN, GITHUB_APP_SLUG } from "~/domain/products/product-registry.js";
 
 /**
  * docs/specs/release-0-1-0.md. The shapes of the settings API. The zod schemas validate the
@@ -69,8 +70,10 @@ export const productSchema = z.object({
   maxConcurrentRuns: z.number(),
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
-  /** docs/specs/pr-review-merge-and-deploy.md. The external review app whose check gates the PR, or null. */
-  prReviewer: z.object({ appSlug: z.string(), checkName: z.string() }).nullable(),
+  /** docs/specs/pr-feedback-loop.md. The review app slugs whose findings Factoree does not act on. */
+  reviewAppDenyList: z.array(z.string()),
+  /** docs/specs/pr-feedback-loop.md. The most PR follow-up runs that review apps and CI checks start on one pull request. */
+  automaticFollowUpLimit: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
   /** docs/specs/repository-membership.md. The products list only: the claims no admin decided yet. */
@@ -131,19 +134,18 @@ export const productSettingsFields = {
   sandboxProviderIds: z.array(z.string().min(1)).max(50),
   maxConcurrentRuns: z.number().int().positive().max(100),
   appChangeIssues: z.enum(["one_per_change", "one_for_all"]),
-  // docs/specs/pr-review-merge-and-deploy.md, DI-21.102. A GitHub App slug and the exact name of its
-  // check run or commit status context. Null clears it.
-  prReviewer: z
-    .object({
-      appSlug: z
+  // docs/specs/pr-feedback-loop.md, DI-21.203. GitHub App slugs, stored in lower case, each once.
+  reviewAppDenyList: z
+    .array(
+      z
         .string()
         .trim()
-        .regex(/^[a-z0-9][a-z0-9-]{0,99}$/i, "must be a GitHub App slug")
+        .regex(GITHUB_APP_SLUG, "must be a GitHub App slug")
         .transform((slug) => slug.toLowerCase()),
-      checkName: z.string().trim().min(1).max(200),
-    })
-    .strict()
-    .nullable(),
+    )
+    .max(50)
+    .transform((slugs) => [...new Set(slugs)].sort()),
+  automaticFollowUpLimit: z.number().int().min(AUTOMATIC_FOLLOW_UP_LIMIT_MIN).max(AUTOMATIC_FOLLOW_UP_LIMIT_MAX),
 };
 
 /** docs/specs/pr-review-merge-and-deploy.md. What each GitHub App installation of a product lacks. */

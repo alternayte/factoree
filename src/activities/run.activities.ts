@@ -163,6 +163,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       metrics.runDuration.observe(labels, Math.max(0, completedAt.getTime() - run.createdAt.getTime() - (input.waitedMs ?? 0)) / 1000);
       if (input.status === "READY_FOR_HUMAN") metrics.runsReady.inc(labels);
       else if (input.status === "REPORTED") metrics.runsReported.inc(labels);
+      else if (input.status === "ANSWERED") metrics.runsAnswered.inc(labels);
       else if (input.status === "CANCELLED") metrics.runsCancelled.inc(labels);
       else
         metrics.runsFailed.inc({
@@ -173,7 +174,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     }
     // docs/specs/run-diagnostics.md. The end of the run, linked to its newest fault. The status the
     // run held before this write is the stage it ended in.
-    const failed = input.status !== "READY_FOR_HUMAN" && input.status !== "REPORTED" && input.status !== "CANCELLED";
+    const failed = input.status !== "READY_FOR_HUMAN" && input.status !== "REPORTED" && input.status !== "ANSWERED" && input.status !== "CANCELLED";
     if (!alreadyTerminal && dependencies.events !== undefined) {
       const cause = failed ? await dependencies.events.store.newest(run.tenantId, { runId: run.id }, FAULT_KINDS).catch(() => null) : null;
       await recordRunEvent(dependencies.events, {
