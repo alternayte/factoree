@@ -40,6 +40,8 @@ const member = (repository: string, number: number, record: Partial<PublishedPul
             verifiedRunId: "run-1",
             reviewerHandledKey: null,
             reviewerFollowUpKeys: [],
+            answeredFindingFingerprints: [],
+            reviewAppNoticeKey: null,
             bringCurrentHeadSha: null,
             workflowId: `pr:t:${repository}#${String(number)}`,
             ...record,

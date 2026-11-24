@@ -256,6 +256,8 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   listAutoMergeUnavailable: () => Promise.reject(new Error("this worker holds no pull request store")),
   originFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
   markReviewerHandled: () => Promise.reject(new Error("this worker holds no pull request store")),
+  addAnsweredFingerprints: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markReviewAppNotice: () => Promise.reject(new Error("this worker holds no pull request store")),
   countReviewerFollowUp: () => Promise.reject(new Error("this worker holds no pull request store")),
   markBringCurrentTried: () => Promise.reject(new Error("this worker holds no pull request store")),
   listOpenByBase: () => Promise.reject(new Error("this worker holds no pull request store")),
@@ -273,7 +275,6 @@ const NO_REVIEWS_REASON = "this worker holds no GitHub review port";
 
 /** A worker built without the review port starts no PR follow-up run, and the PR workflow logs it. */
 const NO_REVIEWS: PullRequestReviewPort = {
-  reviewerFindings: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   review: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   canWrite: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   reply: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
@@ -292,7 +293,6 @@ const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
 const NO_AUTO_MERGE: AutoMergePort = {
   pullRequest: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   gate: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
-  reviewerVerdict: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   reviews: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   enable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   disable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),

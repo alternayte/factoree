@@ -694,7 +694,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
 
   /**
    * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. Amends the proof pack of a run after
-   * publication: a deploy result, a plain comment or the PR reviewer suggestions on a passed check.
+   * publication: a deploy result (docs/specs/pr-feedback-loop.md, DI-21.213: no PR comment).
    * The amendment renders the whole proof pack again from its stored input with the "After
    * publication" section and stores the new document and hash. DI-21.126: it posts nothing in the
    * agent session. The caller posts at most one short line, and the run page shows the proof pack. A
@@ -713,8 +713,6 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       stored?.afterPublication ?? ((run.proofPackDocument["afterPublication"] ?? null) as ProofPackAfterPublication | null) ?? null;
     const after: ProofPackAfterPublication = {
       amendedFor: input.afterPublication.amendedFor,
-      comments: input.afterPublication.comments ?? before?.comments ?? [],
-      suggestions: input.afterPublication.suggestions ?? before?.suggestions ?? [],
       deploys: input.afterPublication.deploys ?? before?.deploys ?? [],
     };
     const postedAt = new Date();

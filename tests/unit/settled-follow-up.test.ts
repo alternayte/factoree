@@ -5,7 +5,9 @@ import type { ProductRecord } from "~/domain/products/product-registry.js";
 import type { PullRequestReviewPort } from "~/domain/pull-requests/pr-follow-up.js";
 import type { DecisionEvent } from "~/domain/pull-requests/pr-follow-up.js";
 import type { CheckOnCommit, ReviewThreadOnGitHub } from "~/domain/pull-requests/review-apps.js";
+import { unthreadedFindingFingerprintText } from "~/domain/pull-requests/review-apps.js";
 import { Redactor } from "~/telemetry/redaction.js";
+import { createHash } from "node:crypto";
 import { createLogger } from "~/telemetry/logger.js";
 
 const reject = () => Promise.reject(new Error("not used"));
@@ -24,7 +26,7 @@ const check = (name: string, appSlug: string, conclusion: string, id: number): C
   detailsUrl: null,
 });
 
-const build = (options: { followUps?: number; saysoConclusion?: string } = {}) => {
+const build = (options: { followUps?: number; saysoConclusion?: string; answered?: string[]; level?: string; ciPasses?: boolean; threadsAnswered?: boolean } = {}) => {
   const record: PublishedPullRequest = {
     id: "pr-1",
     tenantId: "tenant-1",
@@ -44,12 +46,14 @@ const build = (options: { followUps?: number; saysoConclusion?: string } = {}) =
     autoMerge: "off",
     autoMergeReason: null,
     verifiedHeadSha: "head-1",
-    autonomyLevel: "L3",
+    autonomyLevel: options.level ?? "L3",
     autoMergeGateBase: null,
     verifiedBaseSha: "base-1",
     verifiedRunId: "run-1",
     reviewerHandledKey: null,
     reviewerFollowUpKeys: [],
+    answeredFindingFingerprints: options.answered ?? [],
+    reviewAppNoticeKey: null,
     bringCurrentHeadSha: null,
     workflowId: "pr:tenant-1:acme/api#12",
   };
@@ -72,9 +76,26 @@ const build = (options: { followUps?: number; saysoConclusion?: string } = {}) =
       record.reviewerHandledKey = key;
       return Promise.resolve(true);
     },
+    markReviewAppNotice: (_tenantId: string, _id: string, key: string) => {
+      if (record.reviewAppNoticeKey === key) return Promise.resolve(false);
+      record.reviewAppNoticeKey = key;
+      return Promise.resolve(true);
+    },
+    addAnsweredFingerprints: (_tenantId: string, _id: string, fingerprints: readonly string[]) => {
+      record.answeredFindingFingerprints = [...new Set([...record.answeredFindingFingerprints, ...fingerprints])];
+      return Promise.resolve();
+    },
   } as unknown as PullRequestStore;
   const threads: ReviewThreadOnGitHub[] = [
-    { isResolved: false, path: "src/page.tsx", line: 4, comments: [{ commentId: 7, authorLogin: "sayso[bot]", body: "S-1 · blocker", url: null }] },
+    {
+      isResolved: false,
+      path: "src/page.tsx",
+      line: 4,
+      comments: [
+        { commentId: 7, authorLogin: "sayso[bot]", body: "S-1 · blocker", url: null },
+        ...(options.threadsAnswered === true ? [{ commentId: 10, authorLogin: "factoreetemp[bot]", body: "Factoree triaged this finding and did not act on it.", url: null }] : []),
+      ],
+    },
     {
       isResolved: false,
       path: "src/page.tsx",
@@ -86,7 +107,6 @@ const build = (options: { followUps?: number; saysoConclusion?: string } = {}) =
     },
   ];
   const reviews: PullRequestReviewPort = {
-    reviewerFindings: reject,
     review: reject,
     canWrite: reject,
     reply: reject,
@@ -102,7 +122,11 @@ const build = (options: { followUps?: number; saysoConclusion?: string } = {}) =
     checksOnCommit: (_slug, sha) =>
       Promise.resolve(
         sha === "head-1"
-          ? [check("sayso", "sayso", options.saysoConclusion ?? "neutral", 1), check("test", "github-actions", "failure", 2), check("lint", "github-actions", "failure", 3)]
+          ? [
+              check("sayso", "sayso", options.saysoConclusion ?? "neutral", 1),
+              check("test", "github-actions", options.ciPasses === true ? "success" : "failure", 2),
+              check("lint", "github-actions", "failure", 3),
+            ]
           : [check("test", "github-actions", "success", 4), check("lint", "github-actions", "failure", 5)],
       ),
     annotations: (_slug, checkRunId) =>
@@ -115,7 +139,7 @@ const build = (options: { followUps?: number; saysoConclusion?: string } = {}) =
     pullRequests: store,
     close: { closeOfRecord: reject, afterFailedDeploy: reject },
     logger: createLogger({ level: "error", redactor: new Redactor() }),
-    autoMerge: { pullRequest: reject, gate: reject, reviewerVerdict: reject, reviews: reject, enable: reject, disable: reject, behindBy: reject, merge: reject },
+    autoMerge: { pullRequest: reject, gate: reject, reviews: reject, enable: reject, disable: reject, behindBy: reject, merge: reject },
     deploys: { contains: reject, previousSuccess: reject },
     products: {
       findById: () =>
@@ -208,5 +232,30 @@ describe("planSettledFollowUp", () => {
     expect(planned.input.prFollowUp?.decisions?.map((decision) => decision.key)).toEqual(["issue-comment-50"]);
     expect(planned.input.prFollowUp?.ciFindings).toHaveLength(1);
     expect(said).toEqual([]);
+  });
+
+  // DI-21.214. An answered annotation starts nothing until its text changes.
+  it("skips an annotation whose fingerprint Factoree answered", async () => {
+    const answered = createHash("sha256")
+      .update(unthreadedFindingFingerprintText({ appSlug: "sayso", path: "src/api.ts", line: 40, body: "S-3 · blocker:  The caller passes null." }))
+      .digest("hex");
+    const { plan } = build({ answered: [answered] });
+    const planned = await plan();
+    expect(planned.kind).toBe("start");
+    if (planned.kind !== "start") return;
+    expect(planned.input.prFollowUp?.reviewAppFindings?.map((finding) => finding.key)).toEqual(["comment-7"]);
+  });
+
+  // DI-21.212. A settled L4 head that a review app holds back, with nothing left to act on, needs a human.
+  it("names the holding review app once per head when an L4 head leaves nothing to act on", async () => {
+    const answered = createHash("sha256")
+      .update(unthreadedFindingFingerprintText({ appSlug: "sayso", path: "src/api.ts", line: 40, body: "S-3 · blocker: The caller passes null." }))
+      .digest("hex");
+    const { plan, said, commented } = build({ answered: [answered], level: "L4", ciPasses: true, threadsAnswered: true });
+    expect(await plan()).toEqual({ kind: "none", reason: "nothing to act on" });
+    expect(await plan()).toEqual({ kind: "none", reason: "nothing to act on" });
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain("The check of the review app sayso did not pass");
+    expect(commented).toEqual(said);
   });
 });

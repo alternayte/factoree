@@ -1189,6 +1189,13 @@ model PullRequest {
   // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
   // starts no other one on that head until the base branch moves.
   bringCurrentHeadSha  String?             @map("bring_current_head_sha")
+  // docs/specs/pr-feedback-loop.md, DI-21.214. The SHA-256 fingerprints of the review app findings
+  // with no thread (annotations and review bodies) that Factoree answered. A later plan skips them
+  // until their text changes.
+  answeredFindingFingerprints String[]     @default([]) @map("answered_finding_fingerprints")
+  // DI-21.212. The head and the review apps of the last "Needs your attention" post about review
+  // apps that hold back an L4 merge, so one head posts it once.
+  reviewAppNoticeKey   String?             @map("review_app_notice_key")
   // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
   // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
   changeSetStatusKey   String?             @map("change_set_status_key")

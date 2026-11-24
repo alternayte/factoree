@@ -608,7 +608,7 @@ describe("publishProofPack, needs your eye (docs/specs/by-eye-criteria-and-selec
 
 /** docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. */
 describe("amendProofPack", () => {
-  it("stores the whole proof pack again with the deploys and the comments after publication, and posts nothing (DI-21.126)", async () => {
+  it("stores the whole proof pack again with the deploys after publication, and posts nothing (DI-21.126)", async () => {
     const stored: { document: Record<string, unknown> | null; input: Record<string, unknown> | null; sha256: string | null } = {
       document: null,
       input: null,
@@ -631,12 +631,8 @@ describe("amendProofPack", () => {
     const { activities, posted } = build({ runs } as unknown as Partial<ProofPackActivityDependencies>);
     await activities.publishProofPack(input);
     const first = stored.sha256;
-    await activities.amendProofPack({
-      tenantId: "t1",
-      productId: "p1",
-      runId: "run-1",
-      afterPublication: { amendedFor: "a comment arrived.", comments: ["dana: Looks fine."] },
-    });
+    // DI-21.213. A stored input from before the review apps still holds comments and suggestions.
+    stored.input = { ...(stored.input ?? {}), afterPublication: { amendedFor: "a comment arrived.", comments: ["dana: Looks fine."], suggestions: ["src/a.ts:3: nit"], deploys: [] } };
     await activities.amendProofPack({
       tenantId: "t1",
       productId: "p1",
@@ -653,9 +649,9 @@ describe("amendProofPack", () => {
         deploys: [expect.objectContaining({ environment: "production", sha: "d".repeat(40) })],
       },
     });
-    // The stored input renders the whole proof pack again, with what the first amendment set.
-    expect(stored.input).toMatchObject({ afterPublication: { comments: ["dana: Looks fine."] } });
+    // The stored input renders the whole proof pack again, and the old comments and suggestions are gone.
     expect(stored.sha256).not.toBe(first);
-    expect(stored.document).toMatchObject({ afterPublication: { comments: ["dana: Looks fine."] } });
+    expect(JSON.stringify(stored.document)).not.toContain("Looks fine");
+    expect(JSON.stringify(stored.input)).not.toContain("src/a.ts:3");
   });
 });

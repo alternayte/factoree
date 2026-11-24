@@ -7,7 +7,7 @@ import type { Run } from "../run.js";
 import { failHung, failProviderUnreachable, hangOf, providerUnreachableOf, runSession, spriteOf } from "../sessions.js";
 import { oneOffSpriteInput, prepareOneOffSprite } from "./one-off-sprite.js";
 
-/** The failed PR reviewer check a triage reads. */
+/** The review app findings a triage reads (a failed PR reviewer check in a history from before the review apps). */
 export interface ReviewerCheck {
   pullRequestId: string;
   url: string;
@@ -90,14 +90,14 @@ export const triageReviewerFindings = async (
   if (run.stopped) await run.cancel();
   if (triage === null) {
     await run.ensureTime();
-    return await run.fail("REVIEW_UNAVAILABLE", `The triage of the PR reviewer findings on ${check.url} did not finish.`);
+    return await run.fail("REVIEW_UNAVAILABLE", `The triage of the review app findings on ${check.url} did not finish.`);
   }
   const unreachable = providerUnreachableOf(triage);
   if (unreachable !== null) await failProviderUnreachable(run, "reviewer", unreachable);
   const hang = hangOf(triage);
   if (hang !== null) await failHung(run, "reviewer", hang);
   if (!triage.reportUsable) {
-    return await run.fail("REVIEW_UNAVAILABLE", `Factoree could not triage the PR reviewer findings on ${check.url}. ${triage.reportProblem ?? ""}`.trim());
+    return await run.fail("REVIEW_UNAVAILABLE", `Factoree could not triage the review app findings on ${check.url}. ${triage.reportProblem ?? ""}`.trim());
   }
   const kept = triage.decisions.filter((decision) => decision.kept);
   const dropped = triage.decisions.filter((decision) => !decision.kept);
@@ -107,7 +107,7 @@ export const triageReviewerFindings = async (
   const triageLine =
     `Factoree triaged ${String(triage.decisions.length)} ${triage.decisions.length === 1 ? "finding" : "findings"} of ${check.reviewerName} on ${check.url}: ` +
     `it kept ${String(kept.length)} and dropped ${String(dropped.length)}.` +
-    (dropped.length === 0 ? "" : " It replied on the pull request to each dropped finding with the reason.");
+    (dropped.length === 0 ? "" : " It answered each dropped finding on the pull request with the reason.");
   if (kept.length === 0 && options.endWhenNothingKept) {
     await run.report(
       [
@@ -115,7 +115,7 @@ export const triageReviewerFindings = async (
         "",
         triageLine,
         "",
-        "No finding names a concrete defect, a rule and evidence, so Factoree changed nothing. This triage does not count toward the limit of PR follow-up runs.",
+        "No finding names a concrete defect, a rule and evidence, so Factoree changed nothing. This triage does not count toward the automatic follow-up limit.",
       ].join("\n"),
     );
   }

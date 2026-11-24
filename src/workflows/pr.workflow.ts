@@ -147,6 +147,13 @@ const CHANGE_SET_STATUS_PATCH = "change-set-status";
  */
 const SET_RUN_PATCH = "change-set-runs";
 
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.213. The proof pack lists no PR comment and no suggestion of a
+ * passed check. A history from before this patch plans the amendment of such an event, which now
+ * amends nothing.
+ */
+const NO_COMMENT_AMENDMENTS_PATCH = "no-comment-amendments";
+
 /** DI-21.158. A waiting PR workflow reads the set again this often, in case a release signal was lost. */
 const SET_WAIT = "5 minutes";
 
@@ -162,8 +169,8 @@ const mayConflict = (event: PullRequestEvent): boolean =>
   event.kind === "base_pushed" || event.kind === "synchronized" || event.kind === "reopened" || event.kind === "edited";
 
 /**
- * DI-21.123. The events that may list themselves in the proof pack: a submitted comment review, and a
- * check run or commit status that passed. The planner decides whether it is the PR reviewer's.
+ * DI-21.123. The events that listed themselves in the proof pack in a history from before the patch
+ * `no-comment-amendments`: a submitted comment review, and a check run or commit status that passed.
  */
 const mayAmend = (event: PullRequestEvent): boolean =>
   (event.kind === "review" && event.action === "submitted" && event.state === "commented") ||
@@ -618,9 +625,8 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
   };
 
   /**
-   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. A plain comment, or a passed PR reviewer
-   * check with comments, amends the proof pack of the verified head. A failure costs only the
-   * amendment.
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The amendment of a history from before the
+   * patch `no-comment-amendments`. A failure costs only the amendment.
    */
   const amend = async (event: PullRequestEvent): Promise<void> => {
     try {
@@ -764,8 +770,9 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
         const reason = wanted ?? ((await conflicts(event)) ? "conflict" : null);
         if (reason !== null) await bringCurrent(reason, event.deliveryId);
       }
-      // DI-21.123. A plain comment or a passed PR reviewer check lists itself in the proof pack.
-      if (mayAmend(event) && patched(DEPLOYS_PATCH)) {
+      // DI-21.123, DI-21.213. A history from before the patch planned an amendment for a plain comment
+      // or a passed PR reviewer check. Since the patch, no such event amends the proof pack.
+      if (mayAmend(event) && patched(DEPLOYS_PATCH) && !patched(NO_COMMENT_AMENDMENTS_PATCH)) {
         await amend(event);
       }
     }

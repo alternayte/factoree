@@ -22,8 +22,8 @@ import { deployFailureFindings } from "./new-run.js";
  */
 export const prFollowUpEnding = (followUp: PrFollowUpInput): RunEnding => ({
   failureNote:
-    `This PR follow-up run pushed nothing to ${followUp.url}. Mention Factoree on the pull request with what to change, ` +
-    "request changes there, or reply here, to start another PR follow-up run.",
+    `This PR follow-up run pushed no commit to ${followUp.url}. To start another one, mention Factoree on the pull request with what to change, ` +
+    "request changes there, or reply here.",
   draftOnInternalError: false,
 });
 
@@ -41,15 +41,53 @@ const deciders = (followUp: PrFollowUpInput): string => {
   return names.length === 0 ? (followUp.reviewerLogin ?? "A human") : names.join(", ");
 };
 
-export const prFollowUpGreeting = (followUp: PrFollowUpInput): string =>
-  followUp.trigger === "human"
-    ? `${deciders(followUp)} asked for changes on ${followUp.url}, so Factoree started a PR follow-up run.`
-    : followUp.trigger === "base"
-      ? `Factoree could not bring ${followUp.url} current with ${followUp.baseBranch} on its own, so it started a PR follow-up run.`
-      : followUp.trigger === "reviewer"
-        ? `The PR reviewer check failed on ${followUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`
-        : `${automaticSources(followUp)} found problems on ${followUp.url}, so Factoree started a PR follow-up run.` +
-          (followUpParts(followUp).reviewAppFindings.length === 0 ? "" : " It triages the review app findings first.");
+/** The most source lines one greeting lists. The proof pack names the rest. */
+const MAX_GREETING_LINES = 10;
+
+const clipped = (text: string, limit: number): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
+};
+
+/**
+ * docs/specs/pr-feedback-loop.md. The lines of the start post that name each source of the run: each
+ * human decision with its place and link, each review app with its count of findings, and each
+ * failed CI check with its link.
+ */
+const sourceLines = (followUp: PrFollowUpInput): string[] => {
+  const parts = followUpParts(followUp);
+  const lines = [
+    ...parts.decisions.map(
+      (decision) => `- ${decision.author} in ${decisionPlace(decision)}: ${clipped(decision.body, 160)}${decision.url === null ? "" : ` (${decision.url})`}`,
+    ),
+    ...[...new Set(parts.reviewAppFindings.map((finding) => finding.appSlug))].map((app) => {
+      const count = parts.reviewAppFindings.filter((finding) => finding.appSlug === app).length;
+      return `- Review app ${app}: ${String(count)} open ${count === 1 ? "finding" : "findings"} to triage.`;
+    }),
+    ...parts.ciFindings.map((finding) => `- CI check ${finding.name} failed (${finding.conclusion})${finding.detailsUrl === null ? "." : `: ${finding.detailsUrl}`}`),
+  ];
+  return lines.length <= MAX_GREETING_LINES ? lines : [...lines.slice(0, MAX_GREETING_LINES), `- ${String(lines.length - MAX_GREETING_LINES)} more.`];
+};
+
+/**
+ * docs/specs/pr-feedback-loop.md. The one post in the agent session when a PR follow-up run starts:
+ * what started it, who, and a link to each thread, check or reply it acts on.
+ */
+export const prFollowUpGreeting = (followUp: PrFollowUpInput): string => {
+  if (followUp.trigger === "base") {
+    return `Factoree could not bring ${followUp.url} current with ${followUp.baseBranch} on its own, so it started a PR follow-up run.`;
+  }
+  if (followUp.trigger === "reviewer") {
+    return `The PR reviewer check failed on ${followUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`;
+  }
+  const parts = followUpParts(followUp);
+  const head =
+    followUp.trigger === "human"
+      ? `${deciders(followUp)} asked for a change on ${followUp.url}, so Factoree started a PR follow-up run. A human decision outranks every other request.`
+      : `The reviews of ${followUp.url} settled, and ${automaticSources(followUp)} did not pass, so Factoree started a PR follow-up run.`;
+  const triage = parts.reviewAppFindings.length === 0 ? [] : ["", "Factoree triages the review app findings first. It acts only on a finding that names a concrete defect, a rule and evidence."];
+  return [head, "", ...sourceLines(followUp), ...triage].join("\n");
+};
 
 /**
  * DI-19.04. A human review is a decision, as a Linear reply is, so the implementer follows it.
@@ -67,6 +105,19 @@ export const humanReviewInput = (followUp: PrFollowUpInput): string | null => {
     `Humans decided on the pull request ${followUp.url}:`,
     ...followUp.decisions.map((decision) => `- ${decision.author} (${decisionPlace(decision)}): ${decision.body}`),
   ].join("\n");
+};
+
+/** docs/specs/pr-feedback-loop.md. Each dropped review app finding with its place and the reason, for the proof pack. */
+const droppedFindingsOf = (followUp: PrFollowUpInput, triaged: readonly TriagedFinding[]): Array<{ place: string; reason: string }> => {
+  const parts = followUpParts(followUp);
+  const findings = followUp.trigger === "reviewer" ? (followUp.findings ?? []) : parts.reviewAppFindings;
+  const byKey = new Map(findings.map((finding) => [finding.key, finding]));
+  return triaged
+    .filter((finding) => !finding.kept)
+    .map((finding) => {
+      const source = byKey.get(finding.key);
+      return { place: source === undefined ? "the pull request" : `${source.author} at ${findingPlace(source)}`, reason: finding.reason };
+    });
 };
 
 const reviewerName = (followUp: PrFollowUpInput): string =>
@@ -173,7 +224,7 @@ export const prFollowUpRun = async (run: Run, followUp: PrFollowUpInput): Promis
         startedBy: followUp.trigger === "base" ? followUp.baseBranch : followUp.trigger === "human" ? deciders(followUp) : automaticSources(followUp),
         kept: triaged.filter((finding) => finding.kept).map((finding) => ({ evidence: finding.evidence, defect: finding.defect, rule: finding.rule })),
         dropped: triaged.filter((finding) => !finding.kept).length,
-        plainComments: followUp.plainComments ?? [],
+        droppedFindings: droppedFindingsOf(followUp, triaged),
         ...(parts.ciFindings.length === 0 ? {} : { ciFailures: parts.ciFindings.map((finding) => finding.name) }),
       },
     },

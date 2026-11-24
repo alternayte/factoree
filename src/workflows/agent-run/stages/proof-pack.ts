@@ -18,7 +18,8 @@ export interface PullRequestFollowUpFacts {
   startedBy: string;
   kept: Array<{ evidence: string; defect: string; rule: string }>;
   dropped: number;
-  plainComments: string[];
+  /** docs/specs/pr-feedback-loop.md. Each dropped review app finding, with its place and the reason. */
+  droppedFindings?: Array<{ place: string; reason: string }>;
   /** DI-21.208. The CI checks that failed on the head the run read. */
   ciFailures?: string[];
 }

@@ -50,6 +50,10 @@ export interface PublishedPullRequest {
   reviewerFollowUpKeys: string[];
   /** DI-21.118. The head commit of the last bring-current update that pushed nothing, until the base moves. */
   bringCurrentHeadSha: string | null;
+  /** DI-21.214. The fingerprints of the answered review app findings with no thread. */
+  answeredFindingFingerprints: string[];
+  /** DI-21.212. The head and the review apps of the last L4 hold notice. */
+  reviewAppNoticeKey: string | null;
   workflowId: string;
 }
 
@@ -132,6 +136,10 @@ export interface PullRequestStore {
    * the count. A second call with the same key writes nothing.
    */
   countReviewerFollowUp(tenantId: string, pullRequestId: string, key: string): Promise<number>;
+  /** DI-21.214. Adds the fingerprints of answered review app findings with no thread. A known one is kept once. */
+  addAnsweredFingerprints(tenantId: string, pullRequestId: string, fingerprints: readonly string[]): Promise<void>;
+  /** DI-21.212. Marks one L4 hold notice as posted. False when this key was the last one posted. */
+  markReviewAppNotice(tenantId: string, pullRequestId: string, key: string): Promise<boolean>;
   /** DI-21.118. Records the head of a bring-current update that pushed nothing. */
   markBringCurrentTried(tenantId: string, pullRequestId: string, headSha: string): Promise<void>;
   /**

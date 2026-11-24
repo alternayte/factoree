@@ -207,3 +207,40 @@ export const logTailOf = (log: string, lines = MAX_LOG_TAIL_LINES): string =>
     .filter((entry, index, all) => !(index === all.length - 1 && entry === ""))
     .slice(-lines)
     .join("\n");
+
+/** docs/specs/pr-feedback-loop.md, DI-21.212. Why one review app holds back an L4 merge of the head. */
+export interface ReviewAppHold {
+  appSlug: string;
+  reason: "pending" | "not_passed" | "unanswered";
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.212. The review apps that hold back an L4 merge of the head.
+ * An app with a check holds it until every check of it on the head passed (success or skipped). An
+ * app with no check holds it while one of its unresolved threads has no answer from Factoree. A
+ * dropped finding that Factoree answered does not hold it: the app's own check is its verdict.
+ */
+export const reviewAppHolds = (input: {
+  apps: readonly string[];
+  checks: readonly CheckOnCommit[];
+  threads: readonly ReviewThreadOnGitHub[];
+  factoreeSlug: string | null;
+}): ReviewAppHold[] => {
+  const holds: ReviewAppHold[] = [];
+  for (const app of input.apps) {
+    const verdict = reviewAppVerdict(input.checks, app);
+    if (verdict === "pending") holds.push({ appSlug: app, reason: "pending" });
+    else if (verdict === "acts") holds.push({ appSlug: app, reason: "not_passed" });
+    else if (verdict === "none" && unansweredThreadsOf(input.threads, app, input.factoreeSlug).length > 0) holds.push({ appSlug: app, reason: "unanswered" });
+  }
+  return holds;
+};
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.214. The fingerprint of a review app finding with no thread:
+ * an annotation or a review body. It holds the app, the place and the text with its white space
+ * folded, so the same finding on a new check run or a new head matches, and a changed text does not.
+ * The caller hashes it.
+ */
+export const unthreadedFindingFingerprintText = (finding: { appSlug: string; path: string | null; line: number | null; body: string }): string =>
+  [finding.appSlug.toLowerCase(), finding.path ?? "", finding.line === null ? "" : String(finding.line), finding.body.replace(/\s+/g, " ").trim().toLowerCase()].join("\n");

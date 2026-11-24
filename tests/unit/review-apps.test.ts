@@ -3,6 +3,7 @@ import {
   actionsJobIdOf,
   failedCiChecks,
   logTailOf,
+  reviewAppHolds,
   reviewAppsOf,
   reviewAppVerdict,
   unansweredThreadsOf,
@@ -82,6 +83,38 @@ describe("unanswered threads", () => {
     const resolved = thread(["sayso[bot]"], true);
     const human = thread(["dana"]);
     expect(unansweredThreadsOf([open, answered, answeredThenReplied, resolved, human], "sayso", "factoreetemp")).toEqual([open, answeredThenReplied]);
+  });
+});
+
+// docs/specs/pr-feedback-loop.md, DI-21.212. The L4 merge waits for every review app to pass.
+describe("review app holds of an L4 merge", () => {
+  const open = (author: string, answeredBy: string | null = null): ReviewThreadOnGitHub => ({
+    isResolved: false,
+    path: "src/a.ts",
+    line: 3,
+    comments: [
+      { commentId: 1, authorLogin: author, body: "text", url: null },
+      ...(answeredBy === null ? [] : [{ commentId: 2, authorLogin: answeredBy, body: "answer", url: null }]),
+    ],
+  });
+  const holds = (checks: CheckOnCommit[], threads: ReviewThreadOnGitHub[] = []) =>
+    reviewAppHolds({ apps: ["sayso", "copilot-pull-request-reviewer"], checks, threads, factoreeSlug: "factoreetemp" });
+
+  it("holds while an app check runs or did not pass, and not once every check passed", () => {
+    expect(holds([run("sayso", "sayso", null, false)])).toEqual([{ appSlug: "sayso", reason: "pending" }]);
+    expect(holds([run("sayso", "sayso", "neutral")])).toEqual([{ appSlug: "sayso", reason: "not_passed" }]);
+    expect(holds([run("sayso", "sayso", "success")])).toEqual([]);
+  });
+
+  it("holds for an app with no check only while one of its open threads has no answer from Factoree", () => {
+    expect(holds([run("sayso", "sayso", "success")], [open("copilot-pull-request-reviewer[bot]")])).toEqual([
+      { appSlug: "copilot-pull-request-reviewer", reason: "unanswered" },
+    ]);
+    expect(holds([run("sayso", "sayso", "success")], [open("copilot-pull-request-reviewer[bot]", "factoreetemp[bot]")])).toEqual([]);
+  });
+
+  it("does not let an answered thread of an app with a failing check release the merge", () => {
+    expect(holds([run("sayso", "sayso", "failure")], [open("sayso[bot]", "factoreetemp[bot]")])).toEqual([{ appSlug: "sayso", reason: "not_passed" }]);
   });
 });
 

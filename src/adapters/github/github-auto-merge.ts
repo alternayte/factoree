@@ -3,7 +3,6 @@ import { GitHubRest } from "./github-rest.js";
 import { GitHubApiError } from "./github-pull-requests.js";
 import { assertRepositorySlug } from "~/domain/products/repository-url.js";
 import type { GitHubTokenProvider, GitHubTokenScope } from "~/domain/products/github-token-provider.js";
-import type { PrReviewer } from "~/domain/pull-requests/auto-merge.js";
 import {
   BRANCH_PROTECTION,
   MERGE_GATING_RULES,
@@ -13,7 +12,6 @@ import {
   type MergeMethod,
   type MergeOutcome,
   type PullRequestOnGitHub,
-  type ReviewerVerdict,
   type ReviewOnGitHub,
 } from "~/domain/pull-requests/auto-merge.js";
 
@@ -147,38 +145,6 @@ export class GitHubAutoMerge implements AutoMergePort {
     );
     if (!isRecord(body) || typeof body.behind_by !== "number") throw new Error(`GitHub answered no compare of ${slug} ${baseBranch}...${headSha}`);
     return body.behind_by;
-  }
-
-  /**
-   * DI-21.107. The newest check run of that name from the reviewer app on the commit. Without one,
-   * the newest commit status of that context that the app's bot created.
-   */
-  async reviewerVerdict(slug: string, sha: string, reviewer: PrReviewer, installationId: string): Promise<ReviewerVerdict> {
-    const query = new URLSearchParams({ check_name: reviewer.checkName, filter: "latest", per_page: "100" });
-    const checks = await this.rest(slug, `/commits/${sha}/check-runs?${query.toString()}`, { method: "GET" }, installationId, READ_SCOPE);
-    const runs = isRecord(checks) && Array.isArray(checks.check_runs) ? checks.check_runs : [];
-    const run = runs.find(
-      (candidate): candidate is Record<string, unknown> =>
-        isRecord(candidate) && isRecord(candidate.app) && typeof candidate.app.slug === "string" && candidate.app.slug.toLowerCase() === reviewer.appSlug,
-    );
-    if (run !== undefined) {
-      if (run.status !== "completed") return "pending";
-      return run.conclusion === "success" ? "passed" : "failed";
-    }
-    const statuses = await this.rest(slug, `/commits/${sha}/statuses?per_page=100`, { method: "GET" }, installationId, READ_SCOPE);
-    const bot = `${reviewer.appSlug}[bot]`;
-    // GitHub lists the statuses of a commit newest first.
-    const status = (Array.isArray(statuses) ? statuses : []).find(
-      (candidate): candidate is Record<string, unknown> =>
-        isRecord(candidate) &&
-        candidate.context === reviewer.checkName &&
-        isRecord(candidate.creator) &&
-        typeof candidate.creator.login === "string" &&
-        candidate.creator.login.toLowerCase() === bot,
-    );
-    if (status === undefined) return "absent";
-    if (status.state === "success") return "passed";
-    return status.state === "pending" ? "pending" : "failed";
   }
 
   async reviews(slug: string, number: number, installationId: string): Promise<ReviewOnGitHub[]> {

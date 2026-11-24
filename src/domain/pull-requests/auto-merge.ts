@@ -1,14 +1,5 @@
 import type { AutoMergeState } from "./pull-request-store.js";
-
-/**
- * docs/specs/pr-review-merge-and-deploy.md. An external review app: its GitHub App slug, and the name
- * of the check run or commit status it reports on the pull request head. docs/specs/pr-feedback-loop.md
- * removes the product setting that named one, so no product names a reviewer (DI-21.203).
- */
-export interface PrReviewer {
-  appSlug: string;
-  checkName: string;
-}
+import type { ReviewAppHold } from "./review-apps.js";
 
 /**
  * docs/specs/pr-review-merge-and-deploy.md. The L4 merge: Factoree turns on GitHub auto-merge when
@@ -64,8 +55,28 @@ export interface ReviewOnGitHub {
   state: string;
 }
 
-/** The PR reviewer verdict on one commit. absent: the app reported no check and no status there. */
-export type ReviewerVerdict = "passed" | "failed" | "pending" | "absent";
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.212. The "Needs your attention" post for an L4 head that review
+ * apps hold back once Factoree has nothing left to act on.
+ */
+export const reviewAppHoldNotice = (url: string, holds: readonly ReviewAppHold[]): string =>
+  [
+    "### Needs your attention",
+    "",
+    `Factoree did not turn on auto-merge for ${url}, so it stays open as at L3:`,
+    ...holds.map((hold) => `- ${reviewAppHoldLine(hold)}`),
+    "",
+    "Factoree has nothing left to act on for this head. A human decides now: mention Factoree with what to change, " +
+      "override or re-run the review app, merge the pull request, or close it.",
+  ].join("\n");
+
+/** One sentence per hold, as the auto-merge reason and the "Needs your attention" post name it. */
+export const reviewAppHoldLine = (hold: ReviewAppHold): string =>
+  hold.reason === "pending"
+    ? `The review app ${hold.appSlug} still reviews the head commit.`
+    : hold.reason === "not_passed"
+      ? `The check of the review app ${hold.appSlug} did not pass on the head commit.`
+      : `The review app ${hold.appSlug} has an open review thread that Factoree did not answer.`;
 
 /** The outcome of an auto-merge request. clean: GitHub can merge now, so it refuses auto-merge. */
 export type EnableAutoMergeOutcome = { kind: "enabled" } | { kind: "clean" } | { kind: "refused"; message: string };
@@ -79,7 +90,6 @@ export type MergeOutcome = { kind: "merged" } | { kind: "refused"; message: stri
 export interface AutoMergePort {
   pullRequest(slug: string, number: number, installationId: string): Promise<PullRequestOnGitHub>;
   gate(slug: string, baseBranch: string, installationId: string): Promise<AutoMergeGate>;
-  reviewerVerdict(slug: string, sha: string, reviewer: PrReviewer, installationId: string): Promise<ReviewerVerdict>;
   reviews(slug: string, number: number, installationId: string): Promise<ReviewOnGitHub[]>;
   enable(slug: string, pullRequest: PullRequestOnGitHub, method: MergeMethod, installationId: string): Promise<EnableAutoMergeOutcome>;
   disable(slug: string, pullRequest: PullRequestOnGitHub, installationId: string): Promise<void>;
@@ -158,9 +168,8 @@ export interface AutoMergeConditionInput {
   level: string | null;
   verifiedHeadSha: string | null;
   pullRequest: PullRequestOnGitHub;
-  reviewer: PrReviewer | null;
-  /** Null when the product names no PR reviewer. */
-  reviewerVerdict: ReviewerVerdict | null;
+  /** docs/specs/pr-feedback-loop.md, DI-21.212. The review apps that hold back the merge of the verified head. */
+  reviewAppHolds: readonly ReviewAppHold[];
   changeRequests: readonly string[];
 }
 
@@ -176,10 +185,7 @@ export const unmetConditions = (input: AutoMergeConditionInput): string[] => {
   if (input.verifiedHeadSha === null || input.pullRequest.headSha !== input.verifiedHeadSha) {
     unmet.push(`Factoree did not verify the head commit ${input.pullRequest.headSha.slice(0, 12)}.`);
   }
-  if (input.reviewer !== null && input.reviewerVerdict !== "passed") {
-    const verdict = input.reviewerVerdict === null || input.reviewerVerdict === "absent" ? "has not reported" : input.reviewerVerdict === "failed" ? "failed" : "is pending";
-    unmet.push(`The PR reviewer check "${input.reviewer.checkName}" ${verdict} on the head commit.`);
-  }
+  unmet.push(...input.reviewAppHolds.map(reviewAppHoldLine));
   if (input.changeRequests.length > 0) {
     unmet.push(`A "request changes" review is open from ${input.changeRequests.join(", ")}.`);
   }

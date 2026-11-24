@@ -82,19 +82,6 @@ export class GitHubPullRequestReviews implements PullRequestReviewPort {
     this.http = new GitHubRest(options);
   }
 
-  async reviewerFindings(slug: string, number: number, headSha: string, appSlug: string, installationId: string): Promise<PrReviewFinding[]> {
-    const bot = `${appSlug.toLowerCase()}[bot]`;
-    const reviews = (await this.list(slug, `/pulls/${String(number)}/reviews`, installationId)).filter(
-      (review) => isRecord(review.user) && typeof review.user.login === "string" && review.user.login.toLowerCase() === bot && review.commit_id === headSha,
-    );
-    const findings: PrReviewFinding[] = [];
-    for (const review of reviews) {
-      if (typeof review.id !== "number") continue;
-      findings.push(...(await this.findingsOf(slug, number, review, installationId)));
-    }
-    return findings;
-  }
-
   async review(slug: string, number: number, reviewId: number, installationId: string): Promise<ReviewOfPullRequest> {
     const review = await this.http.repository(slug, `/pulls/${String(number)}/reviews/${String(reviewId)}`, { method: "GET" }, installationId, READ_SCOPE);
     if (!isRecord(review) || !isRecord(review.user) || typeof review.user.login !== "string") {

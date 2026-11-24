@@ -67,20 +67,11 @@ export interface PrChangeSet {
   edges: Array<{ provider: string; consumer: string }>;
 }
 
-/**
- * The spec: each pull request takes at most 3 PR follow-up runs from the PR reviewer. Human reviews
- * have no limit. docs/specs/change-sets.md: in a change set the limit counts per set (DI-21.160).
- */
-export const MAX_REVIEWER_FOLLOW_UPS = 3;
-
 /** The longest text of one finding that a PR follow-up run carries. */
 export const MAX_FINDING_BODY_CHARACTERS = 4_000;
 
 /** The most findings one PR follow-up run carries. A review with more names the rest by count. */
 export const MAX_FINDINGS = 50;
-
-/** The most plain comments the proof pack lists. */
-export const MAX_PLAIN_COMMENTS = 20;
 
 /**
  * One comment of a review, or the body of the review itself. The PR reviewer's findings, and the
@@ -117,6 +108,11 @@ export interface TriagedFinding {
 export interface ReviewAppFinding extends PrReviewFinding {
   /** The review app, in lower case. */
   appSlug: string;
+  /**
+   * DI-21.214. The SHA-256 fingerprint of a finding with no thread: an annotation or a review body.
+   * Absent for a thread finding, whose answer is Factoree's reply in the thread.
+   */
+  fingerprint?: string;
 }
 
 /**
@@ -165,7 +161,10 @@ export interface PrFollowUpInput {
   findings?: PrReviewFinding[];
   /** The findings past MAX_FINDINGS that the run does not carry. */
   omittedFindings: number;
-  /** A history from before the review apps: plain comments that started nothing. */
+  /**
+   * A history from before docs/specs/pr-feedback-loop.md: plain comments that started nothing. The
+   * proof pack no longer lists them (DI-21.213), so a run ignores them.
+   */
   plainComments?: string[];
   /** docs/specs/pr-feedback-loop.md. The review app findings to triage. */
   reviewAppFindings?: ReviewAppFinding[];
@@ -181,35 +180,6 @@ export interface PrFollowUpInput {
    */
   changeSet?: PrChangeSet;
 }
-
-/** The verdict of the PR reviewer that one check run event or commit status event reports. */
-export type ReviewerEventVerdict = "pending" | "passed" | "failed" | "other";
-
-/**
- * DI-21.108. The PR reviewer verdict that one event reports, or null for an event of another check.
- * A check run is pinned to its app by the slug, and a commit status by its sender (DI-21.107). Only
- * a check run that completed with `failure`, or a commit status `failure`, is a failed check that
- * starts triage. A neutral, skipped, cancelled or timed-out conclusion, and a status `error`, is
- * `other`: it is no pass for the L4 merge, and it names no defect, so it starts nothing.
- */
-export const reviewerVerdictOfEvent = (
-  event: PullRequestEvent,
-  reviewer: { appSlug: string; checkName: string },
-): ReviewerEventVerdict | null => {
-  if (event.kind === "check_run") {
-    if (event.name !== reviewer.checkName || (event.appSlug ?? "").toLowerCase() !== reviewer.appSlug) return null;
-    if (event.status !== "completed") return "pending";
-    if (event.conclusion === "success") return "passed";
-    return event.conclusion === "failure" ? "failed" : "other";
-  }
-  if (event.kind === "commit_status") {
-    if (event.context !== reviewer.checkName || (event.senderLogin ?? "").toLowerCase() !== `${reviewer.appSlug}[bot]`) return null;
-    if (event.state === "pending") return "pending";
-    if (event.state === "success") return "passed";
-    return event.state === "failure" ? "failed" : "other";
-  }
-  return null;
-};
 
 /**
  * True for the only events that can start a PR follow-up run: a failed check run or commit status,
@@ -438,7 +408,7 @@ export const baseUpdateFindingLines = (update: PrBaseUpdate): string[] =>
 
 /** The repair finding lines the first implementer attempt of a reviewer follow-up receives. */
 export const keptFindingLines = (kept: readonly TriagedFinding[]): string[] =>
-  kept.map((finding) => `PR reviewer finding at ${finding.evidence}: ${finding.defect} Rule: ${finding.rule}`);
+  kept.map((finding) => `Review app finding at ${finding.evidence}: ${finding.defect} Rule: ${finding.rule}`);
 
 /** DI-21.208. The repair finding lines the first implementer attempt of a run with failed CI checks receives. */
 export const ciFindingLines = (findings: readonly CiFinding[]): string[] =>
@@ -454,13 +424,17 @@ export const droppedFindingReply = (finding: TriagedFinding): string =>
     "Factoree acts only on a finding that names a concrete defect, the rule it breaks and the evidence in the change.",
   ].join("\n");
 
-/** The "Needs your attention" post at the limit of PR reviewer follow-up runs. */
-export const reviewerLimitNotice = (url: string, checkName: string, changeSet = false): string =>
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.214. The one comment that answers the dropped findings with no
+ * thread of one triage: the check annotations and the review bodies of the review apps.
+ */
+export const droppedUnthreadedReply = (findings: ReadonlyArray<{ author: string; place: string; body: string; reason: string }>): string =>
   [
-    "### Needs your attention",
+    `Factoree triaged ${findings.length === 1 ? "this review app finding" : `these ${String(findings.length)} review app findings`} and did not act on ${findings.length === 1 ? "it" : "them"}:`,
     "",
-    `The PR reviewer check "${checkName}" failed again on ${url}. Factoree already ran ${String(MAX_REVIEWER_FOLLOW_UPS)} PR follow-up runs ` +
-      `for the PR reviewer on this ${changeSet ? "change set" : "pull request"}, so it starts no other one. A human decides now: request changes, fix the branch, or close the pull request.`,
+    ...findings.map((finding) => `- ${finding.author} at ${finding.place}: ${oneLine(finding.body, 200)} Reason: ${oneLine(finding.reason, 600)}`),
+    "",
+    "Factoree acts only on a finding that names a concrete defect, the rule it breaks and the evidence in the change.",
   ].join("\n");
 
 /**
@@ -487,8 +461,6 @@ export interface ReviewOfPullRequest {
  * one repository, on the control plane only.
  */
 export interface PullRequestReviewPort {
-  /** DI-21.109. The review comments and review bodies of the app `<slug>[bot]` on one head, oldest first. */
-  reviewerFindings(slug: string, number: number, headSha: string, appSlug: string, installationId: string): Promise<PrReviewFinding[]>;
   /** The body and the comments of one review. */
   review(slug: string, number: number, reviewId: number, installationId: string): Promise<ReviewOfPullRequest>;
   /** True when the user holds write, maintain or admin access to the repository. */

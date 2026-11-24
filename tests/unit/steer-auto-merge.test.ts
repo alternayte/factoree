@@ -17,6 +17,8 @@ const build = (
     behindBy?: number;
     /** docs/specs/change-sets.md. The state of the provider pull request of a set where this one is the consumer. */
     provider?: PublishedPullRequest["state"];
+    /** docs/specs/pr-feedback-loop.md, DI-21.212. The conclusion of the review app sayso's check on the head, or none. */
+    sayso?: string | null;
   } = {},
 ) => {
   const record: PublishedPullRequest = {
@@ -44,6 +46,8 @@ const build = (
     verifiedRunId: "run-1",
     reviewerHandledKey: null,
     reviewerFollowUpKeys: [],
+    answeredFindingFingerprints: [],
+    reviewAppNoticeKey: null,
     bringCurrentHeadSha: null,
     workflowId: "pr:tenant-1:acme/api#12",
   };
@@ -71,6 +75,8 @@ const build = (
     listAutoMergeUnavailable: reject,
     originFacts: reject,
     markReviewerHandled: reject,
+    addAnsweredFingerprints: reject,
+    markReviewAppNotice: reject,
     countReviewerFollowUp: (_tenantId: string, _id: string, key: string) => {
       counted.push(key);
       record.reviewerFollowUps += 1;
@@ -106,7 +112,6 @@ const build = (
           requiresUpToDate: false,
         },
       ),
-    reviewerVerdict: () => Promise.resolve("passed"),
     reviews: () => Promise.resolve([]),
     enable: (_slug: string, pullRequest: PullRequestOnGitHub, method: MergeMethod) => {
       calls.push(`enable ${pullRequest.headSha} ${method}`);
@@ -159,7 +164,40 @@ const build = (
         return Promise.resolve();
       },
     },
-    reviews: { reviewerFindings: reject, review: reject, canWrite: reject, reply: reject, comment: reject, reviews: reject, checksOnCommit: reject, annotations: reject, reviewThreads: reject, jobLog: reject, react: reject },
+    reviews: {
+      review: reject,
+      canWrite: reject,
+      reply: reject,
+      comment: reject,
+      reviews: () =>
+        Promise.resolve(
+          options.sayso === undefined ? [] : [{ reviewId: 1, authorLogin: "sayso[bot]", authorType: "Bot", state: "COMMENTED", commitSha: "head-1", body: "" }],
+        ),
+      checksOnCommit: () =>
+        Promise.resolve(
+          options.sayso === undefined || options.sayso === null
+            ? []
+            : [
+                {
+                  kind: "check_run" as const,
+                  id: 1,
+                  name: "sayso",
+                  appSlug: "sayso",
+                  creatorLogin: null,
+                  completed: true,
+                  conclusion: options.sayso,
+                  title: null,
+                  summary: null,
+                  text: null,
+                  detailsUrl: null,
+                },
+              ],
+        ),
+      annotations: reject,
+      reviewThreads: () => Promise.resolve([]),
+      jobLog: reject,
+      react: reject,
+    },
     repositories: { listByProduct: reject },
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),
@@ -174,6 +212,7 @@ const build = (
       recordCheckedHead: reject,
     },
     commitStatuses: { setStatus: reject },
+    factoreeAppSlug: () => Promise.resolve("factoreetemp"),
   });
   const steer = (trigger: "start" | "new_head" | "auto_merge_disabled" | "event" | "base_moved", eventHeadSha: string | null = null) =>
     activities.steerAutoMerge({ tenantId: "tenant-1", pullRequestId: "pr-1", trigger, eventHeadSha });
@@ -189,6 +228,17 @@ describe("steerAutoMerge", () => {
     expect(calls).toEqual(["enable head-1 squash"]);
     expect(said).toHaveLength(1);
     expect(record.autoMergeGateBase).toBe("main");
+  });
+
+  // docs/specs/pr-feedback-loop.md, DI-21.212.
+  it("turns on no auto-merge while a review app's check on the verified head is not success, and names the app", async () => {
+    const neutral = build({ sayso: "neutral" });
+    expect(await neutral.steer("start")).toEqual({ state: "off" });
+    expect(neutral.calls).toEqual([]);
+    expect(neutral.record.autoMergeReason).toContain("The check of the review app sayso did not pass");
+    const passed = build({ sayso: "success" });
+    expect(await passed.steer("start")).toEqual({ state: "enabled" });
+    expect(passed.calls).toEqual(["enable head-1 squash"]);
   });
 
   it("keeps the pull request as L3 and posts Needs your attention once when the gate fails", async () => {

@@ -49,6 +49,8 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   reviewerHandledKey: row.reviewerHandledKey,
   reviewerFollowUpKeys: row.reviewerFollowUpKeys,
   bringCurrentHeadSha: row.bringCurrentHeadSha,
+  answeredFindingFingerprints: row.answeredFindingFingerprints,
+  reviewAppNoticeKey: row.reviewAppNoticeKey,
   workflowId: row.workflowId,
 });
 
@@ -385,6 +387,27 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
     const updated = await this.prisma.pullRequest.updateMany({
       where: { id: pullRequestId, tenantId, OR: [{ reviewerHandledKey: null }, { reviewerHandledKey: { not: key } }] },
       data: { reviewerHandledKey: key },
+    });
+    return updated.count > 0;
+  }
+
+  async addAnsweredFingerprints(tenantId: string, pullRequestId: string, fingerprints: readonly string[]): Promise<void> {
+    if (fingerprints.length === 0) return;
+    // One transaction: read the list and write the union, so a retry adds nothing twice.
+    await this.prisma.$transaction(async (tx) => {
+      const row = await tx.pullRequest.findFirst({ where: { id: pullRequestId, tenantId }, select: { answeredFindingFingerprints: true } });
+      if (row === null) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+      const known = new Set(row.answeredFindingFingerprints);
+      const added = [...new Set(fingerprints)].filter((fingerprint) => !known.has(fingerprint));
+      if (added.length === 0) return;
+      await tx.pullRequest.updateMany({ where: { id: pullRequestId, tenantId }, data: { answeredFindingFingerprints: { push: added } } });
+    });
+  }
+
+  async markReviewAppNotice(tenantId: string, pullRequestId: string, key: string): Promise<boolean> {
+    const updated = await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId, OR: [{ reviewAppNoticeKey: null }, { reviewAppNoticeKey: { not: key } }] },
+      data: { reviewAppNoticeKey: key },
     });
     return updated.count > 0;
   }

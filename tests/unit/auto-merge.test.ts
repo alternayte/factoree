@@ -32,8 +32,7 @@ const holding = {
   level: "L4",
   verifiedHeadSha: "head-1",
   pullRequest: pullRequest(),
-  reviewer: { appSlug: "review-bot", checkName: "Code review" },
-  reviewerVerdict: "passed" as const,
+  reviewAppHolds: [],
   changeRequests: [],
 };
 
@@ -72,8 +71,7 @@ describe("the L4 merge", () => {
     expect(unmetConditions(holding)).toEqual([]);
     expect(unmetConditions({ ...holding, level: "L3" })).toHaveLength(1);
     expect(unmetConditions({ ...holding, pullRequest: pullRequest({ headSha: "head-2" }) })[0]).toContain("did not verify");
-    expect(unmetConditions({ ...holding, reviewerVerdict: "pending" })[0]).toContain("is pending");
-    expect(unmetConditions({ ...holding, reviewer: null, reviewerVerdict: null })).toEqual([]);
+    expect(unmetConditions({ ...holding, reviewAppHolds: [{ appSlug: "sayso", reason: "not_passed" }] })[0]).toContain("sayso did not pass");
     expect(unmetConditions({ ...holding, changeRequests: ["dana"] })[0]).toContain("dana");
   });
 

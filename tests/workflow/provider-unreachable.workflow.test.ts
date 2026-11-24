@@ -51,7 +51,6 @@ describe("an unreachable model provider in the Run workflow", () => {
     reviewerLogin: "ana",
     findings: [],
     omittedFindings: 0,
-    plainComments: [],
   };
 
   it("starts a fresh session in the same sandbox after one failure, and continues the Run", async () => {
