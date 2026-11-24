@@ -233,6 +233,13 @@ const oneLine = (text: string, limit: number): string => {
   return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
 };
 
+/**
+ * DI-21.215. Text that a human or a check wrote, in quotes. The work item parser reads a line that
+ * ends in a question mark as an open question of the issue (SDD section 8), so a decision such as
+ * "why does this skip the cache?" must not end its line with one, or the run asks it back.
+ */
+const quoted = (text: string): string => `"${text}"`;
+
 /** Where a finding sits, such as `src/a.ts:12`, or `the review` for a review body. */
 export const findingPlace = (finding: Pick<PrReviewFinding, "path" | "line">): string =>
   finding.path === null ? "the review" : finding.line === null ? finding.path : `${finding.path}:${String(finding.line)}`;
@@ -287,8 +294,8 @@ const MAX_LOG_TAIL_CHARACTERS = 6_000;
 const ciFindingSection = (finding: CiFinding): string[] => [
   `### ${finding.name} (${finding.conclusion})`,
   "",
-  ...(finding.summary === "" ? [] : [oneLine(finding.summary, MAX_FINDING_BODY_CHARACTERS), ""]),
-  ...(finding.annotations.length === 0 ? [] : [...finding.annotations.map((annotation) => `- ${oneLine(annotation, 600)}`), ""]),
+  ...(finding.summary === "" ? [] : [quoted(oneLine(finding.summary, MAX_FINDING_BODY_CHARACTERS)), ""]),
+  ...(finding.annotations.length === 0 ? [] : [...finding.annotations.map((annotation) => `- ${quoted(oneLine(annotation, 600))}`), ""]),
   ...(finding.logTail === null || finding.logTail.trim() === ""
     ? []
     : ["The last lines of the job log:", "", "```", finding.logTail.slice(-MAX_LOG_TAIL_CHARACTERS), "```", ""]),
@@ -329,7 +336,7 @@ export const renderPrFollowUpDescription = (input: {
           "",
           "Each of these is a decision of a human. It outranks every other sentence of this issue. Follow it.",
           "",
-          ...parts.decisions.map((decision) => `- ${decision.author} (${decisionPlace(decision)}): ${oneLine(decision.body, MAX_FINDING_BODY_CHARACTERS)}`),
+          ...parts.decisions.map((decision) => `- ${decision.author} (${decisionPlace(decision)}): ${quoted(oneLine(decision.body, MAX_FINDING_BODY_CHARACTERS))}`),
           ...(followUp.omittedFindings > 0 ? [`- ${String(followUp.omittedFindings)} more comments on the pull request.`] : []),
           "",
         ];
@@ -435,6 +442,67 @@ export const droppedUnthreadedReply = (findings: ReadonlyArray<{ author: string;
     ...findings.map((finding) => `- ${finding.author} at ${finding.place}: ${oneLine(finding.body, 200)} Reason: ${oneLine(finding.reason, 600)}`),
     "",
     "Factoree acts only on a finding that names a concrete defect, the rule it breaks and the evidence in the change.",
+  ].join("\n");
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.215. The reply to a human decision that asked a question and
+ * changed nothing. A decision in a thread gets it in the thread. A decision with no thread gets it as
+ * a conversation comment that quotes the request first.
+ */
+export const decisionAnswerReply = (decision: HumanDecision, answer: string): string =>
+  [
+    ...(decision.commentId === null ? [`> ${decision.author}: ${oneLine(decision.body, 300)}`, ""] : []),
+    answer.trim(),
+    "",
+    "Factoree answered this question and changed nothing. To ask for a change, mention Factoree with what to change.",
+  ].join("\n");
+
+/** DI-21.215. The final response of a run that answered every human decision and ended ANSWERED. */
+export const answeredResponse = (url: string, answers: ReadonlyArray<{ decision: HumanDecision; answer: string }>): string =>
+  [
+    `Factoree answered ${answers.length === 1 ? "the question" : `the ${String(answers.length)} questions`} on ${url} and changed nothing, so it pushed no commit.`,
+    "",
+    ...answers.flatMap(({ decision, answer }) => [`**${decision.author} in ${decisionPlace(decision)}:** ${oneLine(decision.body, 300)}`, "", answer.trim(), ""]),
+    "To ask for a change, mention Factoree on the pull request with what to change, request changes there, or reply here.",
+  ]
+    .join("\n")
+    .trimEnd();
+
+/** DI-21.215. The progress post of a run that answered some questions and goes on with the changes asked for. */
+export const answersProgress = (url: string, answers: ReadonlyArray<{ decision: HumanDecision; answer: string }>): string =>
+  [
+    `Factoree answered ${answers.length === 1 ? "a question" : `${String(answers.length)} questions`} on ${url}. It goes on with the changes the other requests ask for.`,
+    "",
+    ...answers.flatMap(({ decision, answer }) => [`**${decision.author} in ${decisionPlace(decision)}:** ${oneLine(decision.body, 300)}`, "", answer.trim(), ""]),
+  ]
+    .join("\n")
+    .trimEnd();
+
+/** DI-21.216. The reply in the thread of a kept review app finding that a published commit fixed. */
+export const fixedFindingReply = (commitSha: string, defect: string): string => `Fixed in ${commitSha.slice(0, 12)}: ${oneLine(defect, 300)}`;
+
+/** DI-21.216. The reply in the thread of a human decision that a published commit carries out. */
+export const doneDecisionReply = (commitSha: string): string => `Done in ${commitSha.slice(0, 12)}.`;
+
+/** DI-21.216. One item with no thread that a published commit handled: a kept finding or a human decision. */
+export interface HandledUnthreaded {
+  kind: "fixed" | "done";
+  author: string;
+  /** Where it sits, with its preposition, such as `at src/a.ts:12` or `in the pull request conversation`. */
+  place: string;
+  text: string;
+}
+
+/**
+ * DI-21.216. The one comment that answers the handled items with no thread of one publication: the
+ * kept annotations and review bodies of the review apps, and the human decisions in the
+ * conversation or in a review body.
+ */
+export const handledUnthreadedComment = (commitSha: string, items: readonly HandledUnthreaded[]): string =>
+  [
+    `Factoree pushed ${commitSha.slice(0, 12)}, which handles:`,
+    "",
+    ...items.map((item) => `- ${item.kind === "fixed" ? "Fixed" : "Done"}: ${item.author} ${item.place}: ${oneLine(item.text, 300)}`),
   ].join("\n");
 
 /**

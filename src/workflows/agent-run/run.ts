@@ -339,6 +339,16 @@ export class Run {
   }
 
   /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. A PR follow-up run whose human decisions only asked
+   * questions answered each one, pushed no commit, and ends ANSWERED. The body is its final response.
+   */
+  async answer(body: string): Promise<never> {
+    await this.complete("ANSWERED");
+    await notify(() => activities.postFinalResponse({ sessionId: this.input.agentSessionId, body }));
+    throw this.ended();
+  }
+
+  /**
    * Specification sections 8 and 17. A repository that claims a different Product at the base
    * commit is a binding problem that only an operator can settle.
    */

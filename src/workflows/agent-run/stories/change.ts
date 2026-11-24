@@ -4,6 +4,8 @@ import { pinTargetBases, resolveFirstContext } from "../stages/context.js";
 import { prepareWorkspace, type StartPoint } from "../stages/preparation.js";
 import { publish, type ExistingPullRequest } from "../stages/publication.js";
 import { runRefiner } from "../stages/refiner.js";
+import type { DecisionAnswer } from "~/domain/refinement/refiner-proposal.js";
+import type { RefinerDecisionLine } from "~/prompts/refiner.js";
 import { refine } from "../stages/refinement.js";
 import { reportL0 } from "../stages/reports.js";
 import { selectRunTargets, type TargetRule } from "../stages/targets.js";
@@ -28,6 +30,15 @@ export interface ChangePlan {
   edges: Array<{ provider: string; consumer: string }>;
   /** Null publishes new pull requests. */
   pullRequest: ExistingPullRequest | null;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. The human decisions of a PR follow-up run that the
+   * refiner reads, and what the run does with the refiner's answers before the contract freezes. It
+   * may end the run ANSWERED. Absent for every other run.
+   */
+  decisions?: {
+    lines: RefinerDecisionLine[];
+    afterRefiner: (answers: DecisionAnswer[]) => Promise<void>;
+  };
 }
 
 /**
@@ -56,7 +67,13 @@ export const runChange = async (run: Run, plan: ChangePlan): Promise<never> => {
     startPoint: plan.startPoint,
     targetsOpen: plan.targetsOpen,
   });
-  const refiner = await runRefiner(run, { ...source, description: plan.description }, firstContext, workspace);
+  const refiner = await runRefiner(
+    run,
+    { ...source, description: plan.description, ...(plan.decisions === undefined ? {} : { humanDecisions: plan.decisions.lines }) },
+    firstContext,
+    workspace,
+  );
+  if (plan.decisions !== undefined) await plan.decisions.afterRefiner(refiner.decisionAnswers);
   const validation = await freezeValidationContract(run, refined, refiner.contractCriteria);
   const edges = refiner.edges ?? plan.edges;
   const verified = await runAttempts(run, {

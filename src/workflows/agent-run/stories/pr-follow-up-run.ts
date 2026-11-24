@@ -1,6 +1,10 @@
-import type { PrFollowUpInput, TriagedFinding } from "~/domain/pull-requests/pr-follow-up.js";
+import { patched } from "@temporalio/workflow";
+import type { HumanDecision, PrFollowUpInput, PrReviewFinding, TriagedFinding } from "~/domain/pull-requests/pr-follow-up.js";
+import type { DecisionAnswer } from "~/domain/refinement/refiner-proposal.js";
 // The workflow bundler resolves a relative path only, so value imports do not use the `~/` alias.
 import {
+  answeredResponse,
+  answersProgress,
   baseUpdateFindingLines,
   ciFindingLines,
   decisionPlace,
@@ -9,11 +13,14 @@ import {
   keptFindingLines,
   renderPrFollowUpDescription,
 } from "../../../domain/pull-requests/pr-follow-up.js";
-import { activities } from "../activities.js";
+import { activities, pullRequestReplyActivities } from "../activities.js";
+import { notify } from "../failures.js";
+import { PATCH } from "../patches.js";
 import type { Run, RunEnding } from "../run.js";
 import type { PrepareInput } from "../stages/preparation.js";
 import { triageReviewerFindings } from "../stages/triage.js";
-import { runChange } from "./change.js";
+import type { HandledThreads } from "../stages/publication.js";
+import { runChange, type ChangePlan } from "./change.js";
 import { deployFailureFindings } from "./new-run.js";
 
 /**
@@ -192,7 +199,39 @@ export const prFollowUpRun = async (run: Run, followUp: PrFollowUpInput): Promis
   if (followUp.trigger === "automatic" && parts.ciFindings.length > 0) {
     await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: followUp.pullRequestId, runId: run.id });
   }
+  // docs/specs/pr-feedback-loop.md, DI-21.216. The threads the run handles: each kept review app
+  // finding, and each human decision that asks for a change. The refiner stage drops the questions.
+  const sourceFindings: Array<PrReviewFinding & { fingerprint?: string }> = followUp.trigger === "reviewer" ? (followUp.findings ?? []) : parts.reviewAppFindings;
+  const findingByKey = new Map(sourceFindings.map((finding) => [finding.key, finding]));
+  const keptFindings = triaged.filter((finding) => finding.kept);
+  const handled: HandledThreads = {
+    kept: keptFindings.flatMap((finding) => {
+      const source = findingByKey.get(finding.key);
+      return source === undefined ? [] : [{ finding: source, defect: finding.defect }];
+    }),
+    decisions: followUp.decisions ?? [],
+  };
+  const decisions = followUp.decisions ?? [];
+  const answering = decisions.length > 0 && patched(PATCH.decisionAnswers);
+  const decisionPlan: ChangePlan["decisions"] = !answering
+    ? undefined
+    : {
+        lines: decisions.map((decision) => ({ key: decision.key, author: decision.author, place: decisionPlace(decision), body: decision.body })),
+        afterRefiner: async (answers) => {
+          const questions = questionsOf(decisions, answers);
+          const asked = new Set(questions.map(({ decision }) => decision.key));
+          handled.decisions = decisions.filter((decision) => !asked.has(decision.key));
+          if (questions.length === 0) return;
+          await notify(() => pullRequestReplyActivities.answerHumanDecisions({ tenantId: input.tenantId, pullRequestId: followUp.pullRequestId, answers: questions }));
+          // DI-21.215. Questions only, and nothing else to repair: the run answered, and it pushes nothing.
+          const nothingElse =
+            handled.decisions.length === 0 && keptFindings.length === 0 && parts.ciFindings.length === 0 && followUp.baseUpdate === undefined && deployFailureFindings(input).length === 0;
+          if (nothingElse) return await run.answer(answeredResponse(followUp.url, questions));
+          await run.progress(answersProgress(followUp.url, questions));
+        },
+      };
   return await runChange(run, {
+    ...(decisionPlan === undefined ? {} : { decisions: decisionPlan }),
     description,
     primaryRepository: followUp.repositoryFullName,
     targets: () => ({
@@ -218,6 +257,7 @@ export const prFollowUpRun = async (run: Run, followUp: PrFollowUpInput): Promis
       contractRevision: followUp.contractRevision,
       mergesBase: followUp.baseUpdate !== undefined,
       setMembers: members,
+      ...(patched(PATCH.handledThreadReplies) ? { handled } : {}),
       proofPack: {
         contractRevision: followUp.contractRevision,
         trigger: followUp.trigger,
@@ -228,5 +268,17 @@ export const prFollowUpRun = async (run: Run, followUp: PrFollowUpInput): Promis
         ...(parts.ciFindings.length === 0 ? {} : { ciFailures: parts.ciFindings.map((finding) => finding.name) }),
       },
     },
+  });
+};
+
+/**
+ * DI-21.215. The human decisions the refiner read as questions, each with its answer, in the order of
+ * the decisions. A decision with no answer, or a change request, is not a question.
+ */
+export const questionsOf = (decisions: readonly HumanDecision[], answers: readonly DecisionAnswer[]): Array<{ decision: HumanDecision; answer: string }> => {
+  const byKey = new Map(answers.map((answer) => [answer.key, answer]));
+  return decisions.flatMap((decision) => {
+    const answer = byKey.get(decision.key);
+    return answer === undefined || answer.changeRequested || answer.answer.trim() === "" ? [] : [{ decision, answer: answer.answer }];
   });
 };

@@ -25,6 +25,8 @@ export const REFINER_TARGETS_LIMIT = 10;
 export const REFINER_EDGES_LIMIT = 20;
 /** docs/specs/context-authority-and-cited-conflicts.md. The most conflicts one proposal reports. */
 export const REFINER_CONFLICTS_LIMIT = 5;
+/** DI-21.215. The most decision answers a proposal holds: the most decisions one PR follow-up run carries. */
+export const REFINER_DECISION_ANSWERS_LIMIT = 50;
 
 /**
  * docs/specs/refiner-agent.md. The refiner writes one proposal file. It is data, never code, and
@@ -97,6 +99,13 @@ const proposalSchemaOf = (criteriaLimit: number) =>
         .default([])
         // More reports than the limit never fail a proposal. Factoree checks the first ones only.
         .transform((conflicts) => conflicts.slice(0, REFINER_CONFLICTS_LIMIT)),
+      // docs/specs/pr-feedback-loop.md, DI-21.215. One entry per human decision of a PR follow-up
+      // run: whether it asks for a change, and the answer to a question. An older proposal, and a
+      // run with no human decision, names none.
+      decisionAnswers: z
+        .array(z.object({ key: z.string().min(1), changeRequested: z.boolean(), answer: z.string() }).strict())
+        .max(REFINER_DECISION_ANSWERS_LIMIT)
+        .default([]),
     })
     .strict();
 
@@ -189,7 +198,8 @@ export const REFINER_PROPOSAL_SCHEMA = [
   '  "missingHosts": [{ "host": string, "reason": string }],',
   '  "targets": [{ "repository": string, "file": string, "line": number, "reason": string }],',
   '  "edges": [{ "provider": string, "consumer": string, "file": string, "line": number }],',
-  '  "conflicts": [{ "subject": string, "left": { "item": string, "quote": string }, "right": { "item": string, "quote": string } }]',
+  '  "conflicts": [{ "subject": string, "left": { "item": string, "quote": string }, "right": { "item": string, "quote": string } }],',
+  '  "decisionAnswers": [{ "key": string, "changeRequested": boolean, "answer": string }]',
   "}",
 ].join("\n");
 
@@ -485,4 +495,29 @@ export const gateTargetProposals = (
     edges.push({ provider, consumer, file: edge.file, line: edge.line });
   }
   return { added, edges, refused };
+};
+
+/** docs/specs/pr-feedback-loop.md, DI-21.215. The refiner's reading of one human decision. */
+export interface DecisionAnswer {
+  key: string;
+  /** True when the decision asks for a change of the code or its behaviour. */
+  changeRequested: boolean;
+  /** The answer to a question, with files and lines. Empty for a change request. */
+  answer: string;
+}
+
+/**
+ * DI-21.215. The answers the gate keeps: one per decision key the run carries, the first one of a
+ * repeated key. A decision the refiner did not answer, or answered with an empty text as a
+ * question, counts as a change request, so a misread never drops a change a human asked for.
+ */
+export const gateDecisionAnswers = (answers: readonly DecisionAnswer[], keys: readonly string[]): DecisionAnswer[] => {
+  const byKey = new Map<string, DecisionAnswer>();
+  for (const answer of answers) if (!byKey.has(answer.key)) byKey.set(answer.key, answer);
+  return keys.map((key) => {
+    const answer = byKey.get(key);
+    if (answer === undefined) return { key, changeRequested: true, answer: "" };
+    const text = answer.answer.trim();
+    return { key, changeRequested: answer.changeRequested || text === "", answer: text };
+  });
 };

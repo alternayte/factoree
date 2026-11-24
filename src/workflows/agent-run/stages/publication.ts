@@ -1,11 +1,11 @@
 import { ApplicationFailure, deprecatePatch, isCancellation, ParentClosePolicy, startChild } from "@temporalio/workflow";
 import { WorkflowExecutionAlreadyStartedError } from "@temporalio/common";
 import type { PublishActivityOutput } from "~/activities/publishing.activities.js";
-import type { PrSetMember } from "~/domain/pull-requests/pr-follow-up.js";
+import type { HumanDecision, PrReviewFinding, PrSetMember } from "~/domain/pull-requests/pr-follow-up.js";
 // The workflow bundler resolves a relative path only, so value imports do not use the `~/` alias.
 import { completionInvariantFailures, prePublicationFailures } from "../../../domain/runs/completion-invariant.js";
 import { pullRequestWorkflow } from "../../pr.workflow.js";
-import { activities, publishingActivities } from "../activities.js";
+import { activities, publishingActivities, pullRequestReplyActivities } from "../activities.js";
 import { isConfigurationFault, notify, publicationFailureReasonOf, withCause } from "../failures.js";
 import { PATCH } from "../patches.js";
 import type { Run } from "../run.js";
@@ -36,6 +36,17 @@ export interface ExistingPullRequest {
   /** Slice 9. The members of the change set the pull request belongs to, or null. */
   setMembers: PrSetMember[] | null;
   proofPack: PullRequestFollowUpFacts;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.216. The threads the run handled, which get a reply after
+   * the commit is published. Absent in a history from before the replies.
+   */
+  handled?: HandledThreads;
+}
+
+/** DI-21.216. The kept review app findings and the human decisions a PR follow-up run carries out. */
+export interface HandledThreads {
+  kept: Array<{ finding: PrReviewFinding & { fingerprint?: string }; defect: string }>;
+  decisions: HumanDecision[];
 }
 
 export interface PublicationPlan {
@@ -359,6 +370,23 @@ export const publish = async (run: Run, plan: PublicationPlan): Promise<never> =
     work: workspace.work,
   });
   if (run.stopped) await run.cancel();
+  // docs/specs/pr-feedback-loop.md, DI-21.216. Each handled thread gets its reply once the commit is
+  // on the pull request. A failure costs only the replies.
+  const handled = pullRequest?.handled;
+  if (pullRequest !== null && handled !== undefined && (handled.kept.length > 0 || handled.decisions.length > 0)) {
+    const own = published.find((target) => target.publication.pullRequestUrl === pullRequest.url) ?? published[0];
+    if (own !== undefined) {
+      await notify(() =>
+        pullRequestReplyActivities.answerHandledThreads({
+          tenantId: input.tenantId,
+          pullRequestId: pullRequest.pullRequestId,
+          commitSha: own.publication.commitSha,
+          kept: handled.kept,
+          decisions: handled.decisions,
+        }),
+      );
+    }
+  }
   // SDD section 68. Every clause is checked from recorded facts. No agent claim reaches this check.
   const unmet = completionInvariantFailures({
     ...invariantFacts(run, plan, draft),

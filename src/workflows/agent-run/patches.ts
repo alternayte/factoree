@@ -54,4 +54,14 @@ export const PATCH = {
    * unchanged check passed in an earlier attempt is UNSTABLE when the reviewer passed the change.
    */
   crossAttemptUnstable: "cross-attempt-unstable",
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. A `patched` gate: the refiner of a PR follow-up run
+   * answers its human decisions, and a run of questions only ends ANSWERED.
+   */
+  decisionAnswers: "decision-answers",
+  /**
+   * DI-21.216. A `patched` gate: after publication, a PR follow-up run replies in each thread it
+   * handled, and answers the handled items with no thread in one comment.
+   */
+  handledThreadReplies: "handled-thread-replies",
 } as const;

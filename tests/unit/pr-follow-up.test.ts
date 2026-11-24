@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PrReviewFinding } from "~/domain/pull-requests/pr-follow-up.js";
+import { renderPrFollowUpDescription } from "~/domain/pull-requests/pr-follow-up.js";
+import { parseWorkItem } from "~/domain/refinement/work-item.js";
 import { decideTriage, parseTriageReport, TriageReportInvalidError } from "~/domain/review/triage-report.js";
 
 const finding = (key: string): PrReviewFinding => ({ key, reviewId: 1, commentId: 2, author: "review-bot[bot]", path: "src/a.ts", line: 3, body: "claim" });
@@ -34,5 +36,33 @@ describe("decideTriage", () => {
 
   it("refuses a report with another shape", () => {
     expect(() => parseTriageReport(JSON.stringify({ version: 1, findings: [{ key: "a", decision: "maybe" }] }))).toThrow(TriageReportInvalidError);
+  });
+});
+
+// docs/specs/pr-feedback-loop.md, DI-21.215. A question a human asks on the pull request is a decision
+// for the refiner to answer, never an open question of the issue that stops the run.
+describe("the work item text of a PR follow-up run with a question", () => {
+  it("opens no question of the work item", () => {
+    const description = renderPrFollowUpDescription({
+      description: "Show a loading state on the configs page.",
+      kept: [],
+      followUp: {
+        pullRequestId: "pr-1",
+        repositoryId: "repo-1",
+        repositoryFullName: "acme/web",
+        number: 7,
+        url: "https://github.com/acme/web/pull/7",
+        headBranch: "factoree/run-1",
+        headSha: "f".repeat(40),
+        baseSha: "a".repeat(40),
+        baseBranch: "main",
+        contractRevision: 2,
+        trigger: "human",
+        omittedFindings: 0,
+        decisions: [{ key: "comment-1", source: "github", author: "dana", body: "@factoreetemp why does this skip the cache?", path: null, line: null, commentId: 1, url: null }],
+      },
+    });
+    expect(description).toContain("why does this skip the cache?");
+    expect(parseWorkItem({ issueId: null, title: "Loading state", description, url: null, labels: [] }).openQuestions).toEqual([]);
   });
 });

@@ -232,6 +232,9 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
   const triageHangs = new Map<string, (call: TriageActivityInput) => { silenceLimitMs: number } | null>();
   /** docs/specs/pr-review-merge-and-deploy.md. Every recorded `triagePullRequestFindings` call, in order. */
   const triageCalls: TriageActivityInput[] = [];
+  // docs/specs/pr-feedback-loop.md, DI-21.215 and DI-21.216. The answers and the thread replies a PR follow-up run sends.
+  const decisionAnswerCalls: Array<{ pullRequestId: string; answers: Array<{ decision: { key: string }; answer: string }> }> = [];
+  const handledThreadCalls: Array<{ pullRequestId: string; commitSha: string; kept: unknown[]; decisions: Array<{ key: string }> }> = [];
   /** Every recorded `prepareTriageSandbox` input, in order. */
   const triagePrepared: PrepareSandboxActivityInput[] = [];
   /** The run ids whose live Implementer session the activity cancelled. */
@@ -1045,6 +1048,22 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
       return { decisions: [], reportUsable: true, reportProblem: null, hang: null };
     },
     answerDroppedFindings: async () => undefined,
+    answerHumanDecisions: async (activityInput: { pullRequestId: string; answers: Array<{ decision: { key: string }; answer: string }> }) => {
+      activityOrder.push("answerHumanDecisions");
+      decisionAnswerCalls.push(activityInput);
+      return { answered: activityInput.answers.length };
+    },
+    answerHandledThreads: async (activityInput: { pullRequestId: string; commitSha: string; kept: unknown[]; decisions: Array<{ key: string }> }) => {
+      activityOrder.push("answerHandledThreads");
+      handledThreadCalls.push(activityInput);
+      return { answered: activityInput.kept.length + activityInput.decisions.length };
+    },
+    // docs/specs/pr-review-merge-and-deploy.md. A PR follow-up run pushes one commit to the pull request it follows.
+    publishFollowUp: async (activityInput: PublishActivityInput & { pullRequestUrl: string }) => {
+      activityOrder.push("publishFollowUp");
+      publishCalls.push(activityInput);
+      return { patchSha256: "d".repeat(64), commitSha: "c".repeat(40), patchByteLength: 120, baseMove: null };
+    },
     publish: async (activityInput: PublishActivityInput): Promise<PublishActivityOutput> => {
       activityOrder.push("publish");
       publishCalls.push(activityInput);
@@ -1275,6 +1294,8 @@ export const createWorkflowHarness = (environment: () => TestWorkflowEnvironment
     triageProviderUnreachable,
     triageHangs,
     triageCalls,
+    decisionAnswerCalls,
+    handledThreadCalls,
     triagePrepared,
     cancelledLiveSessions,
     postedErrors,

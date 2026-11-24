@@ -4,7 +4,7 @@ import { egressBody } from "./egress.js";
 import { targetRepositoriesBody, type TargetRepositoryLine } from "./implementer.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REFINER_PROMPT_VERSION = "refiner@14";
+export const REFINER_PROMPT_VERSION = "refiner@15";
 
 export interface RefinerPromptFields {
   workItem: string;
@@ -37,7 +37,40 @@ export interface RefinerPromptFields {
    * the hosts only the bootstrap reached. Absent in a history recorded before it existed.
    */
   egress?: EgressFacts | null;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. The human decisions of a PR follow-up run. Absent or
+   * empty for every other run.
+   */
+  humanDecisions?: RefinerDecisionLine[];
 }
+
+/** DI-21.215. One human decision the refiner reads: its key, who wrote it, where, and the text. */
+export interface RefinerDecisionLine {
+  key: string;
+  author: string;
+  place: string;
+  body: string;
+}
+
+/** DI-21.215. The section and the rules of the human decisions of a PR follow-up run. */
+const decisionsSection = (decisions: RefinerDecisionLine[]): string[] =>
+  decisions.length === 0
+    ? []
+    : [
+        section(
+          "Human decisions on the pull request",
+          [
+            "Humans wrote these on the open pull request of this run, or in its Linear agent session. Each one outranks every other sentence of the Work Item.",
+            ...decisions.map((decision) => `- key \`${decision.key}\`, ${decision.author} in ${decision.place}: ${decision.body.replace(/\s+/g, " ").trim()}`),
+            "",
+            "Add one entry under `decisionAnswers` for each key above.",
+            "Set `changeRequested` to true when the decision asks for a change of the code or of its behaviour, even when it is phrased as a question, such as \"can you rename this?\". Leave `answer` empty then.",
+            "Set `changeRequested` to false only when the decision asks a question that changes nothing, such as \"why does this skip the cache?\". " +
+              "Then write the `answer`: two to six plain sentences that answer the question from the code, and name each file and line you cite as `path:line`. Do not promise a change.",
+            "When you are not sure that a decision changes nothing, set `changeRequested` to true.",
+          ].join("\n"),
+        ),
+      ];
 
 /** docs/specs/change-sets.md. One repository the refiner reads read-only, at the commit it reads. */
 export interface SiblingRepositoryLine extends TargetRepositoryLine {
@@ -101,6 +134,7 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
             ].join("\n"),
           ),
         ]),
+    ...decisionsSection(fields.humanDecisions ?? []),
     section("Skills", list(fields.skills, "None.")),
     ...(fields.egress === undefined || fields.egress === null
       ? []
@@ -147,6 +181,7 @@ export const renderRefinerPrompt = (fields: RefinerPromptFields): string =>
         "You must not propose a check that needs a host this sandbox does not reach. Name the host under `missingHosts` instead.",
         ...targetRules(fields.siblingRepositories ?? [], fields.targetRepositories?.length ?? 1),
         "Leave `targets` and `edges` empty when no rule above asks for them.",
+        "Leave `decisionAnswers` empty when no section \"Human decisions on the pull request\" is above.",
         "When two items under \"Selected context\" state rules that disagree for this change, add one entry under `conflicts`: the `subject`, and for each side the `item` as the Context Contract names it (`owner/repo path`) and a `quote` of 20 to 400 characters copied exactly from that file. " +
           "Factoree checks each quote in the file and asks a human which item governs. Report only a disagreement you can quote from both files. Two files that only mention the same word do not disagree. Leave `conflicts` empty when no items disagree.",
       ].join("\n"),

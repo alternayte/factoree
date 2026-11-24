@@ -16,6 +16,12 @@ import {
   type PrReviewFinding,
   type PullRequestReviewPort,
   type TriagedFinding,
+  decisionAnswerReply,
+  decisionPlace,
+  doneDecisionReply,
+  fixedFindingReply,
+  handledUnthreadedComment,
+  type HandledUnthreaded,
 } from "~/domain/pull-requests/pr-follow-up.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WorkItemPort } from "~/domain/runs/ports.js";
@@ -1234,6 +1240,103 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
   },
 
   /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. Answers each human decision on GitHub that asked a
+   * question and changed nothing: in its thread, or as a conversation comment that quotes it. A Linear
+   * decision is answered in the agent session by the run, so it is skipped here. A failed reply costs
+   * only that reply.
+   */
+  async answerHumanDecisions(input: {
+    tenantId: string;
+    pullRequestId: string;
+    answers: Array<{ decision: HumanDecision; answer: string }>;
+  }): Promise<{ answered: number }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null) return { answered: 0 };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    let answered = 0;
+    for (const { decision, answer } of input.answers) {
+      if (decision.source !== "github") continue;
+      const body = decisionAnswerReply(decision, answer);
+      try {
+        if (decision.commentId === null) {
+          await dependencies.reviews.comment(record.repositoryFullName, record.number, body, origin.githubInstallationId);
+        } else {
+          await dependencies.reviews.reply(record.repositoryFullName, record.number, threadOfDecision(decision), body, origin.githubInstallationId);
+        }
+        answered += 1;
+      } catch (error) {
+        dependencies.logger.warn("the answer to a human decision did not reach the pull request", { pull_request: label, decision: decision.key, error: String(error), step: "answer" });
+      }
+    }
+    return { answered };
+  },
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.216. After a PR follow-up run published its commit: a
+   * reply in each thread it handled ("Fixed in" for a kept review app finding, "Done in" for a human
+   * decision), and one comment for the handled items with no thread, whose fingerprints the record
+   * keeps so no later plan triages them again. Factoree never resolves a thread. A failed reply
+   * costs only that reply.
+   */
+  async answerHandledThreads(input: {
+    tenantId: string;
+    pullRequestId: string;
+    commitSha: string;
+    kept: Array<{ finding: PrReviewFinding & { fingerprint?: string }; defect: string }>;
+    decisions: HumanDecision[];
+  }): Promise<{ answered: number }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null) return { answered: 0 };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    const installationId = origin.githubInstallationId;
+    let answered = 0;
+    const unthreaded: HandledUnthreaded[] = [];
+    const fingerprints: string[] = [];
+    const reply = async (finding: PrReviewFinding, body: string, key: string): Promise<void> => {
+      try {
+        await dependencies.reviews.reply(record.repositoryFullName, record.number, finding, body, installationId);
+        answered += 1;
+      } catch (error) {
+        dependencies.logger.warn("the reply to a handled thread did not reach the pull request", { pull_request: label, item: key, error: String(error), step: "handled_threads" });
+      }
+    };
+    for (const { finding, defect } of input.kept) {
+      if (finding.commentId === null) {
+        unthreaded.push({ kind: "fixed", author: finding.author, place: `at ${findingPlace(finding)}`, text: defect });
+        if (finding.fingerprint !== undefined) fingerprints.push(finding.fingerprint);
+        continue;
+      }
+      await reply(finding, fixedFindingReply(input.commitSha, defect), finding.key);
+    }
+    for (const decision of input.decisions) {
+      // A Linear decision has its link on the pull request already, and its answer in the session.
+      if (decision.source !== "github") continue;
+      if (decision.commentId === null) {
+        unthreaded.push({ kind: "done", author: decision.author, place: `in ${decisionPlace(decision)}`, text: decision.body });
+        continue;
+      }
+      await reply(threadOfDecision(decision), doneDecisionReply(input.commitSha), decision.key);
+    }
+    if (unthreaded.length > 0) {
+      try {
+        await dependencies.reviews.comment(record.repositoryFullName, record.number, handledUnthreadedComment(input.commitSha, unthreaded), installationId);
+        answered += unthreaded.length;
+        if (fingerprints.length > 0) await dependencies.pullRequests.addAnsweredFingerprints(input.tenantId, record.id, fingerprints);
+      } catch (error) {
+        dependencies.logger.warn("the comment on the handled items with no thread did not reach the pull request", {
+          pull_request: label,
+          items: unthreaded.length,
+          error: String(error),
+          step: "handled_threads",
+        });
+      }
+    }
+    return { answered };
+  },
+
+  /**
    * The spec, DI-21.114: counts one PR follow-up run from the PR reviewer, once its triage kept a
    * finding. The run id keys the count, so a retry after a successful write counts nothing.
    */
@@ -1512,4 +1615,15 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       }
     }
   },
+});
+
+/** DI-21.215. The thread a human decision sits in, in the shape the reply port takes. */
+const threadOfDecision = (decision: HumanDecision): PrReviewFinding => ({
+  key: decision.key,
+  reviewId: 0,
+  commentId: decision.commentId,
+  author: decision.author,
+  path: decision.path,
+  line: decision.line,
+  body: decision.body,
 });

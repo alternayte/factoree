@@ -43,12 +43,15 @@ import {
   gateTargetProposals,
   type AddedTarget,
   type GatedTargets,
+  gateDecisionAnswers,
+  type DecisionAnswer,
 } from "~/domain/refinement/refiner-proposal.js";
 import {
   REFINER_LIMIT_CORRECTION_VERSION,
   REFINER_PROMPT_VERSION,
   renderRefinerLimitCorrectionPrompt,
   renderRefinerPrompt,
+  type RefinerDecisionLine,
 } from "~/prompts/refiner.js";
 import { metrics } from "~/telemetry/metrics.js";
 import type {
@@ -185,6 +188,11 @@ export interface ProposeRefinementActivityInput {
    * a history recorded before the setting existed, where the cap was 20.
    */
   criteriaLimit?: number;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. The human decisions of a PR follow-up run, with the
+   * place each one sits. Absent for every other run, and in an older history.
+   */
+  humanDecisions?: RefinerDecisionLine[];
 }
 
 export interface ProposeRefinementActivityOutput {
@@ -235,6 +243,11 @@ export interface ProposeRefinementActivityOutput {
    * history.
    */
   conflicts?: ConflictReport[];
+  /**
+   * DI-21.215. One answer per human decision of the input, in its order. Absent when the input
+   * carried none.
+   */
+  decisionAnswers?: DecisionAnswer[];
 }
 
 const REFINER_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -401,6 +414,7 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         skills: input.skills,
         egress: input.egress ?? null,
         ...((input.verifyCommands ?? []).length === 0 ? {} : { verifyCommands: input.verifyCommands }),
+        ...((input.humanDecisions ?? []).length === 0 ? {} : { humanDecisions: input.humanDecisions }),
       });
     const prompt = promptFor(proposalPath);
 
@@ -720,6 +734,14 @@ export const createRefinementActivities = (dependencies: RefinementActivityDepen
         missingHosts: hosts.missing,
         ...(targetGate === null ? {} : { addedTargets: targetGate.added, edges: targetGate.edges }),
         ...(parsed.conflicts.length === 0 ? {} : { conflicts: parsed.conflicts }),
+        ...((input.humanDecisions ?? []).length === 0
+          ? {}
+          : {
+              decisionAnswers: gateDecisionAnswers(
+                parsed.decisionAnswers.map((answer) => ({ ...answer, answer: agent.redactor.redactText(answer.answer) })),
+                (input.humanDecisions ?? []).map((decision) => decision.key),
+              ),
+            }),
       };
     } finally {
       clearInterval(heartbeat);

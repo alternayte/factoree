@@ -59,6 +59,7 @@ const build = (options: { followUps?: number; saysoConclusion?: string; answered
   };
   const said: string[] = [];
   const commented: string[] = [];
+  const replied: Array<{ commentId: number | null; body: string }> = [];
   const store = {
     find: () => Promise.resolve({ ...record }),
     originFacts: () =>
@@ -109,7 +110,10 @@ const build = (options: { followUps?: number; saysoConclusion?: string; answered
   const reviews: PullRequestReviewPort = {
     review: reject,
     canWrite: reject,
-    reply: reject,
+    reply: (_slug, _number, finding, body) => {
+      replied.push({ commentId: finding.commentId, body });
+      return Promise.resolve();
+    },
     comment: (_slug, _number, body) => {
       commented.push(body);
       return Promise.resolve();
@@ -177,7 +181,7 @@ const build = (options: { followUps?: number; saysoConclusion?: string; answered
   });
   const plan = (decisions: DecisionEvent[] = []) =>
     activities.planSettledFollowUp({ tenantId: "tenant-1", pullRequestId: "pr-1", decisions, settleKey: "github:check-1" });
-  return { plan, said, commented, record };
+  return { plan, said, commented, replied, record, activities };
 };
 
 const mention: DecisionEvent = {
@@ -257,5 +261,71 @@ describe("planSettledFollowUp", () => {
     expect(said).toHaveLength(1);
     expect(said[0]).toContain("The check of the review app sayso did not pass");
     expect(commented).toEqual(said);
+  });
+});
+
+// docs/specs/pr-feedback-loop.md, DI-21.215 and DI-21.216. The replies a PR follow-up run sends on GitHub.
+describe("the replies of a PR follow-up run", () => {
+  const finding = (key: string, commentId: number | null, fingerprint?: string) => ({
+    key,
+    reviewId: 1,
+    commentId,
+    author: "sayso[bot]",
+    path: "src/api.ts",
+    line: 40,
+    body: "S-3 · blocker. The caller passes null.",
+    ...(fingerprint === undefined ? {} : { fingerprint }),
+  });
+  const decision = (key: string, commentId: number | null, source: "github" | "linear" = "github") => ({
+    key,
+    source,
+    author: "dana",
+    body: "@factoreetemp rename the prop to label",
+    path: commentId === null ? null : "src/page.tsx",
+    line: commentId === null ? null : 4,
+    commentId,
+    url: null,
+  });
+
+  it("replies Fixed to a kept thread finding, Done to a decision in a thread, and lists the rest in one comment", async () => {
+    const { activities, replied, commented, record } = build();
+    await activities.answerHandledThreads({
+      tenantId: "tenant-1",
+      pullRequestId: "pr-1",
+      commitSha: "c".repeat(40),
+      kept: [
+        { finding: finding("comment-7", 7), defect: "The caller passes null to the parser." },
+        { finding: finding("annotation-1", null, "f".repeat(64)), defect: "The handler drops the error." },
+      ],
+      decisions: [decision("review-comment-12", 12), decision("comment-50", null), decision("linear-1", null, "linear")],
+    });
+    expect(replied).toEqual([
+      { commentId: 7, body: `Fixed in ${"c".repeat(12)}: The caller passes null to the parser.` },
+      { commentId: 12, body: `Done in ${"c".repeat(12)}.` },
+    ]);
+    expect(commented).toHaveLength(1);
+    expect(commented[0]).toContain(`Factoree pushed ${"c".repeat(12)}, which handles:`);
+    expect(commented[0]).toContain("- Fixed: sayso[bot] at src/api.ts:40: The handler drops the error.");
+    expect(commented[0]).toContain("- Done: dana in the pull request conversation: @factoreetemp rename the prop to label");
+    expect(commented[0]).not.toContain("Linear");
+    expect(record.answeredFindingFingerprints).toEqual(["f".repeat(64)]);
+  });
+
+  it("answers a question in its thread, quotes a conversation question, and leaves a Linear question to the session", async () => {
+    const { activities, replied, commented } = build();
+    await activities.answerHumanDecisions({
+      tenantId: "tenant-1",
+      pullRequestId: "pr-1",
+      answers: [
+        { decision: { ...decision("review-comment-12", 12), body: "why does this skip the cache?" }, answer: "A signed-in user skips it, see src/cache.ts:12." },
+        { decision: { ...decision("comment-50", null), body: "why the new prop?" }, answer: "The page reads it, see src/page.tsx:4." },
+        { decision: { ...decision("linear-1", null, "linear"), body: "why?" }, answer: "Because." },
+      ],
+    });
+    expect(replied.map((entry) => entry.commentId)).toEqual([12]);
+    expect(replied[0]?.body).toContain("A signed-in user skips it, see src/cache.ts:12.");
+    expect(replied[0]?.body).toContain("Factoree answered this question and changed nothing.");
+    expect(commented).toHaveLength(1);
+    expect(commented[0]?.startsWith("> dana: why the new prop?")).toBe(true);
   });
 });

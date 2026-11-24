@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  gateDecisionAnswers,
   gateTargetProposals,
   gateRefinerProposal,
   overLimitMessage,
@@ -278,6 +279,34 @@ describe("gateTargetProposals (docs/specs/change-sets.md, DI-21.139)", () => {
       "did not add acme/web as a target",
       "did not add other/repo as a target",
       "did not record the edge from acme/api to acme/web",
+    ]);
+  });
+});
+
+/** docs/specs/pr-feedback-loop.md, DI-21.215. The refiner reads each human decision as a change or a question. */
+describe("the decision answers of a refiner proposal", () => {
+  it("parses the answers, and an older proposal holds none", () => {
+    expect(parseRefinerProposal(proposal([])).decisionAnswers).toEqual([]);
+    const parsed = parseRefinerProposal(
+      JSON.stringify({ criteria: [], questions: [], patterns: [], decisionAnswers: [{ key: "comment-1", changeRequested: false, answer: "See src/a.ts:3." }] }),
+    );
+    expect(parsed.decisionAnswers).toEqual([{ key: "comment-1", changeRequested: false, answer: "See src/a.ts:3." }]);
+  });
+
+  it("keeps one answer per decision in decision order, and reads a missing or empty answer as a change request", () => {
+    const gated = gateDecisionAnswers(
+      [
+        { key: "b", changeRequested: false, answer: "  Because src/b.ts:9 caches it. " },
+        { key: "b", changeRequested: true, answer: "" },
+        { key: "c", changeRequested: false, answer: "   " },
+        { key: "x", changeRequested: false, answer: "Not a decision of the run." },
+      ],
+      ["a", "b", "c"],
+    );
+    expect(gated).toEqual([
+      { key: "a", changeRequested: true, answer: "" },
+      { key: "b", changeRequested: false, answer: "Because src/b.ts:9 caches it." },
+      { key: "c", changeRequested: true, answer: "" },
     ]);
   });
 });
