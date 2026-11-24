@@ -63,6 +63,7 @@ const build = (
   const counted: string[] = [];
   const store: PullRequestStore = {
     recordPublished: reject,
+    listOpenByAgentSession: reject,
     findByNumber: reject,
     findByCommit: reject,
     recordEvent: reject,
@@ -158,7 +159,7 @@ const build = (
         return Promise.resolve();
       },
     },
-    reviews: { reviewerFindings: reject, review: reject, canWrite: reject, reply: reject, comment: reject },
+    reviews: { reviewerFindings: reject, review: reject, canWrite: reject, reply: reject, comment: reject, reviews: reject, checksOnCommit: reject, annotations: reject, reviewThreads: reject, jobLog: reject, react: reject },
     repositories: { listByProduct: reject },
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),

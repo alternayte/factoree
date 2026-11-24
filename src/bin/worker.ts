@@ -586,6 +586,7 @@ const worker = await Worker.create({
     autoMerge: new GitHubAutoMerge({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     // docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR follow-up runs.
     pullRequestReviews: new GitHubPullRequestReviews({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+    factoreeAppSlug: async () => (await settings.read()).github.appSlug,
     // Slice 5. The deploy report reads compares and deployments, and writes nothing on GitHub.
     deploys: new GitHubDeployments({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     // docs/specs/change-sets.md, slices 8 and 9. The pull requests of a set, and the factoree/change-set status.

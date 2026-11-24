@@ -89,6 +89,8 @@ export interface PullRequestReviewEvent {
   /** GitHub's author association, such as OWNER, MEMBER or COLLABORATOR. */
   authorAssociation: string;
   body: string | null;
+  /** docs/specs/pr-feedback-loop.md. True when the review body mentions the Factoree app. Absent before review apps. */
+  mentions?: boolean;
 }
 
 /** `check_run`. The app slug pins a check to the app that reported it. */

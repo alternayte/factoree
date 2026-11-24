@@ -354,6 +354,8 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
       }
       const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
       if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      // docs/specs/pr-feedback-loop.md. A review body that mentions Factoree is a human decision.
+      const reviewAppSlug = (await dependencies.factoreeAppSlug?.()) ?? null;
       const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, pullRequest.number, {
         kind: "review",
         deliveryId: deliveryIdOr(`pull_request_review:${repository.full_name}#${String(pullRequest.number)}:${String(review.id)}:${action}`),
@@ -365,6 +367,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         reviewerType: review.user.type,
         authorAssociation: review.author_association,
         body: review.body ?? null,
+        mentions: mentionsApp(review.body ?? "", reviewAppSlug),
       });
       return reply.code(200).send(routedReply(routed));
     }

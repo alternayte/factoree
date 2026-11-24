@@ -19,6 +19,8 @@ export interface PullRequestFollowUpFacts {
   kept: Array<{ evidence: string; defect: string; rule: string }>;
   dropped: number;
   plainComments: string[];
+  /** DI-21.208. The CI checks that failed on the head the run read. */
+  ciFailures?: string[];
 }
 
 /**

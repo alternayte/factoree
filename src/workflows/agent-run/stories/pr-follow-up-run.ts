@@ -2,10 +2,14 @@ import type { PrFollowUpInput, TriagedFinding } from "~/domain/pull-requests/pr-
 // The workflow bundler resolves a relative path only, so value imports do not use the `~/` alias.
 import {
   baseUpdateFindingLines,
+  ciFindingLines,
+  decisionPlace,
   findingPlace,
+  followUpParts,
   keptFindingLines,
   renderPrFollowUpDescription,
 } from "../../../domain/pull-requests/pr-follow-up.js";
+import { activities } from "../activities.js";
 import type { Run, RunEnding } from "../run.js";
 import type { PrepareInput } from "../stages/preparation.js";
 import { triageReviewerFindings } from "../stages/triage.js";
@@ -18,29 +22,55 @@ import { deployFailureFindings } from "./new-run.js";
  */
 export const prFollowUpEnding = (followUp: PrFollowUpInput): RunEnding => ({
   failureNote:
-    `This PR follow-up run pushed nothing to ${followUp.url}. Request changes on the pull request, ` +
-    "or run the PR reviewer check again, to start another PR follow-up run.",
+    `This PR follow-up run pushed nothing to ${followUp.url}. Mention Factoree on the pull request with what to change, ` +
+    "request changes there, or reply here, to start another PR follow-up run.",
   draftOnInternalError: false,
 });
 
+/** The names of the review apps and the CI checks of an automatic run, for the greeting and the proof pack. */
+const automaticSources = (followUp: PrFollowUpInput): string => {
+  if (followUp.trigger === "reviewer") return reviewerName(followUp);
+  const parts = followUpParts(followUp);
+  const names = [...new Set(parts.reviewAppFindings.map((finding) => finding.appSlug)), ...parts.ciFindings.map((finding) => finding.name)];
+  return names.length === 0 ? "The review apps" : names.join(", ");
+};
+
+/** The humans whose decisions started a run. */
+const deciders = (followUp: PrFollowUpInput): string => {
+  const names = [...new Set(followUpParts(followUp).decisions.map((decision) => decision.author))];
+  return names.length === 0 ? (followUp.reviewerLogin ?? "A human") : names.join(", ");
+};
+
 export const prFollowUpGreeting = (followUp: PrFollowUpInput): string =>
   followUp.trigger === "human"
-    ? `${followUp.reviewerLogin ?? "A human"} requested changes on ${followUp.url}, so Factoree started a PR follow-up run.`
+    ? `${deciders(followUp)} asked for changes on ${followUp.url}, so Factoree started a PR follow-up run.`
     : followUp.trigger === "base"
       ? `Factoree could not bring ${followUp.url} current with ${followUp.baseBranch} on its own, so it started a PR follow-up run.`
-      : `The PR reviewer check failed on ${followUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`;
+      : followUp.trigger === "reviewer"
+        ? `The PR reviewer check failed on ${followUp.url}, so Factoree started a PR follow-up run. It triages the findings first.`
+        : `${automaticSources(followUp)} found problems on ${followUp.url}, so Factoree started a PR follow-up run.` +
+          (followUpParts(followUp).reviewAppFindings.length === 0 ? "" : " It triages the review app findings first.");
 
-/** DI-19.04. A human review is a decision, as a Linear reply is, so the implementer follows it. */
-export const humanReviewInput = (followUp: PrFollowUpInput): string | null =>
-  followUp.trigger !== "human"
-    ? null
-    : [
-        `${followUp.reviewerLogin ?? "A human"} requested changes on the pull request ${followUp.url}:`,
-        ...followUp.findings.map((finding) => `- ${findingPlace(finding)}: ${finding.body}`),
-      ].join("\n");
+/**
+ * DI-19.04. A human review is a decision, as a Linear reply is, so the implementer follows it.
+ * docs/specs/pr-feedback-loop.md: every human decision of the run is one.
+ */
+export const humanReviewInput = (followUp: PrFollowUpInput): string | null => {
+  if (followUp.trigger !== "human") return null;
+  if (followUp.decisions === undefined) {
+    return [
+      `${followUp.reviewerLogin ?? "A human"} requested changes on the pull request ${followUp.url}:`,
+      ...(followUp.findings ?? []).map((finding) => `- ${findingPlace(finding)}: ${finding.body}`),
+    ].join("\n");
+  }
+  return [
+    `Humans decided on the pull request ${followUp.url}:`,
+    ...followUp.decisions.map((decision) => `- ${decision.author} (${decisionPlace(decision)}): ${decision.body}`),
+  ].join("\n");
+};
 
 const reviewerName = (followUp: PrFollowUpInput): string =>
-  followUp.reviewer === null ? "PR reviewer" : `${followUp.reviewer.appSlug} (${followUp.reviewer.checkName})`;
+  followUp.reviewer === undefined || followUp.reviewer === null ? "PR reviewer" : `${followUp.reviewer.appSlug} (${followUp.reviewer.checkName})`;
 
 /**
  * D2 and slice 4. The work sprite holds the full change of the pull request: the verified base,
@@ -76,23 +106,40 @@ export const prFollowUpRun = async (run: Run, followUp: PrFollowUpInput): Promis
   const { input } = run;
   const members = followUp.changeSet?.members ?? null;
   const memberOf = (slug: string) => members?.find((member) => member.repositoryFullName.toLowerCase() === slug.toLowerCase()) ?? null;
+  const parts = followUpParts(followUp);
   let triaged: TriagedFinding[] = [];
   let description = followUp.trigger === "reviewer" ? input.workItem.description : renderPrFollowUpDescription({ description: input.workItem.description, followUp, kept: [] });
-  let initialFindings = [...(followUp.baseUpdate === undefined ? [] : baseUpdateFindingLines(followUp.baseUpdate)), ...deployFailureFindings(input)];
-  if (followUp.trigger === "reviewer") {
-    triaged = await triageReviewerFindings(run, {
-      pullRequestId: followUp.pullRequestId,
-      url: followUp.url,
-      repositoryId: followUp.repositoryId,
-      repositoryFullName: followUp.repositoryFullName,
-      baseSha: followUp.baseSha,
-      headSha: followUp.headSha,
-      reviewerName: reviewerName(followUp),
-      findings: followUp.findings,
-    });
+  let initialFindings = [
+    ...(followUp.baseUpdate === undefined ? [] : baseUpdateFindingLines(followUp.baseUpdate)),
+    ...deployFailureFindings(input),
+    ...ciFindingLines(parts.ciFindings),
+  ];
+  // A reviewer run of an open history triages always, as it did before the review apps.
+  if (followUp.trigger === "reviewer" || parts.reviewAppFindings.length > 0) {
+    // docs/specs/pr-feedback-loop.md, DI-21.210. A run with failed CI checks or human decisions goes
+    // on when the triage keeps nothing. Only an automatic run counts toward the limit.
+    const legacy = followUp.trigger === "reviewer";
+    triaged = await triageReviewerFindings(
+      run,
+      {
+        pullRequestId: followUp.pullRequestId,
+        url: followUp.url,
+        repositoryId: followUp.repositoryId,
+        repositoryFullName: followUp.repositoryFullName,
+        baseSha: followUp.baseSha,
+        headSha: followUp.headSha,
+        reviewerName: legacy ? reviewerName(followUp) : [...new Set(parts.reviewAppFindings.map((finding) => finding.appSlug))].join(", "),
+        findings: legacy ? (followUp.findings ?? []) : parts.reviewAppFindings,
+      },
+      legacy ? undefined : { endWhenNothingKept: followUp.trigger === "automatic" && parts.ciFindings.length === 0, count: followUp.trigger === "automatic" },
+    );
     const kept = triaged.filter((finding) => finding.kept);
     description = renderPrFollowUpDescription({ description: input.workItem.description, followUp, kept });
-    initialFindings = keptFindingLines(kept);
+    initialFindings = [...initialFindings, ...keptFindingLines(kept)];
+  }
+  // DI-21.210. An automatic run with failed CI checks counts once, by its run id, whatever the triage kept.
+  if (followUp.trigger === "automatic" && parts.ciFindings.length > 0) {
+    await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: followUp.pullRequestId, runId: run.id });
   }
   return await runChange(run, {
     description,
@@ -123,10 +170,11 @@ export const prFollowUpRun = async (run: Run, followUp: PrFollowUpInput): Promis
       proofPack: {
         contractRevision: followUp.contractRevision,
         trigger: followUp.trigger,
-        startedBy: followUp.trigger === "base" ? followUp.baseBranch : followUp.trigger === "human" ? (followUp.reviewerLogin ?? "A human") : reviewerName(followUp),
+        startedBy: followUp.trigger === "base" ? followUp.baseBranch : followUp.trigger === "human" ? deciders(followUp) : automaticSources(followUp),
         kept: triaged.filter((finding) => finding.kept).map((finding) => ({ evidence: finding.evidence, defect: finding.defect, rule: finding.rule })),
         dropped: triaged.filter((finding) => !finding.kept).length,
-        plainComments: followUp.plainComments,
+        plainComments: followUp.plainComments ?? [],
+        ...(parts.ciFindings.length === 0 ? {} : { ciFailures: parts.ciFindings.map((finding) => finding.name) }),
       },
     },
   });

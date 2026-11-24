@@ -12,7 +12,8 @@ export interface PullRequestSignal {
 }
 
 export interface PullRequestEventRouterDependencies {
-  pullRequests: Pick<PullRequestStore, "findByNumber" | "findByCommit" | "recordEvent" | "listOpenByBase" | "listMergedForDeploy">;
+  pullRequests: Pick<PullRequestStore, "findByNumber" | "findByCommit" | "recordEvent" | "listOpenByBase" | "listMergedForDeploy"> &
+    Partial<Pick<PullRequestStore, "listOpenByAgentSession">>;
   /** Signal-with-start: it reaches the PR workflow that runs, or starts it. */
   signal: (input: PullRequestSignal) => Promise<void>;
   logger: Logger;
@@ -88,6 +89,20 @@ export class PullRequestEventRouter {
       if (delivered === "routed" || outcome === "unmatched") outcome = delivered;
     }
     return outcome;
+  }
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.211. A reply in the Linear agent session while the pull
+   * request of its run is open. The first open pull request of the session takes it: in a change set
+   * its PR follow-up run runs as the whole set. The answer is the workflow id that took it, or null
+   * when the session has no open pull request.
+   */
+  async byAgentSession(tenantId: string, agentSessionId: string, event: Extract<PullRequestEvent, { kind: "linear_reply" }>): Promise<string | null> {
+    const open = (await this.dependencies.pullRequests.listOpenByAgentSession?.(tenantId, agentSessionId)) ?? [];
+    const pullRequest = open[0];
+    if (pullRequest === undefined) return null;
+    await this.dependencies.signal({ workflowId: pullRequest.workflowId, tenantId: pullRequest.tenantId, pullRequestId: pullRequest.id, event });
+    return pullRequest.workflowId;
   }
 
   private now(): Date {

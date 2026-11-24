@@ -206,6 +206,8 @@ export interface ActivityDependencies {
    * follow-up runs. A worker without them starts no PR follow-up run.
    */
   pullRequestReviews?: PullRequestReviewPort | undefined;
+  /** docs/specs/pr-feedback-loop.md. The slug of Factoree's own GitHub App, from the install settings. */
+  factoreeAppSlug?: (() => Promise<string | null>) | undefined;
   /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The deploy reads. A worker without them reports no deploy. */
   deploys?: DeployPort | undefined;
   /** docs/specs/change-sets.md, slices 8 and 9. The pull requests of a change set. A worker without them knows no set. */
@@ -257,6 +259,7 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   countReviewerFollowUp: () => Promise.reject(new Error("this worker holds no pull request store")),
   markBringCurrentTried: () => Promise.reject(new Error("this worker holds no pull request store")),
   listOpenByBase: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listOpenByAgentSession: () => Promise.reject(new Error("this worker holds no pull request store")),
   listEvents: () => Promise.reject(new Error("this worker holds no pull request store")),
   listMergedForDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
   listDeploys: () => Promise.reject(new Error("this worker holds no pull request store")),
@@ -275,6 +278,12 @@ const NO_REVIEWS: PullRequestReviewPort = {
   canWrite: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   reply: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   comment: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  reviews: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  checksOnCommit: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  annotations: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  reviewThreads: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  jobLog: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  react: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
 };
 
 const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
@@ -620,6 +629,8 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
     deploys: dependencies.deploys ?? NO_DEPLOYS,
     changeSets: dependencies.changeSets ?? NO_CHANGE_SETS,
     commitStatuses: dependencies.commitStatuses ?? NO_COMMIT_STATUSES,
+    ...(dependencies.factoreeAppSlug === undefined ? {} : { factoreeAppSlug: dependencies.factoreeAppSlug }),
+    redactText: (text: string) => dependencies.redactor.redactText(text),
   }),
   /** docs/specs/drain-mode.md. A PR workflow waits before it starts a run while drain mode is on. */
   async isDrainModeOn(): Promise<boolean> {

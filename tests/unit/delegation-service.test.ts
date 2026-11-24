@@ -524,7 +524,7 @@ describe("the delegation service and the organization skills repository", () => 
         expect(await service.handleAgentSessionEvent(reply(body), `delivery-${body}`)).toEqual({ kind: "follow_up_refused", status: "FAILED" });
       }
       expect(starter.start).not.toHaveBeenCalled();
-      expect(postedResponses).toEqual([expect.stringContaining("Request changes on the pull request"), expect.stringContaining("Request changes")]);
+      expect(postedResponses).toEqual([expect.stringContaining("no longer open"), expect.stringContaining("no longer open")]);
     });
 
     // docs/specs/draft-of-failed-run.md. The typed reply and the chosen option take one matcher.

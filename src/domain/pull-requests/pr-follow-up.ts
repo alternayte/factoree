@@ -6,12 +6,24 @@
  * The agent-run workflow imports this module, so it imports nothing at run time.
  */
 import type { PullRequestEvent } from "./pull-request-event.js";
+import type {
+  CheckAnnotation,
+  CheckOnCommit,
+  CiFinding,
+  PullRequestReviewOnGitHub,
+  ReviewThreadOnGitHub,
+} from "./review-apps.js";
 
 /**
  * What started a PR follow-up run. base: a bring-current update that conflicted or failed its check
- * (slice 4). It does not count toward the limit of PR reviewer follow-up runs.
+ * (slice 4). It does not count toward the limit of automatic follow-up runs.
+ *
+ * docs/specs/pr-feedback-loop.md, DI-21.210. automatic: the findings of review apps or failed CI
+ * checks, with no human decision. human: at least one human decision, with any automatic findings
+ * of the same head. reviewer: a run of a history from before the review apps, started by the failed
+ * check of the named PR reviewer. Such a run still replays, and reads as automatic.
  */
-export type PrFollowUpTrigger = "reviewer" | "human" | "base";
+export type PrFollowUpTrigger = "automatic" | "human" | "base" | "reviewer";
 
 /**
  * docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.119. The bring-current update that a
@@ -101,6 +113,31 @@ export interface TriagedFinding {
   reason: string;
 }
 
+/** docs/specs/pr-feedback-loop.md. A finding of one review app: a thread it started, an annotation or a review body. */
+export interface ReviewAppFinding extends PrReviewFinding {
+  /** The review app, in lower case. */
+  appSlug: string;
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.210. One human decision on the pull request: a "request
+ * changes" review, a mention of Factoree from a user with write access, or a reply in the Linear
+ * agent session while the pull request is open. It skips triage and outranks every other sentence.
+ */
+export interface HumanDecision {
+  /** `review-<id>`, `review-comment-<id>`, `comment-<id>` or `linear-<reply id>`. */
+  key: string;
+  source: "github" | "linear";
+  author: string;
+  body: string;
+  /** The file and the line a review comment sits on, or null. */
+  path: string | null;
+  line: number | null;
+  /** The review comment to reply in, or null for a conversation comment, a review body or a Linear reply. */
+  commentId: number | null;
+  url: string | null;
+}
+
 /** The pull request a PR follow-up run works on, and what started it. */
 export interface PrFollowUpInput {
   pullRequestId: string;
@@ -120,16 +157,22 @@ export interface PrFollowUpInput {
   /** The contract revision this run freezes. The proof pack names it, and the record takes it at publication. */
   contractRevision: number;
   trigger: PrFollowUpTrigger;
-  /** The PR reviewer, as `slug` and check name, for the reviewer trigger. */
-  reviewer: { appSlug: string; checkName: string } | null;
-  /** The human who requested changes, for the human trigger. */
-  reviewerLogin: string | null;
-  /** The PR reviewer findings to triage, or the sentences of the human review. */
-  findings: PrReviewFinding[];
+  /** A history from before the review apps: the PR reviewer, as `slug` and check name, for the reviewer trigger. */
+  reviewer?: { appSlug: string; checkName: string } | null;
+  /** A history from before the review apps: the human who requested changes, for the human trigger. */
+  reviewerLogin?: string | null;
+  /** A history from before the review apps: the PR reviewer findings to triage, or the sentences of the human review. */
+  findings?: PrReviewFinding[];
   /** The findings past MAX_FINDINGS that the run does not carry. */
   omittedFindings: number;
-  /** Plain comments and suggestions on the pull request that started nothing. The proof pack lists them. */
-  plainComments: string[];
+  /** A history from before the review apps: plain comments that started nothing. */
+  plainComments?: string[];
+  /** docs/specs/pr-feedback-loop.md. The review app findings to triage. */
+  reviewAppFindings?: ReviewAppFinding[];
+  /** docs/specs/pr-feedback-loop.md. The failed CI checks of the head. They skip triage. */
+  ciFindings?: CiFinding[];
+  /** docs/specs/pr-feedback-loop.md. The human decisions, oldest first. They skip triage. */
+  decisions?: HumanDecision[];
   /** Slice 4. The bring-current update this run finishes, for the base trigger. Absent otherwise. */
   baseUpdate?: PrBaseUpdate;
   /**
@@ -180,6 +223,41 @@ export const mayStartFollowUp = (event: PullRequestEvent): boolean => {
   return false;
 };
 
+/** DI-21.209. The quiet window: the reviews of a head settle once no event of it arrives for this long. */
+export const SETTLE_QUIET_MS = 2 * 60_000;
+
+/** DI-21.209. The longest wait for a pending review app check, from the first event of the head. */
+export const SETTLE_MAX_MS = 30 * 60_000;
+
+/** DI-21.210. The events that may carry a human decision. The PR workflow holds them until the plan. */
+export type DecisionEvent = Extract<PullRequestEvent, { kind: "review" | "comment" | "review_comment" | "linear_reply" }>;
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.210. True for an event that may be a human decision: a
+ * submitted "request changes" review, a submitted review whose body mentions Factoree, a comment or
+ * a review comment that mentions Factoree, and a Linear reply. Write access is checked when the PR
+ * workflow takes it.
+ */
+export const isDecisionEvent = (event: PullRequestEvent): boolean => {
+  if (event.kind === "review") return event.action === "submitted" && (event.state === "changes_requested" || event.mentions === true);
+  if (event.kind === "comment" || event.kind === "review_comment") return event.mentions;
+  return event.kind === "linear_reply";
+};
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.209. True for an event after which the head may hold
+ * something to act on: a human decision, any submitted review, a check run that completed with
+ * neither success nor skipped, and a commit status failure or error. The PR workflow waits for the
+ * reviews of the head to settle after it, then plans once.
+ */
+export const needsAttention = (event: PullRequestEvent): boolean => {
+  if (isDecisionEvent(event)) return true;
+  if (event.kind === "review") return event.action === "submitted";
+  if (event.kind === "check_run") return event.status === "completed" && event.conclusion !== "success" && event.conclusion !== "skipped";
+  if (event.kind === "commit_status") return event.state === "failure" || event.state === "error";
+  return false;
+};
+
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
@@ -190,8 +268,67 @@ export const findingPlace = (finding: Pick<PrReviewFinding, "path" | "line">): s
   finding.path === null ? "the review" : finding.line === null ? finding.path : `${finding.path}:${String(finding.line)}`;
 
 /**
- * The work item text of a PR follow-up run. A human review outranks every other sentence, as a
- * Linear reply does (DI-19.04). The kept PR reviewer findings are defects to repair, not decisions.
+ * docs/specs/pr-feedback-loop.md, DI-21.210. The review app findings, the CI findings and the human
+ * decisions of a PR follow-up run. A run of a history from before the review apps carries the named
+ * PR reviewer's findings, or the sentences of one human review, in `findings`: they read as review
+ * app findings and as one decision.
+ */
+export const followUpParts = (
+  followUp: PrFollowUpInput,
+): { reviewAppFindings: ReviewAppFinding[]; ciFindings: CiFinding[]; decisions: HumanDecision[] } => {
+  const legacy = followUp.findings ?? [];
+  const reviewAppFindings =
+    followUp.reviewAppFindings ??
+    (followUp.trigger === "reviewer" ? legacy.map((finding) => ({ ...finding, appSlug: followUp.reviewer?.appSlug ?? finding.author })) : []);
+  const decisions =
+    followUp.decisions ??
+    (followUp.trigger === "human"
+      ? legacy.map((finding) => ({
+          key: finding.key,
+          source: "github" as const,
+          author: followUp.reviewerLogin ?? finding.author,
+          body: finding.body,
+          path: finding.path,
+          line: finding.line,
+          commentId: finding.commentId,
+          url: null,
+        }))
+      : []);
+  return { reviewAppFindings, ciFindings: followUp.ciFindings ?? [], decisions };
+};
+
+/** True for a run that the findings of review apps or CI started, with no human decision. */
+export const isAutomaticTrigger = (trigger: PrFollowUpTrigger): boolean => trigger === "automatic" || trigger === "reviewer";
+
+/** Where a human decision sits: a file and line, the conversation, or the Linear agent session. */
+export const decisionPlace = (decision: HumanDecision): string =>
+  decision.source === "linear"
+    ? "the Linear agent session"
+    : decision.path === null
+      ? "the pull request conversation"
+      : decision.line === null
+        ? decision.path
+        : `${decision.path}:${String(decision.line)}`;
+
+/** The most characters of a CI log tail the work item text carries. */
+const MAX_LOG_TAIL_CHARACTERS = 6_000;
+
+/** DI-21.208. The work item lines of one failed CI check: its output, its annotations and its log tail. */
+const ciFindingSection = (finding: CiFinding): string[] => [
+  `### ${finding.name} (${finding.conclusion})`,
+  "",
+  ...(finding.summary === "" ? [] : [oneLine(finding.summary, MAX_FINDING_BODY_CHARACTERS), ""]),
+  ...(finding.annotations.length === 0 ? [] : [...finding.annotations.map((annotation) => `- ${oneLine(annotation, 600)}`), ""]),
+  ...(finding.logTail === null || finding.logTail.trim() === ""
+    ? []
+    : ["The last lines of the job log:", "", "```", finding.logTail.slice(-MAX_LOG_TAIL_CHARACTERS), "```", ""]),
+  ...(finding.detailsUrl === null ? [] : [`Details: ${finding.detailsUrl}`, ""]),
+];
+
+/**
+ * The work item text of a PR follow-up run. A human decision outranks every other sentence, as a
+ * Linear reply does (DI-19.04). The kept review app findings and the failed CI checks are defects to
+ * repair, not decisions.
  */
 export const renderPrFollowUpDescription = (input: {
   description: string;
@@ -212,31 +349,47 @@ export const renderPrFollowUpDescription = (input: {
   if (followUp.trigger === "base" && followUp.baseUpdate !== undefined) {
     return [...header, ...baseUpdateSection(followUp.baseBranch, followUp.baseSha, followUp.baseUpdate)].join("\n");
   }
-  if (followUp.trigger === "human") {
-    return [
-      ...header,
-      `## Review from ${followUp.reviewerLogin ?? "a human"}: changes requested`,
-      "",
-      "This review is a decision of a human. It outranks every other sentence of this issue. Follow it.",
-      "",
-      ...followUp.findings.map((finding) => `- ${findingPlace(finding)}: ${oneLine(finding.body, MAX_FINDING_BODY_CHARACTERS)}`),
-      ...(followUp.omittedFindings > 0 ? [`- ${String(followUp.omittedFindings)} more comments on the pull request.`] : []),
-    ].join("\n");
-  }
-  const byKey = new Map(followUp.findings.map((finding) => [finding.key, finding]));
-  return [
-    ...header,
-    `## Defects the PR reviewer found`,
-    "",
-    "Factoree triaged the PR reviewer's findings and kept only these. Each one names a concrete defect, a rule and evidence. Repair each one.",
-    "",
-    ...input.kept.map((kept) => {
-      const source = byKey.get(kept.key);
-      return `- ${oneLine(kept.evidence, 200)}: ${oneLine(kept.defect, 600)} Rule: ${oneLine(kept.rule, 300)}.${
-        source === undefined ? "" : ` (${findingPlace(source)})`
-      }`;
-    }),
-  ].join("\n");
+  const parts = followUpParts(followUp);
+  const byKey = new Map(parts.reviewAppFindings.map((finding) => [finding.key, finding]));
+  const decisions =
+    parts.decisions.length === 0
+      ? []
+      : [
+          "## Decisions of humans",
+          "",
+          "Each of these is a decision of a human. It outranks every other sentence of this issue. Follow it.",
+          "",
+          ...parts.decisions.map((decision) => `- ${decision.author} (${decisionPlace(decision)}): ${oneLine(decision.body, MAX_FINDING_BODY_CHARACTERS)}`),
+          ...(followUp.omittedFindings > 0 ? [`- ${String(followUp.omittedFindings)} more comments on the pull request.`] : []),
+          "",
+        ];
+  const ci =
+    parts.ciFindings.length === 0
+      ? []
+      : [
+          "## Checks that failed on the pull request head",
+          "",
+          "These repository CI checks failed on the head, and they pass on the base. Each one is a defect to repair. Make each check pass.",
+          "",
+          ...parts.ciFindings.flatMap(ciFindingSection),
+        ];
+  const kept =
+    input.kept.length === 0
+      ? []
+      : [
+          "## Defects the review apps found",
+          "",
+          "Factoree triaged the findings of the review apps and kept only these. Each one names a concrete defect, a rule and evidence. Repair each one.",
+          "",
+          ...input.kept.map((finding) => {
+            const source = byKey.get(finding.key);
+            return `- ${oneLine(finding.evidence, 200)}: ${oneLine(finding.defect, 600)} Rule: ${oneLine(finding.rule, 300)}.${
+              source === undefined ? "" : ` (${source.appSlug}, ${findingPlace(source)})`
+            }`;
+          }),
+          "",
+        ];
+  return [...header, ...decisions, ...ci, ...kept].join("\n").replace(/\n+$/, "");
 };
 
 /**
@@ -287,6 +440,10 @@ export const baseUpdateFindingLines = (update: PrBaseUpdate): string[] =>
 export const keptFindingLines = (kept: readonly TriagedFinding[]): string[] =>
   kept.map((finding) => `PR reviewer finding at ${finding.evidence}: ${finding.defect} Rule: ${finding.rule}`);
 
+/** DI-21.208. The repair finding lines the first implementer attempt of a run with failed CI checks receives. */
+export const ciFindingLines = (findings: readonly CiFinding[]): string[] =>
+  findings.map((finding) => `The CI check ${finding.name} failed on the pull request head (${finding.conclusion}): ${oneLine(finding.summary || "no summary", 600)}`);
+
 /** The reply Factoree posts on the pull request to one dropped finding. */
 export const droppedFindingReply = (finding: TriagedFinding): string =>
   [
@@ -304,6 +461,19 @@ export const reviewerLimitNotice = (url: string, checkName: string, changeSet = 
     "",
     `The PR reviewer check "${checkName}" failed again on ${url}. Factoree already ran ${String(MAX_REVIEWER_FOLLOW_UPS)} PR follow-up runs ` +
       `for the PR reviewer on this ${changeSet ? "change set" : "pull request"}, so it starts no other one. A human decides now: request changes, fix the branch, or close the pull request.`,
+  ].join("\n");
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.210. The "Needs your attention" post at the product limit of
+ * automatic follow-up runs. It names what still fails on the head.
+ */
+export const automaticLimitNotice = (url: string, limit: number, failing: readonly string[], changeSet = false): string =>
+  [
+    "### Needs your attention",
+    "",
+    `${failing.length === 0 ? "The review apps or CI checks" : failing.join(", ")} still ${failing.length === 1 ? "fails" : "fail"} on ${url}. ` +
+      `Factoree already ran ${String(limit)} automatic PR follow-up ${limit === 1 ? "run" : "runs"} on this ${changeSet ? "change set" : "pull request"}, ` +
+      "so it starts no other one. A human decides now: mention Factoree with what to change, request changes, fix the branch, or close the pull request.",
   ].join("\n");
 
 /** A human review as GitHub answers it: its author, and its body and comments as findings. */
@@ -327,4 +497,16 @@ export interface PullRequestReviewPort {
   reply(slug: string, number: number, finding: PrReviewFinding, body: string, installationId: string): Promise<void>;
   /** One comment on the pull request conversation. */
   comment(slug: string, number: number, body: string, installationId: string): Promise<void>;
+  /** docs/specs/pr-feedback-loop.md. Every review of the pull request, oldest first. */
+  reviews(slug: string, number: number, installationId: string): Promise<PullRequestReviewOnGitHub[]>;
+  /** DI-21.206. The newest check run of each name, and the newest commit status of each context, on one commit. */
+  checksOnCommit(slug: string, sha: string, installationId: string): Promise<CheckOnCommit[]>;
+  /** DI-21.206. The annotations of one check run. */
+  annotations(slug: string, checkRunId: number, installationId: string): Promise<CheckAnnotation[]>;
+  /** DI-21.207. Every review thread of the pull request, with its comments oldest first. */
+  reviewThreads(slug: string, number: number, installationId: string): Promise<ReviewThreadOnGitHub[]>;
+  /** DI-21.208. The full log of one GitHub Actions job, or null when GitHub keeps none. It needs Actions read. */
+  jobLog(slug: string, jobId: number, installationId: string): Promise<string | null>;
+  /** DI-21.211. Adds the 👀 reaction to a conversation comment or a review comment. */
+  react(slug: string, target: { kind: "comment" | "review_comment"; commentId: number }, installationId: string): Promise<void>;
 }

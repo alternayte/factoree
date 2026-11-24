@@ -91,6 +91,7 @@ const build = (options: { previousSuccess?: string | null; failIssueMoveWrites?:
   let failIssueMoveWrites = options.failIssueMoveWrites ?? 0;
   const store: PullRequestStore = {
     recordPublished: reject,
+    listOpenByAgentSession: reject,
     findByNumber: reject,
     findByCommit: reject,
     recordEvent: reject,
@@ -162,7 +163,7 @@ const build = (options: { previousSuccess?: string | null; failIssueMoveWrites?:
     deploys: port,
     products: { findById: reject },
     agentSession: { respond: reject },
-    reviews: { reviewerFindings: reject, review: reject, canWrite: reject, reply: reject, comment: reject },
+    reviews: { reviewerFindings: reject, review: reject, canWrite: reject, reply: reject, comment: reject, reviews: reject, checksOnCommit: reject, annotations: reject, reviewThreads: reject, jobLog: reject, react: reject },
     repositories: { listByProduct: reject },
     workItems: { facts: reject },
     repositoryBaseUrl: () => Promise.resolve("https://github.com"),

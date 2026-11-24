@@ -134,6 +134,11 @@ export interface PullRequestStore {
   countReviewerFollowUp(tenantId: string, pullRequestId: string, key: string): Promise<number>;
   /** DI-21.118. Records the head of a bring-current update that pushed nothing. */
   markBringCurrentTried(tenantId: string, pullRequestId: string, headSha: string): Promise<void>;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.211. The open pull requests whose origin run has this
+   * Linear agent session, oldest first.
+   */
+  listOpenByAgentSession(tenantId: string, agentSessionId: string): Promise<PublishedPullRequest[]>;
   /** DI-21.117. The open pull requests of a repository that target that base branch. */
   listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]>;
   /** The recorded events of one kind, oldest first. */

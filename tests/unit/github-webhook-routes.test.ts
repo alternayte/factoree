@@ -621,6 +621,7 @@ describe("GitHub webhook route", () => {
       reviewerType: "User",
       authorAssociation: "MEMBER",
       body: "Rename the handler.",
+      mentions: false,
     });
   });
 

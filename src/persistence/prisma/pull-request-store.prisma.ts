@@ -406,6 +406,16 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
     if (updated.count === 0) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
   }
 
+  async listOpenByAgentSession(tenantId: string, agentSessionId: string): Promise<PublishedPullRequest[]> {
+    const rows = await this.prisma.pullRequest.findMany({
+      where: { tenantId, state: "open", originRun: { linearAgentSessionId: agentSessionId } },
+      orderBy: { createdAt: "asc" },
+      take: 20,
+      include,
+    });
+    return rows.map(toRecord);
+  }
+
   async listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]> {
     const rows = await this.prisma.pullRequest.findMany({
       where: { tenantId, state: "open", baseBranch, repository: { fullName: { equals: repositoryFullName, mode: "insensitive" } } },

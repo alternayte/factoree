@@ -295,12 +295,18 @@ export interface ProofPackAfterPublication {
 
 export interface ProofPackPullRequestFollowUp {
   contractRevision: number;
-  trigger: "reviewer" | "human" | "base";
-  /** The human who requested changes, the PR reviewer as `slug (check name)`, or the base branch. */
+  /** docs/specs/pr-feedback-loop.md. automatic and human replace reviewer, which a run from before the review apps holds. */
+  trigger: "reviewer" | "automatic" | "human" | "base";
+  /**
+   * The humans who decided, the review apps and checks, the PR reviewer as `slug (check name)` of a
+   * run from before the review apps, or the base branch.
+   */
   startedBy: string;
   kept: Array<{ evidence: string; defect: string; rule: string }>;
   dropped: number;
   plainComments: string[];
+  /** DI-21.208. The CI checks that failed on the head the run read. They skip triage. */
+  ciFailures?: string[];
 }
 
 /**
@@ -699,12 +705,23 @@ const followUpLines = (input: ProofPackInput): string[] => {
     "",
     `The head commit \`${input.commitSha.slice(0, 7)}\` holds contract revision ${String(followUp.contractRevision)}.`,
     followUp.trigger === "human"
-      ? `${line(followUp.startedBy)} requested changes. Factoree followed the review as a decision, with no triage.`
+      ? `${line(followUp.startedBy)} decided on the pull request. Factoree followed each decision, with no triage.`
       : followUp.trigger === "base"
         ? `Factoree brought the pull request current with ${line(followUp.startedBy)}, and the update conflicted or failed its check. ` +
           "This commit merges the new base into the branch."
-        : `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree kept ${String(followUp.kept.length)} ` +
-        `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`,
+        : followUp.trigger === "reviewer"
+          ? `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree kept ${String(followUp.kept.length)} ` +
+            `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`
+          : `${line(followUp.startedBy)} found problems on the head. Factoree kept ${String(followUp.kept.length)} review app ` +
+            `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`,
+    ...(followUp.trigger === "human" && (followUp.kept.length > 0 || followUp.dropped > 0)
+      ? [
+          `Factoree also triaged the review app findings of the same head: it kept ${String(followUp.kept.length)} and dropped ${String(followUp.dropped)}.`,
+        ]
+      : []),
+    ...((followUp.ciFailures ?? []).length === 0
+      ? []
+      : [`The CI ${(followUp.ciFailures ?? []).length === 1 ? "check" : "checks"} ${(followUp.ciFailures ?? []).map(line).join(", ")} failed on the head, and the change repairs ${(followUp.ciFailures ?? []).length === 1 ? "it" : "them"}.`]),
     ...followUp.kept.map((kept) => `- ${line(kept.evidence)}: ${line(kept.defect)} Rule: ${line(kept.rule)}.`),
     "",
     // DI-21.123. An amendment lists the comments of the whole pull request below, so they stand once.
