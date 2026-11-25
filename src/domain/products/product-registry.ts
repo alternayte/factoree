@@ -54,6 +54,12 @@ export interface ProductRecord {
    * on one pull request together. A human decision has no limit.
    */
   automaticFollowUpLimit: number;
+  /** docs/specs/retro-agent.md. The product goal in markdown, which only the retro agent reads, or null. */
+  productGoal: string | null;
+  /** docs/specs/retro-agent.md, SDD section 61. Keep the redacted transcript of every agent session. */
+  keepTranscripts: boolean;
+  /** docs/specs/retro-agent.md. The days kept transcripts and signal results stay. */
+  retroRetentionDays: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,6 +71,11 @@ export const GITHUB_APP_SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/i;
 export const AUTOMATIC_FOLLOW_UP_LIMIT_MIN = 1;
 export const AUTOMATIC_FOLLOW_UP_LIMIT_MAX = 20;
 export const AUTOMATIC_FOLLOW_UP_LIMIT_DEFAULT = 3;
+
+/** docs/specs/retro-agent.md. The bounds of the retro data retention, and the most bytes of a product goal. */
+export const RETRO_RETENTION_DAYS_MIN = 7;
+export const RETRO_RETENTION_DAYS_MAX = 365;
+export const PRODUCT_GOAL_MAX_BYTES = 16 * 1024;
 
 export interface ProductEffort {
   implementer: string | null;
@@ -94,6 +105,9 @@ export interface ProductSettingsUpdate {
   appChangeIssues?: AppChangeIssueMode;
   reviewAppDenyList?: string[];
   automaticFollowUpLimit?: number;
+  productGoal?: string | null;
+  keepTranscripts?: boolean;
+  retroRetentionDays?: number;
 }
 
 export interface CreateProductInput {

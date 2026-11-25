@@ -17,12 +17,13 @@ A retro agent runs on a schedule, outside any run, and reads the runs that ended
 - A save that cannot reach Temporal keeps the settings, shows "Schedule not saved: Temporal is unreachable" with a retry button, and the worker reconciles the schedule from the stored settings at start — the stored settings are the truth, and the schedule follows them.
 - A retro reads the runs of its products that ended since the last successful retro, capped at 200 — each run is read once, and one retro stays inside the model's context.
 - Factoree exports, per run, the stages, review findings, repairs, failed checks with their retained logs, hung sessions, human replies of follow-up runs, cost per session and the transcript when kept, as files in the sandbox — the agent reads data, and P-12 holds.
+- A retro runs one agent session per product in scope, in sequence, with that product's runner credential, sandbox provider, signal sources and product goal. The retro stops before the next product when its sessions have spent the cost cap — runner credentials are product secrets, and one session never sees another product's data.
 - The retro agent runs through the existing runner in a sandbox from the sandbox image, with no repository and no network beyond the model provider — P-08 forbids a direct model call, and the agent needs no code.
 - The retro prompt is `src/prompts/retro.ts`, and each retro records its prompt version — §56.
 - A signal source belongs to one product and has a kind, errors or analytics, an MCP endpoint, an optional bearer token from a product secret, and up to 10 queries — §52: a product's signals stay in its retros.
 - A query has a name, an MCP tool name, JSON arguments and a byte cap (default 256 KiB, at most 1 MiB). The text `{since}` in an argument becomes the end time of the last successful retro, in ISO 8601 — the operator picks what the agent sees, and each retro reads new data.
 - The query tools join the source's allow list, and each call passes Action Policy — §58.
-- The worker calls each query before the session and redacts the result with the retained-log redactor. It writes the result to `signals/<source>/<query>.md` in the sandbox. Each result is one signal result with its own id. The retro stores each result, its SHA-256 and its source and query names, and deletes them after the product's run retention period — the token never enters the sandbox, Factoree can check every citation, and production data may hold personal data.
+- The worker calls each query before the session and redacts the result with the retained-log redactor. It writes the result to `signals/<source>/<query>.md` in the sandbox. Each result is one signal result with its own id. The retro stores each result, its SHA-256 and its source and query names, and deletes them after the product's retro data retention — the token never enters the sandbox, Factoree can check every citation, and production data may hold personal data.
 - A failed or capped query records its reason as a retro event and skips that result. The retro goes on — a signal source never fails a retro, as DI-5.13 does for a context source.
 - The admin connection test runs each query and shows its size and its first 500 characters — the operator sees what the agent reads.
 - The output is a list of findings: product, kind (factory, error or idea), title, description, cited run ids, cited signal result ids, cited repositories — data that Factoree checks.
@@ -39,10 +40,11 @@ A retro agent runs on a schedule, outside any run, and reads the runs that ended
 - With no product goal, the agent ranks error findings first, then factory findings by failed runs, repairs, hung sessions and cost, then idea findings — a production error hurts users now.
 - The Retro page shows per product, over the runs of the last retro: first-pass rate, repairs per run, hung sessions and cost per run — the goal and the result sit side by side.
 - The product page has a "Keep transcripts" switch, off by default — §61.
+- The product page has "Retro data retention" in days, default 30, from 7 to 365. A worker job deletes older kept transcripts and signal results every hour — §51 has no run retention, and a weekly retro needs a week of data.
 - A kept transcript is the runner's whole process output plus every tool input, redacted by the same redactor as the retained log, then gzipped — the runner already holds both, and redaction runs before any byte leaves the worker.
 - Transcripts go to Postgres by default — one dependency keeps self-hosting easy.
 - The install settings take an optional S3-compatible bucket (endpoint, bucket, region, access key, secret key). When set, new transcripts go there and the row keeps the object key. `FACTOREE_TRANSCRIPT_S3_*` env vars win and lock the fields — the owner's env-over-UI rule.
-- A kept transcript is deleted after the product's run retention period — §51.
+- A kept transcript is deleted after the product's retro data retention — §51.
 - The model picker gets a retro row on the tenant's Retro settings, with the same runner, model and effort rules — no second model form.
 - A running retro shows on the factory floor (`docs/specs/factory-floor.md`) as one consultant who walks the lines of the products it reads. The retro session writes session pulses with its retro id, and the floor read model returns the running retros — every workflow that does work is visible on the floor.
 

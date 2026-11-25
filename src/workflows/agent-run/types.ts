@@ -60,6 +60,8 @@ export interface AgentRunWorkflowInput {
   product: AgentRunProductInput;
   /** docs/specs/run-recovery.md. The failed run this run follows up. Absent for a first run. */
   followUpOfRunId?: string;
+  /** docs/specs/retro-agent.md. The human reply that started this follow-up run, so a retro reads it. */
+  followUpReply?: string;
   /**
    * docs/specs/run-recovery.md. The browser assertions of the failed run. When the follow-up run
    * freezes none, its proof pack says the reply replaced them and no visual evidence exists.

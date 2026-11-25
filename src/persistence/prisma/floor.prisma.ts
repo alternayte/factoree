@@ -119,14 +119,16 @@ export class PrismaFloorReader implements FloorReader {
     });
     const seen = new Set<string>();
     const pulses = pulseRows.filter((row) => {
-      const key = `${row.runId ?? ""}:${row.setupId ?? ""}:${row.role}`;
+      const key = `${row.runId ?? ""}:${row.setupId ?? ""}:${row.retroId ?? ""}:${row.productId ?? ""}:${row.role}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
     // The throughput covers today and the 6 days before it.
     const from = new Date(`${dayOf(new Date(now.getTime() - 6 * DAY_MS))}T00:00:00.000Z`);
-    return this.assemble(tenantId, now, from, now, runs, setups, pulses);
+    // docs/specs/retro-agent.md. A running retro walks the floor until it ends.
+    const retros = await this.prisma.retro.findMany({ where: { tenantId, status: "running" }, orderBy: { startedAt: "asc" }, take: 5 });
+    return this.assemble(tenantId, now, from, now, runs, setups, pulses, retros);
   }
 
   async replay(tenantId: string, from: Date, to: Date): Promise<FloorData> {
@@ -161,7 +163,12 @@ export class PrismaFloorReader implements FloorReader {
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: MAX_PULSES,
     });
-    return this.assemble(tenantId, new Date(), from, to, runs, setups, pulses);
+    const retros = await this.prisma.retro.findMany({
+      where: { tenantId, startedAt: { lte: to }, OR: [{ endedAt: null }, { endedAt: { gte: from } }] },
+      orderBy: { startedAt: "asc" },
+      take: 50,
+    });
+    return this.assemble(tenantId, new Date(), from, to, runs, setups, pulses, retros);
   }
 
   private async assemble(
@@ -171,7 +178,17 @@ export class PrismaFloorReader implements FloorReader {
     to: Date,
     runRows: RunRow[],
     setupRows: SetupRow[],
-    pulseRows: Array<{ runId: string | null; setupId: string | null; role: string; toolKind: string; lastOutputAt: Date; createdAt: Date }>,
+    pulseRows: Array<{
+      runId: string | null;
+      setupId: string | null;
+      retroId: string | null;
+      productId: string | null;
+      role: string;
+      toolKind: string;
+      lastOutputAt: Date;
+      createdAt: Date;
+    }>,
+    retroRows: Array<{ id: string; status: string; productIds: string[]; startedAt: Date; endedAt: Date | null }>,
   ): Promise<FloorData> {
     const products = await this.prisma.product.findMany({
       where: { tenantId },
@@ -262,6 +279,8 @@ export class PrismaFloorReader implements FloorReader {
     const pulses: FloorPulse[] = pulseRows.map((row) => ({
       runId: row.runId,
       setupId: row.setupId,
+      retroId: row.retroId,
+      productId: row.productId,
       role: row.role,
       toolKind: toolKindOf(row.toolKind),
       lastOutputAt: row.lastOutputAt,
@@ -282,6 +301,13 @@ export class PrismaFloorReader implements FloorReader {
       })),
       runs,
       setups,
+      retros: retroRows.map((retro) => ({
+        id: retro.id,
+        status: retro.status === "succeeded" || retro.status === "failed" ? retro.status : "running",
+        productIds: retro.productIds,
+        startedAt: retro.startedAt,
+        endedAt: retro.endedAt,
+      })),
       pulses,
       throughput: await this.throughput(tenantId, from, to),
     };

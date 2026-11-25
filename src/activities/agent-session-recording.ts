@@ -24,7 +24,7 @@ export interface AgentSessionContext {
   tenantId: string;
   productId: string;
   runId: string;
-  role: AgentSessionRole;
+  role: Exclude<AgentSessionRole, "retro">;
   attempt: number;
   runner: string;
   idempotencyKey: string;

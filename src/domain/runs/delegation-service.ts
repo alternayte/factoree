@@ -415,7 +415,7 @@ export class DelegationService {
       product: workflowProduct,
       ...(followUp === null
         ? {}
-        : { followUpOfRunId: followUp.failedRunId, followUpBrowserAssertions: followUp.browserAssertions }),
+        : { followUpOfRunId: followUp.failedRunId, followUpReply: followUp.reply, followUpBrowserAssertions: followUp.browserAssertions }),
       ...(followUpTargets.length === 0 ? {} : { followUpTargets }),
       ...(followUp?.deploy === undefined
         ? {}

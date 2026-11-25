@@ -14,6 +14,7 @@ import type { Redactor } from "~/telemetry/redaction.js";
 import { buildRetainedLog } from "~/domain/runs/retained-log.js";
 import { RunConfigurationError } from "~/domain/runs/run-configuration-error.js";
 import type { AgentSessionOutcome, AgentSessionUsage } from "~/domain/runs/agent-session.js";
+import { transcriptTextOf } from "~/domain/retro/transcript.js";
 import { PULSE_INTERVAL_MS, type SessionPulseRecorder, type ToolKind } from "~/domain/runs/session-pulse.js";
 import {
   PROVIDER_UNREACHABLE_GRACE_MS,
@@ -124,6 +125,17 @@ export interface CliAgentRunnerOptions {
    * A failed write never touches the session: a pulse is a picture, not evidence.
    */
   pulses?: SessionPulseRecorder;
+  /**
+   * docs/specs/retro-agent.md, SDD section 61. Receives the redacted transcript of each ended
+   * invocation: the whole process output plus every tool input. The sink keeps it only for a
+   * product that keeps transcripts. A failed write never touches the session.
+   */
+  transcripts?: TranscriptSink;
+}
+
+/** docs/specs/retro-agent.md. Where a runner sends the redacted transcript of one invocation. */
+export interface TranscriptSink {
+  keep(input: { tenantId: string; owner: string; role: AgentRole; invocation: string; text: string }): Promise<void>;
 }
 
 /**
@@ -656,6 +668,13 @@ export abstract class CliAgentRunner implements AgentRunner {
       output,
       counted: live.counted,
     });
+    // docs/specs/retro-agent.md. Redacted here, before any byte leaves the worker.
+    if (this.cliOptions.transcripts !== undefined) {
+      const text = this.cliOptions.redactor.redact(transcriptTextOf(output, reading.toolInputs ?? []));
+      await this.cliOptions.transcripts
+        .keep({ tenantId: live.tenantId, owner: live.owner, role: live.role, invocation: live.process.id, text })
+        .catch(() => undefined);
+    }
     return {
       session: {
         sessionId: sessionId ?? live.process.id,

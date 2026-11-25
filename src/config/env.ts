@@ -40,6 +40,13 @@ const schema = z
     // Test only. "filesystem" keeps visual evidence on the worker disk instead of Linear.
     FACTOREE_EVIDENCE_STORAGE: z.enum(["filesystem", "linear"]).default("linear"),
     FACTOREE_EVIDENCE_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-evidence"),
+    // docs/specs/retro-agent.md. The S3-compatible bucket of kept transcripts. Each one set wins
+    // over the install setting of the same name, and the Settings page shows that field locked.
+    FACTOREE_TRANSCRIPT_S3_ENDPOINT: z.string().url().optional(),
+    FACTOREE_TRANSCRIPT_S3_BUCKET: z.string().min(1).optional(),
+    FACTOREE_TRANSCRIPT_S3_REGION: z.string().min(1).optional(),
+    FACTOREE_TRANSCRIPT_S3_ACCESS_KEY: z.string().min(1).optional(),
+    FACTOREE_TRANSCRIPT_S3_SECRET_KEY: z.string().min(1).optional(),
   });
 
 export type Env = z.infer<typeof schema>;

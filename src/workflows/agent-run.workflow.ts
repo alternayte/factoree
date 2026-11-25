@@ -62,6 +62,7 @@ export async function agentRunWorkflow(input: AgentRunWorkflowInput): Promise<Ag
     workItemTitle: input.workItem.title,
     workItemUrl: input.workItem.url,
     ...(input.followUpOfRunId === undefined ? {} : { followUpOfRunId: input.followUpOfRunId }),
+    ...(input.followUpReply === undefined ? {} : { followUpReply: input.followUpReply }),
   });
   control.runId = created.runId;
   // docs/specs/blocked-by-wait.md. A stop cancelled the waiting run before this workflow started.
